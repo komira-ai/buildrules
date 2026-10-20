@@ -16,14 +16,15 @@ one invocation each. `ci/release_check.zig` and `ci/stages_check.zig` (part of `
 | `gamma` | builds our own repositories with the candidate on the farm; fails the release when the farm is not configured (see "The gamma stage") | read, `id-token` write |
 | `tool` | builds `tools/release` and `tools/stage` with buck2 and hands the binaries to the later jobs, before any job that writes holds a token | read |
 | `plan` | read-only; decides whether this commit is released and which version; creates nothing | read |
+| `cli` | builds `//cli:buildrules` from the tested commit with the planned version stamped in (`-c buildrules.release_version=<version>`), in local mode; hands the program to `verify`. It is not a release asset: there are no binaries | read |
 | `archive` | `git archive` of the tested commit (its sha, not a tag) under `buildrules-<planned version>/`, compressed by the tool's own gzip, `SHA256SUMS`, and a build provenance attestation of both files | `id-token`, `attestations` write |
-| `verify` | read-only; checks everything below before a file is published | read |
+| `verify` | read-only; checks everything below before a file is published, and runs the command line that `cli` built (`buildrules --version` must print the release) | read |
 | `tag` | the annotated tag at that sha, made only after the archive is verified, with the release bot's token (see "The tag ruleset"). A tag that exists at the sha is kept; one at another commit fails the job | read; the write is the bot's token, minted in this job and used by the tag step alone |
 | `site` | read-only; the page of the release (the pin snippet) as an artifact; nothing deploys it | read |
 | `publish` | needs `tag` and `verify`; checks the tag peels to the verified sha, then creates the GitHub release from the verified files | `contents: write` |
 | `bump` | needs `plan`, `tag`, `publish` and `tool`; opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge (see "The submodule bump"). Nothing waits for it | read; the write is the bot's token for the internal repository, minted in this job and used by the bump step alone |
 
-The order is `gate`, `beta`, `gamma`, `plan`, `archive`, `verify`, `tag`, `publish` (`site` after `tag` and `verify`); a job runs only if the one before
+The order is `gate`, `beta`, `gamma`, `plan`, `archive`, `verify`, `tag`, `publish` (`cli` beside `archive`, before `verify`; `site` after `tag` and `verify`); a job runs only if the one before
 it succeeded. **Nothing before `tag` waits for it, so a failure in the archive, its attestation or its verification leaves no tag behind**: the tag is the
 first thing in the pipeline that cannot be taken back, and it is made last but for the release (`ci/release_check.zig` refuses a `needs: tag` in any job before it).
 A `GITHUB_TOKEN` write scope
@@ -60,7 +61,7 @@ The runner legs run every action on the runner (`-c buildrules_re.mode=local`; n
 directories**: after the first build the tool records the sha256 of every output (a file's bytes, or a directory's names and bytes), stops the daemon, copies the
 repository without `buck-out` to a sibling directory (the work directory with `-second` appended), builds there from nothing, and compares. A second build in the
 same directory could not see an output that depends on the path it was built at (a compile directory in debug info, a path in a manifest); this one can.
-Any difference is red, with both digests and both directories.
+Any difference is red, with both digests and both directories. A leg whose build declares no output at all is red as well (`tools/stage` fails it, on the farm too): two empty lists compare equal, so the check would pass having compared nothing. The Mojo leg builds the package's `.mojoc` (`//hello:lib`) beside `//hello:ci` for that reason.
 
 C and C++ outputs used to depend on the path: zig cc assembles the C runtime's start-up objects at link time with debug info, whatever `-g0` said for the compiles,
 and that DWARF names the action's working directory. The toolchain now links with `-Wl,--strip-debug`, and `hermetic_check` (`examples/cxx`, a validation in `//ci:all`)
@@ -123,6 +124,16 @@ To bump `MAJOR.MINOR`, edit `VERSION` (`0.1`, `1.0`) in a pull request. `VERSION
 release of the new line is `v0.1.1`, and `PATCH` counts again from 1. A `VERSION` lower than a tag that exists is refused (the plan job fails
 and says so) rather than released.
 
+### The version of the command line
+
+`buildrules --version` prints `buildrules <version>`, and the version is stamped when the program is built (`cli/version.bzl`, the module `buildrules_version`):
+
+- a release build passes the planned version, `-c buildrules.release_version=<MAJOR.MINOR.PATCH>` (the `cli` job does; nothing else sets it), and the program prints that number;
+- any other build (a checkout, your own farm) prints `<MAJOR.MINOR>-dev` of the `VERSION` file, so a program that was not released never claims a release number.
+
+`cli/src/version_test.zig` holds the stamp to that shape against the `VERSION` file, as a test welded to the program. The release holds the other end: `verify` runs the program
+the `cli` job built and fails the release unless it prints the release's own number. The program is not a release asset yet; the stamp is checked so that it is right when it becomes one.
+
 ## What is released
 
 A green commit on `main` is released when the files changed since the last release tag include one that is not documentation or CI. The
@@ -158,6 +169,7 @@ consumer relies on the published file and its sha256, not on making the file aga
 4. building the archive again from the commit gives the same bytes;
 5. the archive's file list equals `git ls-tree -r` of the commit (a missing, extra or repeated file is a failure);
 6. the scrub (`tools/scrub`: dates, names, addresses and the like that a public repository must not hold) passes on the archive's contents.
+7. (`verify` only) the command line built by `cli` for this release prints the release version: `buildrules --version` is `buildrules <MAJOR.MINOR.PATCH>`, the planned number (see "The version of the command line").
 
 A re-run creates no second release and replaces no asset. If the release exists, each of the two files it already holds must have the sha256
 of ours or the job fails and changes nothing; a file it lacks is added. A release is never edited by the pipeline.

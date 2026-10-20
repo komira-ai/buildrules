@@ -41,6 +41,8 @@ const order = [_][2][]const u8{
     .{ "gamma", "beta" },
     .{ "plan", "gamma" },
     .{ "archive", "plan" },
+    .{ "cli", "plan" },
+    .{ "verify", "cli" },
     .{ "verify", "archive" },
     .{ "tag", "plan" },
     .{ "tag", "verify" },
@@ -51,8 +53,8 @@ const order = [_][2][]const u8{
     .{ "site", "verify" },
 };
 /// The jobs that run before the tag exists: none of them may wait for it, or a failure there could not be told from one after the tag.
-const before_tag = [_][]const u8{ "gate", "beta", "gamma", "plan", "archive", "verify" };
-const all_jobs = [_][]const u8{ "gate", "beta", "gamma", "tool", "plan", "archive", "verify", "tag", "site", "publish", "bump" };
+const before_tag = [_][]const u8{ "gate", "beta", "gamma", "plan", "cli", "archive", "verify" };
+const all_jobs = [_][]const u8{ "gate", "beta", "gamma", "tool", "plan", "cli", "archive", "verify", "tag", "site", "publish", "bump" };
 /// What `bump` waits for: the plan (the tag it opens the pull request for), the tag and the publish (the guard of the internal repository reads the
 /// tag, and the release exists before anything points at it), and the tool. Nothing waits for `bump`.
 const bump_needs = [_][]const u8{ "plan", "tag", "publish", "tool" };
@@ -427,7 +429,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             if (!hasNeed(j, pair[1])) try add(a, &f, "the job `{s}` does not wait for `{s}` (order: gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish)", .{ pair[0], pair[1] });
         }
     }
-    for ([_][]const u8{ "archive", "verify", "site" }) |name| {
+    for ([_][]const u8{ "cli", "archive", "verify", "site" }) |name| {
         if (jobNamed(jobs, name)) |j| {
             if (j.if_expr == null or std.mem.indexOf(u8, j.if_expr.?, released_clause) == null) try add(a, &f, "the job `{s}` runs even when the plan released nothing (its `if:` lacks `{s}`)", .{ name, released_clause });
         }
@@ -492,6 +494,27 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             if (std.mem.indexOf(u8, l, "./buck2") != null)
                 try add(a, &f, "the job `gamma` holds the farm's token and runs buck2 itself: {s}", .{l});
         }
+    }
+    // cli: the command line, built from the tested commit with the planned version stamped in (`-c buildrules.release_version`, read by cli/BUCK), and
+    // `verify` runs it and compares what it prints with the release. Read-only; it runs the buck2 that `tool` handed on, as the literal `./buck2`.
+    if (jobNamed(jobs, "cli")) |j| {
+        if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read"))
+            try add(a, &f, "the job `cli` is not `contents: read` alone", .{});
+        if (!hasNeed(j, "tool")) try add(a, &f, "the job `cli` does not wait for `tool`, which hands on the buck2 it runs", .{});
+        const jt = try j.text(a);
+        if (std.mem.indexOf(u8, jt, "NUMBER: ${{ needs.plan.outputs.number }}") == null) try add(a, &f, "the job `cli` does not take the planned version from the plan (`NUMBER: ${{{{ needs.plan.outputs.number }}}}`)", .{});
+        if (std.mem.indexOf(u8, jt, "-c \"buildrules.release_version=$NUMBER\"") == null) try add(a, &f, "the job `cli` does not stamp the planned version into the program (`-c \"buildrules.release_version=$NUMBER\"`)", .{});
+        if (std.mem.indexOf(u8, jt, " //cli:buildrules") == null) try add(a, &f, "the job `cli` does not build //cli:buildrules", .{});
+        if (std.mem.indexOf(u8, jt, "name: release-cli") == null) try add(a, &f, "the job `cli` does not upload the artifact `release-cli`", .{});
+    }
+    if (jobNamed(jobs, "verify")) |j| {
+        const jt = try j.text(a);
+        if (std.mem.indexOf(u8, jt, "name: release-cli") == null) try add(a, &f, "the job `verify` does not download the artifact `release-cli`", .{});
+        if (std.mem.indexOf(u8, jt, " --cli built-cli/buildrules") == null) try add(a, &f, "the job `verify` does not pass `--cli built-cli/buildrules`, so the program's version is not checked", .{});
+    }
+    if (jobNamed(jobs, "plan")) |j| {
+        const jt = try j.text(a);
+        if (std.mem.indexOf(u8, jt, "number: ${{ steps.version.outputs.number }}") == null) try add(a, &f, "the job `plan` does not output the version number (`number: ${{{{ steps.version.outputs.number }}}}`), which `cli` stamps", .{});
     }
     if (jobNamed(jobs, "site")) |j| {
         if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read")) try add(a, &f, "the job `site` is not `contents: read` alone", .{});
@@ -697,6 +720,7 @@ const fixture_wf =
     \\    outputs:
     \\      released: ${{ steps.version.outputs.released }}
     \\      tag: ${{ steps.version.outputs.tag }}
+    \\      number: ${{ steps.version.outputs.number }}
     \\      previous: ${{ steps.version.outputs.previous }}
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -747,8 +771,35 @@ const fixture_wf =
     \\          retention-days: 7
     \\          if-no-files-found: error
     \\
+    \\  cli:
+    \\    needs: [plan, tool]
+    \\    if: ${{ needs.plan.outputs.released == 'true' }}
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 60
+    \\    permissions:
+    \\      contents: read
+    \\    env:
+    \\      NUMBER: ${{ needs.plan.outputs.number }}
+    \\    steps:
+    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    \\        with:
+    \\          persist-credentials: false
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: stage-tool
+    \\          path: .
+    \\      - run: chmod +x buck2
+    \\      - name: Build the command line with the release version stamped in
+    \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out buildrules //cli:buildrules
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        with:
+    \\          name: release-cli
+    \\          path: buildrules
+    \\          retention-days: 7
+    \\          if-no-files-found: error
+    \\
     \\  verify:
-    \\    needs: [plan, archive, tool]
+    \\    needs: [plan, archive, cli, tool]
     \\    if: ${{ needs.plan.outputs.released == 'true' }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
@@ -770,9 +821,13 @@ const fixture_wf =
     \\        with:
     \\          name: release-assets
     \\          path: dist
-    \\      - run: chmod +x tool/release
-    \\      - name: The archive, its sums, attestations, file list and scrub
-    \\        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --dist dist --workflow .github/workflows/release.yml
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: release-cli
+    \\          path: built-cli
+    \\      - run: chmod +x tool/release built-cli/buildrules
+    \\      - name: The archive, its sums, attestations, file list and scrub, and the command line's version
+    \\        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --dist dist --workflow .github/workflows/release.yml --cli built-cli/buildrules
     \\
     \\  tag:
     \\    needs: [plan, verify, tool]
@@ -970,7 +1025,7 @@ test "the jobs are parsed as the rules read them" {
     const a = ar.allocator();
     const r = try fx(a);
     const jobs = try parseJobs(a, try body(a, r.wf));
-    try t.expectEqual(@as(usize, 11), jobs.len);
+    try t.expectEqual(@as(usize, 12), jobs.len);
     const bp = jobNamed(jobs, "bump").?;
     try t.expect(hasNeed(bp, "plan") and hasNeed(bp, "tag") and hasNeed(bp, "publish") and hasNeed(bp, "tool"));
     try t.expectEqualStrings(tag_if, bp.if_expr.?);
@@ -1207,7 +1262,7 @@ test "rule: the order gate -> beta -> gamma -> plan -> archive -> verify -> tag 
     // the chain after the stages: plan after gamma, archive after plan, verify after archive, tag after verify, publish after tag
     try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "needs: [gamma, tool]", "needs: [tool]"), "`plan` does not wait for `gamma`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "needs: [plan, tool]", "needs: [tool]"), "`archive` does not wait for `plan`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [plan, archive, tool]", "needs: [plan, tool]"), "`verify` does not wait for `archive`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [plan, archive, cli, tool]", "needs: [plan, tool]"), "`verify` does not wait for `archive`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "needs: [plan, verify, tool]", "needs: [plan, tool]"), "`tag` does not wait for `verify`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "needs: [plan, verify, tool]", "needs: [verify, tool]"), "`tag` does not wait for `plan`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs: [plan, tag, verify, tool]", "needs: [plan, verify, tool]"), "`publish` does not wait for `tag`");
@@ -1217,7 +1272,7 @@ test "rule: the order gate -> beta -> gamma -> plan -> archive -> verify -> tag 
     // nothing before the tag waits for it: a failure there must leave no tag (the old order, archive after tag, is red)
     const waits = "waits for `tag` or `publish`";
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "needs: [plan, tool]", "needs: [plan, tag, tool]"), waits);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [plan, archive, tool]", "needs: [plan, archive, tag, tool]"), waits);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [plan, archive, cli, tool]", "needs: [plan, archive, cli, tag, tool]"), waits);
     try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "needs: [gamma, tool]", "needs: [gamma, tag, tool]"), waits);
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "needs: [beta, tool]", "needs: [beta, tool, tag]"), waits);
     // the plan only reads and cannot be skipped
@@ -1227,6 +1282,21 @@ test "rule: the order gate -> beta -> gamma -> plan -> archive -> verify -> tag 
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          ref: refs/tags/${{ needs.plan.outputs.tag }}\n"), "reads a tag by ref");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "--sha \"$GITHUB_SHA\" ", ""), "`verify` does not pass `--sha");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "--sha \"$GITHUB_SHA\" ", ""), "`archive` does not pass `--sha");
+    // the command line is stamped with the planned version and verify runs it: each link of that chain is held
+    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", " -c \"buildrules.release_version=$NUMBER\"", ""), "`cli` does not stamp the planned version");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "needs.plan.outputs.number", "needs.plan.outputs.tag"), "`cli` does not take the planned version from the plan");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", " //cli:buildrules", " //tools/release:release"), "`cli` does not build //cli:buildrules");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "name: release-cli", "name: other"), "`cli` does not upload the artifact `release-cli`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", " -c buildrules_re.mode=local", ""), "does not pass `-c buildrules_re.mode=local`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "      contents: read\n", "      contents: write\n"), "job `cli` holds `contents: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "needs: [plan, tool]", "needs: [plan]"), "`cli` does not wait for `tool`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "needs: [plan, tool]", "needs: [tool]"), "`cli` does not wait for `plan`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "needs: [plan, tool]", "needs: [plan, tag, tool]"), "`cli` waits for `tag` or `publish`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "    if: ${{ needs.plan.outputs.released == 'true' }}\n", ""), "`cli` runs even when the plan released nothing");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [plan, archive, cli, tool]", "needs: [plan, archive, tool]"), "`verify` does not wait for `cli`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", " --cli built-cli/buildrules", ""), "`verify` does not pass `--cli");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "name: release-cli", "name: other"), "`verify` does not download the artifact `release-cli`");
+    try expectFinding(a, r, try mutate(a, r.wf, "      number: ${{ steps.version.outputs.number }}\n", ""), "`plan` does not output the version number");
     // gate is a call of ci.yml that cannot be skipped, with read access only
     try expectFinding(a, r, try mutate(a, r.wf, "    uses: ./.github/workflows/ci.yml\n", "    runs-on: ubuntu-latest\n"), "`gate` does not call");
     try expectFinding(a, r, try mutateIn(a, r.wf, "gate", "    permissions:\n", "    if: ${{ github.event_name == 'push' }}\n    permissions:\n"), "`gate` has an `if:`");

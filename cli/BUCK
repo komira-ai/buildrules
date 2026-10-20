@@ -1,11 +1,25 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # The buildrules command line, in Zig, built by the pinned zig behind its unit tests.
-load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
+load(":version.bzl", "cli_version")
 
 # The CLI is Zig 0.15 code (std.Io, ArrayList.empty): it builds with the pinned zig_next, as kpin does.
 _ZIG = "buildrules//rules/pins:zig_next"
 
 _SRCS = glob(["src/*.zig", "src/fixture/*"])
+
+# The version `buildrules --version` prints (the module `buildrules_version`, imported by main.zig). The release workflow builds with
+# `-c buildrules.release_version=<the planned version>`; any other build reports the VERSION file's MAJOR.MINOR with `-dev` (cli/version.bzl).
+cli_version(
+    name = "version_zig",
+    file = "//:VERSION",
+    release = read_config("buildrules", "release_version", ""),
+)
+
+zig_module(
+    name = "buildrules_version",
+    src = ":version_zig",
+)
 
 _TESTS = [
     "cargo_cmd",
@@ -24,17 +38,30 @@ _TESTS = [
         name = name + "_unit",
         src = "src/" + name + "_test.zig",
         imports = _SRCS,
+        deps = [":buildrules_version"],
         zig = _ZIG,
     )
     for name in _TESTS
 ]
 
+# What the stamp is: `--version` prints it, and it is the VERSION file's MAJOR.MINOR with `-dev`, or a release number of that MAJOR.MINOR
+# (a build with -c buildrules.release_version=...). The VERSION file is the test's data.
+zig_test(
+    name = "version_unit",
+    src = "src/version_test.zig",
+    imports = _SRCS,
+    deps = [":buildrules_version"],
+    data = {"VERSION": "//:VERSION"},
+    zig = _ZIG,
+)
+
 zig_exe(
     name = "buildrules",
     src = "src/main.zig",
     imports = _SRCS,
+    deps = [":buildrules_version"],
     zig = _ZIG,
-    unit_tests = [":" + name + "_unit" for name in _TESTS],
+    unit_tests = [":" + name + "_unit" for name in _TESTS] + [":version_unit"],
     visibility = ["PUBLIC"],
 )
 

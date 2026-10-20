@@ -378,6 +378,13 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
     };
 
     const first = try hashAll(a, o.work, try build(a, io, o, o.work, targets.items));
+    // A leg whose targets have no output at all would pass the comparison below having compared nothing: two empty lists are equal. That is a
+    // vacuous determinism check, so it is red (on a farm too: the same STEPS would be vacuous on the runner). Name a target that makes a file.
+    if (first.len == 0) {
+        std.debug.print("beta {s}: the build of {s} declares no output, so there is nothing to compare between two builds (a vacuous determinism check); build a target that makes a file, such as a library or an executable\n", .{ o.lang, try std.mem.join(a, " ", targets.items) });
+        _ = try io.run(a, o.work, &.{ o.buck2, "kill" });
+        return error.NoOutputsToCompare;
+    }
     var res = Result{ .outcome = .passed, .outputs = first };
     if (o.exec == .farm) {
         io_mod.say("beta {s}: determinism not checked on a farm: its cache would answer the second build\n", .{o.lang});
@@ -780,6 +787,44 @@ test "a build that makes a different number of outputs in the second directory i
     };
     var fake = Fake{ .a = a, .rules = &rules };
     try t.expectError(error.NotDeterministic, run(a, fake.io(), env.opts(.local)));
+}
+
+const no_output_steps =
+    \\run buildrules init . --git {origin} --commit {commit}
+    \\config
+    \\build //app:ci
+    \\
+;
+
+test "a leg whose build declares no output is red: two empty lists would compare equal and prove nothing" {
+    // The defect: the Mojo leg built `//hello:ci`, a group with no output, and its build-twice check passed having compared zero files.
+    for ([_][]const u8{ "root//app:ci\n", "" }) |printed| {
+        var arena = std.heap.ArenaAllocator.init(t.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        var env = try Env.make(a, no_output_steps);
+        defer env.tmp.cleanup();
+        var rules = [_]Fake.Rule{
+            .{ .needle = "init" },
+            .{ .needle = "build --console simple", .out = okOut(printed, local_stderr) },
+            .{ .needle = "buck2 kill" },
+        };
+        var fake = Fake{ .a = a, .rules = &rules };
+        try t.expectError(error.NoOutputsToCompare, run(a, fake.io(), env.opts(.local)));
+        // it stops after the build step and the build that is hashed: no second directory was made
+        try t.expectEqual(@as(usize, 2), fake.count("build --console simple"));
+        try t.expectEqual(@as(usize, 0), fake.count("-second"));
+        // and the same on a farm, where no second build is made at all
+        var rules2 = [_]Fake.Rule{
+            .{ .needle = "init" },
+            .{ .needle = "build --console simple", .out = okOut(printed, farm_stderr) },
+            .{ .needle = "buck2 kill" },
+        };
+        var fake2 = Fake{ .a = a, .rules = &rules2 };
+        var env2 = try Env.make(a, no_output_steps);
+        defer env2.tmp.cleanup();
+        try t.expectError(error.NoOutputsToCompare, run(a, fake2.io(), env2.opts(.{ .farm = "[buildrules_re]\n" })));
+    }
 }
 
 test "a farm beta: the farm's settings are the repository's, no mode is passed, and a build that ran on this machine is red" {

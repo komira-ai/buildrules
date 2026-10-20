@@ -4,7 +4,7 @@
 //!   release plan    --root DIR --sha SHA [--output FILE]
 //!   release tag     --root DIR --repo OWNER/NAME --tag TAG --sha SHA
 //!   release archive --root DIR --tag TAG --sha SHA --out DIR
-//!   release verify  --root DIR --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --workflow PATH
+//!   release verify  --root DIR --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --workflow PATH --cli PATH
 //!   release publish --root DIR --repo OWNER/NAME --tag TAG --sha SHA --previous TAG --dist DIR
 //!   release site    --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --out DIR
 //!   release bump-check    --internal-repo OWNER/NAME
@@ -142,7 +142,7 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         return 0;
     }
     if (std.mem.eql(u8, cmd, "verify")) {
-        const g = try parseArgs(a, rest, &.{ "root", "repo", "tag", "sha", "dist", "workflow" });
+        const g = try parseArgs(a, rest, &.{ "root", "repo", "tag", "sha", "dist", "workflow", "cli" });
         const tag = try g.need("tag");
         const v = version.parseTag(tag) orelse {
             std.debug.print("release: `{s}` is not a release tag\n", .{tag});
@@ -162,10 +162,11 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
             .archive = archive,
             .sums = sums,
             .workflow = try g.need("workflow"),
+            .cli = try g.need("cli"),
         });
         for (f.items) |m| std.debug.print("release verify: {s}\n", .{m});
         if (f.items.len != 0) return 1;
-        say("release verify: {s} is the archive of {s}; checked: sums, checkout, attestations, reproduction, file list, scrub\n", .{ name, g.get("sha").? });
+        say("release verify: {s} is the archive of {s}; checked: sums, checkout, attestations, reproduction, the built program's version, file list, scrub\n", .{ name, g.get("sha").? });
         return 0;
     }
     if (std.mem.eql(u8, cmd, "publish")) {

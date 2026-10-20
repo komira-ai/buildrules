@@ -5,7 +5,7 @@ export const cli: Page = {
   title: 'CLI reference',
   nav: 'CLI',
   description: 'The buildrules command line: init, cargo new, cargo init, cargo adopt, sync, check, npm and mojo, with every flag and exit code.',
-  lead: 'The `buildrules` program writes and reads the files the Rust, Node and Mojo rules need. It is written in Zig. Version `0.0.3-poc`.',
+  lead: 'The `buildrules` program writes and reads the files the Rust, Node and Mojo rules need. It is written in Zig. `buildrules --version` prints the release it was built as (`0.0.N`), or the `VERSION` file\'s `MAJOR.MINOR` with `-dev` when it was built from a checkout.',
   blocks: [
     code('buildrules <command> [flags]\nbuildrules <command> --help\nbuildrules --version', 'usage'),
     h2('Exit codes'),

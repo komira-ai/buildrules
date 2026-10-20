@@ -30,7 +30,7 @@ export_file(
 export_file(
     name = "VERSION",
     src = "VERSION",
-    visibility = ["//site:"],
+    visibility = ["//site:", "//cli:"],
 )
 
 export_file(

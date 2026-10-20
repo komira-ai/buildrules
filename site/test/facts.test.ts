@@ -80,8 +80,11 @@ describe('CLI page against the command line', () => {
   });
 
   test('the version and the exit codes are the program\'s and the contract\'s', () => {
-    const version = /pub const version = "([^"]+)"/.exec(repoFile('cli/src/main.zig'))![1];
-    expect(cliText).toContain(`\`${version}\``);
+    const mainSrc = repoFile('cli/src/main.zig');
+    expect(mainSrc).toContain('pub const version = @import("buildrules_version").release;');
+    expect(mainSrc).not.toMatch(/pub const version = "/);
+    expect(cliText).toContain('`buildrules --version` prints the release it was built as');
+    expect(cliText).toContain('`-dev`');
     expect(main).toMatch(/Exit codes: 0 ok, 1 failed or stale, 2 usage/);
     expect(repoFile('docs/contract.md')).toMatch(/`0` ok; `1` failed, stale or refused[^]*`2` usage error/);
     for (const code of ['`0`', '`1`', '`2`']) expect(cliText).toContain(code);
