@@ -13,7 +13,8 @@ const mojo_cmd = @import("mojo_cmd.zig");
 const sync = @import("sync.zig");
 const Ctx = ctxm.Ctx;
 
-pub const version = "0.0.3-poc";
+/// The version this program was built as: the release number in a release build, `<MAJOR.MINOR>-dev` of the VERSION file otherwise (cli/version.bzl).
+pub const version = @import("buildrules_version").release;
 
 pub const usage_text =
     \\usage: buildrules <command> [flags]

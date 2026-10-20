@@ -256,6 +256,8 @@ pub const VerifyOpts = struct {
     sums: []const u8,
     /// The workflow that signed the attestations, `.github/workflows/release.yml`.
     workflow: []const u8,
+    /// The `buildrules` program the `cli` job built with the planned version stamped in (`-c buildrules.release_version`); verify runs it.
+    cli: []const u8,
 };
 
 /// Every reason the files must not be published; empty when there is none. Nothing is written.
@@ -293,6 +295,21 @@ pub fn verify(a: std.mem.Allocator, io: Io, o: VerifyOpts) !assets.Findings {
     if (archive(a, io, o.root, o.tag, o.sha)) |again| {
         if (!std.mem.eql(u8, again.archive, o.archive)) try assets.add(a, &f, "the archive does not reproduce: building {s} again from the commit gives other bytes", .{o.tag});
     } else |e| try assets.add(a, &f, "the archive cannot be built again from the commit: {s}", .{@errorName(e)});
+
+    // 7. the program built for this release prints this release's version: a stamp that is missing, stale (the hard-coded constant it replaced) or of
+    // another release is a finding. The program is run exactly as a user runs it, `--version`.
+    const want_version = try std.fmt.allocPrint(a, "buildrules {s}", .{number});
+    const ran = io.run(a, &.{ o.cli, "--version" }) catch |e| blk: {
+        try assets.add(a, &f, "the built program {s} cannot be run: {s}", .{ o.cli, @errorName(e) });
+        break :blk null;
+    };
+    if (ran) |r| {
+        if (r.code != 0) {
+            try assets.add(a, &f, "`{s} --version` exited {d}: {s}", .{ o.cli, r.code, trimNl(r.stderr) });
+        } else if (!std.mem.eql(u8, trimNl(r.stdout), want_version)) {
+            try assets.add(a, &f, "`{s} --version` printed `{s}`, the release is `{s}`: the program was not built with the release's version", .{ o.cli, trimNl(r.stdout), want_version });
+        }
+    }
 
     // 5. its files are the commit's tracked files, 6. and the scrub passes on them.
     const tree = try io.run(a, &.{ "git", "-C", o.root, "ls-tree", "-r", "-z", "--name-only", o.sha });
@@ -697,13 +714,21 @@ test "the archive command takes only a release tag" {
     try t.expectEqual(@as(usize, 0), fake.calls.items.len);
 }
 
-fn verifyRules(tar_bytes: []const u8, tree: []const u8, attest: Out, kind: []const u8, peeled: []const u8) [5]Fake.Rule {
+const cli_path = "cli/buildrules";
+
+fn verifyRules(tar_bytes: []const u8, tree: []const u8, attest: Out, kind: []const u8, peeled: []const u8) [6]Fake.Rule {
+    return verifyRulesCli(tar_bytes, tree, attest, kind, peeled, ok("buildrules 0.0.1\n"));
+}
+
+/// As `verifyRules`, with what `cli/buildrules --version` answers.
+fn verifyRulesCli(tar_bytes: []const u8, tree: []const u8, attest: Out, kind: []const u8, peeled: []const u8, cli_says: Out) [6]Fake.Rule {
     return .{
         .{ .needle = "rev-parse", .out = ok(peeled) },
         .{ .needle = "cat-file -t", .out = ok(kind) },
         .{ .needle = "gh attestation verify", .out = attest },
         .{ .needle = " archive ", .out = ok(tar_bytes) },
         .{ .needle = "ls-tree", .out = ok(tree) },
+        .{ .needle = cli_path ++ " --version", .out = cli_says },
     };
 }
 
@@ -725,7 +750,7 @@ const tree_ok = "BUCK\x00rules/zig.bzl\x00";
 const peeled_a = sha_a ++ "\n";
 
 fn opts(b: Built) VerifyOpts {
-    return .{ .root = "/w", .repo = "o/n", .tag = "v0.0.1", .sha = sha_a, .dist = "dist", .archive_name = b.name, .archive = b.archive, .sums = b.sums, .workflow = ".github/workflows/release.yml" };
+    return .{ .root = "/w", .repo = "o/n", .tag = "v0.0.1", .sha = sha_a, .dist = "dist", .archive_name = b.name, .archive = b.archive, .sums = b.sums, .workflow = ".github/workflows/release.yml", .cli = cli_path };
 }
 
 test "verify: a correct archive has no finding, and every check was made" {
@@ -802,6 +827,21 @@ test "verify mutants: each defect is a finding" {
     o.sums = try assets.formatSums(a, b.name, o.archive);
     fake = Fake{ .a = a, .rules = &good };
     try expectFinding(try verify(a, fake.io(), o), "not a gzip file");
+
+    // the built program does not print the release's version: the constant it used to be, the version of another release, a
+    // dev stamp (built without the planned version), nothing at all, a failure, or a program that cannot be run
+    for ([_][]const u8{ "buildrules 0.0.3-poc\n", "buildrules 0.0.2\n", "buildrules 0.0-dev\n", "0.0.1\n", "buildrules 0.0.1 extra\n", "" }) |said| {
+        const wrong = verifyRulesCli(tar_bytes, tree_ok, ok(""), "tag\n", peeled_a, ok(said));
+        fake = Fake{ .a = a, .rules = &wrong };
+        try expectFinding(try verify(a, fake.io(), opts(b)), "the program was not built with the release's version");
+    }
+    const crashed = verifyRulesCli(tar_bytes, tree_ok, ok(""), "tag\n", peeled_a, fail(3, "boom"));
+    fake = Fake{ .a = a, .rules = &crashed };
+    try expectFinding(try verify(a, fake.io(), opts(b)), "--version` exited 3: boom");
+    var no_cli = good;
+    no_cli[5].needle = "nothing-matches-this";
+    fake = Fake{ .a = a, .rules = &no_cli };
+    try expectFinding(try verify(a, fake.io(), opts(b)), "cannot be run: UnscriptedCommand");
 }
 
 test "verify runs the scrub on the archive's contents" {

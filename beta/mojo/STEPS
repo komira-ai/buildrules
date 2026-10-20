@@ -5,4 +5,5 @@ run buildrules init . --git {origin} --commit {commit}
 config
 run buildrules mojo sync
 run buildrules mojo check
-build //hello:ci
+# //hello:lib is the package's .mojoc: a file, so the build-twice check compares bytes. //hello:ci alone is a group with no output (the check would compare nothing; tools/stage refuses such a leg).
+build //hello:ci //hello:lib
