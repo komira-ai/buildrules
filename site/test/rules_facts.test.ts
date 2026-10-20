@@ -1,0 +1,555 @@
+// What the rule pages say about rules, versions, CPU levels, the CI matrix, Mojo and npm, compared with the sources.
+// facts.test.ts covers the command line and the first-column rule names; this file covers the arguments of rules, the
+// version tables and the targets. A claim is checked against the file that makes it true, not against another page.
+
+import { PAGES } from '../tools/pages';
+import type { Block, Page } from '../tools/model';
+import { repoFile } from './helpers';
+
+const page = (path: string): Page => PAGES.find((p) => p.path === path) as Page;
+
+function blockTexts(b: Block): string[] {
+  switch (b.kind) {
+    case 'h2':
+    case 'h3':
+    case 'p':
+    case 'note':
+    case 'code':
+      return [b.text];
+    case 'ul':
+    case 'ol':
+      return b.items;
+    case 'table':
+      return [...b.head, ...b.rows.flat()];
+  }
+}
+const pageText = (p: Page): string => [p.lead, ...p.blocks.flatMap(blockTexts)].join('\n');
+const allText = (): string => PAGES.map(pageText).join('\n');
+const squash = (s: string): string => s.replace(/\s+/g, ' ');
+const unticked = (s: string): string => s.replace(/`/g, '');
+
+/** Every `code span` in the prose and the tables of every page. */
+function spans(): string[] {
+  const out: string[] = [];
+  for (const p of PAGES) {
+    for (const b of [{ kind: 'p', text: p.lead } as Block, ...p.blocks]) {
+      if (b.kind === 'code') {
+        if (b.label === 'signature') out.push(b.text);
+        continue;
+      }
+      for (const t of blockTexts(b)) for (const m of t.matchAll(/`([^`]+)`/g)) out.push(m[1]);
+    }
+  }
+  return out;
+}
+
+// ---- reading Starlark -------------------------------------------------------------------------------------------
+
+const SOURCES = [
+  'rules/rust/cargo.bzl',
+  'rules/rust/toolchain.bzl',
+  'rules/node/modules.bzl',
+  'rules/node/defs.bzl',
+  'rules/node/npm.bzl',
+  'rules/zig/zig.bzl',
+  'rules/cxx/defs.bzl',
+  'rules/cxx/archive.bzl',
+  'rules/mojo/defs.bzl',
+  'rules/mopm/toolchain.bzl',
+  'rules/isa.bzl',
+  'rules/matrix.bzl',
+];
+const src = SOURCES.map(repoFile).join('\n');
+
+/** Split `a, b = [1, 2], c` at the commas that are not inside brackets or quotes. */
+function splitTop(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote = '';
+  let cur = '';
+  for (const ch of s) {
+    if (quote) {
+      if (ch === quote) quote = '';
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if ('([{'.includes(ch)) depth++;
+    else if (')]}'.includes(ch)) depth--;
+    if (ch === ',' && depth === 0 && !quote) {
+      out.push(cur);
+      cur = '';
+    } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur);
+  return out.map((a) => a.trim()).filter((a) => a !== '');
+}
+
+const argName = (a: string): string => /^[*]*([A-Za-z_][A-Za-z0-9_]*)/.exec(a)![1];
+
+/** The attributes of the `rule(...)` assigned to `var`: the keys of its `attrs` dict. */
+function ruleAttrs(var_: string): string[] | undefined {
+  const start = new RegExp(`^${var_} = (?:_on_linux\\()?rule\\(`, 'm').exec(src);
+  if (!start) return undefined;
+  const rest = src.slice(start.index);
+  const end = rest.search(/\n\)/);
+  return [...rest.slice(0, end < 0 ? rest.length : end).matchAll(/"([a-z_][a-z_0-9]*)": attrs\./g)].map((m) => m[1]);
+}
+
+const ALL_ATTRS = new Set([...src.matchAll(/"([a-z][a-z_0-9]*)": attrs\./g)].map((m) => m[1]));
+const GENERIC = ['name', 'visibility', 'exec_compatible_with', 'target_compatible_with', 'labels', 'tests'];
+
+/** The arguments `name` takes, from the `def` or `rule` it resolves to; undefined if the sources do not define it. */
+function paramsOf(name: string, seen: string[] = []): string[] | undefined {
+  if (seen.includes(name)) return undefined;
+  const def = new RegExp(`^def ${name}\\(([^)]*)\\)`, 'm').exec(src);
+  if (def) {
+    const args = splitTop(def[1]);
+    const names = args.filter((a) => !a.startsWith('*')).map(argName);
+    return args.some((a) => a.startsWith('**')) ? [...names, ...GENERIC, ...ALL_ATTRS] : names;
+  }
+  const alias = new RegExp(`^${name} = (?:_on_linux\\()?([A-Za-z_][A-Za-z0-9_]*)\\)?\\s*$`, 'm').exec(src);
+  if (alias) return paramsOf(alias[1], [...seen, name]);
+  for (const v of [name, `_${name}`, `${name}_rule`, `_${name}_rule`]) {
+    const a = ruleAttrs(v);
+    if (a) return [...a, ...GENERIC];
+  }
+  const own = new RegExp(`^_${name}\\b`, 'm').test(src);
+  return own ? paramsOf(`_${name}`, [...seen, name]) : undefined;
+}
+
+// ---- rule arguments ---------------------------------------------------------------------------------------------
+
+describe('rule arguments on the pages are the arguments the rules take', () => {
+  const calls = spans()
+    .map((s) => /^([a-z][a-z_0-9]*)\((.*)\)$/s.exec(s))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => ({ name: m[1], args: splitTop(m[2]).map(argName), text: m[0] }));
+  const known = calls.filter((c) => paramsOf(c.name) !== undefined);
+
+  test('the pages show the calls of at least the rules that matter', () => {
+    const names = new Set(known.map((c) => c.name));
+    for (const n of ['cargo_package', 'cargo_workspace', 'npm_package', 'mojo_package', 'npm_modules', 'tsc_check', 'node_tree_build', 'rust_toolchains']) {
+      expect({ rule: n, shown: names.has(n) }).toEqual({ rule: n, shown: true });
+    }
+  });
+
+  test.each([...new Set(known.map((c) => c.text))])('%s', (text) => {
+    const c = known.find((k) => k.text === text)!;
+    const params = paramsOf(c.name)!;
+    for (const a of c.args) expect({ call: c.text, arg: a, taken: params.includes(a) }).toEqual({ call: c.text, arg: a, taken: true });
+  });
+
+  test('every argument of the front-door macros is documented on the page of its family', () => {
+    const doc: [string, string][] = [
+      ['cargo_package', '/rules/rust/'],
+      ['cargo_workspace', '/rules/rust/'],
+      ['npm_package', '/rules/node/'],
+      ['mojo_package', '/rules/mojo/'],
+    ];
+    for (const [rule, path] of doc) {
+      const t = pageText(page(path));
+      for (const a of paramsOf(rule)!) expect({ rule, arg: a, documented: new RegExp(`\\b${a}\\b`).test(t) }).toEqual({ rule, arg: a, documented: true });
+    }
+  });
+
+  test('the Argument table of cargo_package lists only its arguments', () => {
+    const t = page('/rules/rust/').blocks.find((b) => b.kind === 'table' && b.head[0] === 'Argument') as { rows: string[][] };
+    const params = paramsOf('cargo_package')!;
+    expect(t.rows.length).toBeGreaterThan(3);
+    for (const r of t.rows) expect({ arg: unticked(r[0]), taken: params.includes(unticked(r[0])) }).toEqual({ arg: unticked(r[0]), taken: true });
+  });
+
+  test('the Key arguments column of the Zig table lists attributes the rules have', () => {
+    const t = page('/rules/zig/').blocks.find((b) => b.kind === 'table' && b.head[1] === 'Key arguments') as { rows: string[][] };
+    for (const r of t.rows) {
+      const rule = unticked(r[0]);
+      const params = paramsOf(rule);
+      expect({ rule, defined: params !== undefined }).toEqual({ rule, defined: true });
+      for (const m of r[1].matchAll(/`([a-z_]+)`/g)) expect({ rule, arg: m[1], taken: params!.includes(m[1]) }).toEqual({ rule, arg: m[1], taken: true });
+    }
+  });
+
+  test('the hand-written Rust rules take the arguments the prose lists', () => {
+    const t = pageText(page('/rules/rust/'));
+    const sentence = /`rust_library`, `rust_binary` and `rust_test` take ([^.]*)\./.exec(t)![1];
+    const rs = repoFile('rules/rust/rust.bzl');
+    for (const lib of ['rust_library', 'rust_binary', 'rust_test']) expect({ lib, defined: new RegExp(`^_${lib} = rule\\(`, 'm').test(rs) }).toEqual({ lib, defined: true });
+    const listed = [...sentence.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
+    expect(listed).toEqual(['srcs', 'crate_root', 'crate_name', 'edition', 'deps', 'rustc_flags']);
+    for (const a of listed) expect({ arg: a, taken: new RegExp(`"${a}": attrs\\.`).test(rs) }).toEqual({ arg: a, taken: true });
+    const gate = /A library or binary can list `(\w+)`/.exec(t)![1];
+    expect(rs).toMatch(new RegExp(`_rust_library = rule\\([^]*?${gate} = attrs\\.`));
+    expect(rs).toMatch(new RegExp(`_rust_binary = rule\\([^]*?${gate} = attrs\\.`));
+  });
+});
+
+// ---- Rust versions ----------------------------------------------------------------------------------------------
+
+describe('the Rust version table on the pages is the table in pins.bzl', () => {
+  const pins = repoFile('rules/rust/pins.bzl');
+  const versions = [...pins.matchAll(/^ {4}"(\d+\.\d+\.\d+)": \{/gm)].map((m) => m[1]);
+  const dflt = /RUST_DEFAULT = "([^"]+)"/.exec(pins)![1];
+  const oldest = /RUST_OLDEST = "([^"]+)"/.exec(pins)![1];
+  const vname = (v: string): string => v.replace(/\./g, '_');
+  const rust = pageText(page('/rules/rust/'));
+
+  test('the table has the versions the claims need', () => {
+    expect(versions.length).toBeGreaterThanOrEqual(2);
+    expect(versions).toContain(dflt);
+    expect(versions).toContain(oldest);
+  });
+
+  test('every pinned version is a row of the Rust page, with its role', () => {
+    const t = page('/rules/rust/').blocks.find((b) => b.kind === 'table' && b.head[0] === 'Version') as { rows: string[][] };
+    expect(t.rows.map((r) => unticked(r[0])).sort()).toEqual([...versions].sort());
+    for (const r of t.rows) {
+      const v = unticked(r[0]);
+      if (v === dflt) expect(r[1]).toContain('default');
+      else if (v === oldest) expect(r[1]).toContain('oldest');
+      else expect(r[1]).not.toMatch(/default|oldest/);
+    }
+  });
+
+  test('the other pages name the same versions', () => {
+    const concepts = pageText(page('/concepts/'));
+    const faq = pageText(page('/faq/'));
+    for (const v of versions) {
+      expect({ v, concepts: concepts.includes(v) }).toEqual({ v, concepts: true });
+      expect({ v, faq: faq.includes(v) }).toEqual({ v, faq: true });
+    }
+    expect(concepts).toContain(`${dflt} (the default)`);
+    expect(concepts).toContain(`${oldest} (the oldest supported)`);
+  });
+
+  test('no page names a Rust release that is not pinned as if it were', () => {
+    // Releases that appear as the example of a user pin (docs/contract.md section 6) are allowed; every other `N.N.N` in
+    // backticks on the Rust, Concepts, FAQ and Getting started pages must be pinned.
+    const example = /\[rust\."(\d+\.\d+\.\d+)"\]/.exec(repoFile('docs/contract.md'))![1];
+    const text = ['/rules/rust/', '/concepts/', '/faq/', '/getting-started/'].map((p) => pageText(page(p))).join('\n');
+    for (const m of text.matchAll(/`(\d+\.\d+\.\d+)`/g)) {
+      expect({ v: m[1], pinned: versions.includes(m[1]) || m[1] === example }).toEqual({ v: m[1], pinned: true });
+    }
+  });
+
+  test('the toolchain targets named on the page are the ones rust_toolchains declares', () => {
+    const tc = repoFile('rules/rust/toolchain.bzl');
+    for (const role of ['sysroot', 'cargo', 'clippy']) {
+      expect(tc).toContain(`name = "${role}_" + n`);
+      expect(rust).toContain(`:${role}_${vname(oldest)}`);
+    }
+    expect(tc).toMatch(/rust_toolchain\(\s*name = "rust_" \+ n/);
+    expect(rust).toContain(`toolchains//:rust_${vname(oldest)}`);
+    expect(repoFile('docs/contract.md')).toContain(`buildrules//platforms:linux_x86_64_rust_${vname(oldest)}`);
+    expect(rust).toContain(`buildrules//platforms:linux_x86_64_rust_${vname(oldest)}`);
+  });
+
+  test('a version of your own is described the way buildrules-pins.toml reads it', () => {
+    const toml = repoFile('cli/src/pins_toml.zig');
+    const comps = /pub const components = \[_\]\[\]const u8\{([^}]*)\}/.exec(toml)![1].match(/"([a-z-]+)"/g)!.map((s) => s.replace(/"/g, ''));
+    expect(comps).toEqual(['rustc', 'rust-std', 'cargo', 'clippy']);
+    for (const c of comps) expect({ c, shown: rust.includes(c) }).toEqual({ c, shown: true });
+    expect(rust).toContain('[rust."1.86.0"]');
+    expect(rust).not.toContain('date = "');
+    expect(rust).toContain('sha256 = "');
+    expect(rust).toContain('size = ');
+    expect(repoFile('rules/rust/toolchain.bzl')).toContain('rust_toolchains(extra = {})');
+    expect(rust).toContain('rust_toolchains(extra = EXTRA_RUST_VERSIONS)');
+  });
+
+  test('the override keys on the Rust page are the keys the generator reads', () => {
+    const keys = /const override_keys = \[_\]\[\]const u8\{([^}]*)\}/.exec(repoFile('cli/src/buckgen.zig'))![1].match(/"([a-z_]+)"/g)!.map((s) => s.replace(/"/g, ''));
+    expect(keys.sort()).toEqual(['cfgs', 'drop_build_script', 'native_deps', 'patch', 'why']);
+    for (const k of keys) expect({ k, shown: rust.includes(k) }).toEqual({ k, shown: true });
+    expect(repoFile('cli/src/buckgen.zig')).toContain('third_party/buildrules/overrides.json');
+    expect(rust).toContain('third_party/buildrules/overrides.json');
+  });
+
+  test('the Rust page claims no shipped example of an override', () => {
+    // The unit tests of the generator exercise the override keys; no example in the repository has an overrides.json.
+    expect(rust).toContain('no shipped example uses `drop_build_script` or `native_deps`');
+    expect(allText()).not.toMatch(/aws-lc-sys/);
+  });
+});
+
+// ---- CPU levels -------------------------------------------------------------------------------------------------
+
+describe('the CPU level tables are the table in isa.bzl', () => {
+  const isa = repoFile('rules/isa.bzl');
+  const levels = [...isa.matchAll(/^ {4}"([^"]+)": \{"id": "(\w+)", "family": "(\w+)", "property": "([^"]+)", "rustc": \[([^\]]*)\], "zig": "([^"]+)"/gm)].map((m) => ({
+    level: m[1],
+    id: m[2],
+    family: m[3],
+    property: m[4],
+    rustc: (m[5].match(/"([^"]+)"/g) ?? []).map((s) => s.replace(/"/g, '')).join(' '),
+    zig: m[6],
+  }));
+  const rules = page('/rules/');
+  const levelTable = rules.blocks.find((b) => b.kind === 'table' && b.head[0] === 'Level') as { rows: string[][] };
+
+  test('isa.bzl is read: x86-64 v1 to v4 and Arm v8.0 to v8.4', () => {
+    expect(levels.map((l) => l.level)).toEqual(['x86-64-v1', 'x86-64-v2', 'x86-64-v3', 'x86-64-v4', 'armv8.0-a', 'armv8.1-a', 'armv8.2-a', 'armv8.3-a', 'armv8.4-a']);
+  });
+
+  test('each level is a row, with its ISA property, its rustc flags and its zig flag', () => {
+    expect(levelTable.rows).toHaveLength(levels.length);
+    levels.forEach((l, i) => {
+      const r = levelTable.rows[i].map(unticked);
+      expect(r.slice(0, 4)).toEqual([l.level, l.property, l.rustc, l.zig]);
+    });
+  });
+
+  test('only the x86-64 levels are marked built; the Arm levels are planned', () => {
+    levels.forEach((l, i) => expect({ level: l.level, status: levelTable.rows[i][4] }).toEqual({ level: l.level, status: l.family === 'x86_64' ? 'built' : 'planned' }));
+    const platforms = rules.blocks.find((b) => b.kind === 'table' && b.head[0] === 'Platform') as { rows: string[][] };
+    const arm = platforms.rows.find((r) => r[0].includes('armv8'))!;
+    expect(arm[1]).toMatch(/^planned/);
+    expect(isa).toContain('Arm has none');
+  });
+
+  test('the execution platforms the page describes are the levels isa.bzl registers', () => {
+    expect(isa).toMatch(/def test_levels\(\):[^]*?l != "x86-64-v1"/);
+    expect(isa).toMatch(/def exec_levels\(\):[^]*?\["family"\] == "x86_64"/);
+    const withPlatform = levels.filter((l) => l.family === 'x86_64' && l.level !== 'x86-64-v1').map((l) => l.level);
+    expect(withPlatform).toEqual(['x86-64-v2', 'x86-64-v3', 'x86-64-v4']);
+    const t = pageText(rules);
+    expect(t).toContain('one such platform for each of v2, v3 and v4; v1 needs none');
+    expect(pageText(page('/remote-execution/'))).toContain('`x86-64-v2`, `x86-64-v3` and `x86-64-v4`');
+  });
+
+  test('the test run is a separate target with the exec requirement, and the refusal says what the page quotes', () => {
+    expect(isa).toContain('def test_exec_compatible_with()');
+    expect(repoFile('rules/rust/test_run.bzl')).toContain('built for ISA {} but its execution platform reports ISA={}');
+    expect(pageText(rules)).toContain('built for ISA x86-64-v3 but its execution platform reports ISA=x86-64');
+    expect(pageText(rules)).toContain('exec_compatible_with = test_exec_compatible_with()');
+  });
+
+  test('native is never passed, and no level flag is native', () => {
+    for (const l of levels) expect(`${l.rustc} ${l.zig}`).not.toContain('native');
+    expect(pageText(rules)).toContain('`native` is never passed');
+  });
+});
+
+// ---- the CI matrix ----------------------------------------------------------------------------------------------
+
+describe('the CI matrix on the Rules page is ci/BUCK', () => {
+  const buck = repoFile('ci/BUCK');
+  const defined = [...buck.matchAll(/^(?:group|rust_at|isa_at)\(\s*name = "(\w+)"/gm)].map((m) => m[1]);
+  const matrixDeps = [...(/group\(name = "matrix", deps = \[([^\]]*)\]/.exec(buck)![1].matchAll(/":(\w+)"/g))].map((m) => m[1]);
+  const table = page('/rules/').blocks.find((b) => b.kind === 'table' && b.head[0] === 'Target') as { rows: string[][] };
+  const shown = [...table.rows.map((r) => r[0]).join(' ').matchAll(/`\/\/ci:(\w+)`/g)].map((m) => m[1]);
+
+  test('every target the page names exists in ci/BUCK', () => {
+    expect(shown.length).toBeGreaterThan(5);
+    for (const t of shown) expect({ target: t, defined: defined.includes(t) }).toEqual({ target: t, defined: true });
+  });
+
+  test('every cell of //ci:matrix is on the page, and the page has no cell the matrix lacks', () => {
+    expect(matrixDeps.length).toBeGreaterThan(5);
+    for (const t of matrixDeps) expect({ cell: t, shown: shown.includes(t) }).toEqual({ cell: t, shown: true });
+    for (const t of shown.filter((s) => s !== 'matrix')) expect({ cell: t, inMatrix: matrixDeps.includes(t) }).toEqual({ cell: t, inMatrix: true });
+  });
+
+  test('the Mojo cell is stated to be outside the matrix, as it is', () => {
+    expect(defined).toContain('mojo');
+    expect(matrixDeps).not.toContain('mojo');
+    expect(pageText(page('/rules/'))).toContain('It is not part of `//ci:matrix`');
+  });
+
+  test('the oldest-Rust and CPU-level cells use the transitions the page names', () => {
+    expect(buck).toMatch(/rust_at\(name = "rust_oldest", version = RUST_OLDEST/);
+    expect(buck).toMatch(/isa_at\(name = "isa_v3", level_id = "x86_64_v3"/);
+    const m = repoFile('rules/matrix.bzl');
+    expect(m).toContain('def rust_at(');
+    expect(m).toContain('def isa_at(');
+    const t = pageText(page('/rules/'));
+    expect(t).toContain('(`rust_at`)');
+    expect(t).toContain('(`isa_at`)');
+  });
+
+  test('the refusal cells are the refusals the page lists', () => {
+    expect(buck).toContain('unpinned_builtin_is_refused');
+    expect(buck).toContain('recorded_hashes_must_be_the_pinned_ones');
+    expect(buck).toContain('pinned_version_with_user_origin_is_refused');
+  });
+
+  test('a Rust version in the table needs a line in matrix.bzl, as the page says', () => {
+    expect(repoFile('rules/matrix.bzl')).toContain('rules/matrix.bzl has no transition for Rust');
+    expect(pageText(page('/rules/'))).toContain('needs its line in `rules/matrix.bzl`');
+  });
+});
+
+// ---- Mojo and mopm ----------------------------------------------------------------------------------------------
+
+describe('the Mojo page against the Mojo rules, mopm\'s pins and the contract', () => {
+  const mojo = pageText(page('/rules/mojo/'));
+  const defs = repoFile('rules/mojo/defs.bzl');
+  const mopm = repoFile('rules/mopm/pins.bzl');
+  const contract = squash(repoFile('docs/contract.md'));
+
+  test('every target in the table is a target mojo_package declares', () => {
+    const t = page('/rules/mojo/').blocks.find((b) => b.kind === 'table' && b.head[0] === 'Target') as { rows: string[][] };
+    const names = t.rows.map((r) => unticked(r[0]).replace(/^:/, ''));
+    expect(names).toEqual(['lib', 'test', 'build', 'coverage', 'ci', 'check']);
+    for (const n of names) expect({ target: n, declared: defs.includes(`name_once("${n}")`) }).toEqual({ target: n, declared: true });
+    expect(defs).toContain('stem + "__bin"');
+    expect(mojo).toContain(':<stem>__bin');
+  });
+
+  test('mopm-toolchain.toml has the keys the page writes, and mojo sync reads them', () => {
+    const cmd = repoFile('cli/src/mojo_cmd.zig');
+    expect(cmd).toContain('quotedValue(line, "mopm")');
+    expect(cmd).toContain('quotedValue(line, "mojo")');
+    expect(mojo).toContain('[toolchain]');
+    expect(cmd).toContain('there is no default. Create it, for example');
+    expect(cmd).toContain('[toolchain]\\nmopm = \\"0.0.1\\"');
+    const dflt = /MOPM_DEFAULT = "([^"]+)"/.exec(mopm)![1];
+    expect(mojo).toContain(`mopm = "${dflt}"`);
+  });
+
+  test('the mopm version table has the keys a user pin must give, and the page says the same', () => {
+    const row = /MOPM_VERSIONS = \{[^]*?\n {4}\},/.exec(mopm)![0];
+    for (const k of ['url', 'sha256', 'size']) expect(row).toContain(`"${k}"`);
+    expect(mojo).toContain('`url`, `sha256` and `size`');
+    expect(mojo).toContain('[mopm."0.0.2"]');
+    expect(repoFile('cli/src/mojo_cmd.zig')).toContain('[mopm.\\"{s}\\"]');
+    expect(repoFile('rules/mopm/toolchain.bzl')).toContain('name = "mopm_" + vname(v)');
+    expect(mojo).toContain('toolchains//:mopm_<version>');
+  });
+
+  test('the mopm release is called pending exactly while the table says release_pending', () => {
+    const pending = /"release_pending": True/.test(mopm);
+    expect({ tableSaysPending: pending, pageSaysPending: mojo.includes('A published mopm release is pending') }).toEqual({ tableSaysPending: pending, pageSaysPending: pending });
+    expect({ tableSaysPending: pending, pageSaysStandIn: mojo.includes('stand-in') }).toEqual({ tableSaysPending: pending, pageSaysStandIn: pending });
+    expect(mopm).toContain('url_map');
+    expect(mojo).toContain('`url_map`');
+  });
+
+  test('one Mojo version is pinned, and the page says so', () => {
+    const one = /mopm pins one \(`(\d+\.\d+\.\d+)`\)/.exec(contract)![1];
+    expect(mojo).toContain(`mopm pins one Mojo today (${one})`);
+    expect(mojo).toContain(`mojo = "${one}"`);
+    expect(contract).toContain('so no package here builds for two Mojo versions');
+  });
+
+  test('the checks the page lists are the checks the contract lists', () => {
+    for (const f of ['mopm.toml', 'mopm.lock', 'mopm-toolchain.toml', 'toolchains/mojo_pins.bzl']) {
+      expect({ f, page: mojo.includes(f), contract: contract.includes(f) }).toEqual({ f, page: true, contract: true });
+    }
+    expect(defs).toContain('mojo_group(name = name_once("ci"), deps = [":build", ":test"]');
+  });
+});
+
+// ---- npm_package ------------------------------------------------------------------------------------------------
+
+describe('the npm_package front door and the renamed rule', () => {
+  const npm = repoFile('rules/node/npm.bzl');
+  const defs = repoFile('rules/node/defs.bzl');
+  const node = pageText(page('/rules/node/'));
+
+  test('npm_package is the front door in npm.bzl; the single-tarball rule is npm_tarball in defs.bzl', () => {
+    expect(npm).toMatch(/^def npm_package\(/m);
+    expect(defs).toMatch(/^npm_tarball = /m);
+    expect(defs).not.toMatch(/npm_package/);
+    expect(node).toContain('`npm_tarball`');
+    expect(node).toContain('This is the rule that `npm_package` used to be called');
+  });
+
+  test('the steps are the steps npm.bzl declares', () => {
+    const steps = /_STEPS = \[([^\]]*)\]/.exec(npm)![1].match(/"([a-z]+)"/g)!.map((s) => s.replace(/"/g, ''));
+    expect(steps).toEqual(['typecheck', 'lint', 'test', 'build']);
+    for (const s of steps) expect({ s, shown: node.includes(`\`:${s}\``) }).toEqual({ s, shown: true });
+  });
+
+  test('the policy keys are the ones npm.bzl reads', () => {
+    for (const k of ['steps', 'actions', 'dist']) {
+      expect({ k, read: npm.includes(`policy.get("${k}")`) || npm.includes(`"${k}"`) }).toEqual({ k, read: true });
+      expect({ k, shown: node.includes(`\`${k}\``) }).toEqual({ k, shown: true });
+    }
+  });
+
+  test('the table targets exist', () => {
+    for (const t of ['node_modules', 'check', 'dist']) expect({ t, declared: npm.includes(`name = "${t}"`) }).toEqual({ t, declared: true });
+    expect(node).toContain('`:node_modules`');
+    expect(node).toContain('`:check`');
+    expect(node).toContain('`:dist`');
+  });
+
+  test('the generated glue the page shows is the glue the command writes', () => {
+    const cmd = repoFile('cli/src/npm_cmd.zig');
+    expect(cmd).toContain('def npm_package(**kwargs):');
+    expect(cmd).toContain('_npm_package(table = TABLE, **kwargs)');
+    expect(node).toContain('load(":buildrules.bzl", "npm_package")');
+  });
+});
+
+// ---- the C/C++ page ---------------------------------------------------------------------------------------------
+
+describe('the AWS-LC example on the C/C++ page', () => {
+  const buck = repoFile('third_party/aws-lc/BUCK');
+  const cxx = pageText(page('/rules/cxx/'));
+
+  test('the three gates it names are rules the library uses', () => {
+    for (const rule of ['prefixed_archive_check', 'c_check', 'glibc_floor_check']) {
+      expect({ rule, used: new RegExp(`^${rule}\\(`, 'm').test(buck) }).toEqual({ rule, used: true });
+    }
+    expect(cxx).toContain('Three gates must pass');
+    expect(cxx).toContain('`crypto[static-pic]`');
+    expect(buck).toContain('static-pic');
+  });
+});
+
+// ---- what the command-line examples run -------------------------------------------------------------------------
+
+describe('every `buildrules` command in a code block is a verb the program has, with flags it has', () => {
+  const usage = (n: string): string => {
+    const zig = repoFile(`cli/src/${n}.zig`);
+    const start = zig.indexOf('pub const usage_text =');
+    return zig.slice(start, zig.indexOf('\n;', start));
+  };
+  const byVerb: Record<string, string> = {
+    init: usage('init'),
+    cargo: usage('cargo_cmd'),
+    sync: usage('sync'),
+    check: usage('check'),
+    npm: usage('npm_cmd'),
+    mojo: usage('mojo_cmd'),
+  };
+  const lines: { line: string; verb: string; sub: string; flags: string[] }[] = [];
+  for (const p of PAGES) {
+    for (const b of p.blocks) {
+      if (b.kind !== 'code') continue;
+      for (const l of b.text.split('\n')) {
+        const m = /^buildrules\s+(.*)$/.exec(l.trim());
+        if (!m) continue;
+        const words = m[1].split(/\s+/);
+        if (!/^[a-z]+$/.test(words[0])) continue;
+        const sub = ['cargo', 'npm', 'mojo'].includes(words[0]) && /^[a-z]+$/.test(words[1] ?? '') ? words[1] : '';
+        lines.push({ line: l.trim(), verb: words[0], sub, flags: [...l.matchAll(/\s(--[a-z][a-z0-9-]*)/g)].map((f) => f[1]) });
+      }
+    }
+  }
+
+  test('the pages show commands of every verb', () => {
+    expect([...new Set(lines.map((l) => l.verb))].sort()).toEqual(['cargo', 'check', 'init', 'mojo', 'npm', 'sync']);
+    expect(lines.some((l) => l.verb === 'npm' && l.sub === 'sync')).toBe(true);
+    expect(lines.some((l) => l.verb === 'mojo' && l.sub === 'check')).toBe(true);
+  });
+
+  test.each([...new Set(lines.map((l) => l.line))])('%s', (line) => {
+    const l = lines.find((x) => x.line === line)!;
+    const text = byVerb[l.verb];
+    expect({ line, verb: l.verb, known: text !== undefined }).toEqual({ line, verb: l.verb, known: true });
+    if (l.sub) expect({ line, sub: l.sub, known: text.includes(`buildrules ${l.verb} ${l.sub}`) }).toEqual({ line, sub: l.sub, known: true });
+    for (const f of l.flags) expect({ line, flag: f, known: text.includes(f) }).toEqual({ line, flag: f, known: true });
+  });
+});
+
+// ---- Zig versions -----------------------------------------------------------------------------------------------
+
+describe('the Zig releases the Concepts page names are pinned', () => {
+  test('0.12.0 and 0.15.2', () => {
+    const pins = repoFile('rules/pins/pins.bzl');
+    const cell = pageText(page('/concepts/')).split('\n').find((l) => l.startsWith('pinned releases, '))!;
+    for (const v of /pinned releases, (\d+\.\d+\.\d+) and (\d+\.\d+\.\d+)/.exec(cell)!.slice(1)) {
+      expect({ v, pinned: pins.includes(`zig-x86_64-linux-${v}`) || pins.includes(`zig-linux-x86_64-${v}`) }).toEqual({ v, pinned: true });
+    }
+  });
+});

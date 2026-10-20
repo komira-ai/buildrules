@@ -1,0 +1,19 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules:isa.bzl", "required_isa")
+load("@buildrules//rules/rust:test_run.bzl", "test_run")
+
+# PLANTED DEFECTS that must stay red. Each is compatible only with the platform it breaks on, so a wildcard build of the
+# repository skips it, and building it by name on that platform must FAIL while the build graph is analysed:
+#
+#   buck2 build --target-platforms buildrules//platforms:linux_x86_64_v3 //ci/negative:v3_test_without_isa_property
+#
+# It is the run of the x86-64-v3 test with `exec_compatible_with` left out: the rule would run on any worker, and the AVX2
+# instruction in it would die with SIGILL on one that lacks AVX2. The rule refuses it (test_run.bzl).
+test_run(
+    name = "v3_test_without_isa_property",
+    unit = "//examples/isa:isa_lib_test__bin",
+    required_isa = required_isa(),
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+scrub_files()

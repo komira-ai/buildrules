@@ -1,0 +1,103 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The Mojo rules (docs/contract.md, section 12): the tools their actions run, built by the pinned zig behind their unit tests.
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/zig:zig.bzl", "zig_exe", "zig_test")
+
+# The compile wrapper (tools/*.zig). It is the one place
+# that knows how to run the hermetic compiler; mopm executes it through mojo_launch.
+zig_exe(
+    name = "mojo_compile",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/mojo_compile.zig",
+    imports = [
+        "tools/cc_shim.zig",
+        "tools/compile_args.zig",
+        "tools/modular_cfg.zig",
+        "tools/proc_tree.zig",
+    ],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    unit_tests = ["buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
+)
+
+# conda_unpack (a newer copy than rules/zig's: zstd windows, CLOSURE_MANIFEST): unpacks the compiler closure.
+zig_exe(
+    name = "conda_unpack",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/conda_unpack.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    unit_tests = ["buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
+)
+
+# `<toolchain>/mojo_compile`, which mopm executes: puts the wrapper's options (where the compiler and the zig are) in front
+# of mopm's arguments. Behind its unit tests.
+zig_test(
+    name = "mojo_launch_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/mojo_launch_test.zig",
+    imports = ["tools/mojo_launch.zig"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+zig_exe(
+    name = "mojo_launch",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/mojo_launch.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    unit_tests = [":mojo_launch_unit", "buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
+)
+
+# The `.mojoc` of a registry package, out of its `.conda`. Behind its unit tests.
+zig_test(
+    name = "prebuilt_unpack_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/prebuilt_unpack_test.zig",
+    imports = ["tools/prebuilt_unpack.zig"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+zig_exe(
+    name = "prebuilt_unpack",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/prebuilt_unpack.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    unit_tests = [":prebuilt_unpack_unit", "buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
+)
+
+# The comparison of the files a Mojo table was made from with what is on disk now (`:check`, rules/mojo/check.bzl).
+zig_test(
+    name = "files_check_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/files_check_test.zig",
+    imports = ["tools/files_check.zig"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+zig_exe(
+    name = "files_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/files_check.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    unit_tests = [":files_check_unit", "buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
+)
+
+# Read by the buildrules.dev site tests (site/BUCK), which check its pages against this file.
+export_file(
+    name = "defs.bzl",
+    src = "defs.bzl",
+    visibility = ["//site:"],
+)
+
+scrub_files()

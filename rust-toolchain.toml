@@ -1,0 +1,5 @@
+# The same compiler plain `cargo` uses as the Buck2 build pins (rules/rust/pins.bzl).
+[toolchain]
+channel = "1.95.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

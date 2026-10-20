@@ -1,0 +1,48 @@
+# buildrules v0 proof of concept: Rust on linux-x86_64 only.
+# Where actions run is NOT here: a remote-execution endpoint lives in
+# .buckconfig.local (gitignored); see .buckconfig.local.example.
+
+[cells]
+  buildrules = .
+  # A workspace with crates.io dependencies, as a repository of its own: its generated glue is exactly what `buildrules sync` writes.
+  crates = examples/crates
+  prelude = prelude
+  # The prelude's convention: the `toolchains` cell belongs to the repository at the
+  # project root. Here it is the directory toolchains/, one macro call.
+  toolchains = toolchains
+  none = none
+
+[cell_aliases]
+  config = prelude
+  ovr_config = prelude
+  fbcode = none
+  fbsource = none
+  fbcode_macros = none
+  buck = none
+
+[external_cells]
+  prelude = bundled
+
+[buildfile]
+  name = BUCK
+
+[parser]
+  target_platform_detector_spec = target:buildrules//...->buildrules//platforms:linux_x86_64 target:toolchains//...->buildrules//platforms:linux_x86_64 target:crates//...->buildrules//platforms:linux_x86_64
+
+[build]
+  execution_platforms = buildrules//platforms/exec:exec
+
+[buck2_re_client]
+  max_total_batch_size = 1048576
+
+[buck2]
+  materializations = deferred
+  sqlite_materializer_state = true
+  defer_write_actions = true
+
+[http]
+  connect_timeout_ms = 30000
+  read_timeout_ms = 120000
+
+[project]
+  ignore = buck-out, .git

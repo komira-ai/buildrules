@@ -1,0 +1,11 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# app -> util -> base are workspace members (each a package of its own); cnative is a registry package, fetched by
+# the sha256 in mopm.lock. Its native library is built by buildrules (rules/cxx) and mopm checks its sha256 against the lock.
+mojo_package(
+    path = ".",
+    natives = {"libcnative.so.1": "//examples/mojo/registry/cnative:libcnative"},
+)
+
+scrub_files()

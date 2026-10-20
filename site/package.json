@@ -1,0 +1,19 @@
+{
+  "name": "buildrules-site",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The buildrules.dev web site: prerendered static pages, no runtime dependencies, no scripts shipped to the browser",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "jest --ci",
+    "build": "node -e \"require('fs').rmSync('build',{recursive:true,force:true})\" && tsc -p tsconfig.tools.json && node build/tools/tools/build.js",
+    "serve": "node serve.js dist"
+  },
+  "devDependencies": {
+    "@types/jest": "29.5.14",
+    "@types/node": "20.19.43",
+    "jest": "29.7.0",
+    "ts-jest": "29.4.14",
+    "typescript": "5.9.3"
+  }
+}

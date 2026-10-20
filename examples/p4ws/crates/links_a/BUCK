@@ -1,0 +1,93 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# Member units of crates/links_a, in the unit-level form (see examples/p4ws/Cargo.toml). Kept by hand: cargo_package makes these targets from a table.
+load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit", "crate_src", "stamp_file", "unit_group")
+
+cargo_unit(
+    name = "links_a-0.1.0_4ca083644e",
+    pkg = "links_a",
+    version = "0.1.0",
+    crate_name = "links_a",
+    build_script_name = "build_script_build",
+    mode = "run-custom-build",
+    crate_type = "bin",
+    side = "target",
+    edition = "2024",
+    root = "build.rs",
+    crate_hash = "4ca083644e",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = False,
+    links = "p4probe",
+    srcs = glob(["**"], exclude = ["BUCK", "target/**"]),
+    deps = {
+        "build_script_build": ":links_a-0.1.0_fc9cff2a57",
+    },
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "links_a-0.1.0_7e3a794568",
+    pkg = "links_a",
+    version = "0.1.0",
+    crate_name = "links_a",
+    mode = "test",
+    crate_type = "rlib",
+    side = "target",
+    edition = "2024",
+    root = "src/lib.rs",
+    crate_hash = "7e3a794568",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["src/**", "build.rs", "Cargo.toml"]),
+    deps = {
+        "build_script_build": ":links_a-0.1.0_4ca083644e",
+    },
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "links_a-0.1.0_b887f46dc1",
+    pkg = "links_a",
+    version = "0.1.0",
+    crate_name = "links_a",
+    mode = "build",
+    crate_type = "rlib",
+    side = "target",
+    edition = "2024",
+    root = "src/lib.rs",
+    crate_hash = "b887f46dc1",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["src/**", "build.rs", "Cargo.toml"]),
+    deps = {
+        "build_script_build": ":links_a-0.1.0_4ca083644e",
+    },
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "links_a-0.1.0_fc9cff2a57",
+    pkg = "links_a",
+    version = "0.1.0",
+    crate_name = "links_a",
+    build_script_name = "build_script_build",
+    mode = "build",
+    crate_type = "bin",
+    side = "exec",
+    edition = "2024",
+    root = "build.rs",
+    crate_hash = "fc9cff2a57",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["**"], exclude = ["BUCK", "target/**"]),
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

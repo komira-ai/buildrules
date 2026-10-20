@@ -1,0 +1,148 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# node_tools: the program the node_modules rules run
+#: node_modules from a package-lock.json and
+# pinned tarballs, and a program of node_modules run by the pinned node over a
+# copy of a source tree. A Zig tool, as every build tool here is;
+# built behind its unit tests.
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load("//rules/core:pinned_file.bzl", "pinned_file")
+load("//rules/pins:pins.bzl", "PINS")
+load("//rules/zig:zig.bzl", "conda_libs")
+load(":defs.bzl", "node_dist", "npm_tarball")
+load(":pins.bzl", "NODE", "NPM", "npm_target")
+
+# Built with zig 0.15.2 (`:zig_next`); the executables are built behind the check
+# that the pin is that release.
+_ZIG = "buildrules//rules/pins:zig_next"
+_ZIG_VERSION = "buildrules//rules/pins:zig_next_version"
+
+_SRCS = [
+    "check.zig",
+    "layout.zig",
+    "main.zig",
+    "platform.zig",
+    "runner.zig",
+    "shell.zig",
+    "sri.zig",
+    "unpack.zig",
+]
+
+_SUPPORT = ["tartest.zig"]
+
+[
+    zig_test(
+        name = name + "_unit",
+        exec_compatible_with = LINUX_X86_64,
+        src = name + "_test.zig",
+        imports = _SRCS + _SUPPORT,
+        busybox = "buildrules//rules/pins:busybox",
+        zig = _ZIG,
+    )
+    for name in [
+        "check",
+        "layout",
+        "platform",
+        "runner",
+        "shell",
+        "sri",
+        "unpack",
+    ]
+]
+
+zig_exe(
+    name = "node_tools",
+    exec_compatible_with = LINUX_X86_64,
+    src = "main.zig",
+    imports = _SRCS,
+    unit_tests = [
+        ":check_unit",
+        ":layout_unit",
+        ":platform_unit",
+        ":runner_unit",
+        ":shell_unit",
+        ":sri_unit",
+        ":unpack_unit",
+        _ZIG_VERSION,
+    ],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+# ---- The hermetic Node.js (pins.bzl): the runtime and the packages the rules need -----------------
+pinned_file(
+    name = NODE["archive"],
+    url = NODE["url"],
+    sha256 = NODE["sha256"],
+    size_bytes = NODE["size"],
+)
+
+# The C++ runtime `node` links beyond glibc, from the conda-forge packages pinned in rules/pins.
+conda_libs(
+    name = "native_libs",
+    exec_compatible_with = LINUX_X86_64,
+    libs = {
+        "lib/libgcc_s.so.1": "buildrules//rules/pins:" + PINS["libgcc"]["name"],
+        "lib/libstdc++.so.6": "buildrules//rules/pins:" + PINS["libstdcxx"]["name"],
+    },
+    unpacker = "buildrules//rules/zig:conda_unpack",
+)
+
+# `:node`; its sub-target `:node[include]` is the Node-API headers.
+node_dist(
+    name = NODE["name"],
+    archive = ":" + NODE["archive"],
+    native_libs = ":native_libs",
+    top = NODE["top"],
+    version = NODE["version"],
+    visibility = ["PUBLIC"],
+)
+
+[pinned_file(
+    name = p["file"],
+    url = p["url"],
+    sha256 = p["sha256"],
+    size_bytes = p["size"],
+) for p in NPM]
+
+[npm_tarball(
+    name = npm_target(p["name"]),
+    package = p["name"],
+    version = p["version"],
+    integrity = p["integrity"],
+    tarball = ":" + p["file"],
+    exe = p["exe"],
+    deps = [":" + npm_target(d) for d in p["deps"]],
+    visibility = ["PUBLIC"],
+) for p in NPM]
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check its pages against this file.
+export_file(
+    name = "modules.bzl",
+    src = "modules.bzl",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check its pages against this file.
+export_file(
+    name = "defs.bzl",
+    src = "defs.bzl",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK).
+export_file(
+    name = "pins.bzl",
+    src = "pins.bzl",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check its pages against this file.
+export_file(
+    name = "npm.bzl",
+    src = "npm.bzl",
+    visibility = ["//site:"],
+)
+
+scrub_files()

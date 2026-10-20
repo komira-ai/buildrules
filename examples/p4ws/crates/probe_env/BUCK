@@ -1,0 +1,92 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# Member units of crates/probe_env, in the unit-level form (see examples/p4ws/Cargo.toml). Kept by hand: cargo_package makes these targets from a table.
+load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit", "crate_src", "stamp_file", "unit_group")
+
+cargo_unit(
+    name = "probe_env-0.1.0_2cea61ad96",
+    pkg = "probe_env",
+    version = "0.1.0",
+    crate_name = "probe_env",
+    build_script_name = "build_script_build",
+    mode = "run-custom-build",
+    crate_type = "bin",
+    side = "target",
+    edition = "2024",
+    root = "build.rs",
+    crate_hash = "2cea61ad96",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = False,
+    srcs = glob(["**"], exclude = ["BUCK", "target/**"]),
+    deps = {
+        "build_script_build": ":probe_env-0.1.0_5c4eef27d8",
+    },
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "probe_env-0.1.0_30c08c59d3",
+    pkg = "probe_env",
+    version = "0.1.0",
+    crate_name = "probe_env",
+    mode = "build",
+    crate_type = "rlib",
+    side = "target",
+    edition = "2024",
+    root = "src/lib.rs",
+    crate_hash = "30c08c59d3",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["src/**", "build.rs", "Cargo.toml"]),
+    deps = {
+        "build_script_build": ":probe_env-0.1.0_2cea61ad96",
+    },
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "probe_env-0.1.0_318265fce0",
+    pkg = "probe_env",
+    version = "0.1.0",
+    crate_name = "probe_env",
+    mode = "test",
+    crate_type = "rlib",
+    side = "target",
+    edition = "2024",
+    root = "src/lib.rs",
+    crate_hash = "318265fce0",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["src/**", "build.rs", "Cargo.toml"]),
+    deps = {
+        "build_script_build": ":probe_env-0.1.0_2cea61ad96",
+    },
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "probe_env-0.1.0_5c4eef27d8",
+    pkg = "probe_env",
+    version = "0.1.0",
+    crate_name = "probe_env",
+    build_script_name = "build_script_build",
+    mode = "build",
+    crate_type = "bin",
+    side = "exec",
+    edition = "2024",
+    root = "build.rs",
+    crate_hash = "5c4eef27d8",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["**"], exclude = ["BUCK", "target/**"]),
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

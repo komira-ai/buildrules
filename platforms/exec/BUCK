@@ -1,0 +1,18 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//rules:isa.bzl", "ISA_LEVELS", "exec_levels")
+load("//rules:platforms.bzl", "buildrules_execution_platforms")
+
+# Its own package: only the ROOT cell's .buckconfig.local is read for `[buildrules_re]`, so when
+# buildrules is a cell of another repository this package is not loaded; the consumer's
+# platforms/BUCK makes the same call.
+# Remote-only. The worker property set comes from `[buildrules_re]` in
+# .buckconfig.local; nothing here names a service.
+# The first platform is ISA-agnostic; one more per ISA level a test can ask for (rules/isa.bzl).
+buildrules_execution_platforms(
+    name = "exec",
+    linux_x86_64 = "//platforms:linux_x86_64",
+    isa_platforms = {ISA_LEVELS[l]["property"]: "//platforms:exec_" + ISA_LEVELS[l]["id"] for l in exec_levels()},
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

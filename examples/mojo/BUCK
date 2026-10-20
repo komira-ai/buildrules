@@ -1,0 +1,10 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# Exports mopm-toolchain.toml. Every Mojo package below this directory carries a `:check` that compares it with the hash its table recorded
+# (rules/mojo/check.bzl); `buildrules mojo sync` writes this file when the directory of the toolchain file has no BUCK file.
+export_file(
+    name = "mopm-toolchain.toml",
+    src = "mopm-toolchain.toml" if glob(["mopm-toolchain.toml"]) else fail("mopm-toolchain.toml is required and there is no default. Create it, for example:\n\n[toolchain]\nmopm = '0.0.1'\nmojo = '1.0.0'\n"),
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

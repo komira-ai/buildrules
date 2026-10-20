@@ -1,0 +1,18 @@
+# Copy to .buckconfig.local (gitignored). Without a [buck2_re_client] endpoint no action
+# can run: the execution platform is remote unless you opt in to running on this machine
+# (docs/contract.md, section 14):
+#
+#   [buildrules_re]
+#     mode = local
+#
+# (and then no endpoint or property set may be configured).
+[buck2_re_client]
+  # engine_address = grpc://re.example.invalid:8980
+  # action_cache_address = grpc://re.example.invalid:8980
+  # cas_address = grpc://re.example.invalid:8980
+  # instance_name = main
+  # tls = true
+
+[buildrules_re]
+  # The exact REAPI property set of linux-x86_64 workers (key=value, comma separated).
+  # linux_x86_64_properties = OSFamily=Linux,ISA=x86-64,container-image=docker://<image>@sha256:<digest>

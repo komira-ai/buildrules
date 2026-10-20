@@ -1,0 +1,11 @@
+[package]
+name = "util"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[dependencies]
+base = { path = "base" }
+
+[targets]
+lib = { path = "src/util" }
+tests = ["tests"]

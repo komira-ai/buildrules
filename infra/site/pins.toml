@@ -1,0 +1,2 @@
+# kpin reads this and package-lock.json into pins.lock.bzl. The site pins nothing but npm tarballs,
+# which come from package-lock.json, so there is nothing to list here.

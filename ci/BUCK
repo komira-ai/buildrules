@@ -1,0 +1,160 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules:matrix.bzl", "group", "isa_at", "rust_at")
+load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_OLDEST")
+load("@buildrules//rules/zig:zig.bzl", "zig_test")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load(":workflow_lint.bzl", "actionlint_check")
+
+# The CI matrix (docs/contract.md, section 10). Every cell builds AND tests: a test of these examples is a build action that
+# writes a `.passed` marker, a library is welded to its tests, and `run_check` executes the binary.
+#
+#   buck2 build //ci:matrix            every cell
+#   buck2 build //ci:rust_default      one cell: the default Rust (RUST_DEFAULT) and the default zig (0.12.0, the oldest pinned)
+#   buck2 build //ci:rust_oldest       one cell: the oldest supported Rust (RUST_OLDEST)
+#   buck2 build //ci:zig_next          one cell: the other pinned zig (0.15.2)
+#   buck2 build //ci:isa_v3            one cell: the ISA example at x86-64-v3
+#
+# The generated-unit examples (examples/p4ws) name units by content id; the three crates that build are listed. The other three
+# of that workspace are refusal fixtures and are meant to fail.
+
+# Rust: the hand-written rules (hello), and cargo units with build scripts, `links` and tests (p4ws).
+_RUST = [
+    "//examples/hello:hello_runs",
+    "//examples/hello:hello_lib_test",
+    "//examples/p4ws/crates/probe_ok:probe_ok-0.1.0_2662e7548e",
+    "//examples/p4ws/crates/links_a:links_a-0.1.0_7e3a794568",
+    "//examples/p4ws/crates/links_b:links_b-0.1.0_a447e2534e",
+]
+
+group(name = "rust_default", deps = _RUST + [
+    "//rules/rust:rustc_launch_unit",
+    "//examples/zig:hello_zig",
+    "//examples/zig:hello_unit",
+])
+
+rust_at(name = "rust_oldest", version = RUST_OLDEST, deps = _RUST)
+
+# Zig: 0.12.0 is the rules' default and the oldest pinned; 0.15.2 is `zig_next`.
+group(name = "zig_next", deps = [
+    "//examples/zig:hello_zig_next",
+    "//examples/zig:hello_unit_next",
+])
+
+# ISA: the same example under the baseline and under x86-64-v3 (ymm in the machine code, the AVX2 test on a v3 worker).
+group(name = "isa_v1", deps = ["//examples/isa:audit", "//examples/isa:audit_c", "//examples/isa:isa_lib_test"])
+
+isa_at(name = "isa_v3", level_id = "x86_64_v3", deps = ["//examples/isa:audit", "//examples/isa:audit_c", "//examples/isa:isa_lib_test"])
+
+# The refusals, as analysis tests (rules/rust/refusal.bzl): each is green only if the rule refused (or accepted) as stated.
+group(name = "refusals", deps = [
+    "//rules/rust/tests:pinned_is_accepted",
+    "//rules/rust/tests:every_pinned_version_is_accepted",
+    "//rules/rust/tests:user_pin_is_accepted",
+    "//rules/rust/tests:unpinned_builtin_is_refused",
+    "//rules/rust/tests:unpinned_without_record_is_refused",
+    "//rules/rust/tests:recorded_hashes_must_be_the_pinned_ones",
+    "//rules/rust/tests:pinned_version_with_user_origin_is_refused",
+    "//examples/unpinned/crates/app:unpinned_rustc_is_refused",
+    "//rules/mojo/tests:table_without_toolchain_file_is_refused",
+    "//rules/mojo/tests:table_without_manifest_is_refused",
+    "//rules/mojo/tests:recorded_toolchain_file_is_accepted",
+    "//rules/mojo/tests:missing_toolchain_file_is_refused",
+    "//rules/mojo/tests:present_toolchain_file_is_accepted",
+])
+
+group(name = "matrix", deps = [
+    ":refusals",
+    ":crates",
+    ":rust_default",
+    ":rust_oldest",
+    ":zig_next",
+    ":isa_v1",
+    ":isa_v3",
+])
+
+# The Mojo examples (docs/contract.md, section 12): every package's :ci and :coverage, and the same-bytes gate. `ws` imports the registry package
+# `cnative` as a download: a machine that has no copy of it points the URL at one with `buildrules.url_map` (examples/mojo/README.md), so
+# these are not in //ci:matrix.
+group(name = "mojo", deps = [
+    "//examples/mojo/copy_of_base:ci",
+    "//examples/mojo/copy_of_base:coverage",
+    "//examples/mojo/copy_of_base:same_bytes",
+    "//examples/mojo/registry/cnative:ci",
+    "//examples/mojo/registry/cnative:conda",
+    "//examples/mojo/ws:ci",
+    "//examples/mojo/ws:coverage",
+    "//examples/mojo/ws/util:ci",
+    "//examples/mojo/ws/util:coverage",
+    "//examples/mojo/ws/util/base:ci",
+    "//examples/mojo/ws/util/base:coverage",
+])
+
+# A workspace with crates.io dependencies, a build script and a native library (examples/crates, its own cell): lint and test it, and prove its
+# generated files are what `buildrules sync` writes now (on the farm, against a local copy of the registry: no network).
+group(name = "crates", deps = [
+    "crates//:ci",
+    "crates//:sync_check",
+    "crates//:sync",
+    "crates//:debug",
+    "crates//:release",
+    "crates//:lint",
+    "crates//:test",
+    "crates//crates/zdemo:debug",
+    "crates//crates/zdemo:release",
+    "crates//crates/zdemo:lib",
+])
+
+# The public CI workflow (.github/workflows/ci.yml, docs/contract.md section 14): the pinned actionlint accepts it, and ci/workflow_check.zig
+# checks what actionlint does not know about this repository (actions pinned by commit, read-only token, local mode, every promised target,
+# the buck2 release of tools/buck2). Each rule of the check is itself tested against planted text.
+actionlint_check(
+    name = "workflow_lint",
+    exec_compatible_with = LINUX_X86_64,
+    actionlint = "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
+    workflows = ["//:ci.yml"],
+)
+
+zig_test(
+    name = "workflow_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "workflow_check.zig",
+    data = {
+        ".github/workflows/ci.yml": "//:ci.yml",
+        "tools/buck2": "//:buck2.pin",
+        "ci/BUCK": "BUCK",
+    },
+)
+
+group(name = "workflow", deps = [":workflow_lint", ":workflow_check"])
+
+# Everything the public runner can build: the public CI builds this one target. It names what the other groups do not reach: the C/C++ rules and
+# aws-lc, the gate and kpin tools, the Node toolchain, the type checks of the sites, the cargo units outside the matrix. ci/completeness.bxl
+# (`buck2 bxl //ci:completeness.bxl:check`) fails when a target of the tree is in neither this closure, //ci:mojo's, nor EXCLUDED in ci/all.bzl.
+group(name = "all", deps = [
+    ":matrix",
+    ":workflow",
+    "//cli:buildrules",
+    "//site:test",
+    "//site:dist",
+    "//site:preview",
+    "//site:typecheck",
+    "//infra/site:test",
+    "//infra/site:typecheck",
+    "//tools/scrub:scrub",
+    "//rules/gate:gate",
+    "//rules/kpin:kpin",
+    "//rules/node:esbuild_linux-x64",
+    "//third_party/aws-lc:crypto",
+    "//examples/node:modules",
+    "//examples/p4ws/crates/links_b:links_b-0.1.0_9f2ed89200",
+    "//examples/p4ws/crates/probe_ok:probe_ok-0.1.0_35cff8487e",
+])
+
+# Read by the buildrules.dev site tests (site/BUCK), which check its pages against this file.
+export_file(
+    name = "BUCK.txt",
+    src = "BUCK",
+    visibility = ["//site:"],
+)
+
+scrub_files()

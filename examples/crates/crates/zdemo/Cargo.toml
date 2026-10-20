@@ -1,0 +1,14 @@
+[package]
+name = "zdemo"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# zstd-safe links zstd-sys, whose build script (cc, pkg-config) compiles zstd's C sources and tells rustc to link the result:
+# a build script, a native dependency and `links` in one small tree.
+[dependencies]
+zstd-safe = { version = "7.0.0", default-features = false, features = ["std"] }
+
+[package.metadata.buildrules]
+# Policy only: `actions = { name = ["lint", "test"] }`, `default-action`, `[package.metadata.buildrules.lint]`.
+# Absent keys inherit [workspace.metadata.buildrules]. See docs/contract.md.

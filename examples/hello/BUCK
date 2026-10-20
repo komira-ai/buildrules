@@ -1,0 +1,38 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("@buildrules//rules/core:run_check.bzl", "run_check")
+
+# The library's inline #[test]s, compiled with `rustc --test` over the same sources.
+rust_test(
+    name = "hello_lib_test",
+    srcs = ["src/lib.rs"],
+    crate_root = "src/lib.rs",
+    crate_name = "hello_lib",
+    visibility = ["PUBLIC"],
+)
+
+# Welded: the library cannot be built unless its test passes.
+rust_library(
+    name = "hello_lib",
+    srcs = ["src/lib.rs"],
+    crate_root = "src/lib.rs",
+    gate_tests = [":hello_lib_test"],
+    visibility = ["PUBLIC"],
+)
+
+rust_binary(
+    name = "hello",
+    srcs = ["src/main.rs"],
+    crate_root = "src/main.rs",
+    deps = [":hello_lib"],
+)
+
+# Runs the binary on the farm and compares its stdout.
+run_check(
+    name = "hello_runs",
+    exe = ":hello",
+    expected_stdout = "hello, world",
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

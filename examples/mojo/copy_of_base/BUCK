@@ -1,0 +1,16 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:same.bzl", "mojo_same")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+mojo_package(path = ".")
+
+# The same sources as //examples/mojo/ws/util/base at another path: their `.mojoc` files must be the same bytes. (A `.mojoc` that
+# recorded the directory it was staged in would differ; rules/mojo/tools/mojo_launch.zig is what prevents it.)
+mojo_same(
+    name = "same_bytes",
+    a = ":lib",
+    b = "//examples/mojo/ws/util/base:lib",
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

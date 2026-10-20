@@ -1,0 +1,57 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules:isa.bzl", "expected_vector_width")
+load("@buildrules//rules/rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("@buildrules//rules/rust:isa_audit.bzl", "isa_audit")
+
+# Build under a level to see it in the machine code and in the scheduling:
+#   buck2 build --target-platforms buildrules//platforms:linux_x86_64_v3 //examples/isa:audit //examples/isa:isa_lib_test
+# `isa_lib_test` runs on the execution platform of the target's level (ISA=x86-64-v3), `audit` disassembles the binary.
+
+rust_library(
+    name = "isa_lib",
+    srcs = ["src/lib.rs"],
+    crate_root = "src/lib.rs",
+    crate_name = "isa_lib",
+    visibility = ["PUBLIC"],
+)
+
+# The inline #[test]s of the library: at v3 one of them executes an AVX2 instruction.
+rust_test(
+    name = "isa_lib_test",
+    srcs = ["src/lib.rs"],
+    crate_root = "src/lib.rs",
+    crate_name = "isa_lib",
+    visibility = ["PUBLIC"],
+)
+
+rust_binary(
+    name = "isa_bin",
+    srcs = ["src/main.rs"],
+    crate_root = "src/main.rs",
+    crate_name = "isa_bin",
+    deps = [":isa_lib"],
+)
+
+# Fails unless the machine code matches the platform's level: ymm instructions at x86-64-v3 and v4, none below.
+isa_audit(
+    name = "audit",
+    binary = ":isa_bin",
+    expect = expected_vector_width(),
+    visibility = ["PUBLIC"],
+)
+
+# The same check for C: `zig cc -mcpu=` follows the platform's level (cxx_toolchains(target_cpu = zig_cpu()) in toolchains/BUCK).
+cxx_binary(
+    name = "isa_c_bin",
+    srcs = ["sum.c"],
+    compiler_flags = ["-O2"],
+)
+
+isa_audit(
+    name = "audit_c",
+    binary = ":isa_c_bin",
+    expect = expected_vector_width(),
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

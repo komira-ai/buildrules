@@ -1,0 +1,104 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The buildrules.dev site, built and tested on the farm with buildrules' own Node rules from the
+# pinned npm packages (pins.lock.bzl, from package-lock.json by kpin). No install, no script, no
+# network, no host node or npm. README.md says what each target is.
+
+load("@buildrules//rules/node:modules.bzl", "jest_test", "node_tree_build", "npm_modules", "tsc_build", "tsc_check")
+load(":pins.lock.bzl", "NPM")
+load(":preview.bzl", "site_preview")
+
+_CONFIGS = [
+    "package.json",
+    "tsconfig.json",
+    "tsconfig.tools.json",
+]
+
+_SRCS = glob(["static/**", "test/**", "tools/**"]) + _CONFIGS + ["jest.config.js", "serve.js"]
+
+npm_modules(
+    name = "modules",
+    lockfile = "package-lock.json",
+    npm = NPM,
+)
+
+# `npm run typecheck`
+tsc_check(
+    name = "typecheck",
+    visibility = ["//ci:"],
+    modules = ":modules",
+    srcs = _SRCS,
+)
+
+# `npm test`. The tests check the rendered pages, every link and fragment between them, and that
+# the content names rules and commands that exist: they read the rule sources and the contract
+# (the files in `data`) at their paths in the repository.
+jest_test(
+    name = "test",
+    visibility = ["//ci:"],
+    data = {
+        "ci/BUCK": "//ci:BUCK.txt",
+        "cli/src/buckgen.zig": "//cli:buckgen.zig",
+        "cli/src/cargo_cmd.zig": "//cli:cargo_cmd.zig",
+        "cli/src/check.zig": "//cli:check.zig",
+        "cli/src/init.zig": "//cli:init.zig",
+        "cli/src/main.zig": "//cli:main.zig",
+        "cli/src/mojo_cmd.zig": "//cli:mojo_cmd.zig",
+        "cli/src/npm_cmd.zig": "//cli:npm_cmd.zig",
+        "cli/src/pins_toml.zig": "//cli:pins_toml.zig",
+        "cli/src/sync.zig": "//cli:sync.zig",
+        "docs/contract.md": "//docs:contract.md",
+        "rules/isa.bzl": "//rules:isa.bzl",
+        "rules/matrix.bzl": "//rules:matrix.bzl",
+        "rules/mojo/defs.bzl": "//rules/mojo:defs.bzl",
+        "rules/mopm/pins.bzl": "//rules/mopm:pins.bzl",
+        "rules/mopm/toolchain.bzl": "//rules/mopm:toolchain.bzl",
+        "rules/node/modules.bzl": "//rules/node:modules.bzl",
+        "rules/pins/pins.bzl": "//rules/pins:pins.bzl",
+        "rules/node/defs.bzl": "//rules/node:defs.bzl",
+        "rules/node/npm.bzl": "//rules/node:npm.bzl",
+        "rules/node/pins.bzl": "//rules/node:pins.bzl",
+        "rules/rust/pins.bzl": "//rules/rust:pins.bzl",
+        "rules/rust/cargo.bzl": "//rules/rust:cargo.bzl",
+        "rules/rust/rust.bzl": "//rules/rust:rust.bzl",
+        "rules/rust/test_run.bzl": "//rules/rust:test_run.bzl",
+        "rules/rust/toolchain.bzl": "//rules/rust:toolchain.bzl",
+        "rules/zig/zig.bzl": "//rules/zig:zig.bzl",
+        "third_party/aws-lc/BUCK": "//third_party/aws-lc:BUCK.txt",
+        "rules/cxx/archive.bzl": "//rules/cxx:archive.bzl",
+        "rules/cxx/defs.bzl": "//rules/cxx:defs.bzl",
+    },
+    modules = ":modules",
+    srcs = _SRCS,
+)
+
+# `npm run build`, step 1: `tsc -p tsconfig.tools.json`, the build program.
+tsc_build(
+    name = "tools",
+    modules = ":modules",
+    out_dir = "build/tools",
+    project = "tsconfig.tools.json",
+    srcs = glob(["tools/**"]) + _CONFIGS,
+)
+
+# Step 2: `node build/tools/tools/build.js`, which renders the pages, hashes the stylesheet, checks
+# the tree (every link, every fragment, no script, no inline style) and writes dist/. The target is
+# dist/; a broken link fails this target.
+node_tree_build(
+    name = "dist",
+    data = {"site/build/tools": ":tools"},
+    modules = ":modules",
+    out_dir = "dist",
+    program = "build/tools/tools/build.js",
+    srcs = glob(["static/**"]),
+    visibility = ["PUBLIC"],
+)
+
+# `buck2 run //site:preview` builds dist/ on the farm and serves it on 127.0.0.1:8080.
+site_preview(
+    name = "preview",
+    visibility = ["//ci:"],
+    dist = ":dist",
+    script = "serve.js",
+)
+
+scrub_files()

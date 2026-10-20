@@ -1,0 +1,23 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//examples/unpinned:buildrules.bzl", "cargo_package")
+load("@buildrules//rules/rust:refusal.bzl", "recording", "refusal_test")
+
+# The call `buildrules cargo adopt` writes is `cargo_package(path = ".")`, and on this table it stops the load:
+#
+#   the table was generated for rustc 1.50.0 which buildrules does not pin (it pins 1.95.0, 1.85.0). Pin your own hashes for it ...
+#
+# Buck2 has no "expect this to fail", so this file passes `refuse`, which records the reason and lets the load go on, and the target
+# below exists only if the rule refused for the reason it should. (Remove the refusal from check_toolchain and this target fails
+# analysis: "expected a refusal and there was none".)
+refusals, refuse = recording()
+
+cargo_package(path = ".", refuse = refuse)
+
+refusal_test(
+    name = "unpinned_rustc_is_refused",
+    refusals = refusals,
+    contains = ["does not pin", "1.50.0", "1.95.0", "buildrules-pins.toml"],
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

@@ -1,0 +1,92 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# Member units of crates/probe_tree, in the unit-level form (see examples/p4ws/Cargo.toml). Kept by hand: cargo_package makes these targets from a table.
+load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit", "crate_src", "stamp_file", "unit_group")
+
+cargo_unit(
+    name = "probe_tree-0.1.0_505effa32e",
+    pkg = "probe_tree",
+    version = "0.1.0",
+    crate_name = "probe_tree",
+    build_script_name = "build_script_build",
+    mode = "run-custom-build",
+    crate_type = "bin",
+    side = "target",
+    edition = "2024",
+    root = "build.rs",
+    crate_hash = "505effa32e",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = False,
+    srcs = glob(["**"], exclude = ["BUCK", "target/**"]),
+    deps = {
+        "build_script_build": ":probe_tree-0.1.0_c48b95a191",
+    },
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "probe_tree-0.1.0_c301a77fc5",
+    pkg = "probe_tree",
+    version = "0.1.0",
+    crate_name = "probe_tree",
+    mode = "test",
+    crate_type = "rlib",
+    side = "target",
+    edition = "2024",
+    root = "src/lib.rs",
+    crate_hash = "c301a77fc5",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["src/**", "build.rs", "Cargo.toml"]),
+    deps = {
+        "build_script_build": ":probe_tree-0.1.0_505effa32e",
+    },
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "probe_tree-0.1.0_c48b95a191",
+    pkg = "probe_tree",
+    version = "0.1.0",
+    crate_name = "probe_tree",
+    build_script_name = "build_script_build",
+    mode = "build",
+    crate_type = "bin",
+    side = "exec",
+    edition = "2024",
+    root = "build.rs",
+    crate_hash = "c48b95a191",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["**"], exclude = ["BUCK", "target/**"]),
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "probe_tree-0.1.0_ff3d4c8b0a",
+    pkg = "probe_tree",
+    version = "0.1.0",
+    crate_name = "probe_tree",
+    mode = "build",
+    crate_type = "rlib",
+    side = "target",
+    edition = "2024",
+    root = "src/lib.rs",
+    crate_hash = "ff3d4c8b0a",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["src/**", "build.rs", "Cargo.toml"]),
+    deps = {
+        "build_script_build": ":probe_tree-0.1.0_505effa32e",
+    },
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

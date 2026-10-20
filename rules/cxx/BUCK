@@ -1,0 +1,93 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The C/C++ family: the toolchain's launcher, and the symbol-prefixing tools (README.md).
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load(":defs.bzl", "c_exe")
+
+# zig_cc_launcher: runs `zig cc|c++|ar|ranlib` for the toolchain (toolchain.bzl): expands the nested response
+# files the prelude passes (zig refuses them) and gives zig a cache directory under the working directory.
+# Built by the pinned zig 0.12, as the Rust rules' link steps are.
+zig_exe(
+    name = "zig_cc_launcher",
+    exec_compatible_with = LINUX_X86_64,
+    src = "zig_cc_launcher.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig",
+    visibility = ["PUBLIC"],
+)
+
+# zig 0.15.2 builds the prefix tool; it is built behind the check that the pin is that release.
+_ZIG = "buildrules//rules/pins:zig_next"
+_ZIG_VERSION = "buildrules//rules/pins:zig_next_version"
+
+# elfsyms: an archive's symbol table and its members' symbols (prefix/elfsyms.c). The C toolchain has no `nm`.
+c_exe(
+    name = "elfsyms",
+    exec_compatible_with = LINUX_X86_64,
+    src = "prefix/elfsyms.c",
+    visibility = ["PUBLIC"],
+)
+
+_SRCS = glob(["prefix/src/*.zig"])
+
+# The unit tests of prefix_tool: `zig test` of main.zig, whose test block imports prefix_test.zig and
+# cli_test.zig, run as a build action.
+zig_test(
+    name = "prefix_tool_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = _SRCS,
+    src = "prefix/src/main.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = _ZIG,
+)
+
+# prefix_tool (Zig): `header` writes a prefix_header's header, `check` is a prefixed_archive_check. Built
+# behind its unit tests: no header or check runs unless they pass.
+zig_exe(
+    name = "prefix_tool",
+    exec_compatible_with = LINUX_X86_64,
+    imports = _SRCS,
+    src = "prefix/src/main.zig",
+    unit_tests = [":prefix_tool_unit", _ZIG_VERSION],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+# glibc_floor (Zig): the newest glibc symbol version an ELF needs; `glibc_floor_check` (defs.bzl) fails a build
+# whose binary needs more than the toolchain's floor. Behind its unit tests (floor/src/floor_test.zig).
+zig_test(
+    name = "glibc_floor_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["floor/src/floor_test.zig"],
+    src = "floor/src/floor.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "glibc_floor",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["floor/src/floor_test.zig"],
+    src = "floor/src/floor.zig",
+    unit_tests = [":glibc_floor_unit", _ZIG_VERSION],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check its pages against this file.
+export_file(
+    name = "defs.bzl",
+    src = "defs.bzl",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK).
+export_file(
+    name = "archive.bzl",
+    src = "archive.bzl",
+    visibility = ["//site:"],
+)
+
+scrub_files()

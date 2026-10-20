@@ -1,0 +1,52 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The refusals of rules/rust/cargo.bzl (check_toolchain), as targets: each is green only if the table is refused (or accepted) as stated.
+# They are analysis tests; see rules/rust/refusal.bzl. The same refusal through the front door is
+# //examples/unpinned/crates/app:unpinned_rustc_is_refused.
+load("//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_VERSIONS")
+load("//rules/rust:refusal.bzl", "refusal_test")
+load(":cases.bzl", "refused", "table")
+
+# A pinned version with the hashes the pins file has: accepted.
+refusal_test(name = "pinned_is_accepted", refusals = refused(table(RUST_DEFAULT, "builtin")), none = True, visibility = ["PUBLIC"])
+
+# Every older pinned version, too.
+refusal_test(name = "every_pinned_version_is_accepted", refusals = [m for v in RUST_VERSIONS for m in refused(table(v, "builtin"))], none = True, visibility = ["PUBLIC"])
+
+# A version the user pinned in buildrules-pins.toml, with the origin the generator records: accepted.
+refusal_test(name = "user_pin_is_accepted", refusals = refused(table("1.2.3", "buildrules-pins.toml")), none = True, visibility = ["PUBLIC"])
+
+# A Rust nobody pins, in a table whose record says builtin (a table made when that version was pinned): refused, with the way out.
+refusal_test(
+    name = "unpinned_builtin_is_refused",
+    refusals = refused(table("1.2.3", "builtin")),
+    contains = ["does not pin", "1.2.3", "buildrules-pins.toml", "buildrules sync"],
+    visibility = ["PUBLIC"],
+)
+
+# A table with no toolchain record at all (made before the toolchain lock): an unpinned version is refused.
+refusal_test(
+    name = "unpinned_without_record_is_refused",
+    refusals = refused({"RUSTC": "1.2.3"}),
+    contains = ["does not pin"],
+    visibility = ["PUBLIC"],
+)
+
+# A pinned version whose recorded hashes are not the pinned ones: refused (a pin bump is a visible diff in the table).
+refusal_test(
+    name = "recorded_hashes_must_be_the_pinned_ones",
+    refusals = refused(table(RUST_DEFAULT, "builtin", {k: "cd" * 32 for k in ["rustc", "rust_std", "cargo", "clippy"]})),
+    contains = ["other hashes", "buildrules sync"],
+    visibility = ["PUBLIC"],
+)
+
+# A pinned version claimed by the user's own file: the reviewed hashes win, so the record must say builtin.
+refusal_test(
+    name = "pinned_version_with_user_origin_is_refused",
+    refusals = refused(table(RUST_DEFAULT, "buildrules-pins.toml")),
+    contains = ["other hashes"],
+    visibility = ["PUBLIC"],
+)
+
+# The same refusal through the front door and the consumer's own table is in //examples/unpinned/crates/app.
+
+scrub_files()

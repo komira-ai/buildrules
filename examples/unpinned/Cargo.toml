@@ -1,0 +1,4 @@
+# A virtual workspace, as `buildrules init` writes it.
+[workspace]
+resolver = "2"
+members = ["crates/app"]

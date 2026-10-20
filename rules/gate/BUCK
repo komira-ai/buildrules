@@ -1,0 +1,54 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/zig:zig.bzl", "zig_exe", "zig_test")
+
+# gate: runs and supervises every welded test (`gate rust` runs one rust_test in a build action).
+# Built by zig 0.15.2, statically linked, and published behind its unit tests: no test runs unless
+# these passed. linux x86_64 only.
+_ZIG = "buildrules//rules/pins:zig_next"
+_ZIG_VERSION = "buildrules//rules/pins:zig_next_version"
+
+_SRCS = [
+    "gate.zig",
+    "mojo.zig",
+    "proctab.zig",
+    "proctab_darwin.zig",
+    "rust.zig",
+    "step.zig",
+    "supervise.zig",
+    "sys.zig",
+    "util.zig",
+]
+
+_TESTS = [
+    "mojo_test",
+    "rust_test",
+    "step_test",
+    "supervise_test",
+    "util_test",
+]
+
+[
+    zig_test(
+        name = t,
+        exec_compatible_with = LINUX_X86_64,
+        imports = _SRCS + ["testkit.zig"],
+        src = t + ".zig",
+        busybox = "buildrules//rules/pins:busybox",
+        zig = _ZIG,
+    )
+    for t in _TESTS
+]
+
+zig_exe(
+    name = "gate",
+    exec_compatible_with = LINUX_X86_64,
+    imports = _SRCS,
+    src = "gate.zig",
+    unit_tests = [":" + t for t in _TESTS] + [_ZIG_VERSION],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

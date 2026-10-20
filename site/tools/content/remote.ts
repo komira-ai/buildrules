@@ -1,0 +1,58 @@
+import { code, h2, info, limit, p, table, ul, type Page } from '../model';
+
+export const remote: Page = {
+  path: '/remote-execution/',
+  title: 'Remote execution',
+  nav: 'Remote execution',
+  description: 'Connect buildrules to any REAPI remote execution farm with a gitignored .buckconfig.local. No endpoint is ever committed.',
+  lead: 'buildrules runs every action on a remote execution farm and has no local fallback. You tell Buck2 where the farm is in a file that is never committed.',
+  blocks: [
+    h2('Why remote only'),
+    p('Building on a farm is what makes the cache shared and the toolchains uniform: the same pinned inputs run on the same kind of worker and give the same result. The execution platform buildrules registers has local execution disabled and remote execution enabled. If you have not configured a farm, loading the platform fails with a message that tells you what to set, instead of quietly compiling on your machine.'),
+    h2('Connect a farm'),
+    p('`buildrules init` writes `.buckconfig.local.example` and adds `.buckconfig.local` to `.gitignore`. Copy the example and fill it in:'),
+    code(
+      [
+        '[buck2_re_client]',
+        '  engine_address = <execution endpoint>',
+        '  action_cache_address = <action cache endpoint>',
+        '  cas_address = <content-addressable storage endpoint>',
+        '  instance_name = <instance name>',
+        '  tls = true',
+        '',
+        '[buildrules_re]',
+        '  linux_x86_64_properties = OSFamily=Linux,ISA=x86-64,container-image=docker://<image>@sha256:<digest>',
+      ].join('\n'),
+      '.buckconfig.local',
+    ),
+    table(
+      ['Setting', 'Meaning'],
+      ['`engine_address`, `action_cache_address`, `cas_address`', 'where Buck2 sends actions, looks up cached results and stores files. Many farms use one address for all three.'],
+      ['`instance_name`', 'the REAPI instance your farm serves'],
+      ['`tls`', 'whether to use TLS'],
+      ['`linux_x86_64_properties`', 'the exact property set of the workers that should run Linux x86_64 actions, as comma-separated `key=value` pairs. These are your farm\'s own keys; buildrules passes them through unchanged.'],
+    ),
+    p('The `[buck2_re_client]` section is standard Buck2 configuration. The `[buildrules_re]` section is read by `buildrules_execution_platforms` in your `platforms/BUCK`. If `linux_x86_64_properties` is missing or malformed, the platform fails to load and says so.'),
+    p('CPU levels. Your property set names the baseline, `ISA=x86-64`, and every compile runs on a worker that matches it. buildrules registers one more execution platform for each of `x86-64-v2`, `x86-64-v3` and `x86-64-v4`, with the same properties and `ISA=<level>`, and a test built for a level runs on it. Your farm has to schedule on that property: a worker reports every level it reaches, so `ISA=x86-64-v3` is served by v3 and v4 workers. See [CPU levels](/rules/#cpu-levels).'),
+    h2('Keep endpoints out of repositories'),
+    ul(
+      'Commit `.buckconfig.local.example`, with placeholders. Never commit `.buckconfig.local`.',
+      '`buildrules init` adds `.buckconfig.local` to `.gitignore` for you.',
+      'No rule, generated file or table holds an endpoint, an account or a worker property. Nothing the CLI writes depends on which farm you use.',
+      'In CI, write `.buckconfig.local` from your secret store before the first `buck2` command.',
+    ),
+    h2('Check that it worked'),
+    code('buck2 build //crates/hello:test', 'shell'),
+    p('The summary line shows where actions ran:'),
+    code('Commands: 12 (cached: 9, remote: 3, local: 0)', 'example output'),
+    p('`local` is always `0`: there is no local executor. `cached` counts actions whose results the farm\'s action cache already had; run the same build twice and the second is all cached.'),
+    h2('What the worker needs'),
+    ul(
+      'Linux on x86_64, with glibc 2.34 or newer.',
+      '`libgcc_s.so.1` and `libz.so.1`, which the Rust compiler loads (they are not pinned yet).',
+      'Nothing else. Compilers, `node`, shells and file utilities are inputs of the actions. No host `cargo`, `rustc`, `cc`, `node` or `npm` is read.',
+    ),
+    info('buildrules has been run on one farm. It uses plain REAPI v2 through Buck2, so other farms that implement it should work, but that has not been tested here. If yours differs, the first things to check are the worker properties and the glibc version.'),
+    limit('Builds have no local fallback and no Buck2 "hybrid" mode. Without a reachable farm there is nothing to run.'),
+  ],
+};

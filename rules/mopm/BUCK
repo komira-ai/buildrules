@@ -1,0 +1,15 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# Read by the buildrules.dev site tests (site/BUCK), which check its pages against this file.
+export_file(
+    name = "pins.bzl",
+    src = "pins.bzl",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "toolchain.bzl",
+    src = "toolchain.bzl",
+    visibility = ["//site:"],
+)
+
+scrub_files()

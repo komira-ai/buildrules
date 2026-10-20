@@ -1,0 +1,4 @@
+# The compiler of every build and of plain `cargo`: an exact release, never a channel. buildrules does not pin this one.
+[toolchain]
+channel = "1.50.0"
+profile = "minimal"

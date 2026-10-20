@@ -1,0 +1,97 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# Member units of crates/links_b, in the unit-level form (see examples/p4ws/Cargo.toml). Kept by hand: cargo_package makes these targets from a table.
+load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit", "crate_src", "stamp_file", "unit_group")
+
+cargo_unit(
+    name = "links_b-0.1.0_985f6df882",
+    pkg = "links_b",
+    version = "0.1.0",
+    crate_name = "links_b",
+    build_script_name = "build_script_build",
+    mode = "run-custom-build",
+    crate_type = "bin",
+    side = "target",
+    edition = "2024",
+    root = "build.rs",
+    crate_hash = "985f6df882",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = False,
+    link_deps = [
+        "//examples/p4ws/crates/links_a:links_a-0.1.0_4ca083644e",
+    ],
+    srcs = glob(["**"], exclude = ["BUCK", "target/**"]),
+    deps = {
+        "build_script_build": ":links_b-0.1.0_9ee9143fd6",
+    },
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "links_b-0.1.0_9ee9143fd6",
+    pkg = "links_b",
+    version = "0.1.0",
+    crate_name = "links_b",
+    build_script_name = "build_script_build",
+    mode = "build",
+    crate_type = "bin",
+    side = "exec",
+    edition = "2024",
+    root = "build.rs",
+    crate_hash = "9ee9143fd6",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["**"], exclude = ["BUCK", "target/**"]),
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "links_b-0.1.0_9f2ed89200",
+    pkg = "links_b",
+    version = "0.1.0",
+    crate_name = "links_b",
+    mode = "build",
+    crate_type = "rlib",
+    side = "target",
+    edition = "2024",
+    root = "src/lib.rs",
+    crate_hash = "9f2ed89200",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["src/**", "build.rs", "Cargo.toml"]),
+    deps = {
+        "build_script_build": ":links_b-0.1.0_985f6df882",
+        "links_a": "//examples/p4ws/crates/links_a:links_a-0.1.0_b887f46dc1",
+    },
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "links_b-0.1.0_a447e2534e",
+    pkg = "links_b",
+    version = "0.1.0",
+    crate_name = "links_b",
+    mode = "test",
+    crate_type = "rlib",
+    side = "target",
+    edition = "2024",
+    root = "src/lib.rs",
+    crate_hash = "a447e2534e",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["src/**", "build.rs", "Cargo.toml"]),
+    deps = {
+        "build_script_build": ":links_b-0.1.0_985f6df882",
+        "links_a": "//examples/p4ws/crates/links_a:links_a-0.1.0_b887f46dc1",
+    },
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

@@ -1,0 +1,37 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The checks of the buildrules.dev hosting stack, run on the farm from the pinned npm packages
+# (pins.lock.bzl, from package-lock.json by kpin) with buildrules' node rules: `npm run typecheck`
+# and `npm test`. No install, no script, no network, no AWS. Nothing here deploys: the held steps
+# (held/, README.md) are run by a person with their own credentials.
+
+load("@buildrules//rules/node:modules.bzl", "jest_test", "npm_modules", "tsc_check")
+load(":pins.lock.bzl", "NPM")
+
+_SRCS = glob(["bin/**", "held/**", "lib/**", "test/**"]) + [
+    "cdk.json",
+    "jest.config.js",
+    "package.json",
+    "tsconfig.json",
+]
+
+npm_modules(
+    name = "modules",
+    lockfile = "package-lock.json",
+    npm = NPM,
+)
+
+tsc_check(
+    name = "typecheck",
+    visibility = ["//ci:"],
+    modules = ":modules",
+    srcs = _SRCS,
+)
+
+jest_test(
+    name = "test",
+    visibility = ["//ci:"],
+    modules = ":modules",
+    srcs = _SRCS,
+)
+
+scrub_files(extra = [".gitignore"])

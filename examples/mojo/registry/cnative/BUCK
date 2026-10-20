@@ -1,0 +1,30 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/cxx:defs.bzl", "c_shared")
+load("@buildrules//rules/mojo:pack.bzl", "mojo_conda")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# The publisher's side of the registry stand-in: a Mojo package over a C library.
+mojo_package(path = ".")
+
+# The native library, built by the pinned zig (rules/cxx); its sha256 is what the consumer's mopm.lock records.
+c_shared(
+    name = "libcnative",
+    exec_compatible_with = LINUX_X86_64,
+    soname = "libcnative.so.1",
+    src = "native/cnative.c",
+    visibility = ["PUBLIC"],
+)
+
+# `mopm pack` of the library: the `.conda` a registry would serve. Its sha256 and size go into the consumer's lock.
+mojo_conda(
+    name = "conda",
+    lib = ":lib",
+    manifest = "mopm.toml",
+    mojo = "1.0.0",
+    mopm = "toolchains//:mopm",
+    package = "cnative",
+    version = "0.1.0",
+)
+
+scrub_files()

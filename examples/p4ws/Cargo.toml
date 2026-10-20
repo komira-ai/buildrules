@@ -1,0 +1,11 @@
+# P4 fixtures: std-only crates for the build-script contract (links/DEP_*, undeclared reads).
+# Plain `cargo build` works here. The Buck2 targets are kept in the unit-level form (one `cargo_unit` per cargo unit, in each member's BUCK file), which
+# exercises the build-script contract (rules/rust/bs_runner.zig) at two Rust versions in //ci:matrix; examples/crates is the same flow through `buildrules sync`.
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false

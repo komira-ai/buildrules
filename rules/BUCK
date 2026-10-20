@@ -1,0 +1,15 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# Read by the buildrules.dev site tests (site/BUCK), which check its pages against these files.
+export_file(
+    name = "isa.bzl",
+    src = "isa.bzl",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "matrix.bzl",
+    src = "matrix.bzl",
+    visibility = ["//site:"],
+)
+
+scrub_files()

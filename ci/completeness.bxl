@@ -1,0 +1,46 @@
+# Whether //ci:all covers the whole tree. Run by the public CI before it builds:
+#
+#   buck2 bxl //ci:completeness.bxl:check
+#
+# A target of `//...` or `crates//...` is covered when it is in the dependency closure of //ci:all or //ci:mojo (a library is welded to its
+# tests, so a test is in the closure of what it gates), when its rule only describes a configuration, or when ci/all.bzl lists it under
+# EXCLUDED with a reason. Anything else is an uncovered target: this fails and names it. It also fails when an exclusion matches nothing, or
+# when //ci:all builds a target that is excluded (the exclusion would be a lie).
+
+load("@buildrules//ci:all.bzl", "EXCLUDED", "MIRROR_ONLY", "NOT_BUILT_KINDS")
+
+def _targets(q, expr):
+    return [str(t.label) for t in q.eval(expr)]
+
+def _impl(ctx):
+    q = ctx.uquery()
+    tree = "(//... + crates//...)"
+    problems = []
+
+    for pattern in EXCLUDED:
+        if not _targets(q, pattern):
+            problems.append("the exclusion {} matches no target (remove it)".format(pattern))
+    excluded = "(" + " + ".join(EXCLUDED.keys()) + ")"
+
+    built = "deps(//ci:all + {})".format(MIRROR_ONLY)
+    for t in _targets(q, "deps(//ci:all) ^ " + excluded):
+        problems.append("{} is excluded in ci/all.bzl and is built by //ci:all".format(t))
+
+    uncovered = _targets(q, "{tree} - {built} - kind('^({kinds})$', {tree}) - {excluded}".format(
+        tree = tree,
+        built = built,
+        kinds = NOT_BUILT_KINDS,
+        excluded = excluded,
+    ))
+    for t in sorted(uncovered):
+        problems.append("{} is built by neither //ci:all nor //ci:mojo and is not excluded".format(t))
+
+    if problems:
+        # The failure message is what a failed bxl command shows (its stdout is dropped), so the list goes in it.
+        fail("{} problem(s); add each uncovered target to //ci:all in ci/BUCK, or list it in EXCLUDED in ci/all.bzl with a reason:\n  ".format(len(problems)) + "\n  ".join(problems))
+    ctx.output.print("ok: every target of the tree is built by //ci:all or //ci:mojo, or excluded with a reason ({} exclusions)".format(len(EXCLUDED)))
+
+check = bxl_main(
+    impl = _impl,
+    cli_args = {},
+)

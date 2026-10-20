@@ -1,0 +1,14 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/node:modules.bzl", "npm_modules")
+load(":pins.lock.bzl", "NPM")
+
+# node_modules from package-lock.json: every package a sha256-pinned download, checked against
+# the lockfile's sha512, unpacked on the farm by node_tools. No npm, no install script, no network.
+npm_modules(
+    name = "modules",
+    visibility = ["//ci:"],
+    lockfile = "package-lock.json",
+    npm = NPM,
+)
+
+scrub_files()

@@ -1,0 +1,6 @@
+# Local, machine-specific buck2 configuration (remote-execution endpoint). Never committed.
+.buckconfig.local
+buck-out/
+# The buck2 binary: fetch the pinned release in tools/buck2 (see README.md).
+/buck2
+__pycache__/

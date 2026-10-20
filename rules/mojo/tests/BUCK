@@ -1,0 +1,30 @@
+# mopm-toolchain.toml is required (docs/contract.md, section 12): the refusals of rules/mojo/defs.bzl as analysis tests (rules/rust/refusal.bzl).
+# Each target is green only if the rule refused as stated; make the rule fall back to a default and it stops existing (analysis fails).
+load("//rules/mojo:defs.bzl", "check_toolchain_file_present", "check_toolchain_file_recorded")
+load("//rules/rust:refusal.bzl", "recording", "refusal_test")
+
+_NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.1\"", "mojo = \"1.0.0\""]
+
+# A table whose recorded files do not include the toolchain file (made by hand, or before the file was required): refused.
+_r1, _f1 = recording()
+check_toolchain_file_recorded({"MANIFEST_SHA256": {"mopm.toml": "00", "mopm.lock": "11"}}, _f1)
+refusal_test(name = "table_without_toolchain_file_is_refused", refusals = _r1, contains = _NAMED + ["buildrules mojo sync"], visibility = ["PUBLIC"])
+
+# A table with no MANIFEST_SHA256 at all: refused.
+_r2, _f2 = recording()
+check_toolchain_file_recorded({}, _f2)
+refusal_test(name = "table_without_manifest_is_refused", refusals = _r2, contains = _NAMED, visibility = ["PUBLIC"])
+
+# The file is recorded (here or above): accepted.
+_r3, _f3 = recording()
+check_toolchain_file_recorded({"MANIFEST_SHA256": {"mopm.toml": "00", "../../mopm-toolchain.toml": "22"}}, _f3)
+refusal_test(name = "recorded_toolchain_file_is_accepted", refusals = _r3, none = True, visibility = ["PUBLIC"])
+
+# The checkout has no such file (the glob of the BUCK file is empty): refused, naming the package.
+_r4, _f4 = recording()
+check_toolchain_file_present("examples/x", [], _f4)
+refusal_test(name = "missing_toolchain_file_is_refused", refusals = _r4, contains = _NAMED + ["examples/x"], visibility = ["PUBLIC"])
+
+_r5, _f5 = recording()
+check_toolchain_file_present("examples/x", ["mopm-toolchain.toml"], _f5)
+refusal_test(name = "present_toolchain_file_is_accepted", refusals = _r5, none = True, visibility = ["PUBLIC"])

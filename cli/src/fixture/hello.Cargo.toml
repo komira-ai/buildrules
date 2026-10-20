@@ -1,0 +1,10 @@
+[package]
+name = "hello"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[package.metadata.buildrules]
+# Policy only: `actions = { name = ["lint", "test"] }`, `default-action`, `[package.metadata.buildrules.lint]`.
+# Absent keys inherit [workspace.metadata.buildrules]. See docs/contract.md.

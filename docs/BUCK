@@ -1,0 +1,9 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The buildrules contract, read by the buildrules.dev site's tests (site/BUCK), which check its pages against it.
+export_file(
+    name = "contract.md",
+    src = "contract.md",
+    visibility = ["//site:"],
+)
+
+scrub_files()

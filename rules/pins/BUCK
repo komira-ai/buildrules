@@ -1,0 +1,59 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The pinned downloads and unpacked tools every family of this directory shares: busybox (`sh` and
+# the file utilities of every action), zig (the C link driver, and the compiler of the Zig tools),
+# zig 0.15.2 and the conda runtime libraries. Values in pins.bzl.
+load("//rules/core:pinned_file.bzl", "pinned_file")
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/zig:zig.bzl", "zig_dist", "zig_test")
+load(":pins.bzl", "PINS", "strip_prefix")
+
+[
+    pinned_file(
+        name = p["name"],
+        url = p["url"],
+        sha256 = p["sha256"],
+        size_bytes = p["size"],
+        executable = p.get("executable", False),
+        visibility = ["PUBLIC"],
+    )
+    for p in PINS.values()
+]
+
+zig_dist(
+    name = "zig",
+    exec_compatible_with = LINUX_X86_64,
+    archive = ":" + PINS["zig"]["name"],
+    busybox = ":busybox",
+    strip_prefix = strip_prefix("zig"),
+    visibility = ["PUBLIC"],
+)
+
+zig_dist(
+    name = "zig_next",
+    exec_compatible_with = LINUX_X86_64,
+    archive = ":" + PINS["zig_next"]["name"],
+    busybox = ":busybox",
+    strip_prefix = strip_prefix("zig_next"),
+    visibility = ["PUBLIC"],
+)
+
+# `:zig_next` reports 0.15.2. Compiled and run by the 0.12 zig, so it does not depend on what it
+# checks. A target built with `:zig_next` lists this test in its `unit_tests`.
+zig_test(
+    name = "zig_next_version",
+    exec_compatible_with = LINUX_X86_64,
+    env_tools = {"ZIG_NEXT": ":zig_next"},
+    src = "zig_next_version_test.zig",
+    busybox = ":busybox",
+    zig = ":zig",
+    visibility = ["PUBLIC"],
+)
+
+# Read by the buildrules.dev site tests (site/BUCK), which check the Zig versions the pages state.
+export_file(
+    name = "pins.bzl",
+    src = "pins.bzl",
+    visibility = ["//site:"],
+)
+
+scrub_files()

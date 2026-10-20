@@ -1,0 +1,6 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# A consumer whose rust-toolchain.toml names a Rust that buildrules does not pin (1.50.0). `buildrules sync` refuses to make such a
+# table, so buildrules.lock.bzl is a fixture: the table of a buildrules that did pin 1.50.0, as a repository would still have it after
+# the pin was dropped. cargo_package must refuse it, and crates/app/BUCK shows that it does (a target that exists only if it did).
+
+scrub_files()

@@ -1,0 +1,104 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The buildrules command line, in Zig, built by the pinned zig behind its unit tests.
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+
+# The CLI is Zig 0.15 code (std.Io, ArrayList.empty): it builds with the pinned zig_next, as kpin does.
+_ZIG = "buildrules//rules/pins:zig_next"
+
+_SRCS = glob(["src/*.zig", "src/fixture/*"])
+
+_TESTS = [
+    "cargo_cmd",
+    "buckgen",
+    "contract",
+    "init",
+    "mojo_cmd",
+    "pins_toml",
+    "npm_cmd",
+    "sync_check",
+    "unitgen",
+]
+
+[
+    zig_test(
+        name = name + "_unit",
+        src = "src/" + name + "_test.zig",
+        imports = _SRCS,
+        zig = _ZIG,
+    )
+    for name in _TESTS
+]
+
+zig_exe(
+    name = "buildrules",
+    src = "src/main.zig",
+    imports = _SRCS,
+    zig = _ZIG,
+    unit_tests = [":" + name + "_unit" for name in _TESTS],
+    visibility = ["PUBLIC"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check its pages against this file.
+export_file(
+    name = "main.zig",
+    src = "src/main.zig",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check the CLI page against its flags.
+export_file(
+    name = "init.zig",
+    src = "src/init.zig",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check the CLI page against its flags.
+export_file(
+    name = "cargo_cmd.zig",
+    src = "src/cargo_cmd.zig",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check the CLI page against its flags.
+export_file(
+    name = "sync.zig",
+    src = "src/sync.zig",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check the CLI page against its flags.
+export_file(
+    name = "check.zig",
+    src = "src/check.zig",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check the CLI page against its flags.
+export_file(
+    name = "npm_cmd.zig",
+    src = "src/npm_cmd.zig",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check the CLI page against its flags.
+export_file(
+    name = "mojo_cmd.zig",
+    src = "src/mojo_cmd.zig",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK).
+export_file(
+    name = "buckgen.zig",
+    src = "src/buckgen.zig",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK).
+export_file(
+    name = "pins_toml.zig",
+    src = "src/pins_toml.zig",
+    visibility = ["//site:"],
+)
+
+scrub_files()

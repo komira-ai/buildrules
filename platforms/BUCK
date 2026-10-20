@@ -1,0 +1,82 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//rules:isa.bzl", "ISA_LEVELS", "exec_levels")
+load("//rules/rust:pins.bzl", "RUST_VERSIONS", "vname")
+
+# One platform, linux x86_64, per ISA level and per Rust version (below).
+constraint_setting(name = "os", visibility = ["PUBLIC"])
+constraint_setting(name = "cpu", visibility = ["PUBLIC"])
+constraint_value(name = "linux", constraint_setting = ":os", visibility = ["PUBLIC"])
+constraint_value(name = "x86_64", constraint_setting = ":cpu", visibility = ["PUBLIC"])
+constraint_value(name = "aarch64", constraint_setting = ":cpu", visibility = ["PUBLIC"])
+
+# The target platform of everything (`[parser]` in .buckconfig) and the
+# configuration of the execution platform, so a tool built to run in an action is
+# configured exactly like a target built for that platform.
+platform(
+    name = "linux_x86_64",
+    constraint_values = [":linux", ":x86_64"],
+    visibility = ["PUBLIC"],
+)
+
+# No platform has this value: a target that requires it is skipped by a wildcard build (`:coverage` until it exists).
+constraint_setting(name = "implementation", visibility = ["PUBLIC"])
+constraint_value(name = "not_implemented", constraint_setting = ":implementation", visibility = ["PUBLIC"])
+
+# ---- ISA levels (rules/isa.bzl) -----------------------------------------------------------------
+# `isa_level` is a TARGET constraint. No value = no flag (today's action keys). A target platform adds one value;
+# `linux_x86_64_v3` is linux_x86_64 plus `isa_x86_64_v3`. The cpu value of each platform is its level's family, so an x86 level never meets an aarch64 cpu.
+constraint_setting(name = "isa_level", visibility = ["PUBLIC"])
+
+# `exec_isa` is an EXECUTION constraint: only the execution platforms of platforms/exec carry it. A test that needs
+# level vN lists `exec_isa_x86_64_vN` in `exec_compatible_with`, so Buck2 puts its run action on that platform and the farm
+# reports `ISA=x86-64-vN`. The compile actions never list it.
+constraint_setting(name = "exec_isa", visibility = ["PUBLIC"])
+
+[
+    [
+        constraint_value(name = "isa_" + v["id"], constraint_setting = ":isa_level", visibility = ["PUBLIC"]),
+        config_setting(name = "isa_is_" + v["id"], constraint_values = [":isa_" + v["id"]], visibility = ["PUBLIC"]),
+        constraint_value(name = "exec_isa_" + v["id"], constraint_setting = ":exec_isa", visibility = ["PUBLIC"]),
+        config_setting(name = "exec_isa_is_" + v["id"], constraint_values = [":exec_isa_" + v["id"]], visibility = ["PUBLIC"]),
+    ]
+    for v in ISA_LEVELS.values()
+]
+
+[
+    platform(
+        name = "linux_" + v["id"],
+        constraint_values = [":linux", ":" + v["family"], ":isa_" + v["id"]],
+        visibility = ["PUBLIC"],
+    )
+    for v in ISA_LEVELS.values()
+]
+
+# The execution platforms of the levels that have a worker (platforms/exec registers them).
+[
+    platform(
+        name = "exec_" + ISA_LEVELS[l]["id"],
+        constraint_values = [":linux", ":x86_64", ":exec_isa_" + ISA_LEVELS[l]["id"]],
+        visibility = ["PUBLIC"],
+    )
+    for l in exec_levels()
+]
+
+# ---- Rust versions (rules/rust/pins.bzl) --------------------------------------------------------
+# `buck2 build --target-platforms buildrules//platforms:linux_x86_64_rust_1_85_0 ...` compiles with that version
+# (rules/rust/select.bzl): the CI matrix.
+constraint_setting(name = "rust_version", visibility = ["PUBLIC"])
+
+[
+    [
+        constraint_value(name = "rust_" + vname(v), constraint_setting = ":rust_version", visibility = ["PUBLIC"]),
+        config_setting(name = "rust_is_" + vname(v), constraint_values = [":rust_" + vname(v)], visibility = ["PUBLIC"]),
+        platform(
+            name = "linux_x86_64_rust_" + vname(v),
+            constraint_values = [":linux", ":x86_64", ":rust_" + vname(v)],
+            visibility = ["PUBLIC"],
+        ),
+    ]
+    for v in RUST_VERSIONS
+]
+
+scrub_files()

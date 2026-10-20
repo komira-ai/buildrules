@@ -1,0 +1,43 @@
+"""Providers of the Mojo rules. Lists and dicts only, never a tset (facebook/buck2#683: a tset's type is per loading cell)."""
+
+# One pinned Mojo toolchain, as `toolchains//:mojo_<v>` declares it from toolchains/mojo_pins.bzl (which `buildrules mojo sync`
+# copies from mopm's unit graphs).
+MojoToolchainInfo = provider(fields = {
+    # The compiler version, `1.0.0`.
+    "version": provider_field(str),
+    # mopm's hash of the whole closure (the compiler packages and the zig), the value of the graph's
+    # `toolchain.closure_sha256`. The unit action writes it into the toolchain directory's CLOSURE_SHA256 and
+    # `mopm unit build` refuses unless the graph names the same.
+    "closure_sha256": provider_field(str),
+    "cc_target": provider_field(str),
+    # The toolchain row of toolchains/mojo_pins.bzl this toolchain was declared from, whole (mopm's `toolchain` section of the graph, verbatim): the
+    # `:check` of a package compares it with the table's own graph, so a pins file edited without a sync is red.
+    "facts": provider_field(dict),
+    # Directory: bin/mojo, lib/, share/max/modular.cfg and CLOSURE_MANIFEST (conda_unpack).
+    "compiler": provider_field(typing.Any),
+    # Directory: the unpacked zig distribution, which serves as `cc` and the linker.
+    "zig": provider_field(typing.Any),
+})
+
+# A built library unit (or an unpacked registry package).
+MojoLibInfo = provider(fields = {
+    "id": provider_field(str),
+    # The `<package>.mojoc` file.
+    "mojoc": provider_field(typing.Any),
+    # package name -> its `.mojoc`, this unit and everything it imports (a unit's `--deps` directory holds these, flat).
+    "closure": provider_field(dict),
+})
+
+# A compiled test or binary: the unit's output directory (the executable and lib/ with its native libraries).
+MojoExeInfo = provider(fields = {
+    "id": provider_field(str),
+    "dir": provider_field(typing.Any),
+    # The executable inside `dir`, and its file name.
+    "exe": provider_field(typing.Any),
+    "name": provider_field(str),
+})
+
+# What a test run needs to be a `buck2 test` target as well as a build action.
+MojoTestRunInfo = provider(fields = {
+    "marker": provider_field(typing.Any),
+})

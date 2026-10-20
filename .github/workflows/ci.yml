@@ -1,0 +1,67 @@
+# Public CI: builds and tests the repository on GitHub's hosted runners, with every action run on the runner itself
+# (`-c buildrules_re.mode=local`, docs/contract.md section 14). The tools of the actions are the pinned toolchains, so
+# the runner supplies buck2 and its kernel and nothing else. ci/workflow_check.zig (`//ci:workflow`) checks this file.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # x86-64-v3 tests of //ci:matrix run on the runner's CPU.
+      - name: CPU has x86-64-v3
+        run: |
+          for f in avx2 bmi1 bmi2 fma movbe abm; do
+            grep -qw "$f" /proc/cpuinfo || { echo "this runner's CPU lacks $f (x86-64-v3)"; exit 1; }
+          done
+
+      # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/workflow_check.zig compares both.
+      - name: Install buck2
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
+          echo "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst" | sha256sum --check --strict -
+          zstd --decompress --quiet buck2.zst -o buck2
+          chmod +x buck2
+          ./buck2 --version
+
+      - name: Restore the buck2 output cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: buck-out
+          key: buck-out-${{ runner.os }}-${{ hashFiles('tools/buck2', '**/package-lock.json', '**/Cargo.lock', '**/*.lock.bzl', 'rules/**/pins.bzl', 'toolchains/*.bzl', 'rust-toolchain.toml') }}
+          restore-keys: |
+            buck-out-${{ runner.os }}-
+
+      # //ci:all builds every target of the tree except the refusal fixtures (ci/all.bzl lists each with its reason). This step fails when a
+      # target is in neither //ci:all nor //ci:mojo nor that list, so a new target cannot go unbuilt.
+      - name: Every target of the tree is covered
+        run: ./buck2 bxl //ci:completeness.bxl:check
+
+      # //ci:mojo is not built: its packages need the pinned mopm tarball and a package channel, which are fetched through
+      # buildrules.url_map from a mirror a public runner does not have (docs/contract.md section 14).
+      - name: Build and test
+        run: |
+          ./buck2 build --console simple -c buildrules_re.mode=local \
+            //ci:all
+
+      - name: Stop buck2
+        if: always()
+        run: ./buck2 kill

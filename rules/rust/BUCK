@@ -1,0 +1,120 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//rules:isa.bzl", "ISA_LEVELS", "exec_levels")
+load(":exec_isa.bzl", "exec_isa")
+load(":toolchain.bzl", "zig_exe")
+
+# The compile launcher and linker shim of every rustc action, built by the pinned zig.
+zig_exe(
+    name = "rustc_launch",
+    src = "rustc_launch.zig",
+    busybox = "toolchains//:busybox_pin",
+    zig = "toolchains//:zig",
+    visibility = ["PUBLIC"],
+)
+
+# Runs one build script and captures its directives, OUT_DIR and metadata (see bs_runner.zig).
+zig_exe(
+    name = "bs_runner",
+    src = "bs_runner.zig",
+    busybox = "toolchains//:busybox_pin",
+    zig = "toolchains//:zig",
+    visibility = ["PUBLIC"],
+)
+
+# crate_patch (crate_patch.zig): the `patch` of a `crate_src`, run in a build action where cargo would have run the
+# crate's build script (a crate whose native code a buildrules target replaces). Built behind its unit tests.
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/zig:zig.bzl", seed_zig_exe = "zig_exe", seed_zig_test = "zig_test")
+
+seed_zig_test(
+    name = "crate_patch_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "crate_patch.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig",
+)
+
+seed_zig_exe(
+    name = "crate_patch",
+    exec_compatible_with = LINUX_X86_64,
+    src = "crate_patch.zig",
+    unit_tests = [":crate_patch_unit"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig",
+    visibility = ["PUBLIC"],
+)
+
+# (Zig 0.15, like the launcher itself.) The version test of the launcher's `-C linker-features` rule (Rust 1.90+ only).
+seed_zig_test(
+    name = "rustc_launch_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "rustc_launch.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["PUBLIC"],
+)
+
+# The ISA level of the execution platform a test run is placed on (test_run.bzl checks it against the level the test was built for).
+exec_isa(
+    name = "exec_isa",
+    level = select(dict(
+        [("buildrules//platforms:exec_isa_is_" + ISA_LEVELS[l]["id"], ISA_LEVELS[l]["property"]) for l in exec_levels()],
+        DEFAULT = "x86-64",
+    )),
+    visibility = ["PUBLIC"],
+)
+
+# The version table, as a file: `buildrules sync` reads it (cli/src/unitgen.zig) to record the toolchain in the table.
+export_file(
+    name = "pins.bzl",
+    src = "pins.bzl",
+    visibility = ["PUBLIC"],
+)
+
+# Read by the buildrules.dev site tests (site/BUCK), which check its pages against this file.
+export_file(
+    name = "cargo.bzl",
+    src = "cargo.bzl",
+    visibility = ["//site:"],
+)
+
+# `buildrules sync` on the farm, in a copy of a workspace and against a local copy of the registry (sync_stage.zig, rules/rust/sync.bzl).
+seed_zig_test(
+    name = "sync_stage_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "sync_stage_test.zig",
+    imports = ["sync_stage.zig"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+seed_zig_exe(
+    name = "sync_stage",
+    exec_compatible_with = LINUX_X86_64,
+    src = "sync_stage.zig",
+    unit_tests = [":sync_stage_unit"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["PUBLIC"],
+)
+
+# Read by the buildrules.dev site tests (site/BUCK).
+export_file(
+    name = "test_run.bzl",
+    src = "test_run.bzl",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "toolchain.bzl",
+    src = "toolchain.bzl",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "rust.bzl",
+    src = "rust.bzl",
+    visibility = ["//site:"],
+)
+
+scrub_files()

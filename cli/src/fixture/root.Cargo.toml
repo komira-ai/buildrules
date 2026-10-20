@@ -1,0 +1,18 @@
+# Written by `buildrules init`. A virtual workspace: v0 wants the root manifest to have no [package].
+[workspace]
+resolver = "3"
+members = ["crates/hello"]
+
+[workspace.metadata.buildrules]
+# Policy only (profiles and lints stay in cargo's own tables). `ci` is what `buck2 build //:ci` builds.
+default-action = "ci"
+
+[workspace.metadata.buildrules.actions]
+ci = ["lint", "test"]
+
+[workspace.metadata.buildrules.lint]
+deny-warnings = true
+
+# A hermetic build cannot use incremental compilation: the generator refuses a profile that has it on.
+[profile.dev]
+incremental = false

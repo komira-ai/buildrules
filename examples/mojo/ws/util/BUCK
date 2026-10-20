@@ -1,0 +1,6 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+mojo_package(path = ".")
+
+scrub_files()

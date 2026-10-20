@@ -1,0 +1,9 @@
+[package]
+name = "links_b"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[dependencies]
+links_a = { path = "../links_a" }

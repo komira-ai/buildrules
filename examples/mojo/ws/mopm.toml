@@ -1,0 +1,13 @@
+[package]
+name = "app"
+version = "1.0.0"
+mojo = ["1.0.0"]
+
+[dependencies]
+util = { path = "util" }
+cnative = "0.1"
+
+[targets]
+lib = { path = "src/app" }
+bins = [{ name = "app_main", path = "src/main.mojo" }]
+tests = ["tests"]

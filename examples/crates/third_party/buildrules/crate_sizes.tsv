@@ -1,0 +1,7 @@
+# name version bytes; every sha256 was checked against the table by `buildrules sync`
+cc 1.0.83 68343
+jobserver 0.1.27 24774
+libc 0.2.150 719359
+pkg-config 0.3.28 20330
+zstd-safe 7.0.0 20463
+zstd-sys 2.0.9+zstd.1.5.5 728791

@@ -1,0 +1,6 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//:buildrules.bzl", "cargo_package")
+
+cargo_package(path = ".")
+
+scrub_files()

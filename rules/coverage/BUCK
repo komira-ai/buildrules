@@ -1,0 +1,264 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The path tools of a kcov coverage run, and kcov built from source with the pinned zig (README.md): static executables built
+# with the pinned zig, each gated by its cases, which run as build actions. linux x86_64 only.
+load("//rules/core:pinned_file.bzl", "pinned_file")
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/pins:pins.bzl", "PINS")
+load("//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load(":defs.bzl", "cov_tool", "kcov_dist")
+load(":pins.bzl", "KCOV_PINS")
+
+_ZIG = "buildrules//rules/pins:zig_next"
+_ZIG_VERSION = "buildrules//rules/pins:zig_next_version"
+_BB = "buildrules//rules/pins:busybox"
+
+# ---- debug_relocate: a directory path in a file overwritten by a placeholder of the same length -----------------
+zig_test(
+    name = "debug_relocate_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/debug_relocate.zig"],
+    src = "tools/debug_relocate_test.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "debug_relocate_exe",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/debug_relocate.zig",
+    unit_tests = [":debug_relocate_unit", _ZIG_VERSION],
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_test(
+    name = "debug_relocate_exe_test",
+    exec_compatible_with = LINUX_X86_64,
+    env_tools = {"DEBUG_RELOCATE": ":debug_relocate_exe"},
+    src = "tools/debug_relocate_exe_test.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+cov_tool(
+    name = "debug_relocate",
+    cases = [":debug_relocate_exe_test"],
+    exec_compatible_with = LINUX_X86_64,
+    exe = ":debug_relocate_exe",
+    visibility = ["PUBLIC"],
+)
+
+# ---- cov_normalize: a kcov Cobertura report rewritten to repository paths, with bytes that do not depend on the run -----
+zig_test(
+    name = "cov_normalize_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = [
+        "tools/cov_normalize.zig",
+        "tools/fixtures/kcov_full_paths.golden.xml",
+        "tools/fixtures/kcov_full_paths.xml",
+    ],
+    src = "tools/cov_normalize_test.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "cov_normalize_exe",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/cov_normalize.zig",
+    unit_tests = [":cov_normalize_unit", _ZIG_VERSION],
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_test(
+    name = "cov_normalize_exe_test",
+    exec_compatible_with = LINUX_X86_64,
+    env_tools = {"COV_NORMALIZE": ":cov_normalize_exe"},
+    imports = [
+        "tools/fixtures/kcov_full_paths.golden.xml",
+        "tools/fixtures/kcov_full_paths.xml",
+    ],
+    src = "tools/cov_normalize_exe_test.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+cov_tool(
+    name = "cov_normalize",
+    cases = [":cov_normalize_exe_test"],
+    exec_compatible_with = LINUX_X86_64,
+    exe = ":cov_normalize_exe",
+    visibility = ["PUBLIC"],
+)
+
+# ---- cov_zig: the `zig` of a coverage build's link directory --------------------------------------------------
+zig_exe(
+    name = "cov_zig_stub",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/cov_zig_stub.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_test(
+    name = "cov_zig_unit",
+    exec_compatible_with = LINUX_X86_64,
+    env_tools = {
+        "COV_ZIG_STUB": ":cov_zig_stub",
+        "DEBUG_RELOCATE": ":debug_relocate",
+    },
+    imports = [
+        "tools/cov_zig.zig",
+        "tools/cov_zig_elf.zig",
+    ],
+    src = "tools/cov_zig_test.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "cov_zig_exe",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/cov_zig.zig",
+    unit_tests = [":cov_zig_unit", _ZIG_VERSION],
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_test(
+    name = "cov_zig_exe_test",
+    exec_compatible_with = LINUX_X86_64,
+    env_tools = {
+        "COV_ZIG": ":cov_zig_exe",
+        "COV_ZIG_STUB": ":cov_zig_stub",
+        "DEBUG_RELOCATE": ":debug_relocate",
+        "PINNED_ZIG": "buildrules//rules/pins:zig",
+    },
+    imports = ["tools/cov_zig_elf.zig"],
+    src = "tools/cov_zig_exe_test.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+cov_tool(
+    name = "cov_zig",
+    cases = [":cov_zig_exe_test"],
+    exec_compatible_with = LINUX_X86_64,
+    exe = ":cov_zig_exe",
+    visibility = ["PUBLIC"],
+)
+
+# ---- kcov v42, built from source (kcov_build.zig) ---------------------------------------------------------------
+[
+    pinned_file(
+        name = KCOV_PINS[role]["name"],
+        url = KCOV_PINS[role]["url"],
+        sha256 = KCOV_PINS[role]["sha256"],
+        size_bytes = KCOV_PINS[role]["size"],
+    )
+    for role in KCOV_PINS
+]
+
+zig_exe(
+    name = "conda_payload",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/conda_payload.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_test(
+    name = "kcov_build_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/kcov_build.zig"],
+    src = "tools/kcov_build_test.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "kcov_build",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/kcov_build.zig",
+    unit_tests = [":kcov_build_unit", _ZIG_VERSION],
+    busybox = _BB,
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+# DT_RUNPATH -> DT_RPATH, which zig 0.12 cannot link into an executable.
+zig_exe(
+    name = "elf_rpath",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/elf_rpath.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+# The distribution: bin/kcov, lib/libgcc_s.so.1 and share/licenses/.
+kcov_dist(
+    name = "kcov",
+    exec_compatible_with = LINUX_X86_64,
+    archive = ":" + KCOV_PINS["kcov_src"]["name"],
+    conda_payload = ":conda_payload",
+    elf_rpath = ":elf_rpath",
+    packages = {
+        "bzip2": ":" + KCOV_PINS["kcov_bzip2"]["name"],
+        "elfutils": ":" + KCOV_PINS["kcov_elfutils"]["name"],
+        # libgcc_s.so.1, which glibc's pthread_cancel loads.
+        "libgcc": "buildrules//rules/pins:" + PINS["libgcc"]["name"],
+        "lzma": ":" + KCOV_PINS["kcov_lzma"]["name"],
+        "zlib": ":" + KCOV_PINS["kcov_zlib"]["name"],
+        "zstd": ":" + KCOV_PINS["kcov_zstd"]["name"],
+    },
+    shim = [
+        "shim/curl/curl.h",
+        "shim/curl_shim.c",
+    ],
+    strip_prefix = "kcov-42",
+    version = "v42",
+    zig_triple = "x86_64-linux-gnu.2.34",
+    visibility = ["PUBLIC"],
+)
+
+# ---- cov_run and cov_summary: the run of one test under kcov, and the package's line coverage from the reports ----------
+zig_test(
+    name = "cov_run_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/cov_run.zig"],
+    src = "tools/cov_run_test.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "cov_run",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/cov_run.zig",
+    unit_tests = [":cov_run_unit", _ZIG_VERSION],
+    busybox = _BB,
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+zig_test(
+    name = "cov_summary_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/cov_summary.zig"],
+    src = "tools/cov_summary_test.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "cov_summary",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/cov_summary.zig",
+    unit_tests = [":cov_summary_unit", _ZIG_VERSION],
+    busybox = _BB,
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

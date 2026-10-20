@@ -1,0 +1,85 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# kpin (README.md): pins.toml and the native lockfiles (package-lock.json v3)
+# in, a generated pins.lock.bzl out; `update` is the one command that touches
+# the network and never runs in a build action. A Zig tool, as every build tool
+# in this repository is; built behind its unit tests.
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load(":selftest.bzl", "SELFTEST")
+
+_SRCS = [
+    "diag.zig",
+    "fetch.zig",
+    "lockfmt.zig",
+    "main.zig",
+    "npm.zig",
+    "pins.zig",
+    "resolve.zig",
+    "toml.zig",
+    "update.zig",
+    "valid.zig",
+]
+
+# Test support, and the golden lock (which the load above also reads).
+_SUPPORT = [
+    "fixtures.zig",
+    "registry.zig",
+    "example.lock.bzl",
+]
+
+# Loading selftest.bzl is the test that the generated lock is Starlark Buck2
+# loads and that pins.bzl reads it (the package fails to load otherwise).
+_ = SELFTEST
+
+# kpin builds with zig 0.15.2 (`:zig_next`): the std.http client of 0.12 cannot
+# complete a TLS handshake with the registries kpin updates from. The rest of
+# the tools stay on the zig of `:zig`. The executable is built behind the check
+# that the pin is the release it names.
+_ZIG = "buildrules//rules/pins:zig_next"
+_ZIG_VERSION = "buildrules//rules/pins:zig_next_version"
+
+# ---- Unit tests: `zig test` of each, run as a build action -------------------
+
+[
+    zig_test(
+        name = name + "_unit",
+        exec_compatible_with = LINUX_X86_64,
+        src = name + "_test.zig",
+        imports = _SRCS + _SUPPORT,
+        busybox = "buildrules//rules/pins:busybox",
+        zig = _ZIG,
+    )
+    for name in [
+        "lockfmt",
+        "main",
+        "npm",
+        "pins",
+        "resolve",
+        "toml",
+        "update",
+    ]
+]
+
+# ---- The tool, built only when every unit test passed ------------------------
+
+zig_exe(
+    name = "kpin",
+    exec_compatible_with = LINUX_X86_64,
+    src = "main.zig",
+    imports = _SRCS,
+    unit_tests = [
+        ":lockfmt_unit",
+        ":main_unit",
+        ":npm_unit",
+        ":pins_unit",
+        ":resolve_unit",
+        ":toml_unit",
+        ":update_unit",
+        _ZIG_VERSION,
+    ],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

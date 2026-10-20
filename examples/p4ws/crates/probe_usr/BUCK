@@ -1,0 +1,92 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# Member units of crates/probe_usr, in the unit-level form (see examples/p4ws/Cargo.toml). Kept by hand: cargo_package makes these targets from a table.
+load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit", "crate_src", "stamp_file", "unit_group")
+
+cargo_unit(
+    name = "probe_usr-0.1.0_74f1502b20",
+    pkg = "probe_usr",
+    version = "0.1.0",
+    crate_name = "probe_usr",
+    mode = "test",
+    crate_type = "rlib",
+    side = "target",
+    edition = "2024",
+    root = "src/lib.rs",
+    crate_hash = "74f1502b20",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["src/**", "build.rs", "Cargo.toml"]),
+    deps = {
+        "build_script_build": ":probe_usr-0.1.0_c28c4e6cd5",
+    },
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "probe_usr-0.1.0_a1698dcec2",
+    pkg = "probe_usr",
+    version = "0.1.0",
+    crate_name = "probe_usr",
+    build_script_name = "build_script_build",
+    mode = "build",
+    crate_type = "bin",
+    side = "exec",
+    edition = "2024",
+    root = "build.rs",
+    crate_hash = "a1698dcec2",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["**"], exclude = ["BUCK", "target/**"]),
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "probe_usr-0.1.0_c28c4e6cd5",
+    pkg = "probe_usr",
+    version = "0.1.0",
+    crate_name = "probe_usr",
+    build_script_name = "build_script_build",
+    mode = "run-custom-build",
+    crate_type = "bin",
+    side = "target",
+    edition = "2024",
+    root = "build.rs",
+    crate_hash = "c28c4e6cd5",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = False,
+    srcs = glob(["**"], exclude = ["BUCK", "target/**"]),
+    deps = {
+        "build_script_build": ":probe_usr-0.1.0_a1698dcec2",
+    },
+    visibility = ["PUBLIC"],
+)
+
+cargo_unit(
+    name = "probe_usr-0.1.0_dfaaf30d9e",
+    pkg = "probe_usr",
+    version = "0.1.0",
+    crate_name = "probe_usr",
+    mode = "build",
+    crate_type = "rlib",
+    side = "target",
+    edition = "2024",
+    root = "src/lib.rs",
+    crate_hash = "dfaaf30d9e",
+    opt_level = "0",
+    debuginfo = "line-tables-only",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["src/**", "build.rs", "Cargo.toml"]),
+    deps = {
+        "build_script_build": ":probe_usr-0.1.0_c28c4e6cd5",
+    },
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()
