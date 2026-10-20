@@ -407,12 +407,12 @@ test "package then record then sums through the command line, with a binary this
     const base = try tmp.dir.realpathAlloc(a, ".");
     var unused_ctx: u8 = 0;
     const io = cmds.Io{ .ctx = &unused_ctx, .run_fn = realRun, .write_fn = realWrite };
-    // an arm64 Mach-O header and the stamped text: enough for `--exec none`
+    // an arm64 Mach-O header and the stamped version string (NUL-terminated): enough for `--exec none`
     var mach = [_]u8{0} ** 64;
     @memcpy(mach[0..4], "\xcf\xfa\xed\xfe");
     std.mem.writeInt(u32, mach[4..8], 0x0100000c, .little);
     std.mem.writeInt(u32, mach[12..16], 2, .little);
-    try tmp.dir.writeFile(.{ .sub_path = "bin", .data = try std.mem.concat(a, u8, &.{ &mach, "0.0.7" }) });
+    try tmp.dir.writeFile(.{ .sub_path = "bin", .data = try std.mem.concat(a, u8, &.{ &mach, "buildrules \x00\x00" ++ "0.0.7" ++ "\x00" }) });
     try tmp.dir.writeFile(.{ .sub_path = "LICENSE", .data = "l\n" });
     const args = [_][]const u8{ "--version", "0.0.7", "--target", "macos-arm64", "--binary", try join(a, base, "bin"), "--license", try join(a, base, "LICENSE"), "--out", try join(a, base, "dist"), "--exec", "none" };
     try t.expectEqual(@as(u8, 0), try run(a, io, "package", &args));

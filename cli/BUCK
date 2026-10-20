@@ -97,13 +97,13 @@ _CROSS = {
     for name, triple in _CROSS.items()
 ]
 
-zig_exe_target_test(name = "linux_x86_64_is_x86_64_linux_musl", exe = ":buildrules_linux_x86_64", expect = "x86_64-linux-musl", visibility = ["PUBLIC"])
+zig_exe_target_test(name = "linux_x86_64_is_x86_64_linux_musl", exe = ":buildrules_linux_x86_64", expect = "x86_64-linux-musl", same_tests_as = ":buildrules", visibility = ["PUBLIC"])
 
-zig_exe_target_test(name = "linux_aarch64_is_aarch64_linux_musl", exe = ":buildrules_linux_aarch64", expect = "aarch64-linux-musl", visibility = ["PUBLIC"])
+zig_exe_target_test(name = "linux_aarch64_is_aarch64_linux_musl", exe = ":buildrules_linux_aarch64", expect = "aarch64-linux-musl", same_tests_as = ":buildrules", visibility = ["PUBLIC"])
 
-zig_exe_target_test(name = "macos_arm64_is_aarch64_macos", exe = ":buildrules_macos_arm64", expect = "aarch64-macos", visibility = ["PUBLIC"])
+zig_exe_target_test(name = "macos_arm64_is_aarch64_macos", exe = ":buildrules_macos_arm64", expect = "aarch64-macos", same_tests_as = ":buildrules", visibility = ["PUBLIC"])
 
-zig_exe_target_test(name = "macos_x86_64_is_x86_64_macos", exe = ":buildrules_macos_x86_64", expect = "x86_64-macos", visibility = ["PUBLIC"])
+zig_exe_target_test(name = "macos_x86_64_is_x86_64_macos", exe = ":buildrules_macos_x86_64", expect = "x86_64-macos", same_tests_as = ":buildrules", visibility = ["PUBLIC"])
 
 # The bytes of the four: ELF machine or Mach-O cputype, from the files (header_test.zig).
 zig_test(

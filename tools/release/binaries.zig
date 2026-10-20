@@ -88,6 +88,20 @@ pub const PackageOpts = struct {
 
 pub const Packaged = struct { name: []const u8, sha256: [64]u8 };
 
+/// Whether `bin` holds the stamped version `v` as a string of its own: the text, a NUL right after it (the terminator of the string literal that `--version`
+/// prints after `buildrules `), and before it a byte that is not part of a longer version (not a digit or `.`). `0.0.7` is not found in `0.0.70` or `10.0.7`.
+/// The program's `buildrules ` and its version are separate strings (checked on a built binary), so the text `buildrules <V>` is not contiguous in the file.
+fn holdsVersion(bin: []const u8, v: []const u8) bool {
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, bin, from, v)) |at| : (from = at + 1) {
+        const end = at + v.len;
+        if (end >= bin.len or bin[end] != 0) continue;
+        if (at > 0 and (std.ascii.isDigit(bin[at - 1]) or bin[at - 1] == '.')) continue;
+        return true;
+    }
+    return false;
+}
+
 /// Writes `<out>/buildrules-cli-<V>-<target>.tar.gz`: the directory `buildrules-cli-<V>-<target>/` with `buildrules` (0755) and `LICENSE` (0644),
 /// every entry with mtime 0 and the tool's own gzip, so the same inputs make the same bytes. Refuses a binary whose header is another target's, whose
 /// `--version` (or, for `Exec.none`, whose text) is not `buildrules <V>`, and a version that is not MAJOR.MINOR.PATCH.
@@ -120,8 +134,8 @@ pub fn package(a: std.mem.Allocator, io: cmds.Io, o: PackageOpts) !Packaged {
                 return error.WrongVersion;
             }
         },
-        .none => if (std.mem.indexOf(u8, bin, o.version) == null) {
-            std.debug.print("release package: the binary does not hold the version text `{s}`; refusing to package\n", .{o.version});
+        .none => if (!holdsVersion(bin, o.version)) {
+            std.debug.print("release package: the binary does not hold the version `{s}` as its own NUL-terminated string (what `--version` prints after `buildrules `); refusing to package\n", .{o.version});
             return error.WrongVersion;
         },
     }
@@ -536,8 +550,20 @@ test "package of a binary this machine cannot run checks its header and its vers
     const a = arena.allocator();
     var fx = try Fixture.make(a);
     defer fx.dir.tmp.cleanup();
-    try fx.dir.put("mac", try machoBytes(a, 0x01000007, "...buildrules " ++ V ++ "..."));
+    try fx.dir.put("mac", try machoBytes(a, 0x01000007, "buildrules \x00\x00" ++ V ++ "\x00file:"));
     try fx.dir.put("mac_old", try machoBytes(a, 0x01000007, "...0.0.3-poc..."));
+    // The version is a prefix, a suffix or a middle of another one, or has no terminator: not this version.
+    try fx.dir.put("mac_070", try machoBytes(a, 0x01000007, "buildrules \x00\x00" ++ V ++ "0\x00file:"));
+    try fx.dir.put("mac_1007", try machoBytes(a, 0x01000007, "\x0010." ++ V[2..] ++ "\x00"));
+    try fx.dir.put("mac_dotted", try machoBytes(a, 0x01000007, "\x001." ++ V ++ "\x00"));
+    try fx.dir.put("mac_open", try machoBytes(a, 0x01000007, "buildrules " ++ V));
+    try fx.dir.put("mac_text", try machoBytes(a, 0x01000007, "...buildrules " ++ V ++ " extra\n"));
+    // A longer version first and the real one after it: the search goes on past the first hit.
+    try fx.dir.put("mac_both", try machoBytes(a, 0x01000007, "\x00" ++ V ++ "0\x00\x00" ++ V ++ "\x00"));
+    for ([_][]const u8{ "mac_070", "mac_1007", "mac_dotted", "mac_open", "mac_text" }) |bad| {
+        try t.expectError(error.WrongVersion, package(a, fx.fake.io(), try fx.opts(a, bad, "macos-x86_64", .none)));
+    }
+    _ = try package(a, fx.fake.io(), try fx.opts(a, "mac_both", "macos-x86_64", .none));
     const p = try package(a, fx.fake.io(), try fx.opts(a, "mac", "macos-x86_64", .none));
     try t.expectEqualStrings("buildrules-cli-" ++ V ++ "-macos-x86_64.tar.gz", p.name);
     try t.expectError(error.WrongVersion, package(a, fx.fake.io(), try fx.opts(a, "mac_old", "macos-x86_64", .none)));
