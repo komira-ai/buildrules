@@ -34,4 +34,11 @@ jest_test(
     srcs = _SRCS,
 )
 
+# Read by the site workflow check (ci/site_check.zig): the environment and the workflow file the role trusts.
+export_file(
+    name = "config.ts",
+    src = "lib/config.ts",
+    visibility = ["//ci:"],
+)
+
 scrub_files(extra = [".gitignore"])

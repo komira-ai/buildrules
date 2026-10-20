@@ -682,7 +682,7 @@ describe('the stages of the release: the page, RELEASING.md, beta.yml and releas
     expect(release).toMatch(/\n {2}site:\n/);
     expect(release).toContain('tool/release site ');
     expect(release).toContain('name: release-site');
-    expect(squash(releasing)).toContain('Nothing deploys it');
+    expect(squash(releasing)).toContain('The workflow `site` (see "The site") uploads it with the rest of the site.');
     expect(rulesText).toContain('Each release also gets a page with the tag, the commit to pin, the archive URL and its sha256.');
     // the page holds what RELEASING.md says it holds
     const page_zig = repoFile('tools/release/page.zig');
