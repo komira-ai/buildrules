@@ -6,6 +6,7 @@ load("//rules/rust:pins.bzl", "RUST_VERSIONS", "vname")
 constraint_setting(name = "os", visibility = ["PUBLIC"])
 constraint_setting(name = "cpu", visibility = ["PUBLIC"])
 constraint_value(name = "linux", constraint_setting = ":os", visibility = ["PUBLIC"])
+constraint_value(name = "macos", constraint_setting = ":os", visibility = ["PUBLIC"])
 constraint_value(name = "x86_64", constraint_setting = ":cpu", visibility = ["PUBLIC"])
 constraint_value(name = "aarch64", constraint_setting = ":cpu", visibility = ["PUBLIC"])
 
@@ -15,6 +16,21 @@ constraint_value(name = "aarch64", constraint_setting = ":cpu", visibility = ["P
 platform(
     name = "linux_x86_64",
     constraint_values = [":linux", ":x86_64"],
+    visibility = ["PUBLIC"],
+)
+
+# The other hosts (rules/pins/hosts.bzl): a runner that is linux aarch64 or macOS on Apple silicon. These are the configuration of the
+# execution platform that `[buildrules_re] mode = local` registers on such a machine (rules/platforms.bzl), and a target platform for the
+# pins that exist for them. No rule runs on them yet: every toolchain is still `exec_compatible_with` linux x86_64.
+platform(
+    name = "linux_aarch64",
+    constraint_values = [":linux", ":aarch64"],
+    visibility = ["PUBLIC"],
+)
+
+platform(
+    name = "macos_aarch64",
+    constraint_values = [":macos", ":aarch64"],
     visibility = ["PUBLIC"],
 )
 

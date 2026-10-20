@@ -1,4 +1,4 @@
-# Pins (linux-x86_64)
+# Pins (linux-x86_64; the other hosts are the last section)
 
 `rules/rust/pins.bzl` `RUST_VERSIONS` holds one row per Rust version; the table below is the default, 1.95.0. The oldest
 supported, 1.85.0: rustc 118068031 `bddacba2...2999`, rust-std 49657114 `b3ad2196...c4a9`, cargo 12817517 `e27ffcaf...c372`, clippy 4573789
@@ -40,3 +40,15 @@ busybox.net has no mirror of its own that serves this binary: the byte-identical
 host to depend on (no SLA; it can be slow). No mirror was found or checked for `static.rust-lang.org` (CloudFront), `github.com` releases, `registry.npmjs.org`
 or `static.crates.io`; those are fetched from their own hosts. A pin that must not depend on any of these hosts is the repository owner's decision: host the pins as assets of a
 dedicated, immutable buildrules release (the upload is a step only the repository owner can do).
+
+## Other hosts (linux-aarch64, macos-aarch64)
+
+`rules/pins/hosts.bzl` holds the downloads the two other hosts need from the same upstream releases: zig 0.12.0 and 0.15.2, node 24.21.0 and rustc 1.95.0 and 1.85.0 with
+rust-std, cargo, clippy (and llvm-tools for 1.95.0), for `aarch64-unknown-linux-gnu` and `aarch64-apple-darwin`. Sources: ziglang.org's `download/index.json` (zig), nodejs.org's `SHASUMS256.txt`
+(node), the `.sha256` file beside each tarball on static.rust-lang.org (rust); the size is the file's `content-length`. `buck2 build //rules/pins:host_downloads`
+downloads every row and fails on a sha256 or size that is not the file's; the `host_arm` job of `ci.yml` runs it on GitHub's `ubuntu-24.04-arm` runner, with the buck2 release that
+`tools/buck2` pins for `linux-aarch64`.
+
+What the pins do not do yet: nothing unpacks them. Every unpack action runs under the pinned busybox, and busybox.net publishes no static 1.35.0 for aarch64 (its multi-arch
+1.31.0 build has only a 32-bit `armv8l`, which 64-bit-only Arm cores do not execute; not tried on a runner) and none for macOS. A first-party static build of the same source is the way out, and it is the
+next step of the host work, not a pin that exists today.

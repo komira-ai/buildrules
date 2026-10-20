@@ -41,10 +41,22 @@ pub fn isHex40(s: []const u8) bool {
 }
 
 /// The value of `"digest": "..."` and the first provider url inside the `linux-x86_64` block of a dotslash file.
-pub fn dotslashLinux(text: []const u8) ?struct { digest: []const u8, url: []const u8 } {
-    const at = std.mem.indexOf(u8, text, "\"linux-x86_64\"") orelse return null;
-    const rest = text[at..];
-    const end = std.mem.indexOf(u8, rest, "\"macos") orelse rest.len;
+pub const DotslashPin = struct { digest: []const u8, url: []const u8 };
+
+pub fn dotslashLinux(text: []const u8) ?DotslashPin {
+    return dotslashPlatform(text, "linux-x86_64");
+}
+
+/// The same for the platform `name` (`linux-aarch64`): its block ends where the next platform's key begins.
+pub fn dotslashPlatform(text: []const u8, name: []const u8) ?DotslashPin {
+    var key_buf: [64]u8 = undefined;
+    const key = std.fmt.bufPrint(&key_buf, "\"{s}\"", .{name}) catch return null;
+    const at = std.mem.indexOf(u8, text, key) orelse return null;
+    const rest = text[at + key.len ..];
+    var end = rest.len;
+    for ([_][]const u8{ "\"linux-", "\"macos-" }) |next| {
+        if (std.mem.indexOf(u8, rest, next)) |i| end = @min(end, i);
+    }
     const block = rest[0..end];
     const digest = between(block, "\"digest\": \"", "\"") orelse return null;
     const url = between(block, "{\"url\": \"", "\"") orelse return null;
@@ -302,6 +314,19 @@ pub fn buck2Install(a: std.mem.Allocator, f: *Findings, workflow: []const u8, do
     } else try add(a, f, "tools/buck2 has no linux-x86_64 digest and url (this parser is blind)", .{});
 }
 
+/// The aarch64 leg's install: tools/buck2 pins a linux-aarch64 release, and the workflow downloads that url and checks that sha256 (the same
+/// `buck2.zst` line as the x86 install, with the aarch64 digest).
+pub fn buck2InstallArm(a: std.mem.Allocator, f: *Findings, workflow: []const u8, dotslash: []const u8) !void {
+    const p = dotslashPlatform(dotslash, "linux-aarch64") orelse {
+        try add(a, f, "tools/buck2 has no linux-aarch64 digest and url (the host_arm job installs it)", .{});
+        return;
+    };
+    if (std.mem.indexOf(u8, workflow, p.url) == null) try add(a, f, "the workflow does not download the linux-aarch64 url pinned in tools/buck2", .{});
+    const line = try std.fmt.allocPrint(a, "{s}  buck2.zst", .{p.digest});
+    if (std.mem.indexOf(u8, workflow, line) == null) try add(a, f, "the workflow does not check the linux-aarch64 sha256 pinned in tools/buck2", .{});
+    if (std.mem.indexOf(u8, workflow, "runs-on: ubuntu-24.04-arm") == null) try add(a, f, "`runs-on: ubuntu-24.04-arm` is missing (the host_arm job)", .{});
+}
+
 /// `continue-on-error` lets a red job or step pass: a workflow that gates a release has none, at job or step level, unless it is `false`. Any other
 /// value (`true`, an expression, a quoted string) is a finding, wherever the key is (a flow mapping included).
 pub fn noContinueOnError(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !void {
@@ -412,6 +437,7 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
 
     // The buck2 install is the release pinned in tools/buck2.
     try buck2Install(a, &f, workflow, dotslash);
+    try buck2InstallArm(a, &f, workflow, dotslash);
 
     // The cache is keyed on lock files.
     const key = std.mem.indexOf(u8, workflow, "key: buck-out-");
@@ -504,6 +530,13 @@ const fixture_wf =
     \\      - name: Stop buck2
     \\        if: always()
     \\        run: ./buck2 kill
+    \\  host_arm:
+    \\    runs-on: ubuntu-24.04-arm
+    \\    steps:
+    \\      - name: Install buck2
+    \\        run: |
+    \\          curl --output buck2.zst https://example.invalid/2026-09-15/buck2-aarch64-unknown-linux-gnu.zst
+    \\          echo "e35027a8e3f700000000000000000000000000000000000000000000000000ff  buck2.zst" | sha256sum --check --strict -
     \\
 ;
 
@@ -513,6 +546,10 @@ const fixture_ds =
     \\    "linux-x86_64": {
     \\      "digest": "1268fce33fb600000000000000000000000000000000000000000000000000ff",
     \\      "providers": [{"url": "https://example.invalid/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst"}]
+    \\    },
+    \\    "linux-aarch64": {
+    \\      "digest": "e35027a8e3f700000000000000000000000000000000000000000000000000ff",
+    \\      "providers": [{"url": "https://example.invalid/2026-09-15/buck2-aarch64-unknown-linux-gnu.zst"}]
     \\    },
     \\    "macos-x86_64": {}
     \\  }
@@ -712,6 +749,24 @@ test "a buck2 install that drifted from tools/buck2 is found" {
     // the pin moves and the workflow does not
     try expectFinding(a, .{ .wf = r.wf, .ds = try mutate(a, r.ds, "1268fce33fb6", "9999fce33fb6"), .cb = r.cb }, r.wf, "sha256 pinned");
     try expectFinding(a, .{ .wf = r.wf, .ds = "{}", .cb = r.cb }, r.wf, "blind");
+}
+
+test "an aarch64 buck2 install that drifted from tools/buck2 is found" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    try expectFinding(a, r, try mutate(a, r.wf, "2026-09-15/buck2-aarch64", "2026-09-16/buck2-aarch64"), "linux-aarch64 url");
+    try expectFinding(a, r, try mutate(a, r.wf, "e35027a8e3f7", "f35027a8e3f7"), "linux-aarch64 sha256");
+    // the pin moves and the workflow does not
+    try expectFinding(a, .{ .wf = r.wf, .ds = try mutate(a, r.ds, "e35027a8e3f7", "9999fce33fb6"), .cb = r.cb }, r.wf, "linux-aarch64 sha256");
+    // the job runs on the wrong machine, or the pin is dropped
+    try expectFinding(a, r, try mutate(a, r.wf, "runs-on: ubuntu-24.04-arm", "runs-on: ubuntu-24.04"), "ubuntu-24.04-arm");
+    try expectFinding(a, .{ .wf = r.wf, .ds = try mutate(a, r.ds, "\"linux-aarch64\"", "\"linux-arm\""), .cb = r.cb }, r.wf, "no linux-aarch64");
+    // the x86 digest is not read from the aarch64 block, nor the reverse
+    const ds = dotslashPlatform(r.ds, "linux-aarch64").?;
+    try t.expect(std.mem.startsWith(u8, ds.digest, "e35027a8e3f7"));
+    try t.expect(std.mem.startsWith(u8, dotslashLinux(r.ds).?.digest, "1268fce33fb6"));
 }
 
 test "a cache key that does not follow the lock files is found" {
