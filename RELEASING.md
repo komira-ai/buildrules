@@ -20,7 +20,7 @@ one invocation each. `ci/release_check.zig` and `ci/stages_check.zig` (part of `
 | `archive` | `git archive` of the tested commit (its sha, not a tag) under `buildrules-<planned version>/`, compressed by the tool's own gzip, `SHA256SUMS`, and a build provenance attestation of both files | `id-token`, `attestations` write |
 | `verify` | read-only; checks everything below before a file is published, and runs the command line that `cli` built (`buildrules --version` must print the release) | read |
 | `tag` | the annotated tag at that sha, made only after the archive is verified, with the release bot's token (see "The tag ruleset"). A tag that exists at the sha is kept; one at another commit fails the job | read; the write is the bot's token, minted in this job and used by the tag step alone |
-| `site` | read-only; the page of the release (the pin snippet) as an artifact; the workflow `site` deploys it (see "The site") | read |
+| `site` | read-only; the page of the release (the pin snippet) as an artifact; nothing deploys it | read |
 | `publish` | needs `tag` and `verify`; checks the tag peels to the verified sha, then creates the GitHub release from the verified files | `contents: write` |
 | `bump` | needs `plan`, `tag`, `publish` and `tool`; opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge (see "The submodule bump"). Nothing waits for it | read; the write is the bot's token for the internal repository, minted in this job and used by the bump step alone |
 
