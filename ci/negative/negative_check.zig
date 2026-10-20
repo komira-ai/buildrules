@@ -106,7 +106,8 @@ pub fn wiringFindings(a: std.mem.Allocator, completeness: []const u8) ![]const [
     var f = Findings.empty;
     for ([_][]const u8{
         "load(\"@buildrules//ci:negative.bzl\", \"negative_problems\")",
-        "problems += negative_problems(ctx)",
+        "negative = negative_problems(ctx)",
+        "if problems or negative:",
     }) |need| {
         if (std.mem.indexOf(u8, completeness, need) == null) try add(a, &f, "ci/completeness.bxl lacks `{s}`: the CI does not run the check", .{need});
     }
@@ -251,10 +252,12 @@ test "wiring: the CI step passes, and a completeness check that does not run it 
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const ok = "load(\"@buildrules//ci:negative.bzl\", \"negative_problems\")\n    problems += negative_problems(ctx)\n";
+    const ok = "load(\"@buildrules//ci:negative.bzl\", \"negative_problems\")\n    negative = negative_problems(ctx)\n    if problems or negative:\n";
     try expectNone(try wiringFindings(a, ok));
-    try expectOne(try wiringFindings(a, "load(\"@buildrules//ci:negative.bzl\", \"negative_problems\")\n"), "problems += negative_problems(ctx)");
-    try expectOne(try wiringFindings(a, "    problems += negative_problems(ctx)\n"), "load(\"@buildrules//ci:negative.bzl\"");
+    try expectOne(try wiringFindings(a, "load(\"@buildrules//ci:negative.bzl\", \"negative_problems\")\n    if problems or negative:\n"), "negative = negative_problems(ctx)");
+    // The result is computed and never looked at: the check would pass whatever the fixture does.
+    try expectOne(try wiringFindings(a, "load(\"@buildrules//ci:negative.bzl\", \"negative_problems\")\n    negative = negative_problems(ctx)\n"), "if problems or negative:");
+    try expectOne(try wiringFindings(a, "    negative = negative_problems(ctx)\n    if problems or negative:\n"), "load(\"@buildrules//ci:negative.bzl\"");
     const none = try wiringFindings(a, "");
-    try t.expectEqual(@as(usize, 2), none.len);
+    try t.expectEqual(@as(usize, 3), none.len);
 }
