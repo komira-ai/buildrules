@@ -10,10 +10,13 @@
 //!
 //!   lines 87.31
 //!   branches 61.20
+//!   lines 95.51 slack 1.00     (a figure that depends on timing: anywhere from the floor to the floor plus the slack is the floor)
 //!
 //! (`#` starts a comment.) The check is a ratchet. A measured percentage below its floor fails: coverage fell. A measured percentage above it
 //! fails too, naming the number to write: a floor that lags behind the tests would let the coverage fall back to it unseen later. The
-//! percentage is hit/total rounded down to a hundredth, so the number is the same on every run of the same tests. A figure the file has and
+//! percentage is hit/total rounded down to a hundredth, so the number is the same on every run of the same tests. A figure the tests do not
+//! reproduce (the gate's tests race a clock and a signal, and the lines they reach differ by a few between machines) says so with `slack`: it
+//! holds anywhere from the floor to the floor plus the slack, and falling below the floor still fails. A figure the file has and
 //! the coverage lacks (or the other way round) fails: a package does not lose its branch figure by dropping the instrumentation.
 //!
 //! On success `--out` holds one line per figure: the percentage, the counts and how many more hits the 99% target needs.
@@ -29,7 +32,8 @@ pub const Measure = struct { hit: u64, total: u64 };
 
 pub const Coverage = struct { lines: Measure, branches: ?Measure };
 
-pub const Floor = struct { lines: u64, branches: ?u64 };
+/// The floors, in hundredths of a percent, each with the slack above it that is not a rise (0 unless the file gives one).
+pub const Floor = struct { lines: u64, branches: ?u64, lines_slack: u64 = 0, branches_slack: u64 = 0 };
 
 pub const ParseError = error{ BadCoverage, BadFloor, Nothing };
 
@@ -115,18 +119,30 @@ pub fn parseHundredths(s: []const u8) ?u64 {
 pub fn parseFloor(text: []const u8) ParseError!Floor {
     var lines: ?u64 = null;
     var branches: ?u64 = null;
+    var lines_slack: u64 = 0;
+    var branches_slack: u64 = 0;
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |raw| {
         const row = std.mem.trim(u8, if (std.mem.indexOfScalar(u8, raw, '#')) |h| raw[0..h] else raw, " \t\r");
         if (row.len == 0) continue;
-        const sp = std.mem.indexOfScalar(u8, row, ' ') orelse return error.BadFloor;
-        const key = row[0..sp];
-        const v = parseHundredths(std.mem.trim(u8, row[sp + 1 ..], " \t")) orelse return error.BadFloor;
-        const slot: *?u64 = if (std.mem.eql(u8, key, "lines")) &lines else if (std.mem.eql(u8, key, "branches")) &branches else return error.BadFloor;
+        // `<key> <NN.NN>` or `<key> <NN.NN> slack <NN.NN>`
+        var words = std.mem.tokenizeAny(u8, row, " \t");
+        const key = words.next() orelse return error.BadFloor;
+        const v = parseHundredths(words.next() orelse return error.BadFloor) orelse return error.BadFloor;
+        var slack: u64 = 0;
+        if (words.next()) |w| {
+            if (!std.mem.eql(u8, w, "slack")) return error.BadFloor;
+            slack = parseHundredths(words.next() orelse return error.BadFloor) orelse return error.BadFloor;
+            if (slack == 0 or words.next() != null) return error.BadFloor;
+        }
+        const is_lines = std.mem.eql(u8, key, "lines");
+        if (!is_lines and !std.mem.eql(u8, key, "branches")) return error.BadFloor;
+        const slot: *?u64 = if (is_lines) &lines else &branches;
         if (slot.* != null) return error.BadFloor;
         slot.* = v;
+        if (is_lines) lines_slack = slack else branches_slack = slack;
     }
-    return .{ .lines = lines orelse return error.BadFloor, .branches = branches };
+    return .{ .lines = lines orelse return error.BadFloor, .branches = branches, .lines_slack = lines_slack, .branches_slack = branches_slack };
 }
 
 fn fmtHundredths(a: std.mem.Allocator, v: u64) ![]u8 {
@@ -134,22 +150,22 @@ fn fmtHundredths(a: std.mem.Allocator, v: u64) ![]u8 {
 }
 
 /// What is wrong with one figure, or null when it is its floor.
-fn judge(a: std.mem.Allocator, label: []const u8, what: []const u8, m: Measure, floor: u64) !?[]u8 {
+fn judge(a: std.mem.Allocator, label: []const u8, what: []const u8, m: Measure, floor: u64, slack: u64) !?[]u8 {
     const now = try bp(m);
-    if (now == floor) return null;
+    if (now >= floor and now <= floor + slack) return null;
     if (now < floor) {
         return try std.fmt.allocPrint(a, "{s}: {s} coverage is {s}% ({d}/{d}), below its floor {s}%: coverage fell", .{ label, what, try fmtHundredths(a, now), m.hit, m.total, try fmtHundredths(a, floor) });
     }
-    return try std.fmt.allocPrint(a, "{s}: {s} coverage is {s}% ({d}/{d}), above its floor {s}%: raise the floor to {s} (floors only rise, and a floor behind the tests lets the coverage fall back to it unseen)", .{ label, what, try fmtHundredths(a, now), m.hit, m.total, try fmtHundredths(a, floor), try fmtHundredths(a, now) });
+    return try std.fmt.allocPrint(a, "{s}: {s} coverage is {s}% ({d}/{d}), above its floor {s}%{s}: raise the floor to {s} (floors only rise, and a floor behind the tests lets the coverage fall back to it unseen)", .{ label, what, try fmtHundredths(a, now), m.hit, m.total, try fmtHundredths(a, floor), if (slack == 0) "" else " and its slack", try fmtHundredths(a, now) });
 }
 
 /// Every way `cov` is not `floor`; empty when it is held.
 pub fn check(a: std.mem.Allocator, label: []const u8, cov: Coverage, floor: Floor) ![]const []const u8 {
     var bad = std.ArrayList([]const u8).empty;
-    if (try judge(a, label, "line", cov.lines, floor.lines)) |m| try bad.append(a, m);
+    if (try judge(a, label, "line", cov.lines, floor.lines, floor.lines_slack)) |m| try bad.append(a, m);
     if (cov.branches) |b| {
         if (floor.branches) |f| {
-            if (try judge(a, label, "branch", b, f)) |m| try bad.append(a, m);
+            if (try judge(a, label, "branch", b, f, floor.branches_slack)) |m| try bad.append(a, m);
         } else try bad.append(a, try std.fmt.allocPrint(a, "{s}: the tests record branches ({d}/{d}) and the floor file has no `branches` figure: add `branches {s}`", .{ label, b.hit, b.total, try fmtHundredths(a, try bp(b)) }));
     } else if (floor.branches != null) {
         try bad.append(a, try std.fmt.allocPrint(a, "{s}: the floor file has a `branches` figure and the tests record no branches: the instrumentation was dropped", .{label}));

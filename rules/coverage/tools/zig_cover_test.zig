@@ -95,6 +95,23 @@ test "zigArgv: LLVM's code generator, block counters, the coverage runner, and n
     for (want, v) |w, g| try t.expectEqualStrings(w, g);
 }
 
+test "includeDirs: the directories of the files, once each, in order; a file with no directory is itself" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const d = try Z.includeDirs(a, &.{ "cli/src/a.zig", "cli/src/b.zig", "tools/release/binhdr.zig", "cli/src/c.zig", "top.zig", "cli/version.zig" });
+    const want = [_][]const u8{ "cli/src", "tools/release", "top.zig", "cli" };
+    try t.expectEqual(want.len, d.len);
+    for (want, d) |w, g| try t.expectEqualStrings(w, g);
+    try t.expectEqual(@as(usize, 0), (try Z.includeDirs(a, &.{})).len);
+    // Forty files under one directory are one option of a few bytes, whatever the working directory is.
+    var many: [40][]const u8 = undefined;
+    for (&many, 0..) |*m, i| m.* = try std.fmt.allocPrint(a, "rules/kpin/file_{d}.zig", .{i});
+    const one = try Z.includeDirs(a, &many);
+    try t.expectEqual(@as(usize, 1), one.len);
+    try t.expectEqualStrings("rules/kpin", one[0]);
+}
+
 test "normalizeArgv: the tree is mapped to repository paths and its directory forbidden in the output" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();

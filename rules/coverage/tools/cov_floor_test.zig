@@ -65,6 +65,34 @@ test "parseFloor: a missing, repeated, unknown or malformed figure is refused" {
     }
 }
 
+test "parseFloor: a figure may name the slack above its floor that is not a rise" {
+    const f = try F.parseFloor("lines 95.51 slack 1.00\nbranches 15.56\n");
+    try t.expectEqual(@as(u64, 9551), f.lines);
+    try t.expectEqual(@as(u64, 100), f.lines_slack);
+    try t.expectEqual(@as(u64, 0), f.branches_slack);
+    const g = try F.parseFloor("lines 95.51\nbranches 15.56 slack 0.25  # a race\n");
+    try t.expectEqual(@as(u64, 0), g.lines_slack);
+    try t.expectEqual(@as(u64, 25), g.branches_slack);
+    for ([_][]const u8{ "lines 95.51 slack\n", "lines 95.51 slack 0.00\n", "lines 95.51 slack 1.00 extra\n", "lines 95.51 margin 1.00\n", "lines 95.51 slack 1\n" }) |text| {
+        try t.expectError(error.BadFloor, F.parseFloor(text));
+    }
+}
+
+test "check: within the slack above the floor is held; above it is a rise, below the floor is a fall whatever the slack" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cov = try F.parseCoverage(SUMMARY); // lines 80.00, branches 60.00
+    try t.expectEqual(@as(usize, 0), (try arenaCheck(a, cov, try F.parseFloor("lines 79.50 slack 0.50\nbranches 60.00\n"))).len);
+    try t.expectEqual(@as(usize, 0), (try arenaCheck(a, cov, try F.parseFloor("lines 80.00 slack 0.50\nbranches 60.00\n"))).len);
+    const rise = try arenaCheck(a, cov, try F.parseFloor("lines 79.00 slack 0.50\nbranches 60.00\n"));
+    try t.expectEqual(@as(usize, 1), rise.len);
+    try t.expect(std.mem.indexOf(u8, rise[0], "above its floor 79.00% and its slack: raise the floor to 80.00") != null);
+    const fall = try arenaCheck(a, cov, try F.parseFloor("lines 80.50 slack 1.00\nbranches 60.00\n"));
+    try t.expectEqual(@as(usize, 1), fall.len);
+    try t.expect(std.mem.indexOf(u8, fall[0], "below its floor 80.50%: coverage fell") != null);
+}
+
 test "bp: hit over total, rounded down to a hundredth; 0 of 0 counts nothing" {
     try t.expectEqual(@as(u64, 6666), try F.bp(.{ .hit = 2, .total = 3 }));
     try t.expectEqual(@as(u64, 10000), try F.bp(.{ .hit = 5, .total = 5 }));

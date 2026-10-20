@@ -35,7 +35,9 @@ built with LLVM's code generator and block counters, run under kcov, in one acti
 | `:cov_floor` | the floor check; also `--jest-summary` for a jest `coverage-summary.json` (`jest_cover.bzl`) |
 
 **Lines** are kcov's. They need `-fllvm`: with zig's own x86_64 backend kcov finds no line of the sources. The executable's debug information names the sources by
-absolute path, so the build and the run are one action.
+absolute path, so the build and the run are one action. kcov is told the directories of the included files, not the files: it refuses an option of more than a fixed
+length ("Too long string!"), and a package of thirty files under a hosted runner's long working directory is longer. The report lists the files of those directories that the
+executable holds code of; the summary counts only `expect`.
 
 **Branches.** kcov records none for a Zig executable: its report has no `branch` attribute (a farm run of `cov_summary_test.zig` gave `grep -c 'branch="true"'`
 = 0), the line table has no branch information. The figure comes from the compiler instead: `-ffuzz` has LLVM insert a counter in every basic block (sanitizer
@@ -61,7 +63,8 @@ What both figures leave out:
 
 **The floor.** `coverage_floor.txt` holds `lines NN.NN` and `branches NN.NN` (hit over recorded, rounded down to a hundredth). A figure below its floor fails, naming the
 fall; a figure above it fails too, naming the number to write, so the floor is always what the tests reach. A figure the file has and the measurement lacks, or the other way,
-fails. A pin bump of zig or kcov can move the numbers: raise or lower the floor in the same change and say why. The success output of `:coverage_floor` says how many more
+fails. A figure that the tests do not reproduce (`rules/gate`'s tests race a clock and signals: the lines they reach differ by a few between machines) says so with
+`lines 95.51 slack 1.00`: it holds anywhere from the floor to the floor plus the slack, and a fall below the floor still fails. A pin bump of zig or kcov can move the numbers: raise or lower the floor in the same change and say why. The success output of `:coverage_floor` says how many more
 hits the 99% target needs.
 
 To add a package: `zig_coverage(test_targets = [":a_unit", ...], expect = ["pkg/a.zig", ...])` after its `zig_test` targets, a `coverage_floor.txt` with today's figures

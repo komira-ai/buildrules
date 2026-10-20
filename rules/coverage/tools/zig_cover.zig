@@ -132,6 +132,20 @@ pub fn zigArgv(a: std.mem.Allocator, r: Args, bin: []const u8) ![]const []const 
     return a.dupe([]const u8, &.{ zig, "test", "-fllvm", "-ffuzz", "--test-runner", r.runner, "--test-no-exec", "-target", r.target, emit, r.root });
 }
 
+/// What kcov is told to measure: the directories of the included files, once each (a file with no directory stays itself). kcov refuses an
+/// option longer than a fixed length ("Too long string!"), and a package of thirty files under a runner's long working directory is longer; the report is
+/// the same, since kcov lists only files the executable holds code of, and what is not counted is left out by cov_summary.
+pub fn includeDirs(a: std.mem.Allocator, includes: []const []const u8) ![]const []const u8 {
+    var out = std.ArrayList([]const u8).empty;
+    for (includes) |inc| {
+        const entry = std.fs.path.dirname(inc) orelse inc;
+        var seen = false;
+        for (out.items) |o| seen = seen or std.mem.eql(u8, o, entry);
+        if (!seen) try out.append(a, entry);
+    }
+    return out.toOwnedSlice(a);
+}
+
 /// cov_normalize's command line: the report `raw`, the tree rooted at `cwd` mapped to repository paths.
 pub fn normalizeArgv(a: std.mem.Allocator, r: Args, raw: []const u8, out: []const u8, cwd: []const u8) ![]const []const u8 {
     return a.dupe([]const u8, &.{
@@ -288,7 +302,7 @@ pub fn main() !void {
     var kc = C.Args{
         .kcov = rr.kcov,
         .binary = bin,
-        .includes = r.includes,
+        .includes = try includeDirs(a, r.includes),
         .binary_args = if (r.blocks) &.{try std.fmt.allocPrint(a, "--cov-out={s}", .{raw_blocks})} else &.{},
     };
     kc.share = cwd;

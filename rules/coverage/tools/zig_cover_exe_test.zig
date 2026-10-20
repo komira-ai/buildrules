@@ -36,7 +36,8 @@ fn lineOf(text: []const u8, needle: []const u8) !usize {
 
 const Run = struct { code: u8, stderr: []const u8, lines: ?[]const u8, blocks: ?[]const u8 };
 
-var shared_cache: ?[]const u8 = null;
+/// The standard library's cache of the cases, one per zig (a cache is not shared between versions).
+var shared_cache = [2]?[]const u8{ null, null };
 
 /// A fresh directory with the fixtures (`fx/mini.zig`, the test file as `fx/t_test.zig` and the runner), zig_cover run in it over
 /// `fx/t_test.zig` including `fx/mini.zig` and `extra_include`, and what it wrote.
@@ -48,9 +49,10 @@ fn cover(a: std.mem.Allocator, zig: []const u8, test_source: []const u8, extra: 
     try tmp.dir.writeFile(.{ .sub_path = "fx/t_test.zig", .data = test_source });
     try tmp.dir.writeFile(.{ .sub_path = "zig_cov_runner.zig", .data = runner });
     const root = try tmp.dir.realpathAlloc(a, ".");
-    if (shared_cache == null) {
-        shared_cache = try std.fs.cwd().realpathAlloc(a, ".");
-        shared_cache = try std.fs.path.join(a, &.{ shared_cache.?, ".zig-cache-shared" });
+    const which: usize = if (std.mem.eql(u8, zig, "PINNED_ZIG")) 0 else 1;
+    if (shared_cache[which] == null) {
+        const here = try std.fs.cwd().realpathAlloc(std.heap.page_allocator, ".");
+        shared_cache[which] = try std.fmt.allocPrint(std.heap.page_allocator, "{s}/.zig-cache-shared-{d}", .{ here, which });
     }
     var argv = std.ArrayList([]const u8).empty;
     try argv.appendSlice(a, &.{
@@ -76,7 +78,7 @@ fn cover(a: std.mem.Allocator, zig: []const u8, test_source: []const u8, extra: 
     var env = std.process.EnvMap.init(a);
     try env.put("PATH", "/usr/bin:/bin");
     try env.put("HOME", root);
-    try env.put("ZIG_GLOBAL_CACHE_DIR", shared_cache.?);
+    try env.put("ZIG_GLOBAL_CACHE_DIR", shared_cache[which].?);
     try env.put("ZIG_LOCAL_CACHE_DIR", try std.fs.path.join(a, &.{ root, ".zig-cache" }));
     try tmp.dir.makePath("out");
     const r = try std.process.Child.run(.{ .allocator = a, .argv = argv.items, .cwd_dir = tmp.dir, .env_map = &env, .max_output_bytes = 1 << 22 });
@@ -96,6 +98,15 @@ fn cover(a: std.mem.Allocator, zig: []const u8, test_source: []const u8, extra: 
 }
 
 const BLOCKS = [_][]const u8{ "--runner", "zig_cov_runner.zig", "--out-blocks", "out/blocks" };
+
+/// The `<class>` of `file` in a normalized report.
+fn classOf(xml: []const u8, file: []const u8) ![]const u8 {
+    var buf: [128]u8 = undefined;
+    const needle = try std.fmt.bufPrint(&buf, "filename=\"{s}\">", .{file});
+    const at = std.mem.indexOf(u8, xml, needle) orelse return error.TestUnexpectedResult;
+    const rest = xml[at..];
+    return rest[0 .. std.mem.indexOf(u8, rest, "</class>") orelse return error.TestUnexpectedResult];
+}
 
 fn lineHits(xml: []const u8, line: usize) ?[]const u8 {
     var buf: [48]u8 = undefined;
@@ -145,17 +156,18 @@ test "a passing run: the arms the tests reach are hit, the arm they do not is no
         std.debug.print("exit {d}; stderr:\n{s}\n", .{ r.code, r.stderr });
         return error.TestUnexpectedResult;
     }
-    const xml = r.lines orelse return error.TestUnexpectedResult;
+    const whole = r.lines orelse return error.TestUnexpectedResult;
+    const xml = try classOf(whole, "fx/mini.zig");
     const blocks = r.blocks orelse return error.TestUnexpectedResult;
 
     // Lines: kcov's, mapped to the repository path, clamped to 0 or 1.
-    try std.testing.expect(std.mem.indexOf(u8, xml, "<class name=\"fx/mini.zig\" filename=\"fx/mini.zig\">") != null);
+    try std.testing.expect(std.mem.indexOf(u8, whole, "<class name=\"fx/mini.zig\" filename=\"fx/mini.zig\">") != null);
     try std.testing.expectEqualStrings("1", lineHits(xml, try lineOf(mini, "return \"negative\"")) orelse "missing");
     try std.testing.expectEqualStrings("1", lineHits(xml, try lineOf(mini, "return \"positive\"")) orelse "missing");
     try std.testing.expectEqualStrings("0", lineHits(xml, try lineOf(mini, "return \"zero\"")) orelse "missing");
-    // The test file was not asked for, and no absolute path of the run is in the report.
-    try std.testing.expect(std.mem.indexOf(u8, xml, "t_test.zig") == null);
-    try std.testing.expect(std.mem.indexOf(u8, xml, "/tmp") == null and std.mem.indexOf(u8, xml, ".zig-cache") == null);
+    // No absolute path of the run is in the report. (kcov is told the directories of the included files, so the test file beside them is listed too; the summary
+    // counts only the package's own sources.)
+    try std.testing.expect(std.mem.indexOf(u8, whole, "/tmp") == null and std.mem.indexOf(u8, whole, ".zig-cache") == null and std.mem.indexOf(u8, whole, "filename=\"/") == null);
 
     // Blocks: the compiler's, counted per position. classify has five: the entry, and the two arms of each of its two conditions; the one the
     // tests do not reach is the arm of `n == 0` that returns "zero".
