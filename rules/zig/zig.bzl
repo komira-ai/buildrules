@@ -426,3 +426,19 @@ zig_bootstrap_exe = _on_linux(zig_bootstrap_exe_rule)
 zig_exe = _on_linux(zig_exe_rule)
 zig_test = _on_linux(zig_test_rule)
 zig_module = zig_module_rule
+
+def _zig_exe_target_test_impl(ctx):
+    got = ctx.attrs.exe[ZigExeInfo].target
+    if got != ctx.attrs.expect:
+        fail("{}: {} is built for {}, not {}".format(ctx.label.raw_target(), ctx.attrs.exe.label.raw_target(), repr(got), repr(ctx.attrs.expect)))
+    return [DefaultInfo(default_output = ctx.actions.write(ctx.label.name + ".passed", "{} is built for {}\n".format(ctx.attrs.exe.label.raw_target(), got)))]
+
+# An analysis test: green only if `exe` (a `zig_exe`) is built for the zig target triple `expect`. It builds nothing but a marker, so it is
+# cheap; the executable's own bytes are checked by a `zig_test` that reads its file header (cli/header_test.zig).
+zig_exe_target_test = rule(
+    impl = _zig_exe_target_test_impl,
+    attrs = {
+        "exe": attrs.dep(providers = [ZigExeInfo]),
+        "expect": attrs.string(),
+    },
+)

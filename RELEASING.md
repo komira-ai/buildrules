@@ -134,6 +134,34 @@ and says so) rather than released.
 `cli/src/version_test.zig` holds the stamp to that shape against the `VERSION` file, as a test welded to the program. The release holds the other end: `verify` runs the program
 the `cli` job built and fails the release unless it prints the release's own number. The program is not a release asset yet; the stamp is checked so that it is right when it becomes one.
 
+### The command-line binaries
+
+`cli/BUCK` builds the program for the four release targets, from one source and the same tests (only zig's `-target` differs; all are built on the Linux execution
+platform, as a pure-Zig program needs no SDK to cross-compile):
+
+| release target | target | zig `-target` |
+|---|---|---|
+| `linux-x86_64` | `//cli:buildrules_linux_x86_64` | `x86_64-linux-musl` |
+| `linux-aarch64` | `//cli:buildrules_linux_aarch64` | `aarch64-linux-musl` |
+| `macos-arm64` | `//cli:buildrules_macos_arm64` | `aarch64-macos` |
+| `macos-x86_64` | `//cli:buildrules_macos_x86_64` | `x86_64-macos` |
+
+Two tests hold each target to its name. An analysis test per target (`zig_exe_target_test`, spelled with the triple again, so a change to one side alone is red) checks the triple the
+rule was given; `//cli:header_unit` reads the four built files and requires an ELF of the right machine with no dynamic loader (Linux), or a 64-bit Mach-O executable of the
+right cpu (macOS), and that no binary passes as another target's (`tools/release/binhdr.zig`).
+
+`tools/release` packages them (`binaries.zig`; the five commands below take their inputs by flag and upload nothing). The release workflow does not call them yet: until it does, a
+release holds the source archive alone, and `verify` still expects `SHA256SUMS` to be one line.
+
+- `release package --version V --target T --binary PATH --license PATH --out DIR --exec native|none` writes `buildrules-cli-V-T.tar.gz` holding `buildrules-cli-V-T/buildrules` (0755)
+  and `LICENSE`, every entry with time 0 and the tool's own gzip, so the same inputs make the same bytes. The name keeps the tarball apart from the source archive
+  `buildrules-V.tar.gz`. It refuses a binary whose header is another target's, and one that does not say `buildrules V`: with `--exec native` it runs `--version`; with `--exec none`
+  (a binary this machine cannot run) it looks for the version text in the file, a weaker check that a run on the target's own platform must back.
+- `release record --tarball PATH --out DIR` writes the sha256 of a tarball a user-beta leg ran, and `release tested --dist DIR --tested DIR` refuses unless the tarballs to attest are, byte
+  for byte, the ones recorded for `linux-x86_64`, `linux-aarch64` and `macos-arm64` (the Intel macOS binary has no runner), of one version, and nothing else is recorded.
+- `release sums --dist DIR` writes `SHA256SUMS` over the source archive and the four tarballs in name order (five lines) and reads it back; it refuses a missing, stray or other-version tarball.
+- `release sign --dist DIR [--cosign PATH]` runs keyless `cosign sign-blob` on those five files and `SHA256SUMS`, and refuses a bundle that is missing, empty or already there.
+
 ## What is released
 
 A green commit on `main` is released when the files changed since the last release tag include one that is not documentation or CI. The

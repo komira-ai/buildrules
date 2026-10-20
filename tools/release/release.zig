@@ -9,6 +9,11 @@
 //!   release site    --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --out DIR
 //!   release bump-check    --internal-repo OWNER/NAME
 //!   release bump-internal --repo OWNER/NAME --tag TAG --sha SHA --internal-repo OWNER/NAME --submodule PATH --workdir EMPTYDIR   (GH_TOKEN: the release bot's)
+//!   release package --version V --target T --binary PATH --license PATH --out DIR --exec native|none   (binaries.zig: buildrules-cli-V-T.tar.gz)
+//!   release record  --tarball PATH --out DIR      the sha256 of a tarball a user-beta leg ran
+//!   release tested  --dist DIR --tested DIR       the tarballs to attest are the ones the user beta ran
+//!   release sums    --dist DIR                      SHA256SUMS over the source archive and the four tarballs
+//!   release sign    --dist DIR [--cosign PATH]      a keyless cosign bundle per file
 //!
 //! Exit 0 when the step succeeded (`plan` also when it decided there is nothing to release), 1 when a check failed, 2 on a bad command line.
 const std = @import("std");
@@ -16,6 +21,7 @@ const cmds = @import("cmds.zig");
 const bump = @import("bump.zig");
 const version = @import("version.zig");
 const page = @import("page.zig");
+const binaries = @import("binaries.zig");
 
 const Args = struct {
     names: []const []const u8,
@@ -83,6 +89,12 @@ fn join(a: std.mem.Allocator, dir: []const u8, name: []const u8) ![]u8 {
     return std.fs.path.join(a, &.{ dir, name });
 }
 
+/// A refused binaries step: the step has said why on stderr; the exit code is 1 (a check failed).
+fn failed(cmd: []const u8, e: anyerror) u8 {
+    std.debug.print("release {s}: refused ({s})\n", .{ cmd, @errorName(e) });
+    return 1;
+}
+
 fn appendFile(path: []const u8, bytes: []const u8) !void {
     const f = try std.fs.cwd().createFile(path, .{ .truncate = false });
     defer f.close();
@@ -96,7 +108,7 @@ pub fn main() !u8 {
     const a = arena.allocator();
     const argv = try std.process.argsAlloc(a);
     if (argv.len < 2) {
-        std.debug.print("usage: release plan|tag|archive|verify|publish|site|bump-check|bump-internal --flag value ...\n", .{});
+        std.debug.print("usage: release plan|tag|archive|verify|publish|site|bump-check|bump-internal|package|record|tested|sums|sign --flag value ...\n", .{});
         return 2;
     }
     var unused: u8 = 0;
@@ -243,6 +255,48 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         std.debug.print("{s}\n", .{r.text});
         return 1;
     }
+    if (std.mem.eql(u8, cmd, "package")) {
+        const g = try parseArgs(a, rest, &.{ "version", "target", "binary", "license", "out", "exec" });
+        const exec_text = try g.need("exec");
+        const exec: binaries.Exec = if (std.mem.eql(u8, exec_text, "native")) .native else if (std.mem.eql(u8, exec_text, "none")) .none else {
+            std.debug.print("release: --exec is `native` (run the binary) or `none` (it cannot run on this machine), not `{s}`\n", .{exec_text});
+            return error.Usage;
+        };
+        const p = binaries.package(a, io, .{
+            .version = try g.need("version"),
+            .target = try g.need("target"),
+            .binary = try g.need("binary"),
+            .license = try g.need("license"),
+            .out = try g.need("out"),
+            .exec = exec,
+        }) catch |e| return failed("package", e);
+        say("release package: {s} {s}\n", .{ p.name, p.sha256 });
+        return 0;
+    }
+    if (std.mem.eql(u8, cmd, "record")) {
+        const g = try parseArgs(a, rest, &.{ "tarball", "out" });
+        const name = binaries.record(a, try g.need("tarball"), try g.need("out")) catch |e| return failed("record", e);
+        say("release record: {s}\n", .{name});
+        return 0;
+    }
+    if (std.mem.eql(u8, cmd, "tested")) {
+        const g = try parseArgs(a, rest, &.{ "dist", "tested" });
+        binaries.tested(a, try g.need("dist"), try g.need("tested")) catch |e| return failed("tested", e);
+        say("release tested: the tarballs of {s} are the ones the user beta ran\n", .{g.get("dist").?});
+        return 0;
+    }
+    if (std.mem.eql(u8, cmd, "sums")) {
+        const g = try parseArgs(a, rest, &.{"dist"});
+        const d = binaries.sums(a, try g.need("dist")) catch |e| return failed("sums", e);
+        say("release sums: SHA256SUMS over {d} files of {s}\n", .{ d.files.len, d.version });
+        return 0;
+    }
+    if (std.mem.eql(u8, cmd, "sign")) {
+        const g = try parseArgs(a, rest, &.{ "dist", "cosign" });
+        const n = binaries.sign(a, io, try g.need("dist"), g.get("cosign") orelse "cosign") catch |e| return failed("sign", e);
+        say("release sign: {d} bundles\n", .{n});
+        return 0;
+    }
     std.debug.print("release: unknown command `{s}`\n", .{cmd});
     return error.Usage;
 }
@@ -319,4 +373,104 @@ test "site writes the page of the verified release from its SHA256SUMS, and refu
     const bad_sha = [_][]const u8{ "--repo", "org/name", "--tag", "v0.0.7", "--sha", "e" ** 39, "--dist", dist, "--out", out };
     try t.expectError(error.BadSha, run(a, io, "site", &bad_sha));
     try t.expectError(error.Usage, run(a, io, "site", &.{ "--repo", "org/name" }));
+}
+
+test "the binaries commands: usage errors run nothing, a refused step exits 1, a good one 0" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var unused_ctx: u8 = 0;
+    const io = cmds.Io{ .ctx = &unused_ctx, .run_fn = realRun, .write_fn = realWrite };
+    try t.expectError(error.Usage, run(a, io, "package", &.{ "--version", "0.0.7" }));
+    try t.expectError(error.Usage, run(a, io, "record", &.{"--tarball"}));
+    try t.expectError(error.Usage, run(a, io, "tested", &.{ "--dist", "d", "--bogus", "x" }));
+    try t.expectError(error.Usage, run(a, io, "sums", &.{}));
+    try t.expectError(error.Usage, run(a, io, "sign", &.{ "--cosign", "c" }));
+    // --exec is native or none: anything else is a usage error, not a guess
+    try t.expectError(error.Usage, run(a, io, "package", &.{ "--version", "0.0.7", "--target", "linux-x86_64", "--binary", "b", "--license", "l", "--out", "o", "--exec", "maybe" }));
+    // a directory with no release in it is a refusal (1), not a crash
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const dist = try tmp.dir.realpathAlloc(a, ".");
+    try t.expectEqual(@as(u8, 1), try run(a, io, "sums", &.{ "--dist", dist }));
+    try t.expectEqual(@as(u8, 1), try run(a, io, "sign", &.{ "--dist", dist, "--cosign", "/nonexistent/cosign" }));
+    try t.expectEqual(@as(u8, 1), try run(a, io, "tested", &.{ "--dist", dist, "--tested", dist }));
+    try t.expectEqual(@as(u8, 1), try run(a, io, "record", &.{ "--tarball", "buildrules-0.0.7.tar.gz", "--out", dist }));
+}
+
+test "package then record then sums through the command line, with a binary this machine does not run" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const base = try tmp.dir.realpathAlloc(a, ".");
+    var unused_ctx: u8 = 0;
+    const io = cmds.Io{ .ctx = &unused_ctx, .run_fn = realRun, .write_fn = realWrite };
+    // an arm64 Mach-O header and the stamped text: enough for `--exec none`
+    var mach = [_]u8{0} ** 64;
+    @memcpy(mach[0..4], "\xcf\xfa\xed\xfe");
+    std.mem.writeInt(u32, mach[4..8], 0x0100000c, .little);
+    std.mem.writeInt(u32, mach[12..16], 2, .little);
+    try tmp.dir.writeFile(.{ .sub_path = "bin", .data = try std.mem.concat(a, u8, &.{ &mach, "0.0.7" }) });
+    try tmp.dir.writeFile(.{ .sub_path = "LICENSE", .data = "l\n" });
+    const args = [_][]const u8{ "--version", "0.0.7", "--target", "macos-arm64", "--binary", try join(a, base, "bin"), "--license", try join(a, base, "LICENSE"), "--out", try join(a, base, "dist"), "--exec", "none" };
+    try t.expectEqual(@as(u8, 0), try run(a, io, "package", &args));
+    // the same binary under another target's name is refused
+    var wrong = args;
+    wrong[3] = "linux-aarch64";
+    try t.expectEqual(@as(u8, 1), try run(a, io, "package", &wrong));
+    try t.expectEqual(@as(u8, 0), try run(a, io, "record", &.{ "--tarball", try join(a, base, "dist/buildrules-cli-0.0.7-macos-arm64.tar.gz"), "--out", try join(a, base, "rec") }));
+    _ = try tmp.dir.statFile("rec/buildrules-cli-0.0.7-macos-arm64.tar.gz.sha256");
+}
+
+/// A `run` that answers every command with `says` and counts the commands.
+const Says = struct {
+    says: []const u8,
+    calls: usize = 0,
+
+    fn answer(ctx: *anyopaque, _: std.mem.Allocator, _: []const []const u8) anyerror!cmds.Out {
+        const self: *Says = @ptrCast(@alignCast(ctx));
+        self.calls += 1;
+        return .{ .code = 0, .stdout = self.says, .stderr = "" };
+    }
+
+    fn io(self: *Says) cmds.Io {
+        return .{ .ctx = self, .run_fn = answer, .write_fn = realWrite };
+    }
+};
+
+test "--exec native runs the binary for its version, and --exec none does not run it" {
+    // The defect: the two words of --exec swapped, so a binary that can run is never asked its version (or one that cannot is run).
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const base = try tmp.dir.realpathAlloc(a, ".");
+    var elf = [_]u8{0} ** 120;
+    @memcpy(elf[0..4], "\x7fELF");
+    elf[4] = 2;
+    elf[5] = 1;
+    std.mem.writeInt(u16, elf[16..18], 2, .little);
+    std.mem.writeInt(u16, elf[18..20], 62, .little);
+    std.mem.writeInt(u64, elf[32..40], 64, .little);
+    std.mem.writeInt(u16, elf[54..56], 56, .little);
+    std.mem.writeInt(u16, elf[56..58], 1, .little);
+    std.mem.writeInt(u32, elf[64..68], 1, .little);
+    try tmp.dir.writeFile(.{ .sub_path = "bin", .data = &elf }); // no version text inside: only a run can vouch for it
+    try tmp.dir.writeFile(.{ .sub_path = "LICENSE", .data = "l\n" });
+    const out = try join(a, base, "dist");
+    var args = [_][]const u8{ "--version", "0.0.7", "--target", "linux-x86_64", "--binary", try join(a, base, "bin"), "--license", try join(a, base, "LICENSE"), "--out", out, "--exec", "native" };
+    var good = Says{ .says = "buildrules 0.0.7\n" };
+    try t.expectEqual(@as(u8, 0), try run(a, good.io(), "package", &args));
+    try t.expectEqual(@as(usize, 1), good.calls);
+    var bad = Says{ .says = "buildrules 0.0.3-poc\n" };
+    try t.expectEqual(@as(u8, 1), try run(a, bad.io(), "package", &args));
+    try t.expectEqual(@as(usize, 1), bad.calls);
+    // none: nothing is run, and the missing version text in the bytes is the refusal
+    args[11] = "none";
+    var idle = Says{ .says = "buildrules 0.0.7\n" };
+    try t.expectEqual(@as(u8, 1), try run(a, idle.io(), "package", &args));
+    try t.expectEqual(@as(usize, 0), idle.calls);
 }

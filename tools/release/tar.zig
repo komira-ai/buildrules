@@ -9,6 +9,8 @@ pub const Entry = struct {
     name: []const u8,
     kind: Kind,
     data: []const u8,
+    /// The permission bits `build` writes (`parse` leaves the default: it does not read them).
+    mode: u32 = 0o644,
 };
 
 pub const Error = error{ BadTar, OutOfMemory };
@@ -121,10 +123,10 @@ fn putOctal(field: []u8, value: u64) void {
     }
 }
 
-fn header(type_flag: u8, name: []const u8, size: u64) [512]u8 {
+fn header(type_flag: u8, name: []const u8, size: u64, mode: u32) [512]u8 {
     var h = [_]u8{0} ** 512;
     @memcpy(h[0..@min(name.len, 100)], name[0..@min(name.len, 100)]);
-    putOctal(h[100..108], 0o644);
+    putOctal(h[100..108], mode);
     putOctal(h[108..116], 0);
     putOctal(h[116..124], 0);
     putOctal(h[124..136], size);
@@ -150,7 +152,7 @@ pub fn build(a: std.mem.Allocator, entries: []const Entry) ![]u8 {
             for (0..3) |_| total = e.name.len + 7 + @as(usize, @intCast(std.fmt.count("{d}", .{total})));
             const body = try std.fmt.allocPrint(a, "{d} path={s}\n", .{ total, e.name });
             defer a.free(body);
-            const ph = header('x', "pax", body.len);
+            const ph = header('x', "pax", body.len, 0o644);
             try out.appendSlice(a, &ph);
             try out.appendSlice(a, body);
             try out.appendNTimes(a, 0, (512 - body.len % 512) % 512);
@@ -161,7 +163,7 @@ pub fn build(a: std.mem.Allocator, entries: []const Entry) ![]u8 {
             .dir => '5',
             .other => '3',
         };
-        const h = header(flag, e.name, e.data.len);
+        const h = header(flag, e.name, e.data.len, e.mode);
         try out.appendSlice(a, &h);
         try out.appendSlice(a, e.data);
         try out.appendNTimes(a, 0, (512 - e.data.len % 512) % 512);
@@ -204,7 +206,7 @@ test "git's global pax header (the commit id) is skipped, not listed" {
     const a = arena.allocator();
     const rec = "52 comment=0123456789012345678901234567890123456789\n";
     var tar = std.ArrayList(u8).empty;
-    const gh = header('g', "pax_global_header", rec.len);
+    const gh = header('g', "pax_global_header", rec.len, 0o644);
     try tar.appendSlice(a, &gh);
     try tar.appendSlice(a, rec);
     try tar.appendNTimes(a, 0, 512 - rec.len);
