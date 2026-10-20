@@ -1,0 +1,148 @@
+# The reusable workflow that uploads buildrules.dev (RELEASING.md "The site", infra/site/README.md). The AWS role `buildrules-prod-publish` trusts the
+# token of exactly this file, run from refs/heads/main, in the environment `prod` (infra/site/lib/config.ts): so the job below declares that environment, holds
+# `id-token: write`, and is called by site.yml alone. It checks nothing out: what it uploads is the artifact `site-dist` that site.yml built, and no
+# third-party action runs here (the token exchange is two calls, as mopm's deploy does it).
+#
+#   variables  the environment's three values (the bucket, the distribution, the role). If one is empty the job says so in a notice and does nothing else, and
+#              is green: before the one-time setup this whole workflow is a no-op, and a release is never made red by it.
+#   claims     `claims_only`: print the claims of the token (never the token) and stop, to compare with the role's trust before the first deploy.
+#   publish    assume the role (1 h), upload the hashed stylesheet first and immutable, then the pages (pruned) and the release pages (never pruned), flush
+#              the edge, and then fetch the site back and compare it with what was uploaded.
+#
+# ci/site_check.zig (`//ci:workflow`) holds this file to all of that.
+name: site-publish
+
+on:
+  workflow_call:
+    inputs:
+      claims_only:
+        type: boolean
+        required: false
+        default: false
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SITE_BUCKET: ${{ vars.BUILDRULES_SITE_BUCKET }}
+      SITE_DISTRIBUTION_ID: ${{ vars.BUILDRULES_SITE_DISTRIBUTION_ID }}
+      SITE_ROLE_ARN: ${{ vars.BUILDRULES_SITE_PUBLISH_ROLE_ARN }}
+      CLAIMS_ONLY: ${{ inputs.claims_only }}
+      AWS_DEFAULT_REGION: us-east-1
+      SITE_URL: https://buildrules.dev
+    steps:
+      - name: The variables of the environment are set
+        id: vars
+        run: |
+          set -euo pipefail
+          if [ "$CLAIMS_ONLY" = true ]; then
+            echo "mode=claims" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          missing=""
+          [ -n "$SITE_BUCKET" ] || missing="$missing BUILDRULES_SITE_BUCKET"
+          [ -n "$SITE_DISTRIBUTION_ID" ] || missing="$missing BUILDRULES_SITE_DISTRIBUTION_ID"
+          [ -n "$SITE_ROLE_ARN" ] || missing="$missing BUILDRULES_SITE_PUBLISH_ROLE_ARN"
+          if [ -n "$missing" ]; then
+            echo "::notice title=site not published::the environment prod has no value for:$missing. Nothing is deployed. Do the steps of infra/site/README.md (step 4 prints the commands that set them), then run the workflow site again."
+            echo "mode=skip" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::add-mask::$SITE_BUCKET"
+          echo "::add-mask::$SITE_DISTRIBUTION_ID"
+          echo "::add-mask::$SITE_ROLE_ARN"
+          echo "mode=publish" >> "$GITHUB_OUTPUT"
+
+      - name: The claims of the token
+        if: ${{ steps.vars.outputs.mode == 'claims' }}
+        run: |
+          set -euo pipefail
+          resp=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          jwt=$(printf '%s' "$resp" | jq -r .value)
+          echo "::add-mask::$jwt"
+          payload=$(printf '%s' "$jwt" | cut -d. -f2 | tr '_-' '/+')
+          pad=$(( (4 - ${#payload} % 4) % 4 ))
+          payload="$payload$(printf '%*s' "$pad" '' | tr ' ' '=')"
+          printf '%s' "$payload" | base64 -d | jq '{sub, job_workflow_ref, environment, repository_id, repository_owner_id, ref, aud}'
+
+      - name: Assume the publish role through OIDC
+        if: ${{ steps.vars.outputs.mode == 'publish' }}
+        run: |
+          set -euo pipefail
+          resp=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          jwt=$(printf '%s' "$resp" | jq -r .value)
+          echo "::add-mask::$jwt"
+          creds=$(aws sts assume-role-with-web-identity \
+            --role-arn "$SITE_ROLE_ARN" \
+            --role-session-name "buildrules-site-${GITHUB_RUN_ID}" \
+            --web-identity-token "$jwt" \
+            --duration-seconds 3600 \
+            --query Credentials --output json)
+          for k in AccessKeyId SecretAccessKey SessionToken; do
+            echo "::add-mask::$(printf '%s' "$creds" | jq -r ".$k")"
+          done
+          {
+            echo "AWS_ACCESS_KEY_ID=$(printf '%s' "$creds" | jq -r .AccessKeyId)"
+            echo "AWS_SECRET_ACCESS_KEY=$(printf '%s' "$creds" | jq -r .SecretAccessKey)"
+            echo "AWS_SESSION_TOKEN=$(printf '%s' "$creds" | jq -r .SessionToken)"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ steps.vars.outputs.mode == 'publish' }}
+        with:
+          name: site-dist
+          path: site-out
+
+      - name: The hashed stylesheet, first and immutable (a page still cached by a browser keeps its css)
+        if: ${{ steps.vars.outputs.mode == 'publish' }}
+        run: aws s3 sync site-out/tree/assets "s3://$SITE_BUCKET/assets" --no-progress --exclude 'icon.svg' --cache-control 'public, max-age=31536000, immutable'
+
+      - name: The pages and the unhashed files, pruned
+        if: ${{ steps.vars.outputs.mode == 'publish' }}
+        run: aws s3 sync site-out/tree "s3://$SITE_BUCKET/" --no-progress --delete --exclude 'assets/site.*.css' --exclude 'releases/*' --cache-control 'public, max-age=60, s-maxage=300'
+
+      - name: The page of the release, never pruned
+        if: ${{ steps.vars.outputs.mode == 'publish' }}
+        run: |
+          if [ -d site-out/release/releases ]; then
+            aws s3 sync site-out/release/releases "s3://$SITE_BUCKET/releases" --no-progress --cache-control 'public, max-age=60, s-maxage=300'
+          else
+            echo "no release page in this upload"
+          fi
+
+      - name: Flush the edge
+        if: ${{ steps.vars.outputs.mode == 'publish' }}
+        run: aws cloudfront create-invalidation --distribution-id "$SITE_DISTRIBUTION_ID" --paths '/*'
+
+      # The role cannot wait on the invalidation, so each fetch is retried until the edge serves the bytes that were uploaded.
+      - name: Smoke test
+        if: ${{ steps.vars.outputs.mode == 'publish' }}
+        run: |
+          set -euo pipefail
+          want() { # url, status, file the body must equal
+            local got=""
+            for i in $(seq 1 20); do
+              got=$(curl -s -o "$RUNNER_TEMP/body" -w '%{http_code}' "$1" || true)
+              if [ "$got" = "$2" ] && cmp -s "$RUNNER_TEMP/body" "$3"; then
+                echo "$1 -> $got, the uploaded bytes"
+                return 0
+              fi
+              sleep 15
+            done
+            echo "smoke test failed: $1 answered $got, wanted $2 with the uploaded bytes" >&2
+            return 1
+          }
+          want "$SITE_URL/" 200 site-out/tree/index.html
+          want "$SITE_URL/no-such-page-$GITHUB_RUN_ID/" 404 site-out/tree/404.html
+          curl -sI "$SITE_URL/" | grep -i '^content-security-policy: default-src' > /dev/null
+          if [ -d site-out/release/releases ]; then
+            tag=$(ls site-out/release/releases | sort -V | tail -n 1)
+            want "$SITE_URL/releases/$tag/" 200 "site-out/release/releases/$tag/index.html"
+          fi

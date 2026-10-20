@@ -97,13 +97,28 @@ cd infra/site && npm ci --ignore-scripts
 ## The publish workflow
 
 The role trusts a workflow named exactly `.github/workflows/site-publish.yml`, run from `refs/heads/main`, in GitHub
-environment `prod`. **That file does not exist in this repository yet**: no workflow is written, enabled or held here, so
-until someone adds it nothing can assume the role. When it is written, it must be a reusable workflow, and it must:
+environment `prod`. That file exists: it is a reusable workflow, called by `.github/workflows/site.yml` (after a green
+`release` run on `main`, or by hand), and `ci/site_check.zig` holds both files to what follows.
 
-- set `permissions: id-token: write` on a job that declares `environment: prod`, inside that file;
-- be called with `uses: <owner>/<name>/.github/workflows/site-publish.yml@refs/heads/main` (a branch ref, not a SHA);
-- build `site/` (`buck2 build //site:dist`), read the three variables from step 4, assume the role (1 h session),
-  `aws s3 sync` the `dist/` tree with `--delete`, and create an invalidation of `/*`.
+- Its one job declares `environment: prod` and `permissions: id-token: write` (with `contents: read`), inside that file.
+  The caller grants `id-token: write` to that one call and to nothing else.
+- The call is `uses: ./.github/workflows/site-publish.yml`. The public repository's scrub does not allow the owner's name
+  in a file, so the explicit `<owner>/<name>/.github/workflows/site-publish.yml@refs/heads/main` form is not used. For a run
+  from `main` the local path is the same file at the same ref, so `job_workflow_ref` should be the one the role trusts; this
+  is the claim step 5 below prints, and it decides. If it differs, change `PUBLISH_WORKFLOW`, `WORKFLOW_REF` or
+  `GITHUB_ENVIRONMENT` in `lib/config.ts`, or the call, and redeploy step 3.
+- It reads the three variables of step 4 from the environment, masks them before use, assumes the role (1 h session;
+  the exchange is two calls, no third-party action), `aws s3 sync`s the tree built by `//site:dist` (the stylesheet whose
+  name carries a hash first, immutable; the pages with `--delete`, sparing the hashed stylesheets and `releases/`; the page
+  of the release, never pruned), creates an invalidation of `/*`, and fetches the site back to compare it.
+- **Fail safe**: until the setup is done it deploys nothing and is green. With no environment `prod` the plan job of
+  `site.yml` gives a notice and stops; with a variable of the environment empty the first step of the job gives a notice
+  and every later step is skipped. Nothing here makes a release red.
+
+5. **Claims**: after steps 0 to 4 and the merge of the workflows, run the workflow `site` from `main` with `claims_only`
+   set (Actions > site > Run workflow). It prints the token's `sub`, `job_workflow_ref`, `environment`, `repository_id`,
+   `repository_owner_id`, `ref` and `aud` (never the token) and deploys nothing. Compare `sub` with the one below.
+6. **First publish**: run `site` again without `claims_only`, or merge to `main`. Nothing else is needed.
 
 ## The OIDC `sub`
 
@@ -117,8 +132,8 @@ Role `buildrules-prod-publish`, max session 1 h, trust `sts:AssumeRoleWithWebIde
 `<ownerId>` and `<repoId>` are the immutable numeric ids of `gh api repos/<owner>/<name> --jq '.owner.id,.id'`, in the
 immutable-subject form. `job_workflow_ref` is the ref of the workflow file that contains the job: for a reusable
 workflow it is the CALLED file, not the caller. This follows GitHub's documentation of the claim; it is NOT verified
-against a live token. Verify before relying on it: run a manual workflow from `site-publish.yml@refs/heads/main` in
-environment `prod` that prints the token's `sub` and `job_workflow_ref` (never the token itself) and compare. If the
+against a live token. Verify before relying on it (step 5 above): run the workflow `site` with `claims_only`, which runs from `site-publish.yml@refs/heads/main` in
+environment `prod`, prints the token's `sub` and `job_workflow_ref` (never the token itself) and compare. If the
 printed `sub` differs, change `PUBLISH_WORKFLOW`, `WORKFLOW_REF` or `GITHUB_ENVIRONMENT` in `lib/config.ts`, re-run
 `npm test`, and redeploy step 3.
 

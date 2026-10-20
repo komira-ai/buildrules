@@ -111,7 +111,7 @@ actionlint_check(
     name = "workflow_lint",
     exec_compatible_with = LINUX_X86_64,
     actionlint = "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
-    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml"],
+    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml", "//:site.yml", "//:site-publish.yml"],
 )
 
 zig_test(
@@ -161,7 +161,27 @@ zig_test(
     },
 )
 
-group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check", ":stages_check"])
+# The site workflows (.github/workflows/site.yml and site-publish.yml, RELEASING.md "The site"): actionlint accepts them (above), and ci/site_check.zig holds them to the
+# triggers, the tip-of-main guard, the fail-safe when the environment or its variables are absent, the one job that holds the token (declaring the environment and the
+# workflow file that infra/site/lib/config.ts makes the role trust), no third-party action, the masks, the upload commands and the smoke test. It reuses the rules of
+# workflow_check.zig and plants a defect for each of its own.
+zig_test(
+    name = "site_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "site_check.zig",
+    imports = ["workflow_check.zig"],
+    data = {
+        ".github/workflows/site.yml": "//:site.yml",
+        ".github/workflows/site-publish.yml": "//:site-publish.yml",
+        "infra/site/lib/config.ts": "//infra/site:config.ts",
+        "tools/buck2": "//:buck2.pin",
+        # the tests of workflow_check.zig, which this file imports, run here too
+        ".github/workflows/ci.yml": "//:ci.yml",
+        "ci/BUCK": "BUCK",
+    },
+)
+
+group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check"])
 
 # Everything the public runner can build: the public CI builds this one target. It names what the other groups do not reach: the C/C++ rules and
 # aws-lc, the gate and kpin tools, the Node toolchain, the type checks of the sites, the cargo units outside the matrix. ci/completeness.bxl
