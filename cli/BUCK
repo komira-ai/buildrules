@@ -1,8 +1,8 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # The buildrules command line, in Zig, built by the pinned zig behind its unit tests.
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_module", "zig_test")
-load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load(":version.bzl", "cli_version")
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 
 # The CLI is Zig 0.15 code (std.Io, ArrayList.empty): it builds with the pinned zig_next, as kpin does.
 _ZIG = "buildrules//rules/pins:zig_next"
