@@ -12,6 +12,9 @@
 //!    `$BUCK2`, or a shell wrapper (`bash -c`, `eval`, `env`, `sudo`, ...) around one is refused, because a command this check cannot
 //!    read as `./buck2 <subcommand> <args>` is a command whose mode it cannot check), or names a remote-execution endpoint;
 //!  - a buck2 install that drifted from the release pinned in tools/buck2 (url or sha256).
+//!  - a `push` trigger on ci.yml: a push to main is tested through release.yml (ci/release_check.zig), which calls this workflow.
+//!
+//! The pure checks that release.yml shares with this file (`pinnedUses`, `localMode`, `buck2Install`) are public here.
 const std = @import("std");
 const t = std.testing;
 
@@ -25,11 +28,11 @@ const completeness = "./buck2 bxl -c buildrules_re.mode=local //ci:completeness.
 
 pub const Findings = std.ArrayList([]const u8);
 
-fn add(a: std.mem.Allocator, f: *Findings, comptime fmt: []const u8, args: anytype) !void {
+pub fn add(a: std.mem.Allocator, f: *Findings, comptime fmt: []const u8, args: anytype) !void {
     try f.append(try std.fmt.allocPrint(a, fmt, args));
 }
 
-fn isHex40(s: []const u8) bool {
+pub fn isHex40(s: []const u8) bool {
     if (s.len != 40) return false;
     for (s) |c| {
         if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) return false;
@@ -38,7 +41,7 @@ fn isHex40(s: []const u8) bool {
 }
 
 /// The value of `"digest": "..."` and the first provider url inside the `linux-x86_64` block of a dotslash file.
-fn dotslashLinux(text: []const u8) ?struct { digest: []const u8, url: []const u8 } {
+pub fn dotslashLinux(text: []const u8) ?struct { digest: []const u8, url: []const u8 } {
     const at = std.mem.indexOf(u8, text, "\"linux-x86_64\"") orelse return null;
     const rest = text[at..];
     const end = std.mem.indexOf(u8, rest, "\"macos") orelse rest.len;
@@ -48,14 +51,14 @@ fn dotslashLinux(text: []const u8) ?struct { digest: []const u8, url: []const u8
     return .{ .digest = digest, .url = url };
 }
 
-fn between(s: []const u8, open: []const u8, close: []const u8) ?[]const u8 {
+pub fn between(s: []const u8, open: []const u8, close: []const u8) ?[]const u8 {
     const i = std.mem.indexOf(u8, s, open) orelse return null;
     const from = i + open.len;
     const j = std.mem.indexOfPos(u8, s, from, close) orelse return null;
     return s[from..j];
 }
 
-fn hasLine(text: []const u8, exact: []const u8) bool {
+pub fn hasLine(text: []const u8, exact: []const u8) bool {
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |line| {
         if (std.mem.eql(u8, std.mem.trimRight(u8, line, " \r"), exact)) return true;
@@ -76,7 +79,7 @@ fn hasTargetLine(text: []const u8, tg: []const u8) bool {
 
 /// The commands of the workflow's shell, one per logical line: a trailing `\` joins the next line, and a word that starts with `#` begins a
 /// comment that runs to the end of its physical line (so the rest of that line is not part of any command).
-fn commands(a: std.mem.Allocator, text: []const u8) ![]const []const u8 {
+pub fn commands(a: std.mem.Allocator, text: []const u8) ![]const []const u8 {
     var out = std.ArrayList([]const u8).init(a);
     var cur = std.ArrayList(u8).init(a);
     var it = std.mem.splitScalar(u8, text, '\n');
@@ -229,11 +232,9 @@ fn hasArgs(cmd: []const u8, args: []const u8) bool {
     return false;
 }
 
-/// Everything wrong with `workflow`, given the dotslash file of the pinned buck2 and ci/BUCK.
-pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, ci_buck: []const u8) !Findings {
-    var f = Findings.init(a);
-
-    // Every `uses:` is pinned to a full commit.
+/// Every `uses:` line of `workflow` is `owner/repo@<40 hex>`; returns how many there are. `local_ok` lists the values that
+/// may stand without a pin (a local reusable workflow, `./.github/workflows/ci.yml`; a local action checked out from a pinned commit).
+pub fn pinnedUses(a: std.mem.Allocator, f: *Findings, workflow: []const u8, local_ok: []const []const u8) !usize {
     var uses: usize = 0;
     var it = std.mem.splitScalar(u8, workflow, '\n');
     while (it.next()) |raw| {
@@ -243,9 +244,128 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
         uses += 1;
         var v = std.mem.trim(u8, line["uses:".len..], " ");
         if (std.mem.indexOfScalar(u8, v, '#')) |h| v = std.mem.trim(u8, v[0..h], " ");
+        var local = false;
+        for (local_ok) |ok| {
+            if (std.mem.eql(u8, v, ok)) local = true;
+        }
+        if (local) continue;
         const at = std.mem.indexOfScalar(u8, v, '@');
-        if (at == null or !isHex40(v[at.? + 1 ..])) try add(a, &f, "`uses: {s}` is not pinned to a full commit sha", .{v});
+        if (at == null or !isHex40(v[at.? + 1 ..])) try add(a, f, "`uses: {s}` is not pinned to a full commit sha", .{v});
     }
+    return uses;
+}
+
+/// The local-mode rules for every `./buck2` command of `workflow`: the flag on each command that loads the graph (not on an echo, a comment
+/// or another command), no other value of the key anywhere (comments included), no buck2 run any way but the literal `./buck2`, and no
+/// remote-execution endpoint. Returns the number of `./buck2 build` commands.
+pub fn localMode(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !usize {
+    var builds: usize = 0;
+    var mode_uses: usize = 0;
+    var mode_on_graph: usize = 0;
+    for (try commands(a, workflow)) |cmd| {
+        mode_uses += std.mem.count(u8, cmd, mode_key);
+        try nonLiteralBuck2(a, f, cmd);
+        var from: usize = 0;
+        while (std.mem.indexOfPos(u8, cmd, from, buck2)) |i| {
+            const start = i + buck2.len;
+            const end = std.mem.indexOfPos(u8, cmd, start, buck2) orelse cmd.len;
+            const inv = untilSeparator(cmd[start..end]);
+            from = start;
+            if (!loadsGraph(inv)) continue;
+            if (std.mem.startsWith(u8, inv, "build ")) builds += 1;
+            mode_on_graph += std.mem.count(u8, inv, mode_key);
+            if (!inLocalMode(inv)) try add(a, f, "a `./buck2` command that loads the graph does not pass `-c buildrules_re.mode=local`: {s}", .{cmd});
+        }
+    }
+    if (mode_uses != mode_on_graph) try add(a, f, "`{s}` appears outside a `./buck2` command that loads the graph", .{mode_key});
+    var mit = std.mem.splitScalar(u8, workflow, '\n');
+    while (mit.next()) |line| {
+        var from: usize = 0;
+        while (std.mem.indexOfPos(u8, line, from, mode_key)) |i| : (from = i + mode_key.len) {
+            const rest = line[i + mode_key.len ..];
+            const ok = std.mem.startsWith(u8, rest, "=local") and (rest.len == "=local".len or rest["=local".len] == ' ' or rest["=local".len] == '`' or rest["=local".len] == ',' or rest["=local".len] == ')' or rest["=local".len] == '.');
+            if (!ok) try add(a, f, "`{s}` is set to something other than `local`: {s}", .{ mode_key, std.mem.trim(u8, line, " ") });
+        }
+    }
+    for ([_][]const u8{ "engine_address", "cas_address", "action_cache_address", "linux_x86_64_properties", "--no-remote-cache" }) |bad| {
+        if (std.mem.indexOf(u8, workflow, bad) != null) try add(a, f, "the workflow mentions `{s}`", .{bad});
+    }
+    return builds;
+}
+
+/// The buck2 the workflow downloads is the release pinned in tools/buck2 (url and sha256).
+pub fn buck2Install(a: std.mem.Allocator, f: *Findings, workflow: []const u8, dotslash: []const u8) !void {
+    if (dotslashLinux(dotslash)) |p| {
+        if (std.mem.indexOf(u8, workflow, p.url) == null) try add(a, f, "the workflow does not download the url pinned in tools/buck2", .{});
+        const line = try std.fmt.allocPrint(a, "{s}  buck2.zst", .{p.digest});
+        if (std.mem.indexOf(u8, workflow, line) == null) try add(a, f, "the workflow does not check the sha256 pinned in tools/buck2", .{});
+    } else try add(a, f, "tools/buck2 has no linux-x86_64 digest and url (this parser is blind)", .{});
+}
+
+/// `continue-on-error` lets a red job or step pass: a workflow that gates a release has none, at job or step level, unless it is `false`. Any other
+/// value (`true`, an expression, a quoted string) is a finding, wherever the key is (a flow mapping included).
+pub fn noContinueOnError(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !void {
+    var it = std.mem.splitScalar(u8, workflow, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \r");
+        if (line.len > 0 and line[0] == '#') continue;
+        const key = "continue-on-error:";
+        const i = std.mem.indexOf(u8, line, key) orelse continue;
+        var v = std.mem.trim(u8, line[i + key.len ..], " ");
+        if (std.mem.indexOf(u8, v, " #")) |h| v = std.mem.trim(u8, v[0..h], " ");
+        if (!std.mem.eql(u8, v, "false"))
+            try add(a, f, "`continue-on-error` is set to `{s}`: a red job or step would pass (only `false` is allowed)", .{v});
+    }
+}
+
+/// A `${{ }}` expression that reads `vars.` or `github.event.` inside the text of a `run:` (the one line, or the block scalar under it) is expanded into the
+/// script before the shell parses it, so a value with a quote or a `;` becomes code. The value goes through `env:` and the script reads `"$NAME"`.
+pub fn noInlineContext(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !void {
+    var it = std.mem.splitScalar(u8, workflow, '\n');
+    var block_indent: ?usize = null;
+    while (it.next()) |raw| {
+        const trimmed = std.mem.trimLeft(u8, raw, " ");
+        const indent = raw.len - trimmed.len;
+        if (block_indent) |bi| {
+            if (trimmed.len == 0 or indent > bi) {
+                try inlineExprs(a, f, trimmed);
+                continue;
+            }
+            block_indent = null;
+        }
+        if (trimmed.len > 0 and trimmed[0] == '#') continue;
+        var rest = trimmed;
+        if (std.mem.startsWith(u8, rest, "- ")) rest = std.mem.trimLeft(u8, rest[2..], " ");
+        if (!std.mem.startsWith(u8, rest, "run:")) continue;
+        const v = std.mem.trim(u8, rest["run:".len..], " \r");
+        if (v.len > 0 and (v[0] == '|' or v[0] == '>')) {
+            block_indent = indent;
+        } else try inlineExprs(a, f, v);
+    }
+}
+
+fn inlineExprs(a: std.mem.Allocator, f: *Findings, text: []const u8) !void {
+    var pos: usize = 0;
+    while (std.mem.indexOfPos(u8, text, pos, "${{")) |s| {
+        const e = std.mem.indexOfPos(u8, text, s, "}}") orelse text.len;
+        const expr = text[s..e];
+        for ([_][]const u8{ "vars.", "github.event." }) |ctx| {
+            if (std.mem.indexOf(u8, expr, ctx) != null)
+                try add(a, f, "a `run:` line expands `{s}` inline ({s}): pass it through `env:` and read it as \"$NAME\"", .{ ctx, text });
+        }
+        pos = e;
+    }
+}
+
+/// Everything wrong with `workflow`, given the dotslash file of the pinned buck2 and ci/BUCK.
+pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, ci_buck: []const u8) !Findings {
+    var f = Findings.init(a);
+
+    try noContinueOnError(a, &f, workflow);
+    try noInlineContext(a, &f, workflow);
+
+    // Every `uses:` is pinned to a full commit.
+    const uses = try pinnedUses(a, &f, workflow, &.{});
     if (uses == 0) try add(a, &f, "no `uses:` line found (the checkout step is missing, or this parser is blind)", .{});
 
     // Permissions: contents: read at the top level, nothing broader anywhere.
@@ -257,44 +377,22 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
 
     // Triggers and runner.
     if (!hasLine(workflow, "  pull_request:")) try add(a, &f, "`on: pull_request` is missing", .{});
-    if (!hasLine(workflow, "  push:") or !hasLine(workflow, "    branches: [main]")) try add(a, &f, "`on: push: branches: [main]` is missing", .{});
+    // A push to main is tested by release.yml (its gate stage calls this workflow), not twice.
+    if (!hasLine(workflow, "  workflow_call:")) try add(a, &f, "`on: workflow_call` is missing (release.yml calls this workflow as its gate stage)", .{});
+    if (hasLine(workflow, "  push:")) try add(a, &f, "`on: push` is present: a push to main is tested through release.yml, and would run this workflow twice", .{});
     if (std.mem.indexOf(u8, workflow, "runs-on: ubuntu-latest") == null) try add(a, &f, "`runs-on: ubuntu-latest` is missing", .{});
 
+    // The cancel group. release.yml calls this workflow for every push to main: a group shared by all of them, with cancelling on, lets a
+    // re-run of an old main run cancel the gate of the newest commit. So the group of a non-pull-request event holds the commit, and only
+    // a pull request cancels.
+    if (std.mem.indexOf(u8, workflow, "github.event.pull_request.number || github.sha }}") == null)
+        try add(a, &f, "the concurrency group is not per-commit for events other than a pull request (it must end `github.event.pull_request.number || github.sha`)", .{});
+    if (!hasLine(workflow, "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}"))
+        try add(a, &f, "`cancel-in-progress` is not `${{{{ github.event_name == 'pull_request' }}}}`: only a pull request may cancel a run", .{});
+
     // Local mode, never a remote-execution endpoint, every promised target.
-    // The flag is on each `./buck2` command that loads the graph (not on an echo, a comment or another command), a build command exists, and
-    // no other value of the key appears anywhere (comments included), nor the key outside such a command.
-    var builds: usize = 0;
-    var mode_uses: usize = 0;
-    var mode_on_graph: usize = 0;
-    for (try commands(a, workflow)) |cmd| {
-        mode_uses += std.mem.count(u8, cmd, mode_key);
-        try nonLiteralBuck2(a, &f, cmd);
-        var from: usize = 0;
-        while (std.mem.indexOfPos(u8, cmd, from, buck2)) |i| {
-            const start = i + buck2.len;
-            const end = std.mem.indexOfPos(u8, cmd, start, buck2) orelse cmd.len;
-            const inv = untilSeparator(cmd[start..end]);
-            from = start;
-            if (!loadsGraph(inv)) continue;
-            if (std.mem.startsWith(u8, inv, "build ")) builds += 1;
-            mode_on_graph += std.mem.count(u8, inv, mode_key);
-            if (!inLocalMode(inv)) try add(a, &f, "a `./buck2` command that loads the graph does not pass `-c buildrules_re.mode=local`: {s}", .{cmd});
-        }
-    }
+    const builds = try localMode(a, &f, workflow);
     if (builds == 0) try add(a, &f, "no `./buck2 build` command found (the build does not pass `-c buildrules_re.mode=local`; or this parser is blind)", .{});
-    if (mode_uses != mode_on_graph) try add(a, &f, "`{s}` appears outside a `./buck2` command that loads the graph", .{mode_key});
-    var mit = std.mem.splitScalar(u8, workflow, '\n');
-    while (mit.next()) |line| {
-        var from: usize = 0;
-        while (std.mem.indexOfPos(u8, line, from, mode_key)) |i| : (from = i + mode_key.len) {
-            const rest = line[i + mode_key.len ..];
-            const ok = std.mem.startsWith(u8, rest, "=local") and (rest.len == "=local".len or rest["=local".len] == ' ' or rest["=local".len] == '`' or rest["=local".len] == ',' or rest["=local".len] == ')' or rest["=local".len] == '.');
-            if (!ok) try add(a, &f, "`{s}` is set to something other than `local`: {s}", .{ mode_key, std.mem.trim(u8, line, " ") });
-        }
-    }
-    for ([_][]const u8{ "engine_address", "cas_address", "action_cache_address", "linux_x86_64_properties", "--no-remote-cache" }) |bad| {
-        if (std.mem.indexOf(u8, workflow, bad) != null) try add(a, &f, "the workflow mentions `{s}`", .{bad});
-    }
     for (targets) |tg| {
         if (!hasTargetLine(workflow, tg)) try add(a, &f, "target {s} is not built", .{tg});
     }
@@ -313,11 +411,7 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
     if (std.mem.indexOf(u8, workflow, "# //ci:mojo is not built") == null) try add(a, &f, "the comment that says why //ci:mojo is not built is missing", .{});
 
     // The buck2 install is the release pinned in tools/buck2.
-    if (dotslashLinux(dotslash)) |p| {
-        if (std.mem.indexOf(u8, workflow, p.url) == null) try add(a, &f, "the workflow does not download the url pinned in tools/buck2", .{});
-        const line = try std.fmt.allocPrint(a, "{s}  buck2.zst", .{p.digest});
-        if (std.mem.indexOf(u8, workflow, line) == null) try add(a, &f, "the workflow does not check the sha256 pinned in tools/buck2", .{});
-    } else try add(a, &f, "tools/buck2 has no linux-x86_64 digest and url (this parser is blind)", .{});
+    try buck2Install(a, &f, workflow, dotslash);
 
     // The cache is keyed on lock files.
     const key = std.mem.indexOf(u8, workflow, "key: buck-out-");
@@ -362,6 +456,99 @@ fn expectFinding(a: std.mem.Allocator, r: Real, wf: []const u8, needle: []const 
     return error.MutantSurvived;
 }
 
+
+// ---- synthetic fixtures -------------------------------------------------------------------------------------------------------------------
+//
+// The planted-defect tests below run on this text and not on the real ci.yml: every mutant anchors on text this file itself holds, so it cannot fail
+// with `MutantDidNotApply` because the real workflow was reworded, and each red run is the rule under test (the test of the unmutated fixture
+// first requires that it has no finding at all). The real workflow is checked by "the real workflow has no findings" alone.
+
+const fixture_wf =
+    \\name: ci
+    \\
+    \\on:
+    \\  pull_request:
+    \\  workflow_call:
+    \\
+    \\permissions:
+    \\  contents: read
+    \\
+    \\concurrency:
+    \\  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+    \\  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    \\
+    \\jobs:
+    \\  build:
+    \\    runs-on: ubuntu-latest
+    \\    steps:
+    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    \\        with:
+    \\          persist-credentials: false
+    \\      - name: Install buck2
+    \\        run: |
+    \\          curl --output buck2.zst https://example.invalid/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
+    \\          echo "1268fce33fb600000000000000000000000000000000000000000000000000ff  buck2.zst" | sha256sum --check --strict -
+    \\          ./buck2 --version
+    \\      - name: Restore the buck2 output cache
+    \\        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    \\        with:
+    \\          path: buck-out
+    \\          key: buck-out-${{ runner.os }}-${{ hashFiles('tools/buck2', '**/package-lock.json', '**/Cargo.lock') }}
+    \\      - name: Every target of the tree is covered
+    \\        run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check
+    \\      # //ci:mojo is not built: its packages need a mirror.
+    \\      - name: Build and test
+    \\        run: |
+    \\          ./buck2 build --console simple -c buildrules_re.mode=local \
+    \\            //ci:all
+    \\      - name: Stop buck2
+    \\        if: always()
+    \\        run: ./buck2 kill
+    \\
+;
+
+const fixture_ds =
+    \\{
+    \\  "platform": {
+    \\    "linux-x86_64": {
+    \\      "digest": "1268fce33fb600000000000000000000000000000000000000000000000000ff",
+    \\      "providers": [{"url": "https://example.invalid/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst"}]
+    \\    },
+    \\    "macos-x86_64": {}
+    \\  }
+    \\}
+    \\
+;
+
+const fixture_cb = "group(name = \"all\", deps = [])\n";
+
+/// The synthetic fixture; the real files are `real`.
+fn fx(a: std.mem.Allocator) !Real {
+    _ = a;
+    return .{ .wf = fixture_wf, .ds = fixture_ds, .cb = fixture_cb };
+}
+
+test "the synthetic fixture has no finding, so every mutant below is red for its own rule" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const f = try check(a, r.wf, r.ds, r.cb);
+    for (f.items) |m| std.debug.print("finding: {s}\n", .{m});
+    try t.expectEqual(@as(usize, 0), f.items.len);
+}
+
+test "the cancel group of a called workflow is per commit, and only a pull request cancels" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    // the shape that let a re-run of an old main run cancel the newest commit's gate: one group for every push, and cancelling
+    try expectFinding(a, r, try mutate(a, r.wf, "github.event.pull_request.number || github.sha", "github.event.pull_request.number || github.ref"), "per-commit");
+    try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: true"), "only a pull request");
+    try expectFinding(a, r, try mutate(a, r.wf, "concurrency:\n  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n\n", ""), "per-commit");
+}
+
 test "the real workflow has no findings" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
@@ -376,7 +563,7 @@ test "an action pinned by tag, by branch or by a short sha is found" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     const sha = "3d3c42e5aac5ba805825da76410c181273ba90b1";
     try expectFinding(a, r, try mutate(a, r.wf, "actions/checkout@" ++ sha, "actions/checkout@v7"), "not pinned");
     try expectFinding(a, r, try mutate(a, r.wf, "actions/checkout@" ++ sha, "actions/checkout@main"), "not pinned");
@@ -390,7 +577,7 @@ test "a workflow with no uses lines is found, not passed" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     try expectFinding(a, r, "name: x\n", "no `uses:`");
 }
 
@@ -398,7 +585,7 @@ test "a broader token, a fork-code trigger or a secret is found" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     try expectFinding(a, r, try mutate(a, r.wf, "  contents: read", "  contents: write"), "permissions");
     try expectFinding(a, r, try mutate(a, r.wf, "  contents: read", "  contents: read\n  packages: write"), "write");
     try expectFinding(a, r, try mutate(a, r.wf, "permissions:\n  contents: read\n", ""), "permissions");
@@ -410,9 +597,10 @@ test "a missing trigger or runner is found" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     try expectFinding(a, r, try mutate(a, r.wf, "  pull_request:\n", ""), "pull_request");
-    try expectFinding(a, r, try mutate(a, r.wf, "branches: [main]", "branches: [dev]"), "push");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", ""), "workflow_call");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  push:\n    branches: [main]\n"), "`on: push` is present");
     try expectFinding(a, r, try mutate(a, r.wf, "runs-on: ubuntu-latest", "runs-on: self-hosted"), "ubuntu-latest");
 }
 
@@ -420,7 +608,7 @@ test "a build in remote mode, an endpoint, or a dropped target is found (also wh
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     try expectFinding(a, r, try mutateLast(a, r.wf, "-c buildrules_re.mode=local", "-c buildrules_re.mode=remote"), "mode=local");
     try expectFinding(a, r, try mutate(a, r.wf, "--console simple", "--console simple -c buck2_re_client.engine_address=x"), "engine_address");
     try expectFinding(a, r, try mutate(a, r.wf, "--console simple", "--console simple --no-remote-cache"), "--no-remote-cache");
@@ -435,7 +623,7 @@ test "the mode flag must be on the build command, and no other mode may appear" 
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     const flag = " -c buildrules_re.mode=local \\\n";
     // the flag moves from the build command to an echo line: the old substring check passed this
     const moved = try mutateLast(a, r.wf, "./buck2 build --console simple" ++ flag, "echo -c buildrules_re.mode=local\n          ./buck2 build --console simple \\\n");
@@ -460,7 +648,7 @@ test "every buck2 command that loads the graph must run in local mode" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     const need = "does not pass `-c buildrules_re.mode=local`";
     // the shape of the first public CI run: the completeness bxl without the flag (its platforms failed to analyse), the build with it
     const old = try mutate(a, r.wf, "./buck2 bxl -c buildrules_re.mode=local //ci:completeness", "./buck2 bxl //ci:completeness");
@@ -491,7 +679,7 @@ test "the completeness check must run" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     try expectFinding(a, r, try mutate(a, r.wf, "run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check", "run: echo ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:chec"), "completeness");
 }
 
@@ -499,7 +687,7 @@ test "a target named only in a comment is not built" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     // a comment names //ci:all; the build line is removed
     try t.expect(std.mem.indexOf(u8, r.wf, "//ci:all") != null);
     try expectFinding(a, r, try mutate(a, r.wf, "            //ci:all\n", "            #//ci:all\n"), "//ci:all is not built");
@@ -509,7 +697,7 @@ test "mojo may only appear with its reason" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     try expectFinding(a, r, try mutate(a, r.wf, "            //ci:all\n", "            //ci:all \\\n            //ci:mojo\n"), "//ci:mojo is built");
     try expectFinding(a, r, try mutate(a, r.wf, "# //ci:mojo is not built", "# //ci:mojo is built"), "comment that says why");
 }
@@ -518,7 +706,7 @@ test "a buck2 install that drifted from tools/buck2 is found" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     try expectFinding(a, r, try mutate(a, r.wf, "2026-09-15/buck2-x86_64", "2026-09-16/buck2-x86_64"), "url pinned");
     try expectFinding(a, r, try mutate(a, r.wf, "1268fce33fb6", "0268fce33fb6"), "sha256 pinned");
     // the pin moves and the workflow does not
@@ -530,7 +718,7 @@ test "a cache key that does not follow the lock files is found" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     try expectFinding(a, r, try mutate(a, r.wf, "key: buck-out-${{ runner.os }}-${{ hashFiles(", "key: buck-out-${{ runner.os }}-${{ github.sha }}${{ x("), "lock files");
 }
 
@@ -538,7 +726,7 @@ test "a //ci: target missing from ci/BUCK is found" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     try expectFinding(a, .{ .wf = r.wf, .ds = r.ds, .cb = "name = \"matrix\"\n" }, r.wf, "//ci:all is not declared");
 }
 
@@ -546,7 +734,7 @@ test "buck2 run any way but the literal ./buck2 is found" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     const not_literal = "not the literal `./buck2`";
     // each of these ran the graph in remote mode, past the check, before: with the flag and without it
     const slips = [_][]const u8{
@@ -596,7 +784,7 @@ test "kill and --version are exempt only alone, not when more words follow" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try real(a);
+    const r = try fx(a);
     const need = "does not pass `-c buildrules_re.mode=local`";
     for ([_][]const u8{ "kill build //x:y", "kill bxl //x:y", "--version build //x:y", "kill && ./buck2 build //x:y", "kill; ./buck2 test //x:y" }) |c| {
         const wf = try std.mem.concat(a, u8, &.{ r.wf, "      - run: ./buck2 ", c, "\n" });
@@ -611,4 +799,14 @@ test "kill and --version are exempt only alone, not when more words follow" {
     }
     // the flag after a separator belongs to the next command, not to the build before it
     try expectFinding(a, r, try std.mem.concat(a, u8, &.{ r.wf, "      - run: ./buck2 build //x:y && echo -c buildrules_re.mode=local\n" }), need);
+}
+
+test "ci.yml: continue-on-error and an inline vars or github.event expansion in a run line are found" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    try expectFinding(a, r, try mutate(a, r.wf, "    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    continue-on-error: true\n"), "`continue-on-error` is set to");
+    try expectFinding(a, r, try mutate(a, r.wf, "        run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check\n", "        run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check ${{ vars.X }}\n"), "expands `vars.` inline");
+    try expectFinding(a, r, try mutate(a, r.wf, "          ./buck2 --version\n", "          ./buck2 --version ${{ github.event.pull_request.title }}\n"), "expands `github.event.` inline");
 }

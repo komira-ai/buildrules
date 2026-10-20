@@ -2,7 +2,7 @@
 # 2026-09-01, a person's name, an email, a home path, a private host, an IP address, an endpoint, control-plane vocabulary or the name of the
 # project this one grew out of. It runs on the farm, over every package's files (`scrub_files()`, the last line of every BUCK file).
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
-load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
 load(":defs.bzl", "scrub_files", "scrub_test")
 
 zig_test(
@@ -12,6 +12,14 @@ zig_test(
     imports = ["scrub.zig"],
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
+)
+
+# The scrub as a module, for the release tool: the archive it publishes is scanned by the very rules the repository is.
+zig_module(
+    name = "scrub_lib",
+    src = "scrub.zig",
+    unit_tests = [":scrub_unit"],
+    visibility = ["PUBLIC"],
 )
 
 zig_exe(
@@ -30,10 +38,12 @@ scrub_test(
     name = "scrub",
     packages = [
     "//:scrub_files",
+    "//beta:scrub_files",
     "//ci/negative:scrub_files",
     "//ci:scrub_files",
     "//cli:scrub_files",
     "//docs:scrub_files",
+    "//examples/cxx:scrub_files",
     "//examples/hello:scrub_files",
     "//examples/isa:scrub_files",
     "//examples/mojo/copy_of_base:scrub_files",
@@ -73,11 +83,13 @@ scrub_test(
     "//site:scrub_files",
     "//third_party/aws-lc:scrub_files",
     "toolchains//:scrub_files",
+    "//tools/release:scrub_files",
     "//tools/scrub:scrub_files",
+    "//tools/stage:scrub_files",
     "crates//:scrub_files",
     "crates//crates/zdemo:scrub_files",
     ],
-    require = ["README.md", "LICENSE", "BUCK", "cli/src/main.zig", "rules/mojo/defs.bzl", "tools/scrub/scrub.zig", "examples/crates/Cargo.toml", ".buckconfig", ".buckconfig.local.example", ".gitignore", "infra/site/.gitignore", ".github/workflows/ci.yml"],
+    require = ["README.md", "LICENSE", "BUCK", "cli/src/main.zig", "rules/mojo/defs.bzl", "tools/scrub/scrub.zig", "examples/crates/Cargo.toml", ".buckconfig", ".buckconfig.local.example", ".gitignore", "infra/site/.gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/beta.yml", "beta/rust/STEPS", "beta/README.md", "VERSION"],
 )
 
 scrub_files()

@@ -111,7 +111,7 @@ actionlint_check(
     name = "workflow_lint",
     exec_compatible_with = LINUX_X86_64,
     actionlint = "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
-    workflows = ["//:ci.yml"],
+    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml"],
 )
 
 zig_test(
@@ -125,7 +125,43 @@ zig_test(
     },
 )
 
-group(name = "workflow", deps = [":workflow_lint", ":workflow_check"])
+# The release workflow (.github/workflows/release.yml, RELEASING.md): actionlint accepts it (above), and ci/release_check.zig holds it to its write
+# scopes and their exact conditions, the order publish <- verify <- archive <- tag <- gamma <- beta <- gate, pinned actions and local mode. It reuses the rules of
+# workflow_check.zig and plants a defect for each of its own.
+zig_test(
+    name = "release_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "release_check.zig",
+    imports = ["workflow_check.zig"],
+    data = {
+        ".github/workflows/release.yml": "//:release.yml",
+        ".github/workflows/ci.yml": "//:ci.yml",
+        "tools/buck2": "//:buck2.pin",
+        # the tests of workflow_check.zig, which this file imports, run here too
+        "ci/BUCK": "BUCK",
+    },
+)
+
+# The beta workflow (.github/workflows/beta.yml, RELEASING.md): actionlint accepts it (above), and ci/stages_check.zig holds it to its triggers, its token (the farm
+# leg's `id-token` alone), the legs (the languages of beta/, the planned Mojo, arm and macos jobs, the farm job that runs only with FARM_ADDRESS), local mode, and
+# the pinned farm-connect action. It reuses the rules of workflow_check.zig and the job parser of release_check.zig, and plants a defect for each of its own.
+zig_test(
+    name = "stages_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "stages_check.zig",
+    imports = ["workflow_check.zig", "release_check.zig"],
+    data = {
+        ".github/workflows/beta.yml": "//:beta.yml",
+        "tools/buck2": "//:buck2.pin",
+        "beta/check.zig": "//beta:check.zig",
+        # the tests of the two files this one imports run here too
+        ".github/workflows/release.yml": "//:release.yml",
+        ".github/workflows/ci.yml": "//:ci.yml",
+        "ci/BUCK": "BUCK",
+    },
+)
+
+group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check", ":stages_check"])
 
 # Everything the public runner can build: the public CI builds this one target. It names what the other groups do not reach: the C/C++ rules and
 # aws-lc, the gate and kpin tools, the Node toolchain, the type checks of the sites, the cargo units outside the matrix. ci/completeness.bxl
@@ -141,14 +177,28 @@ group(name = "all", deps = [
     "//infra/site:test",
     "//infra/site:typecheck",
     "//tools/scrub:scrub",
+    "//tools/release:release",
+    "//tools/stage:stage",
+    "//beta:beta_check",
     "//rules/gate:gate",
     "//rules/kpin:kpin",
     "//rules/node:esbuild_linux-x64",
     "//third_party/aws-lc:crypto",
+    "//examples/cxx:hermetic_c",
+    "//examples/cxx:hermetic_cxx",
+    "//examples/cxx:runs_c",
+    "//examples/cxx:runs_cxx",
     "//examples/node:modules",
     "//examples/p4ws/crates/links_b:links_b-0.1.0_9f2ed89200",
     "//examples/p4ws/crates/probe_ok:probe_ok-0.1.0_35cff8487e",
 ])
+
+# Read by //beta:beta_check, which requires the reason for leaving beta/ out of the graph to be written there.
+export_file(
+    name = "all.bzl",
+    src = "all.bzl",
+    visibility = ["//beta:"],
+)
 
 # Read by the buildrules.dev site tests (site/BUCK), which check its pages against this file.
 export_file(

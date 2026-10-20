@@ -1,0 +1,6 @@
+# A C and a C++ program on the pinned zig: no host compiler. toolchains/BUCK is the user's own (init keeps a file that is there).
+run buildrules init . --git {origin} --commit {commit}
+config
+build //:hello_c //:hello_cpp
+expect //:hello_c => Hello, world!
+expect //:hello_cpp => Hello, world!

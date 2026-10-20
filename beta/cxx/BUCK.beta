@@ -1,0 +1,11 @@
+cxx_binary(
+    name = "hello_c",
+    srcs = ["hello.c"],
+    compiler_flags = ["-O2", "-Wall", "-Werror"],
+)
+
+cxx_binary(
+    name = "hello_cpp",
+    srcs = ["hello.cpp"],
+    compiler_flags = ["-O2", "-Wall", "-Werror"],
+)

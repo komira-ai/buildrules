@@ -76,6 +76,28 @@ zig_exe(
     visibility = ["PUBLIC"],
 )
 
+# hermetic (Zig): an ELF built by the C/C++ toolchain has no `.debug_*` section and does not contain the path of the directory it was linked in;
+# `hermetic_check` (defs.bzl) is the validation. Behind its unit tests (hermetic/src/hermetic_test.zig).
+zig_test(
+    name = "hermetic_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["hermetic/src/hermetic_test.zig"],
+    src = "hermetic/src/hermetic.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "hermetic",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["hermetic/src/hermetic_test.zig"],
+    src = "hermetic/src/hermetic.zig",
+    unit_tests = [":hermetic_unit", _ZIG_VERSION],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
 # Read by the buildrules.dev site's tests (site/BUCK), which check its pages against this file.
 export_file(
     name = "defs.bzl",

@@ -1,0 +1,8 @@
+# A Rust repository, the way a user starts: init, a package, sync, check, build, run.
+run buildrules init . --git {origin} --commit {commit}
+config
+run buildrules cargo new crates/hello
+run buildrules sync
+run buildrules check
+build //crates/hello:bin //crates/hello:test //crates/hello:lint
+expect //crates/hello:bin => Hello, world!

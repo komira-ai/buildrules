@@ -1,0 +1,61 @@
+# The automatic release's tool (RELEASING.md): the version of a green main commit, the deterministic source archive of a tag, the checks before
+# it is published, and the release. Zig, tested as a build action; `.github/workflows/release.yml` runs it with `buck2 run`, and
+# `//ci:workflow` checks that workflow.
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+_SRCS = [
+    "version.zig",
+    "gz.zig",
+    "tar.zig",
+    "assets.zig",
+    "page.zig",
+    "cmds.zig",
+    "release.zig",
+]
+
+# Every rule of the version scheme, the gzip (decoded by the standard library, and a pinned digest), the tar reader, the SHA256SUMS and
+# release-asset rules, and each step against a fake `git` and `gh`: the tests plant a defect for every check the steps make.
+# Read by the buildrules.dev site tests (site/BUCK), which check the Releases section against these.
+export_file(
+    name = "cmds.zig",
+    src = "cmds.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "version.zig",
+    src = "version.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "page.zig",
+    src = "page.zig",
+    visibility = ["//site:"],
+)
+
+zig_test(
+    name = "release_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "release_test.zig",
+    imports = _SRCS,
+    deps = ["//tools/scrub:scrub_lib"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+zig_exe(
+    name = "release",
+    exec_compatible_with = LINUX_X86_64,
+    src = "release.zig",
+    imports = ["version.zig", "gz.zig", "tar.zig", "assets.zig", "page.zig", "cmds.zig"],
+    deps = ["//tools/scrub:scrub_lib"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    unit_tests = [":release_unit", "buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

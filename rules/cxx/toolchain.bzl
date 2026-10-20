@@ -107,7 +107,9 @@ def _zig_cxx_toolchain_impl(ctx):
         link_style = LinkStyle("static_pic"),
         link_weight = 1,
         linker = cxx,
-        linker_flags = cmd_args("-target", ctx.attrs.target),
+        # --strip-debug: zig cc assembles the C runtime start-up objects (crti, crtn, start) at LINK time with default debug info (`-g0` is a compile flag), and
+        # the DWARF stamps DW_AT_comp_dir with the action's absolute working directory, so a binary would depend on the path it was linked in (examples/cxx).
+        linker_flags = cmd_args("-target", ctx.attrs.target, "-Wl,--strip-debug"),
         object_file_extension = "o",
         shlib_interfaces = ShlibInterfacesMode("disabled"),
         shared_dep_runtime_ld_flags = [],

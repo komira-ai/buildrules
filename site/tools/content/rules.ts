@@ -5,7 +5,7 @@ export const rules: Page = {
   title: 'Rules reference',
   nav: 'Rules',
   description: 'The buildrules rule families (Rust, Node, Zig, C/C++, Mojo, Python), what each provides, and which are built or planned.',
-  lead: 'One page per family. A family is "built" when its rules exist and have been run on a farm; "planned" means it is not built. Nothing is released yet.',
+  lead: 'One page per family. A family is "built" when its rules exist and have been run on a farm; "planned" means it is not built. A release is a source archive, tagged automatically: see [Releases](/rules/#releases).',
   blocks: [
     table(
       ['Family', 'Status', 'Load from', 'Main entry points'],
@@ -32,7 +32,11 @@ export const rules: Page = {
       ['macOS', 'planned; nothing is built'],
       ['Windows', 'planned; nothing is built'],
     ),
-    planned('Published releases are planned. buildrules and mopm have no release binaries yet; you build the command line on your farm, and the pinned mopm is a stand-in (see [Mojo](/rules/mojo/#pinning-mopm-today)).'),
+    h2('Releases'),
+    p('Every push to `main` is built and tested, and a green one that changes more than documentation or CI is released with no human action. A release is a tag `vMAJOR.MINOR.PATCH`, a GitHub release carrying the source archive `buildrules-<version>.tar.gz`, its `SHA256SUMS` and the notes, and a build provenance attestation of both files. `MAJOR.MINOR` is the `VERSION` file, changed by a pull request; `PATCH` is the highest existing patch of that line plus one.'),
+    p('There are no binaries: a release is the source, and you build the command line from it on your farm. To pin a release, name the tag and the sha256 of the archive, or the commit the tag names in your `.buckconfig`; the archive is the same bytes for the same tag, and the release job checks that before it publishes. [RELEASING.md](https://github.com/komira-ai/buildrules/blob/main/RELEASING.md) has the steps, the checks and the commands.'),
+    p('A release is made only after two more stages. In the beta stage, hello-world repositories (Rust, C and C++, Zig, Node, and one that mixes them) consume the candidate commit as an external cell, the way you do: `buildrules init`, `cargo new`, `npm sync`, then a build, a run of what was built, and a second build from nothing, in a copy of the repository at another path, that must give the same bytes. The Mojo leg is planned until mopm\'s first release, and the Arm and macOS legs are planned (buildrules v0 targets linux-x86_64 only); they are declared and skipped, not missing. In the gamma stage our own repositories are built with the candidate on the farm, and a farm that is not configured fails the release rather than letting it pass. Each release also gets a page with the tag, the commit to pin, the archive URL and its sha256.'),
+    planned('A published mopm release is still pending. buildrules releases are source archives; the mopm that the Mojo rules pin is a stand-in until its own release is published (see [Mojo](/rules/mojo/#pinning-mopm-today)).'),
     h2('CPU levels'),
     p('A CPU level is a Buck2 constraint, `isa_level`. A target platform per level, `buildrules//platforms:linux_<id>` (for example `linux_x86_64_v3`), adds the level to the configuration. The compilers of every family get the flags below, so a v1 build and a v3 build have different output paths and different cache keys. A platform without a level, `linux_x86_64`, passes no CPU flag. `native` is never passed: a farm schedules on "at least this level", so host-tuned code would be cached under a lower level\'s key.'),
     table(

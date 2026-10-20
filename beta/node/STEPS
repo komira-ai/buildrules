@@ -1,0 +1,7 @@
+# A Node package: package.json and package-lock.json are npm's own; sync bakes them into a table, the build runs the scripts with the pinned node.
+run buildrules init . --git {origin} --commit {commit}
+config
+run buildrules npm sync web
+run buildrules npm check web
+build //web:ci //web:dist
+expect-file //web:dist hello.txt => Hello, world!

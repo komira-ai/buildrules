@@ -1,0 +1,7 @@
+load("@buildrules//rules/cxx:toolchain.bzl", "cxx_toolchains")
+load("@buildrules//rules/rust:toolchain.bzl", "rust_toolchains")
+load(":rust_pins.bzl", "EXTRA_RUST_VERSIONS")
+
+rust_toolchains(extra = EXTRA_RUST_VERSIONS)
+
+cxx_toolchains()

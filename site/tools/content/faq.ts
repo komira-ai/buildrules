@@ -15,7 +15,7 @@ export const faq: Page = {
     ),
     ...q(
       'Is it ready for production?',
-      'No. It is a v0 proof of concept for Linux x86_64. The Rust, Node, Zig, C/C++ and Mojo rules have run on a farm. The public CI also builds everything except the Mojo packages in the opt-in local mode. Interfaces can still change, nothing is released, and the limits below are real.',
+      'No. It is a v0 proof of concept for Linux x86_64. The Rust, Node, Zig, C/C++ and Mojo rules have run on a farm. The public CI also builds everything except the Mojo packages in the opt-in local mode. Interfaces can still change, a release is a tagged source archive and not a promise of stability, and the limits below are real.',
     ),
     ...q(
       'Does it need a remote farm?',

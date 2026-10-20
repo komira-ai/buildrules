@@ -1,0 +1,311 @@
+# The automatic release (RELEASING.md): every push to main is tested in stages, and a green one that changes more than documentation or CI is
+# released with no human action. The release is a tag `v<MAJOR>.<MINOR>.<PATCH>`, a GitHub release carrying the source archive
+# `buildrules-<version>.tar.gz` with its SHA256SUMS and the notes, and a build provenance attestation of both files. There are no binaries.
+#
+#   gate     the PR gate, the whole CI (ci.yml, called as a workflow): //ci:all and the completeness check, in local mode on the runner.
+#   beta     hello-world repositories per language that consume the candidate commit as a user would, built twice, the second time in a copy at another path, to prove the outputs are the same
+#            bytes (beta.yml, called as a workflow; Mojo, arm and macos legs are planned; a farm leg runs when FARM_ADDRESS is set).
+#   gamma    our own repositories built with the candidate on the farm (tools/stage gamma). It FAILS the release when the farm is not configured.
+#   tool     builds the release tool (tools/release, Zig) before any job holds a token, and hands the binary on.
+#   plan     read-only: decides whether this commit is released (docs and CI alone are not) and which version (the highest patch of VERSION's
+#            MAJOR.MINOR plus one). It creates nothing.
+#   archive  the deterministic archive of the TESTED COMMIT (git archive of the sha, not of a tag; a fixed prefix `buildrules-<planned version>/`
+#            and time, the tool's own gzip), SHA256SUMS, and the attestations.
+#   verify   read-only: the sums, the checkout being the commit, the attestations (this workflow, this commit, main), a second build of the archive
+#            from the sha giving the same bytes, its file list equal to the commit's tracked files, and the scrub on its contents.
+#   tag      the job that writes the repository, with publish: the annotated tag at that sha, made only after the archive was built, attested and
+#            verified, so a failure before it leaves no tag behind. A tag that exists at the sha is kept; one at another commit fails the job.
+#   site     the page of the release (the tag, the commit to pin in .buckconfig, the archive url and its sha256), as an artifact. Nothing deploys it.
+#   publish  creates the GitHub release from the verified files, once the tag exists and peels to the verified sha. A re-run creates no second
+#            release and replaces no asset: a file the release holds must be the same bytes or the job fails, and a missing file is added.
+#
+# `contents: write` is held by tag and publish only, each under the exact `if:` below; `id-token: write` by archive (the attestation), by gamma (the
+# farm network) and by the call of beta (its farm leg), and `attestations: write` by archive only.
+# No job that writes runs buck2. ci/release_check.zig (`//ci:workflow`) holds this file to all of that, to the order
+# gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish (no job before the tag waits for it), to actions pinned by commit, and to local
+# mode on every buck2 command.
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  gate:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  # Hello-world repositories per language, as a user starts them (beta.yml). Its farm leg joins the farm's network, so the call may grant `id-token`.
+  beta:
+    needs: [gate]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/beta.yml
+
+  # Our own repositories, built with the candidate on the farm, in the order GAMMA_REPOS names them. With no farm configured this job fails (the
+  # first step names every repository variable that is empty), and so no release is made: a candidate that was not built on the farm is not released.
+  gamma:
+    needs: [beta, tool]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CONNECT_REF: ${{ vars.FARM_CONNECT_REF }}
+      CONNECT_REPO: ${{ vars.FARM_CONNECT_REPO }}
+      HAS_ADDRESS: ${{ vars.FARM_ADDRESS != '' }}
+      HAS_INSTANCE: ${{ vars.FARM_INSTANCE != '' }}
+      HAS_PROPERTIES: ${{ vars.FARM_LINUX_X86_64_PROPERTIES != '' }}
+      HAS_TS_CLIENT_ID: ${{ vars.TS_CLIENT_ID != '' }}
+      HAS_TS_AUDIENCE: ${{ vars.TS_AUDIENCE != '' }}
+      GAMMA_REPOS: ${{ vars.GAMMA_REPOS }}
+      GAMMA_TARGETS: ${{ vars.GAMMA_TARGETS || '//...' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: stage-tool
+          path: tool
+      - run: chmod +x tool/stage tool/buck2
+      - name: every repository variable gamma needs is set
+        run: tool/stage gamma-vars --farm-address "$HAS_ADDRESS" --farm-instance "$HAS_INSTANCE" --farm-properties "$HAS_PROPERTIES" --ts-client-id "$HAS_TS_CLIENT_ID" --ts-audience "$HAS_TS_AUDIENCE" --connect-repo "$CONNECT_REPO" --connect-ref "$CONNECT_REF" --repos "$GAMMA_REPOS"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.FARM_CONNECT_REPO }}
+          ref: ${{ vars.FARM_CONNECT_REF }}
+          path: farm-action
+          persist-credentials: false
+      - name: the action that joins the farm is at the commit the variable names
+        run: tool/stage action-ref --dir farm-action --ref "$CONNECT_REF"
+      - name: connect to the farm
+        uses: ./farm-action/.github/actions/farm-connect
+        with:
+          ts-client-id: ${{ vars.TS_CLIENT_ID }}
+          ts-audience: ${{ vars.TS_AUDIENCE }}
+          farm-address: ${{ vars.FARM_ADDRESS }}
+          farm-instance: ${{ vars.FARM_INSTANCE }}
+          farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
+          tls: ${{ vars.FARM_TLS || 'false' }}
+      - name: Build our repositories with the candidate on the farm
+        run: tool/stage gamma --work "$RUNNER_TEMP/gamma" --candidate "$GITHUB_SHA" --repos "$GAMMA_REPOS" --targets "$GAMMA_TARGETS" --buck2 "$GITHUB_WORKSPACE/tool/buck2" --farm-config "$HOME/.buckconfig.d/farm.buckconfig"
+
+  tool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/release_check.zig compares both.
+      - name: Install buck2
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
+          echo "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst" | sha256sum --check --strict -
+          zstd --decompress --quiet buck2.zst -o buck2
+          chmod +x buck2
+          ./buck2 --version
+
+      - name: Build the release tool
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out release //tools/release:release
+
+      # The stage tool (beta and gamma) and the buck2 it drives, handed to gamma, the one job that runs them with a token.
+      - name: Build the stage tool
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out stage //tools/stage:stage
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-tool
+          path: release
+          retention-days: 7
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stage-tool
+          path: |
+            ./stage
+            ./buck2
+          retention-days: 7
+          if-no-files-found: error
+
+  plan:
+    needs: [gamma, tool]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      released: ${{ steps.version.outputs.released }}
+      tag: ${{ steps.version.outputs.tag }}
+      previous: ${{ steps.version.outputs.previous }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tool
+          path: tool
+      - run: chmod +x tool/release
+      - name: The version of this commit, if it is released
+        id: version
+        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$GITHUB_SHA" --output "$GITHUB_OUTPUT"
+
+  archive:
+    needs: [plan, tool]
+    if: ${{ needs.plan.outputs.released == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tool
+          path: tool
+      - run: chmod +x tool/release
+      - name: The deterministic source archive of the tested commit, and its SHA256SUMS
+        run: tool/release archive --root "$GITHUB_WORKSPACE" --tag "$TAG" --sha "$GITHUB_SHA" --out dist
+      - name: Attest the archive and SHA256SUMS
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/buildrules-*.tar.gz
+            dist/SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: dist
+          retention-days: 7
+          if-no-files-found: error
+
+  verify:
+    needs: [plan, archive, tool]
+    if: ${{ needs.plan.outputs.released == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      attestations: read
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tool
+          path: tool
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+      - run: chmod +x tool/release
+      - name: The archive, its sums, attestations, file list and scrub
+        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --dist dist --workflow .github/workflows/release.yml
+
+  tag:
+    needs: [plan, verify, tool]
+    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tool
+          path: tool
+      - run: chmod +x tool/release
+      - name: The annotated tag of the verified commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tool/release tag --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA"
+
+  publish:
+    needs: [plan, tag, verify, tool]
+    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      PREVIOUS: ${{ needs.plan.outputs.previous }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tool
+          path: tool
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+      - run: chmod +x tool/release
+      - name: Create the release, or add the file it lacks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tool/release publish --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --previous "$PREVIOUS" --dist dist
+
+  site:
+    needs: [plan, tag, verify, tool]
+    if: ${{ needs.plan.outputs.released == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tool
+          path: tool
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+      - run: chmod +x tool/release
+      - name: The page of the release
+        run: tool/release site --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --dist dist --out site
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-site
+          path: site
+          retention-days: 30
+          if-no-files-found: error

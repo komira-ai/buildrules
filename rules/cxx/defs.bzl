@@ -311,3 +311,24 @@ glibc_floor_check = rule(
         "_tool": attrs.exec_dep(default = "buildrules//rules/cxx:glibc_floor", providers = [RunInfo]),
     },
 )
+
+def _hermetic_check_impl(ctx):
+    result = ctx.actions.declare_output(ctx.label.name + ".hermetic.json")
+    ctx.actions.run(
+        cmd_args(ctx.attrs._tool[RunInfo], ctx.attrs.exe[DefaultInfo].default_outputs[0], result.as_output()),
+        category = "hermetic_check",
+        identifier = ctx.label.name,
+    )
+    return [
+        DefaultInfo(default_output = result),
+        ValidationInfo(validations = [ValidationSpec(name = ctx.label.name, validation_result = result)]),
+    ]
+
+hermetic_check = rule(
+    impl = _hermetic_check_impl,
+    doc = "Fails unless the ELF `exe` has no `.debug_*` section and does not contain the absolute path of the directory the action runs in (the exec root: the directory the binary was linked in). zig cc assembles the C runtime's start-up objects at link time with debug info that stamps the compile directory, so a binary linked without `-Wl,--strip-debug` depends on the checkout path. A validation.",
+    attrs = {
+        "exe": attrs.dep(),
+        "_tool": attrs.exec_dep(default = "buildrules//rules/cxx:hermetic", providers = [RunInfo]),
+    },
+)

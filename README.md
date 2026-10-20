@@ -9,7 +9,7 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     rules/zig, rules/gate, rules/kpin, rules/node, rules/pins
                       generic rules; kpin is pins.toml / npm only
     rules/node        node_dist, npm_tarball (one pinned tarball), npm_modules, tsc_*, jest_test, ...; npm.bzl: the front door `npm_package(path = ".")` (docs/contract.md section 13)
-    rules/cxx, third_party/aws-lc   hermetic C/C++ on the pinned zig; AWS-LC 1.39.0 (crypto[static-pic]) with prefix, symbol and glibc-floor gates
+    rules/cxx, third_party/aws-lc   hermetic C/C++ on the pinned zig (binaries carry no debug info and no build path); AWS-LC 1.39.0 (crypto[static-pic]) with prefix, symbol and glibc-floor gates
     rules/mojo        mojo_package (docs/contract.md section 12): one `mopm unit build` action per unit of mopm's graph, tests, coverage, `:check`; mojo_launch, prebuilt_unpack
     rules/mopm        the pinned mopm (pins.bzl, toolchain.bzl)
     rules/coverage    kcov v42 built from source and the coverage path tools, cov_run, cov_summary
@@ -17,6 +17,9 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     rules/platforms.bzl   the execution platforms: remote by default (properties come from .buckconfig.local), local on request (`-c buildrules_re.mode=local`, docs/contract.md section 14)
     toolchains/       the `toolchains` cell: rust_toolchains(), cxx_toolchains(), mopm_toolchains(), mojo_toolchains() (the last from mopm's graphs)
     platforms/        linux_x86_64, linux_x86_64_v1..v4 and linux_armv8_*, linux_x86_64_rust_<v>; platforms/exec (the execution platforms: agnostic + one per ISA level)
+    tools/release     the release tool (Zig): version, deterministic source archive, checks, GitHub release, the release page (RELEASING.md); tools/scrub: the public-repository scrub
+    tools/stage       the beta and gamma stages of the release (Zig): hello-world repositories that consume the candidate as a user does, and our own repositories on the farm
+    beta/             the files and commands (STEPS) of those hello-world repositories, per language; not built by //ci:all (README.md in it)
     ci/               the CI matrix (`buck2 build //ci:matrix`): examples on the default and oldest Rust, both zigs, ISA v1 and v3, the refusals, examples/crates;
                       `//ci:mojo`: the Mojo examples; ci/negative planted defects
     site/, infra/     the buildrules.dev site (built and tested on the farm) and its infrastructure
@@ -36,7 +39,7 @@ Without a farm, opt in to running every action on this machine, with the same pi
 
     buck2 build -c buildrules_re.mode=local examples/hello:hello_runs
 
-`.github/workflows/ci.yml` does that on GitHub's hosted runners; `//ci:workflow` checks the workflow.
+`.github/workflows/ci.yml` does that on GitHub's hosted runners; `.github/workflows/release.yml` calls it for every push to main, then the beta stage (`beta.yml`: hello-world repositories per language built as a user would, twice) and the gamma stage (our repositories on the farm), and releases a green one automatically (RELEASING.md: a tag and a source archive with its sha256; no binaries). `//ci:workflow` checks the three workflows.
 
 `rust-toolchain.toml` selects the Rust version (1.95.0 here); `rules/rust/pins.bzl` holds every version buildrules can fetch (1.95.0 default, 1.85.0 oldest),
 and `buildrules-pins.toml` adds your own (docs/contract.md section 6).

@@ -18,3 +18,9 @@ MIRROR_ONLY = "//ci:mojo"
 
 # Rule kinds that describe a configuration and build nothing.
 NOT_BUILT_KINDS = "constraint_setting|constraint_value|config_setting|platform|_exec_platforms"
+
+# Directories that are in no Buck2 graph of this repository on purpose, with the reason. A key is a path; beta/check.zig (`//beta:beta_check`) requires
+# the line for `beta/`, and checks that nothing under it is named BUCK, so the directory is not packages of this graph.
+OUTSIDE_THE_GRAPH = {
+    "beta/": "user-style hello-world repositories, each a standalone layout that consumes buildrules as an external cell at the candidate commit. The beta job of the release (RELEASING.md) copies one out of the checkout and builds it with `buildrules` and buck2 as a user would; built here they would be packages of this graph, loaded with a cell they do not declare. Their BUCK files are kept as BUCK.beta.",
+}

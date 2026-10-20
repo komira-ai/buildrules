@@ -1,0 +1,204 @@
+# The beta stage of the automatic release (RELEASING.md): a hello-world repository per language consumes the candidate commit of buildrules as an
+# external Buck2 cell, the way a user does (beta/<lang>/ holds the files and a STEPS file of the commands; tools/stage runs them with the `buildrules`
+# built from the candidate), builds, runs what it built, and builds a second time from nothing to see the outputs are the same bytes.
+#
+# It runs on every pull request from this repository (so a red beta is seen before a merge) and as the second stage of release.yml, between the gate
+# and the tag. Every action runs on the runner (`-c buildrules_re.mode=local`); nothing here is built on this machine's behalf anywhere else.
+#
+#   tools         builds the stage tool and the command line from the candidate, and says which legs are ready (a leg that waits for something is planned)
+#   beta          ubuntu x86_64, one job per language: rust, cxx, zig, node, mixed
+#   beta_mojo     the Mojo leg: planned (this job is skipped) while the mopm that buildrules pins is a stand-in; it runs when the pin is a release
+#   beta_arm      ubuntu-24.04-arm: planned and skipped; buildrules v0 targets linux-x86_64 only
+#   beta_macos    macos-14: planned and skipped; buildrules v0 targets linux-x86_64 only
+#   beta_farm     the same repositories built on a remote-execution farm, only when the repository variable FARM_ADDRESS is set (RELEASING.md)
+#
+# ci/stages_check.zig (`//ci:workflow`) holds this file to all of that.
+name: beta
+
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beta-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tools:
+    # A pull request from a branch of this repository, or a call from the release: a fork's pull request has no commit the cell can be fetched at.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      mojo: ${{ steps.plan.outputs.mojo }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/workflow_check.zig compares both.
+      - name: Install buck2
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
+          echo "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst" | sha256sum --check --strict -
+          zstd --decompress --quiet buck2.zst -o buck2
+          chmod +x buck2
+          ./buck2 --version
+
+      - name: Build the stage tool
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out stage //tools/stage:stage
+
+      # The command line a user would have, built from the candidate.
+      - name: Build the command line
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out buildrules //cli:buildrules
+
+      - name: Which legs are ready, and which are planned
+        id: plan
+        run: ./stage plan --root "$GITHUB_WORKSPACE" --output "$GITHUB_OUTPUT"
+
+      - name: the farm leg is not run (FARM_ADDRESS or FARM_CONNECT_REF is not set)
+        if: ${{ vars.FARM_ADDRESS == '' || vars.FARM_CONNECT_REF == '' }}
+        run: echo "::notice title=beta farm leg::the repository variable FARM_ADDRESS or FARM_CONNECT_REF is not set, so the beta repositories were not built on a farm. Skipped; RELEASING.md says what to set."
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beta-tools
+          path: |
+            ./stage
+            ./buildrules
+            ./buck2
+          retention-days: 7
+          if-no-files-found: error
+
+  beta:
+    needs: [tools]
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    name: beta ${{ matrix.lang }} (ubuntu x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: [rust, cxx, zig, node, mixed]
+    env:
+      LANG_DIR: ${{ matrix.lang }}
+      ORIGIN: https://github.com/${{ github.repository }}
+      COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: beta-tools
+          path: tool
+      - run: chmod +x tool/stage tool/buildrules tool/buck2
+      - name: The repository, as a user starts it, built twice
+        run: tool/stage beta --root "$GITHUB_WORKSPACE" --lang "$LANG_DIR" --work "$RUNNER_TEMP/beta" --origin "$ORIGIN" --commit "$COMMIT" --buck2 "$GITHUB_WORKSPACE/tool/buck2" --buildrules "$GITHUB_WORKSPACE/tool/buildrules" --exec local --summary "$GITHUB_STEP_SUMMARY"
+
+  # Planned until mopm's first release: tools/stage reads rules/mopm/pins.bzl, and while the pinned mopm is marked release_pending this job is skipped.
+  beta_mojo:
+    needs: [tools]
+    if: ${{ needs.tools.outputs.mojo == 'ready' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    name: beta mojo (ubuntu x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      ORIGIN: https://github.com/${{ github.repository }}
+      COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: beta-tools
+          path: tool
+      - run: chmod +x tool/stage tool/buildrules tool/buck2
+      - name: The repository, as a user starts it, built twice
+        run: tool/stage beta --root "$GITHUB_WORKSPACE" --lang mojo --work "$RUNNER_TEMP/beta" --origin "$ORIGIN" --commit "$COMMIT" --buck2 "$GITHUB_WORKSPACE/tool/buck2" --buildrules "$GITHUB_WORKSPACE/tool/buildrules" --exec local --summary "$GITHUB_STEP_SUMMARY"
+
+  # Planned: buildrules v0 targets linux-x86_64 only (README.md), so these legs are declared and skipped, not missing. No event is named `planned`,
+  # so the condition is never true (actionlint refuses a constant condition).
+  beta_arm:
+    if: ${{ github.event_name == 'planned' }}
+    name: beta (ubuntu-24.04-arm) planned, skipped - buildrules v0 targets linux-x86_64 only
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    steps:
+      - run: echo "planned - buildrules v0 targets linux-x86_64 only"
+
+  beta_macos:
+    if: ${{ github.event_name == 'planned' }}
+    name: beta (macos-14) planned, skipped - buildrules v0 targets linux-x86_64 only
+    runs-on: macos-14
+    permissions:
+      contents: read
+    steps:
+      - run: echo "planned - buildrules v0 targets linux-x86_64 only"
+
+  # The same repositories on a farm, when one is configured. The farm-connect action is the one the farm's other repositories use; its repository and the
+  # full commit to use are repository variables (no repository is named in this file), and tools/stage refuses a checkout that is not that commit
+  # before the action runs. A job from a fork gets neither the variables nor the token, and is skipped like the other jobs.
+  beta_farm:
+    needs: [tools]
+    if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_CONNECT_REF != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    name: beta ${{ matrix.lang }} (farm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: [rust, cxx, zig, node, mixed]
+    env:
+      LANG_DIR: ${{ matrix.lang }}
+      ORIGIN: https://github.com/${{ github.repository }}
+      COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      CONNECT_REF: ${{ vars.FARM_CONNECT_REF }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: beta-tools
+          path: tool
+      - run: chmod +x tool/stage tool/buildrules tool/buck2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.FARM_CONNECT_REPO }}
+          ref: ${{ vars.FARM_CONNECT_REF }}
+          path: farm-action
+          persist-credentials: false
+      - name: the action that joins the farm is at the commit the variable names
+        run: tool/stage action-ref --dir farm-action --ref "$CONNECT_REF"
+      - name: connect to the farm
+        uses: ./farm-action/.github/actions/farm-connect
+        with:
+          ts-client-id: ${{ vars.TS_CLIENT_ID }}
+          ts-audience: ${{ vars.TS_AUDIENCE }}
+          farm-address: ${{ vars.FARM_ADDRESS }}
+          farm-instance: ${{ vars.FARM_INSTANCE }}
+          farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
+          tls: ${{ vars.FARM_TLS || 'false' }}
+      - name: The repository, as a user starts it, built on the farm
+        run: tool/stage beta --root "$GITHUB_WORKSPACE" --lang "$LANG_DIR" --work "$RUNNER_TEMP/beta" --origin "$ORIGIN" --commit "$COMMIT" --buck2 "$GITHUB_WORKSPACE/tool/buck2" --buildrules "$GITHUB_WORKSPACE/tool/buildrules" --exec farm --farm-config "$HOME/.buckconfig.d/farm.buckconfig" --summary "$GITHUB_STEP_SUMMARY"

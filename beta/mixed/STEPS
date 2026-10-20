@@ -1,0 +1,13 @@
+# One repository with all four: a Rust package, a C program, a Zig program and a Node package, each under its own directory.
+run buildrules init . --git {origin} --commit {commit}
+config
+run buildrules cargo new crates/hello
+run buildrules sync
+run buildrules npm sync web
+run buildrules check
+run buildrules npm check web
+build //crates/hello:bin //crates/hello:test //native/c:hello_c //native/zig:hello //web:ci //web:dist
+expect //crates/hello:bin => Hello, world!
+expect //native/c:hello_c => Hello, world!
+expect //native/zig:hello => Hello, world!
+expect-file //web:dist hello.txt => Hello, world!

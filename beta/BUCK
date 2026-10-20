@@ -1,0 +1,36 @@
+# The beta repositories (README.md): files a user writes and the commands a user types, per language. Not packages of this graph and not built by
+# //ci:all (ci/all.bzl, OUTSIDE_THE_GRAPH); the beta job of the release builds them as a user would. This package holds the check of what they are.
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_test")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+_FILES = {"beta/" + f: f for f in glob(["*/**"])}
+
+_FILES.update({"ci/all.bzl": "//ci:all.bzl"})
+
+zig_test(
+    name = "beta_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "check.zig",
+    deps = ["//tools/stage:stage_steps"],
+    data = _FILES,
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["//ci:"],
+)
+
+# The list of languages, read by //ci:stages_check, which holds beta.yml to it.
+export_file(
+    name = "check.zig",
+    src = "check.zig",
+    visibility = ["//ci:", "//site:"],
+)
+
+# Read by the buildrules.dev site tests (site/BUCK): the Mojo leg is planned until mopm's first release.
+export_file(
+    name = "mojo_steps",
+    src = "mojo/STEPS",
+    visibility = ["//site:"],
+)
+
+scrub_files()
