@@ -1,5 +1,6 @@
 # Public CI: builds and tests the repository on GitHub's hosted runners, with every action run on the runner itself
-# (`-c buildrules_re.mode=local`, docs/contract.md section 14). The tools of the actions are the pinned toolchains, so
+# (`-c buildrules_re.mode=local`, docs/contract.md section 14, passed to every buck2 command that loads the graph: the execution
+# platforms are analysed by build, bxl, audit, query and test alike, and fail without a mode). The tools of the actions are the pinned toolchains, so
 # the runner supplies buck2 and its kernel and nothing else. ci/workflow_check.zig (`//ci:workflow`) checks this file.
 name: ci
 
@@ -53,7 +54,7 @@ jobs:
       # //ci:all builds every target of the tree except the refusal fixtures (ci/all.bzl lists each with its reason). This step fails when a
       # target is in neither //ci:all nor //ci:mojo nor that list, so a new target cannot go unbuilt.
       - name: Every target of the tree is covered
-        run: ./buck2 bxl //ci:completeness.bxl:check
+        run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check
 
       # //ci:mojo is not built: its packages need the pinned mopm tarball and a package channel, which are fetched through
       # buildrules.url_map from a mirror a public runner does not have (docs/contract.md section 14).

@@ -5,9 +5,10 @@
 //!  - an action referenced by a tag or branch (a moved tag changes what runs with the repository's token): every `uses:` is an
 //!    owner/repo@<40 hex>;
 //!  - a token with more than read access, or a trigger that runs fork code with secrets (`pull_request_target`);
-//!  - a CI that stops building the target it promises (//ci:all), stops running the completeness check, builds in remote mode (the
-//!    `./buck2 build` command itself must pass `-c buildrules_re.mode=local`; any other value of that key anywhere is refused), or names a
-//!    remote-execution endpoint;
+//!  - a CI that stops building the target it promises (//ci:all), stops running the completeness check, runs in remote mode (every
+//!    `./buck2` command that loads the graph, which is every one but `kill` and `--version`, build and bxl and audit and query and test
+//!    alike, must pass `-c buildrules_re.mode=local`, because the execution platforms are analysed by all of them and fail without a mode;
+//!    any other value of that key anywhere is refused), or names a remote-execution endpoint;
 //!  - a buck2 install that drifted from the release pinned in tools/buck2 (url or sha256).
 const std = @import("std");
 const t = std.testing;
@@ -18,7 +19,7 @@ pub const targets = [_][]const u8{
 };
 
 /// The workflow runs the completeness check before it builds.
-const completeness = "./buck2 bxl //ci:completeness.bxl:check";
+const completeness = "./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check";
 
 pub const Findings = std.ArrayList([]const u8);
 
@@ -101,9 +102,24 @@ fn commands(a: std.mem.Allocator, text: []const u8) ![]const []const u8 {
 
 const mode_key = "buildrules_re.mode";
 
-/// Whether the `./buck2 build` command `cmd` has `-c buildrules_re.mode=local` as whole arguments.
-fn buildInLocalMode(cmd: []const u8) bool {
-    return hasArgs(cmd, "-c buildrules_re.mode=local");
+/// Whether the `./buck2` invocation `inv` has `-c buildrules_re.mode=local` as whole arguments.
+fn inLocalMode(inv: []const u8) bool {
+    return hasArgs(inv, "-c buildrules_re.mode=local");
+}
+
+const buck2 = "./buck2 ";
+
+/// `./buck2` subcommands that load no graph, so no execution platform is analysed and no mode is needed. Everything else is held to
+/// local mode (an allow-list of the exempt, so a subcommand this parser has not heard of, or a global flag before it, is not exempt).
+const no_graph = [_][]const u8{ "kill", "--version" };
+
+/// Whether the `./buck2` invocation `inv` (the text after `./buck2 `, up to the next invocation) loads the graph.
+fn loadsGraph(inv: []const u8) bool {
+    const word = std.mem.sliceTo(std.mem.trim(u8, inv, " "), ' ');
+    for (no_graph) |n| {
+        if (std.mem.eql(u8, word, n)) return false;
+    }
+    return true;
 }
 
 /// Whether `args` occurs in `cmd` as whole space-separated words.
@@ -149,23 +165,27 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
     if (std.mem.indexOf(u8, workflow, "runs-on: ubuntu-latest") == null) try add(a, &f, "`runs-on: ubuntu-latest` is missing", .{});
 
     // Local mode, never a remote-execution endpoint, every promised target.
-    // The flag is on the `./buck2 build` command itself (not on an echo, a comment or another command), every such command has it, and no
-    // other value of the key appears anywhere (comments included), nor the key outside a build command.
+    // The flag is on each `./buck2` command that loads the graph (not on an echo, a comment or another command), a build command exists, and
+    // no other value of the key appears anywhere (comments included), nor the key outside such a command.
     var builds: usize = 0;
     var mode_uses: usize = 0;
-    var mode_on_builds: usize = 0;
+    var mode_on_graph: usize = 0;
     for (try commands(a, workflow)) |cmd| {
-        const is_build = std.mem.indexOf(u8, cmd, "./buck2 build ") != null;
-        const here = std.mem.count(u8, cmd, mode_key);
-        mode_uses += here;
-        if (is_build) {
-            builds += 1;
-            mode_on_builds += here;
-            if (!buildInLocalMode(cmd)) try add(a, &f, "a `./buck2 build` command does not pass `-c buildrules_re.mode=local`: {s}", .{cmd});
+        mode_uses += std.mem.count(u8, cmd, mode_key);
+        var from: usize = 0;
+        while (std.mem.indexOfPos(u8, cmd, from, buck2)) |i| {
+            const start = i + buck2.len;
+            const end = std.mem.indexOfPos(u8, cmd, start, buck2) orelse cmd.len;
+            const inv = cmd[start..end];
+            from = start;
+            if (!loadsGraph(inv)) continue;
+            if (std.mem.startsWith(u8, inv, "build ")) builds += 1;
+            mode_on_graph += std.mem.count(u8, inv, mode_key);
+            if (!inLocalMode(inv)) try add(a, &f, "a `./buck2` command that loads the graph does not pass `-c buildrules_re.mode=local`: {s}", .{cmd});
         }
     }
     if (builds == 0) try add(a, &f, "no `./buck2 build` command found (the build does not pass `-c buildrules_re.mode=local`; or this parser is blind)", .{});
-    if (mode_uses != mode_on_builds) try add(a, &f, "`{s}` appears outside a `./buck2 build` command", .{mode_key});
+    if (mode_uses != mode_on_graph) try add(a, &f, "`{s}` appears outside a `./buck2` command that loads the graph", .{mode_key});
     var mit = std.mem.splitScalar(u8, workflow, '\n');
     while (mit.next()) |line| {
         var from: usize = 0;
@@ -323,7 +343,7 @@ test "the mode flag must be on the build command, and no other mode may appear" 
     // the flag moves from the build command to an echo line: the old substring check passed this
     const moved = try mutateLast(a, r.wf, "./buck2 build --console simple" ++ flag, "echo -c buildrules_re.mode=local\n          ./buck2 build --console simple \\\n");
     try expectFinding(a, r, moved, "does not pass `-c buildrules_re.mode=local`");
-    try expectFinding(a, r, moved, "appears outside a `./buck2 build` command");
+    try expectFinding(a, r, moved, "appears outside a `./buck2` command that loads the graph");
     // a later build in remote mode, after the local one: the old check passed this too
     const later = try std.mem.concat(a, u8, &.{ r.wf, "      - run: ./buck2 build -c buildrules_re.mode=remote //x:y\n" });
     try expectFinding(a, r, later, "something other than `local`");
@@ -339,12 +359,43 @@ test "the mode flag must be on the build command, and no other mode may appear" 
     try expectFinding(a, r, try mutateLast(a, r.wf, flag, " \\\n          # -c buildrules_re.mode=local\n"), "does not pass");
 }
 
+test "every buck2 command that loads the graph must run in local mode" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try real(a);
+    const need = "does not pass `-c buildrules_re.mode=local`";
+    // the shape of the first public CI run: the completeness bxl without the flag (its platforms failed to analyse), the build with it
+    const old = try mutate(a, r.wf, "./buck2 bxl -c buildrules_re.mode=local //ci:completeness", "./buck2 bxl //ci:completeness");
+    try expectFinding(a, r, old, need);
+    // every other graph-loading command is held to the same
+    const cmds = [_][]const u8{ "audit providers //ci:all", "cquery //ci:all", "uquery //ci:all", "aquery //ci:all", "test //ci:all", "targets //...", "run //x:y" };
+    for (cmds) |c| {
+        const extra = try std.fmt.allocPrint(a, "      - run: ./buck2 {s}\n", .{c});
+        try expectFinding(a, r, try std.mem.concat(a, u8, &.{ r.wf, extra }), need);
+        // and with the flag it is green
+        const ok = try std.fmt.allocPrint(a, "      - run: ./buck2 {s} -c buildrules_re.mode=local\n", .{c});
+        const f = try check(a, try std.mem.concat(a, u8, &.{ r.wf, ok }), r.ds, r.cb);
+        try t.expectEqual(@as(usize, 0), f.items.len);
+    }
+    // a global flag before the subcommand does not exempt it, nor does a second invocation on the same line
+    try expectFinding(a, r, try std.mem.concat(a, u8, &.{ r.wf, "      - run: ./buck2 --console simple bxl //x:y\n" }), need);
+    try expectFinding(a, r, try std.mem.concat(a, u8, &.{ r.wf, "      - run: ./buck2 build -c buildrules_re.mode=local //x:y && ./buck2 bxl //x:y\n" }), need);
+    // the flag on one command does not cover the next
+    try expectFinding(a, r, try std.mem.concat(a, u8, &.{ r.wf, "      - run: ./buck2 build -c buildrules_re.mode=local //x:y && ./buck2 audit providers //x:y\n" }), need);
+    // the commands that load no graph need no mode (the real workflow has both)
+    try t.expect(std.mem.indexOf(u8, r.wf, "./buck2 kill") != null and std.mem.indexOf(u8, r.wf, "./buck2 --version") != null);
+    // another value is refused on any of them
+    try expectFinding(a, r, try mutate(a, r.wf, "bxl -c buildrules_re.mode=local", "bxl -c buildrules_re.mode=remote"), "something other than `local`");
+    try expectFinding(a, r, try mutate(a, r.wf, "bxl -c buildrules_re.mode=local", "bxl -c buildrules_re.mode=remote"), need);
+}
+
 test "the completeness check must run" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectFinding(a, r, try mutate(a, r.wf, "run: ./buck2 bxl //ci:completeness.bxl:check", "run: echo ./buck2 bxl //ci:completeness.bxl:chec"), "completeness");
+    try expectFinding(a, r, try mutate(a, r.wf, "run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check", "run: echo ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:chec"), "completeness");
 }
 
 test "a target named only in a comment is not built" {
