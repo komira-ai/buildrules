@@ -327,6 +327,67 @@ pub fn buck2InstallArm(a: std.mem.Allocator, f: *Findings, workflow: []const u8,
     if (std.mem.indexOf(u8, workflow, "runs-on: ubuntu-24.04-arm") == null) try add(a, f, "`runs-on: ubuntu-24.04-arm` is missing (the host_arm job)", .{});
 }
 
+/// The lines of job `name` (`host_arm`): from its `  name:` line to the next job key (two spaces, then a name).
+fn jobBlock(workflow: []const u8, name: []const u8, buf: []u8) ?[]const u8 {
+    const key = std.fmt.bufPrint(buf, "\n  {s}:\n", .{name}) catch return null;
+    const at = std.mem.indexOf(u8, workflow, key) orelse return null;
+    const body = workflow[at + 1 ..];
+    var end = body.len;
+    var pos: usize = key.len - 1;
+    while (std.mem.indexOfPos(u8, body, pos, "\n  ")) |i| {
+        const c = if (i + 3 < body.len) body[i + 3] else ' ';
+        if (c != ' ' and c != '#' and c != '\n') {
+            end = i;
+            break;
+        }
+        pos = i + 1;
+    }
+    return body[0..end];
+}
+
+/// Whether one of `cmds` is exactly `want` (the line of a `run: |` block) or `run: ` and `want` (a one-line step).
+fn hasCommand(cmds: []const []const u8, want: []const u8) bool {
+    for (cmds) |c| {
+        if (std.mem.eql(u8, c, want)) return true;
+        if (std.mem.startsWith(u8, c, "run: ") and std.mem.eql(u8, std.mem.trim(u8, c["run: ".len..], " "), want)) return true;
+    }
+    return false;
+}
+
+const arm_platform = "buildrules//platforms:linux_aarch64";
+const arm_target = "//rules/pins:host_downloads";
+const arm_grep = "grep --fixed-strings --quiet \"Execution platform: " ++ arm_platform ++ "\"";
+
+/// What the `host_arm` job must do besides installing buck2, each as a command of that job (a comment that names it does not count):
+/// assert the machine is aarch64, assert the execution platform local mode resolves to is `platforms:linux_aarch64`, and build the pinned
+/// downloads of the aarch64 hosts for that target platform in local mode. A job without these still goes green on an x86 machine or with a
+/// platform that was not chosen, and checks nothing.
+pub fn hostArm(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !void {
+    var buf: [64]u8 = undefined;
+    const job = jobBlock(workflow, "host_arm", &buf) orelse {
+        try add(a, f, "the `host_arm` job is missing (ubuntu-24.04-arm: the machine, its execution platform and the pinned downloads of the aarch64 hosts)", .{});
+        return;
+    };
+    const cmds = try commands(a, job);
+    if (!hasCommand(cmds, "test \"$(uname -m)\" = aarch64")) try add(a, f, "the host_arm job does not assert `uname -m` is aarch64 (`test \"$(uname -m)\" = aarch64`)", .{});
+    var resolved = false;
+    var built = false;
+    for (cmds) |c| {
+        const body = if (std.mem.startsWith(u8, c, "run: ")) c["run: ".len..] else c;
+        if (std.mem.startsWith(u8, body, "./buck2 audit execution-platform-resolution ")) {
+            const bar = std.mem.indexOfScalar(u8, body, '|') orelse continue;
+            const left = std.mem.trim(u8, body[0..bar], " ");
+            const right = std.mem.trim(u8, body[bar + 1 ..], " ");
+            if (hasArgs(left, arm_target) and inLocalMode(left) and std.mem.eql(u8, right, arm_grep)) resolved = true;
+        }
+        if (std.mem.startsWith(u8, body, "./buck2 build ")) {
+            if (hasArgs(body, arm_target) and inLocalMode(body) and hasArgs(body, "--target-platforms " ++ arm_platform)) built = true;
+        }
+    }
+    if (!resolved) try add(a, f, "the host_arm job does not assert the execution platform: `./buck2 audit execution-platform-resolution -c buildrules_re.mode=local {s} | {s}`", .{ arm_target, arm_grep });
+    if (!built) try add(a, f, "the host_arm job does not build {s} with `--target-platforms {s}` in local mode", .{ arm_target, arm_platform });
+}
+
 /// `continue-on-error` lets a red job or step pass: a workflow that gates a release has none, at job or step level, unless it is `false`. Any other
 /// value (`true`, an expression, a quoted string) is a finding, wherever the key is (a flow mapping included).
 pub fn noContinueOnError(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !void {
@@ -438,6 +499,7 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
     // The buck2 install is the release pinned in tools/buck2.
     try buck2Install(a, &f, workflow, dotslash);
     try buck2InstallArm(a, &f, workflow, dotslash);
+    try hostArm(a, &f, workflow);
 
     // The cache is keyed on lock files.
     const key = std.mem.indexOf(u8, workflow, "key: buck-out-");
@@ -537,6 +599,17 @@ const fixture_wf =
     \\        run: |
     \\          curl --output buck2.zst https://example.invalid/2026-09-15/buck2-aarch64-unknown-linux-gnu.zst
     \\          echo "e35027a8e3f700000000000000000000000000000000000000000000000000ff  buck2.zst" | sha256sum --check --strict -
+    \\      - name: The machine is aarch64
+    \\        run: test "$(uname -m)" = aarch64
+    \\      - name: The execution platform of this machine is platforms:linux_aarch64
+    \\        run: |
+    \\          ./buck2 audit execution-platform-resolution -c buildrules_re.mode=local //rules/pins:host_downloads \
+    \\            | grep --fixed-strings --quiet "Execution platform: buildrules//platforms:linux_aarch64"
+    \\      - name: Download and verify the pins of the aarch64 hosts
+    \\        run: |
+    \\          ./buck2 build --console simple -c buildrules_re.mode=local \
+    \\            --target-platforms buildrules//platforms:linux_aarch64 \
+    \\            //rules/pins:host_downloads
     \\
 ;
 
@@ -767,6 +840,33 @@ test "an aarch64 buck2 install that drifted from tools/buck2 is found" {
     const ds = dotslashPlatform(r.ds, "linux-aarch64").?;
     try t.expect(std.mem.startsWith(u8, ds.digest, "e35027a8e3f7"));
     try t.expect(std.mem.startsWith(u8, dotslashLinux(r.ds).?.digest, "1268fce33fb6"));
+}
+
+test "the host_arm job must assert the machine, the execution platform and build the aarch64 pins" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const uname = "      - name: The machine is aarch64\n        run: test \"$(uname -m)\" = aarch64\n";
+    const grep = " \\\n            | grep --fixed-strings --quiet \"Execution platform: buildrules//platforms:linux_aarch64\"";
+    // the machine check
+    try expectFinding(a, r, try mutate(a, r.wf, uname, ""), "uname -m");
+    try expectFinding(a, r, try mutate(a, r.wf, "= aarch64\n", "= x86_64\n"), "uname -m");
+    try expectFinding(a, r, try mutate(a, r.wf, "run: test \"$(uname -m)\" = aarch64", "run: echo ok # test \"$(uname -m)\" = aarch64"), "uname -m");
+    // the execution-platform check: dropped, loosened, aimed at another platform or another target, or without the mode
+    try expectFinding(a, r, try mutate(a, r.wf, grep, ""), "execution platform");
+    try expectFinding(a, r, try mutate(a, r.wf, " \\\n            | grep --fixed-strings --quiet \"Execution platform: buildrules//platforms:linux_aarch64\"", " \\\n            | grep --quiet \"Execution platform: buildrules//platforms:linux_aarch64\""), "execution platform");
+    try expectFinding(a, r, try mutate(a, r.wf, "Execution platform: buildrules//platforms:linux_aarch64", "Execution platform: buildrules//platforms:linux_x86_64"), "execution platform");
+    try expectFinding(a, r, try mutate(a, r.wf, "-c buildrules_re.mode=local //rules/pins:host_downloads \\\n", "-c buildrules_re.mode=local //rules/pins:zig \\\n"), "execution platform");
+    try expectFinding(a, r, try mutate(a, r.wf, "audit execution-platform-resolution", "audit configurations"), "execution platform");
+    // the build: not for the aarch64 target platform, not the downloads, or gone
+    try expectFinding(a, r, try mutate(a, r.wf, "            --target-platforms buildrules//platforms:linux_aarch64 \\\n", ""), "--target-platforms");
+    try expectFinding(a, r, try mutate(a, r.wf, "--target-platforms buildrules//platforms:linux_aarch64", "--target-platforms buildrules//platforms:linux_x86_64"), "--target-platforms");
+    try expectFinding(a, r, try mutate(a, r.wf, "            //rules/pins:host_downloads\n", "            //rules/pins:zig\n"), "--target-platforms");
+    try expectFinding(a, r, try mutate(a, r.wf, "      - name: Download and verify the pins of the aarch64 hosts\n        run: |\n          ./buck2 build --console simple -c buildrules_re.mode=local \\\n            --target-platforms buildrules//platforms:linux_aarch64 \\\n            //rules/pins:host_downloads\n", ""), "--target-platforms");
+    // the job itself, or its steps under another job
+    try expectFinding(a, r, try mutate(a, r.wf, "\n  host_arm:\n", "\n  host_x:\n"), "`host_arm` job is missing");
+    try expectFinding(a, r, try mutate(a, r.wf, "      - name: The machine is aarch64\n", "  other:\n    runs-on: ubuntu-latest\n    steps:\n      - name: The machine is aarch64\n"), "uname -m");
 }
 
 test "a cache key that does not follow the lock files is found" {
