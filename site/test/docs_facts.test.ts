@@ -76,6 +76,10 @@ describe('pins stated in the pages are the pins in the sources', () => {
     expect(rust).toContain('RUST_DEFAULT = "1.95.0"');
     expect(rust).toContain('RUST_OLDEST = "1.85.0"');
     for (const [who, t] of ALL) expect({ who, has: t.includes('1.95.0') && t.includes('1.85.0') }).toEqual({ who, has: true });
+    // the How texts say which is the default and which the oldest; the sentence is checked as a whole, so swapping or changing either is caught
+    for (const [who, t] of ALL.filter(([w]) => /how/i.test(w))) {
+      expect({ who, has: t.replace(/\s+/g, ' ').includes('buildrules pins `1.95.0` (the default) and `1.85.0` (the oldest') }).toEqual({ who, has: true });
+    }
   });
   test('Zig, busybox and the conda libraries', () => {
     expect(pins).toContain('zig-linux-x86_64-0.12.0.tar.xz');
