@@ -38,6 +38,7 @@ scrub_test(
     name = "scrub",
     packages = [
     "//:scrub_files",
+    "//beta:scrub_files",
     "//ci/negative:scrub_files",
     "//ci:scrub_files",
     "//cli:scrub_files",
@@ -83,10 +84,11 @@ scrub_test(
     "toolchains//:scrub_files",
     "//tools/release:scrub_files",
     "//tools/scrub:scrub_files",
+    "//tools/stage:scrub_files",
     "crates//:scrub_files",
     "crates//crates/zdemo:scrub_files",
     ],
-    require = ["README.md", "LICENSE", "BUCK", "cli/src/main.zig", "rules/mojo/defs.bzl", "tools/scrub/scrub.zig", "examples/crates/Cargo.toml", ".buckconfig", ".buckconfig.local.example", ".gitignore", "infra/site/.gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml", "VERSION"],
+    require = ["README.md", "LICENSE", "BUCK", "cli/src/main.zig", "rules/mojo/defs.bzl", "tools/scrub/scrub.zig", "examples/crates/Cargo.toml", ".buckconfig", ".buckconfig.local.example", ".gitignore", "infra/site/.gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/beta.yml", "beta/rust/STEPS", "beta/README.md", "VERSION"],
 )
 
 scrub_files()

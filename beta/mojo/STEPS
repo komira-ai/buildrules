@@ -1,0 +1,8 @@
+# A Mojo package, built by mopm's unit graph. Planned: the mopm that buildrules pins is a stand-in until mopm's first release, so this leg is skipped
+# (and says so) while rules/mopm/pins.bzl marks it release_pending. These steps have not been run end to end yet.
+planned-until mopm-release
+run buildrules init . --git {origin} --commit {commit}
+config
+run buildrules mojo sync
+run buildrules mojo check
+build //hello:ci

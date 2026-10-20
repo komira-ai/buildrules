@@ -206,7 +206,7 @@ pub fn archive(a: std.mem.Allocator, io: Io, root: []const u8, tag_name: []const
     const number = try version.numberText(a, v);
     const prefix = try std.fmt.allocPrint(a, "buildrules-{s}/", .{number});
     const tar_bytes = try must(io, a, &.{
-        "git",                                              "-C",       root,                                       "-c",        "tar.umask=0022",
+        "git", "-C", root, "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "tar.umask=0022",
         "archive",                                          "--format=tar", try std.fmt.allocPrint(a, "--prefix={s}", .{prefix}), "--mtime=" ++ archive_mtime, try std.fmt.allocPrint(a, "refs/tags/{s}", .{tag_name}),
     });
     const archive_bytes = try gz.gzip(a, tar_bytes);
@@ -360,6 +360,18 @@ pub fn publish(a: std.mem.Allocator, io: Io, o: PublishOpts) !PublishResult {
             return .uploaded;
         },
         .create => {
+            // Never create a release below one that exists: a re-run of an old run's failed jobs, after a newer release, would otherwise
+            // publish the lower number afterwards (and could take over "Latest"). Only creating is guarded: a missing file of a release
+            // that exists is still added above. A tag with no release does not block anything (RELEASING.md, "When something fails").
+            const listing = try must(io, a, &.{ "gh", "api", "--paginate", try std.fmt.allocPrint(a, "repos/{s}/releases?per_page=100", .{o.repo}), "--jq", ".[].tag_name" });
+            var names = std.mem.splitScalar(u8, listing, '\n');
+            while (names.next()) |n| {
+                const other = version.parseTag(trimNl(n)) orelse continue;
+                if (version.Version.order(other, v) == .gt) {
+                    std.debug.print("release: {s} exists, which is higher than {s}: refusing to create a lower-numbered release after it\n", .{ trimNl(n), o.tag });
+                    return error.HigherReleaseExists;
+                }
+            }
             const log_range = if (o.previous.len == 0) try std.fmt.allocPrint(a, "refs/tags/{s}", .{o.tag}) else try std.fmt.allocPrint(a, "refs/tags/{s}..refs/tags/{s}", .{ o.previous, o.tag });
             const log = try must(io, a, &.{ "git", "-C", o.root, "log", "--no-merges", "--format=%s", log_range });
             var subjects = std.ArrayList([]const u8).empty;
@@ -380,6 +392,8 @@ pub fn publish(a: std.mem.Allocator, io: Io, o: PublishOpts) !PublishResult {
                 "gh",       "release",  "create", o.tag,
                 archive_path, sums_path, "--repo", o.repo,
                 "--verify-tag", "--title", try std.fmt.allocPrint(a, "buildrules {s}", .{number}), "--notes-file", o.notes_path,
+                // The highest release is the latest; the guard above makes this one the highest.
+                "--latest",
             });
             return .created;
         },
@@ -601,7 +615,7 @@ test "the archive command: git archive of the tag with the fixed prefix and time
     const b = try archive(a, fake.io(), "/w", "v0.0.1");
     try t.expectEqualStrings("buildrules-0.0.1.tar.gz", b.name);
     try t.expectEqualStrings("buildrules-0.0.1/", b.prefix);
-    try t.expectEqualStrings("git -C /w -c tar.umask=0022 archive --format=tar --prefix=buildrules-0.0.1/ --mtime=" ++ archive_mtime ++ " refs/tags/v0.0.1", fake.calls.items[0]);
+    try t.expectEqualStrings("git -C /w -c core.autocrlf=false -c core.eol=lf -c tar.umask=0022 archive --format=tar --prefix=buildrules-0.0.1/ --mtime=" ++ archive_mtime ++ " refs/tags/v0.0.1", fake.calls.items[0]);
     // the gzip is this tool's own and holds the tar
     const back = try gz.gunzip(a, b.archive);
     try t.expectEqualSlices(u8, tar_bytes, back);
@@ -783,10 +797,11 @@ test "publish: with no release yet, one is created with both files, the notes an
         .{ .needle = "rev-parse", .out = ok(peeled_a) },
         .{ .needle = "releases/tags/v0.0.2", .out = fail(1, "gh: Not Found (HTTP 404)") },
         .{ .needle = "log --no-merges", .out = ok("rules: one thing\nci: another\n") },
+        .{ .needle = "releases?per_page", .out = ok("v0.0.1\n") },
         .{ .needle = "release create" },
     } };
     try t.expectEqual(PublishResult.created, try publish(a, fake.io(), c.o));
-    try t.expectEqual(@as(usize, 1), fake.count("gh release create v0.0.2 dist/buildrules-0.0.2.tar.gz dist/SHA256SUMS --repo o/n --verify-tag --title buildrules 0.0.2 --notes-file dist/notes.md"));
+    try t.expectEqual(@as(usize, 1), fake.count("gh release create v0.0.2 dist/buildrules-0.0.2.tar.gz dist/SHA256SUMS --repo o/n --verify-tag --title buildrules 0.0.2 --notes-file dist/notes.md --latest"));
     try t.expectEqual(@as(usize, 1), fake.count("refs/tags/v0.0.1..refs/tags/v0.0.2"));
     try t.expectEqual(@as(usize, 1), fake.files.items.len);
     try t.expect(std.mem.startsWith(u8, fake.files.items[0], "dist/notes.md\n"));
@@ -805,6 +820,7 @@ test "publish: the first release logs the whole tag" {
         .{ .needle = "rev-parse", .out = ok(peeled_a) },
         .{ .needle = "releases/tags", .out = fail(1, "HTTP 404") },
         .{ .needle = "log --no-merges --format=%s refs/tags/v0.0.2", .out = ok("first\n") },
+        .{ .needle = "releases?per_page", .out = ok("v0.0.1\n") },
         .{ .needle = "release create" },
     } };
     try t.expectEqual(PublishResult.created, try publish(a, fake.io(), c.o));
@@ -898,6 +914,79 @@ test "publish: refuses before any release call when the files, the tag or the AP
     } };
     try t.expectError(error.CommandFailed, publish(a, fake.io(), c.o));
     try t.expectEqual(@as(usize, 0), fake.count("release "));
+}
+
+test "publish: a release is never created below one that exists, however the jobs are re-run" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const c = try publishCase(a); // v0.0.2
+    // v0.0.3 is already released: creating v0.0.2 now would take "Latest" from it, so nothing is created
+    var fake = Fake{ .a = a, .rules = &.{
+        .{ .needle = "rev-parse", .out = ok(peeled_a) },
+        .{ .needle = "releases/tags/v0.0.2", .out = fail(1, "gh: Not Found (HTTP 404)") },
+        .{ .needle = "releases?per_page", .out = ok("v0.0.3\nv0.0.1\n") },
+        .{ .needle = "release create" },
+    } };
+    try t.expectError(error.HigherReleaseExists, publish(a, fake.io(), c.o));
+    try t.expectEqual(@as(usize, 0), fake.count("release create"));
+    try t.expectEqual(@as(usize, 0), fake.files.items.len);
+    // a higher number on a later page of the listing, and with a non-release tag among them, is still found
+    fake = Fake{ .a = a, .rules = &.{
+        .{ .needle = "rev-parse", .out = ok(peeled_a) },
+        .{ .needle = "releases/tags/v0.0.2", .out = fail(1, "HTTP 404") },
+        .{ .needle = "releases?per_page", .out = ok("v0.0.1\nlatest\nv0.0.2-rc1\nv0.1.1\n") },
+        .{ .needle = "release create" },
+    } };
+    try t.expectError(error.HigherReleaseExists, publish(a, fake.io(), c.o));
+    // lower releases, a non-release tag name and an empty listing do not block; the new release is made the latest
+    fake = Fake{ .a = a, .rules = &.{
+        .{ .needle = "rev-parse", .out = ok(peeled_a) },
+        .{ .needle = "releases/tags/v0.0.2", .out = fail(1, "HTTP 404") },
+        .{ .needle = "releases?per_page", .out = ok("v0.0.1\nv0.0.2-rc1\n") },
+        .{ .needle = "log --no-merges", .out = ok("x\n") },
+        .{ .needle = "release create" },
+    } };
+    try t.expectEqual(PublishResult.created, try publish(a, fake.io(), c.o));
+    try t.expectEqual(@as(usize, 1), fake.count(" --latest"));
+    // the listing failing is not "no higher release": the job fails and creates nothing
+    fake = Fake{ .a = a, .rules = &.{
+        .{ .needle = "rev-parse", .out = ok(peeled_a) },
+        .{ .needle = "releases/tags/v0.0.2", .out = fail(1, "HTTP 404") },
+        .{ .needle = "releases?per_page", .out = fail(1, "HTTP 502") },
+    } };
+    try t.expectError(error.CommandFailed, publish(a, fake.io(), c.o));
+    try t.expectEqual(@as(usize, 0), fake.count("release create"));
+    // a release that exists keeps getting its missing file added, even when a higher one exists: only creating is guarded
+    const ah = assets.sha256Hex(c.b.archive);
+    const part = try releaseJson(a, &ah, null, true, false);
+    fake = Fake{ .a = a, .rules = &.{
+        .{ .needle = "rev-parse", .out = ok(peeled_a) },
+        .{ .needle = "releases/tags/v0.0.2", .out = ok(part) },
+        .{ .needle = "release upload" },
+    } };
+    try t.expectEqual(PublishResult.uploaded, try publish(a, fake.io(), c.o));
+    try t.expectEqual(@as(usize, 0), fake.count("releases?per_page"));
+}
+
+test "a tag with no release does not block the next tag: the next version is the highest tag plus one, and no release is looked at" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // v0.0.2 is tagged (its run died before publishing) and the tag job of a later commit still takes v0.0.3
+    const refs = "v0.0.1\ttag\t" ++ "1" ** 40 ++ "\t" ++ sha_b ++ "\nv0.0.2\ttag\t" ++ "2" ** 40 ++ "\t" ++ sha_c ++ "\n";
+    var fake = Fake{ .a = a, .rules = &.{
+        .{ .needle = "for-each-ref", .out = ok(refs) },
+        .{ .needle = "merge-base", .out = ok("") },
+        .{ .needle = "diff --name-only", .out = ok("rules/x.bzl\x00") },
+        .{ .needle = "git/tags", .out = ok(sha_c ++ "\n") },
+        .{ .needle = "git/refs" },
+    } };
+    const r = try tag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.0\n" });
+    try t.expect(r.released and r.created);
+    try t.expectEqualStrings("v0.0.3", r.tag);
+    try t.expectEqualStrings("v0.0.2", r.previous);
+    try t.expectEqual(@as(usize, 0), fake.count("releases"));
 }
 
 test "busybox tar, an independent reader, lists the archive this tool writes, with its prefix" {

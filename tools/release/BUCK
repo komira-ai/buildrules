@@ -10,6 +10,7 @@ _SRCS = [
     "gz.zig",
     "tar.zig",
     "assets.zig",
+    "page.zig",
     "cmds.zig",
     "release.zig",
 ]
@@ -29,6 +30,12 @@ export_file(
     visibility = ["//site:"],
 )
 
+export_file(
+    name = "page.zig",
+    src = "page.zig",
+    visibility = ["//site:"],
+)
+
 zig_test(
     name = "release_unit",
     exec_compatible_with = LINUX_X86_64,
@@ -43,7 +50,7 @@ zig_exe(
     name = "release",
     exec_compatible_with = LINUX_X86_64,
     src = "release.zig",
-    imports = ["version.zig", "gz.zig", "tar.zig", "assets.zig", "cmds.zig"],
+    imports = ["version.zig", "gz.zig", "tar.zig", "assets.zig", "page.zig", "cmds.zig"],
     deps = ["//tools/scrub:scrub_lib"],
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",

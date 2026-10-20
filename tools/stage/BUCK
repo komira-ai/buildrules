@@ -1,0 +1,59 @@
+# The beta and gamma stages of the automatic release (RELEASING.md): a hello-world repository per language that consumes the candidate as a user
+# would (beta/, run here from the STEPS file of each), and our own repositories built with the candidate on the farm (gamma). Zig, tested as a build
+# action; `.github/workflows/beta.yml` and `release.yml` run it from the artifact their tool job builds.
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+_SRCS = [
+    "steps.zig",
+    "farm.zig",
+    "io.zig",
+    "beta.zig",
+    "gamma.zig",
+    "stage.zig",
+]
+
+# Every rule of the STEPS format, the copy of a beta repository, the hashing of an output, the build-twice determinism check (with a planted
+# difference), the farm's `local: 0`, the pin of the candidate, and each failure, against a fake that writes the files a build would.
+zig_test(
+    name = "stage_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "stage_test.zig",
+    imports = _SRCS,
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+# The STEPS format as a module, for //beta:beta_check, which holds every beta/<lang>/STEPS to it.
+zig_module(
+    name = "stage_steps",
+    src = "steps.zig",
+    visibility = ["//beta:"],
+)
+
+zig_exe(
+    name = "stage",
+    exec_compatible_with = LINUX_X86_64,
+    src = "stage.zig",
+    imports = [
+        "steps.zig",
+        "farm.zig",
+        "io.zig",
+        "beta.zig",
+        "gamma.zig",
+    ],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    unit_tests = [":stage_unit", "buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
+)
+
+# Read by the buildrules.dev site tests (site/BUCK), which check the Releases section against the stage tool's messages.
+export_file(
+    name = "gamma.zig",
+    src = "gamma.zig",
+    visibility = ["//site:"],
+)
+
+scrub_files()

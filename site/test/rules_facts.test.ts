@@ -610,3 +610,70 @@ describe('the Releases section against RELEASING.md, the release tool and the re
     expect(allText()).not.toMatch(/nothing is released|Nothing is released|Published releases are planned|no release binaries yet/);
   });
 });
+
+describe('the stages of the release: the page, RELEASING.md, beta.yml and release.yml agree', () => {
+  const rulesText = pageText(page('/rules/'));
+  const releasing = repoFile('RELEASING.md');
+  const release = repoFile('.github/workflows/release.yml');
+  const beta = repoFile('.github/workflows/beta.yml');
+  const checkZig = repoFile('beta/check.zig');
+
+  test('the order is publish <- verify <- archive <- tag <- gamma <- beta <- gate, in the workflow and in RELEASING.md', () => {
+    expect(release).toMatch(/\n {2}beta:\n {4}needs: \[gate\]\n/);
+    expect(release).toMatch(/\n {2}gamma:\n {4}needs: \[beta, tool\]\n/);
+    expect(release).toMatch(/\n {2}tag:\n {4}needs: \[gate, beta, gamma, tool\]\n/);
+    expect(squash(releasing)).toContain('`publish` after `verify` after `archive` after `tag` after `gamma` after `beta` after `gate`');
+  });
+
+  test('the languages of the beta stage are the beta directories, the beta matrix, RELEASING.md and the page', () => {
+    const dirs = /expected_langs = \[_\]\[\]const u8\{([^}]*)\}/.exec(checkZig)![1].match(/"([a-z]+)"/g)!.map((s) => s.replace(/"/g, ''));
+    const matrix = /\n {2}beta:[\s\S]*?lang: \[([^\]]*)\]/.exec(beta)![1].split(',').map((s) => s.trim());
+    expect([...matrix, 'mojo'].sort()).toEqual([...dirs].sort());
+    for (const lang of dirs) expect(releasing).toContain('| `' + lang + '` |');
+    expect(rulesText).toContain('hello-world repositories (Rust, C and C++, Zig, Node, and one that mixes them)');
+  });
+
+  test('mojo, arm and macos are planned everywhere they are named, and are in beta.yml as skipped jobs', () => {
+    expect(beta).toMatch(/\n {2}beta_mojo:\n/);
+    expect(beta).toContain('runs-on: ubuntu-24.04-arm');
+    expect(beta).toContain('runs-on: macos-14');
+    expect(beta.match(/if: \$\{\{ github\.event_name == 'planned' \}\}/g)!.length).toBe(2);
+    expect(releasing).toContain('**planned**');
+    expect(rulesText).toContain("The Mojo leg is planned until mopm's first release, and the Arm and macOS legs are planned");
+    // the Mojo leg waits for the pin that the page calls pending
+    expect(repoFile('rules/mopm/pins.bzl')).toContain('"release_pending": True');
+    expect(repoFile('beta/mojo/STEPS')).toContain('planned-until mopm-release');
+  });
+
+  test('every repository variable the workflows read is documented in RELEASING.md, and every documented one is read', () => {
+    const used = new Set<string>();
+    for (const wf of [release, beta]) for (const m of wf.matchAll(/vars\.([A-Z][A-Z0-9_]+)/g)) used.add(m[1]);
+    const section = releasing.slice(releasing.indexOf('## The gamma stage'), releasing.indexOf('## The release page'));
+    const documented = new Set<string>();
+    for (const line of section.split('\n')) {
+      if (!line.startsWith('| `')) continue;
+      for (const m of line.split('|')[1].matchAll(/`([A-Z][A-Z0-9_]+)`/g)) documented.add(m[1]);
+    }
+    expect([...used].sort()).toEqual([...documented].sort());
+  });
+
+  test('gamma fails without a farm, and says so in the workflow, the tool and RELEASING.md', () => {
+    expect(squash(releasing)).toContain('**With no farm configured gamma fails**');
+    expect(release).toContain('tool/stage gamma-vars ');
+    expect(repoFile('tools/stage/gamma.zig')).toContain('the farm is not configured, so our own repositories were not built with this candidate. A release is not made without it.');
+    const gammaJob = release.slice(release.indexOf('\n  gamma:\n'), release.indexOf('\n  tool:\n'));
+    expect(gammaJob).toContain('tool/stage gamma ');
+    expect(gammaJob).not.toMatch(/\n {4}if:/);
+  });
+
+  test('the release page is made by the site job from the verified files and is only an artifact', () => {
+    expect(release).toMatch(/\n {2}site:\n/);
+    expect(release).toContain('tool/release site ');
+    expect(release).toContain('name: release-site');
+    expect(squash(releasing)).toContain('Nothing deploys it');
+    expect(rulesText).toContain('Each release also gets a page with the tag, the commit to pin, the archive URL and its sha256.');
+    // the page holds what RELEASING.md says it holds
+    const page_zig = repoFile('tools/release/page.zig');
+    for (const w of ['commit_hash', 'sha256sum --check SHA256SUMS', 'gh attestation verify']) expect(page_zig).toContain(w);
+  });
+});

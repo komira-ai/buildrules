@@ -1,0 +1,1 @@
+exports.greeting = () => 'Hello, world!';

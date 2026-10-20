@@ -1,0 +1,14 @@
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+
+zig_test(
+    name = "hello_unit",
+    src = "hello_test.zig",
+    imports = ["hello.zig"],
+)
+
+zig_exe(
+    name = "hello",
+    src = "main.zig",
+    imports = ["hello.zig"],
+    unit_tests = [":hello_unit"],
+)

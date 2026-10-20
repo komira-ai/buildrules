@@ -302,3 +302,75 @@ test "busybox gzip, an independent decoder, reads the streams too" {
         try t.expectEqualSlices(u8, d, back);
     }
 }
+
+/// Random content of a given kind: all random bytes, long runs, a short period repeated (matches at every distance, including past the
+/// 32 KiB window), text from the vocabulary of `sample`, and a random mix of those.
+fn propertyInput(a: std.mem.Allocator, r: std.Random, size: usize, kind: u8) ![]u8 {
+    var out = std.ArrayList(u8).empty;
+    errdefer out.deinit(a);
+    switch (kind % 5) {
+        0 => {
+            while (out.items.len < size) try out.append(a, r.int(u8));
+        },
+        1 => {
+            while (out.items.len < size) {
+                const byte = r.int(u8);
+                const run = 1 + r.uintLessThan(usize, 600);
+                var k: usize = 0;
+                while (k < run) : (k += 1) try out.append(a, byte);
+            }
+        },
+        2 => {
+            // a third of the periods are around the window, where a match of exactly that distance is, or is not, allowed
+            const period = switch (r.uintLessThan(u8, 3)) {
+                0 => 1 + r.uintLessThan(usize, 300),
+                1 => 1 + r.uintLessThan(usize, 40_000),
+                else => 32_767 + r.uintLessThan(usize, 4),
+            };
+            const unit = try a.alloc(u8, period);
+            defer a.free(unit);
+            for (unit) |*b| b.* = r.int(u8);
+            // a period near the window needs the data to repeat at least once for a match at that distance to exist
+            const total = if (period > 30_000) @max(size, period * 2 + 5) else size;
+            while (out.items.len < total) try out.appendSlice(a, unit);
+            out.shrinkRetainingCapacity(total);
+            return out.toOwnedSlice(a);
+        },
+        3 => {
+            const text = try sample(a, size, r.int(u64));
+            defer a.free(text);
+            try out.appendSlice(a, text);
+        },
+        else => {
+            while (out.items.len < size) {
+                const piece = try propertyInput(a, r, 1 + r.uintLessThan(usize, 3000), r.int(u8) % 4);
+                defer a.free(piece);
+                try out.appendSlice(a, piece);
+            }
+        },
+    }
+    out.shrinkRetainingCapacity(size);
+    return out.toOwnedSlice(a);
+}
+
+test "property: random lengths and contents round-trip through the standard library's decoder (fixed seed)" {
+    var prng = std.Random.DefaultPrng.init(0x62756c64);
+    const r = prng.random();
+    var i: usize = 0;
+    while (i < 400) : (i += 1) {
+        // mostly small sizes, where the edge cases of the block and the matcher are, and some past the 32 KiB window
+        const size: usize = switch (r.uintLessThan(u8, 8)) {
+            0 => r.uintLessThan(usize, 4),
+            1, 2, 3 => r.uintLessThan(usize, 600),
+            4, 5 => r.uintLessThan(usize, 20_000),
+            6 => 30_000 + r.uintLessThan(usize, 6000),
+            else => r.uintLessThan(usize, 150_000),
+        };
+        const data = try propertyInput(t.allocator, r, size, r.int(u8));
+        defer t.allocator.free(data);
+        roundTrip(data) catch |e| {
+            std.debug.print("property failed at case {d}: size {d}\n", .{ i, size });
+            return e;
+        };
+    }
+}

@@ -4,6 +4,7 @@ test {
     _ = @import("gz.zig");
     _ = @import("tar.zig");
     _ = @import("assets.zig");
+    _ = @import("page.zig");
     _ = @import("cmds.zig");
     _ = @import("release.zig");
 }

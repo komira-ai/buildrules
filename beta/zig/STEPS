@@ -1,0 +1,5 @@
+# A Zig program with its unit test welded to the executable.
+run buildrules init . --git {origin} --commit {commit}
+config
+build //:hello
+expect //:hello => Hello, world!

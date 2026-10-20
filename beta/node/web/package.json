@@ -1,0 +1,13 @@
+{
+  "name": "hello-node",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node test.js",
+    "build": "node build.js"
+  },
+  "buildrules": {
+    "actions": { "ci": ["test", "build"] },
+    "dist": "dist"
+  }
+}

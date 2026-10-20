@@ -660,4 +660,4 @@ The public CI (`.github/workflows/ci.yml`) builds `//ci:all` this way on `ubuntu
 `//ci:mojo` is not built there: its packages need the pinned mopm tarball, a stand-in that is published nowhere yet (section 12.5), and a package channel for `cnative`; both are fetched
 through `buildrules.url_map` from a mirror a public runner does not have. `//ci:mojo` is built on a farm that has the mirror.
 
-`ci.yml` runs on pull requests, and `.github/workflows/release.yml` calls it as the first stage for a push to `main`; a green push that changes more than documentation or CI is then tagged and released with no human action (RELEASING.md). `//ci:workflow` checks both workflows (`ci/workflow_check.zig`, `ci/release_check.zig`).
+`ci.yml` runs on pull requests, and `.github/workflows/release.yml` calls it as the first stage for a push to `main`; a green push that changes more than documentation or CI is then tagged and released with no human action (RELEASING.md). `//ci:workflow` checks the three workflows (`ci/workflow_check.zig`, `ci/release_check.zig`, `ci/stages_check.zig`).

@@ -14,6 +14,12 @@ export_file(
     visibility = ["//ci:", "//site:"],
 )
 
+export_file(
+    name = "beta.yml",
+    src = ".github/workflows/beta.yml",
+    visibility = ["//ci:", "//site:"],
+)
+
 # Read by the buildrules.dev site tests (site/BUCK), which check the Releases section against these.
 export_file(
     name = "RELEASING.md",
@@ -33,4 +39,4 @@ export_file(
     visibility = ["//ci:"],
 )
 
-scrub_files(extra = [".buckconfig", ".buckconfig.local.example", ".gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml"])
+scrub_files(extra = [".buckconfig", ".buckconfig.local.example", ".gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/beta.yml"])

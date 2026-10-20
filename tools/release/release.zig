@@ -5,11 +5,13 @@
 //!   release archive --root DIR --tag TAG --out DIR
 //!   release verify  --root DIR --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --workflow PATH
 //!   release publish --root DIR --repo OWNER/NAME --tag TAG --sha SHA --previous TAG --dist DIR
+//!   release site    --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --out DIR
 //!
 //! Exit 0 when the step succeeded (`tag` also when it decided there is nothing to release), 1 when a check failed, 2 on a bad command line.
 const std = @import("std");
 const cmds = @import("cmds.zig");
 const version = @import("version.zig");
+const page = @import("page.zig");
 
 const Args = struct {
     names: []const []const u8,
@@ -90,7 +92,7 @@ pub fn main() !u8 {
     const a = arena.allocator();
     const argv = try std.process.argsAlloc(a);
     if (argv.len < 2) {
-        std.debug.print("usage: release tag|archive|verify|publish --flag value ...\n", .{});
+        std.debug.print("usage: release tag|archive|verify|publish|site --flag value ...\n", .{});
         return 2;
     }
     var unused: u8 = 0;
@@ -181,6 +183,23 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         say("release publish: {s} {s}\n", .{ tag, @tagName(r) });
         return 0;
     }
+    if (std.mem.eql(u8, cmd, "site")) {
+        const g = try parseArgs(a, rest, &.{ "repo", "tag", "sha", "dist", "out" });
+        const tag = try g.need("tag");
+        const v = version.parseTag(tag) orelse {
+            std.debug.print("release: `{s}` is not a release tag\n", .{tag});
+            return 1;
+        };
+        const name = try std.fmt.allocPrint(a, "buildrules-{s}.tar.gz", .{try version.numberText(a, v)});
+        const sums = try std.fs.cwd().readFileAlloc(a, try join(a, try g.need("dist"), cmds.sums_name), 1 << 20);
+        const digest = try page.digestOf(sums, name);
+        const html = try page.render(a, .{ .repo = try g.need("repo"), .tag = tag, .sha = try g.need("sha"), .archive_name = name, .sha256 = digest });
+        const dir = try join(a, try g.need("out"), try std.fmt.allocPrint(a, "releases/{s}", .{tag}));
+        try std.fs.cwd().makePath(dir);
+        try std.fs.cwd().writeFile(.{ .sub_path = try join(a, dir, "index.html"), .data = html });
+        say("release site: {s}/index.html for {s}\n", .{ dir, tag });
+        return 0;
+    }
     std.debug.print("release: unknown command `{s}`\n", .{cmd});
     return error.Usage;
 }
@@ -212,4 +231,33 @@ test "an unknown command, and a command missing a flag, are usage errors that ru
     try t.expectError(error.Usage, run(a, io, "frobnicate", &.{}));
     try t.expectError(error.Usage, run(a, io, "archive", &.{ "--root", "/w" }));
     try t.expectError(error.Usage, run(a, io, "publish", &.{ "--tag", "v0.0.1", "--bogus", "x" }));
+}
+
+test "site writes the page of the verified release from its SHA256SUMS, and refuses what is not a release" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("dist");
+    try tmp.dir.writeFile(.{ .sub_path = "dist/SHA256SUMS", .data = "d" ** 64 ++ "  buildrules-0.0.7.tar.gz\n" });
+    const base = try tmp.dir.realpathAlloc(a, ".");
+    const dist = try join(a, base, "dist");
+    const out = try join(a, base, "site");
+    var unused: u8 = 0;
+    const io = cmds.Io{ .ctx = &unused, .run_fn = realRun, .write_fn = realWrite };
+    const args = [_][]const u8{ "--repo", "org/name", "--tag", "v0.0.7", "--sha", "e" ** 40, "--dist", dist, "--out", out };
+    try t.expectEqual(@as(u8, 0), try run(a, io, "site", &args));
+    const html = try tmp.dir.readFileAlloc(a, "site/releases/v0.0.7/index.html", 1 << 20);
+    try t.expect(std.mem.indexOf(u8, html, "sha256 <code>" ++ "d" ** 64 ++ "</code>") != null);
+    try t.expect(std.mem.indexOf(u8, html, "commit_hash = " ++ "e" ** 40) != null);
+    // a tag that is not a release writes nothing
+    const bad_tag = [_][]const u8{ "--repo", "org/name", "--tag", "v0.0", "--sha", "e" ** 40, "--dist", dist, "--out", out };
+    try t.expectEqual(@as(u8, 1), try run(a, io, "site", &bad_tag));
+    // sums that name another archive, or a commit that is not 40 hex, are errors
+    const other_tag = [_][]const u8{ "--repo", "org/name", "--tag", "v0.0.8", "--sha", "e" ** 40, "--dist", dist, "--out", out };
+    try t.expectError(error.WrongName, run(a, io, "site", &other_tag));
+    const bad_sha = [_][]const u8{ "--repo", "org/name", "--tag", "v0.0.7", "--sha", "e" ** 39, "--dist", dist, "--out", out };
+    try t.expectError(error.BadSha, run(a, io, "site", &bad_sha));
+    try t.expectError(error.Usage, run(a, io, "site", &.{ "--repo", "org/name" }));
 }
