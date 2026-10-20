@@ -4,12 +4,10 @@ buildrules never builds mopm from source (docs/contract.md, section 12). It pins
 a mopm change reaches this repository by a pin bump after a release. `MOPM_DEFAULT` is the version a repository
 that has no `mopm-toolchain.toml` of its own gets.
 
-`0.0.1` is a stand-in, marked `release_pending`: the tarball was built on the farm from a development tree of mopm
-(commit 5221610 of its `mopm-unit` branch) by `//:mopm-tarball`, and holds a `RELEASE-PENDING` file saying so. Its URL
-is where the release job will publish it; until then nothing answers there, and a machine that has the tarball
-points the download at its copy with `-c buildrules.url_map=<from-prefix>=<to-prefix>` in its `.buckconfig.local`
-(the sha256 is still checked, so a mirror cannot change the bytes). When the release exists, this row gets the
-release job's tarball and loses `release_pending`.
+`0.0.1` is the published mopm release (https://github.com/komira-ai/mopm/releases/tag/v0.0.1), its linux-x86_64 tarball: the sha256 and size are
+those of the asset and of the release's `SHA256SUMS`, and the tarball unpacks into `mopm-0.0.1-linux-x86_64/{mopm,LICENSE}`. A machine that
+mirrors the download points it at its copy with `-c buildrules.url_map=<from-prefix>=<to-prefix>` (the sha256 is still checked, so a mirror
+cannot change the bytes).
 
 A version not in this table is refused unless the user supplies its URL, sha256 and size in `buildrules-pins.toml`
 (`[mopm."0.0.2"]`); `buildrules mojo sync` copies them into `toolchains/mopm_pins.bzl`, which has the same shape as
@@ -21,11 +19,10 @@ MOPM_DEFAULT = "0.0.1"
 MOPM_VERSIONS = {
     "0.0.1": {
         "url": "https://github.com/komira-ai/mopm/releases/download/v0.0.1/mopm-0.0.1-linux-x86_64.tar.gz",
-        "sha256": "7609a462ddb64bdb0307dba9f96a4adb75dfe92145efb702befc467d2ed45e4c",
-        "size": 977850,
+        "sha256": "80ac2ed492f0a9ab809d763fc9cf39cbb97d507dd69bd7a61be248a85d5b23dc",
+        "size": 980653,
         # The directory the tarball unpacks into; `mopm` is the executable in it.
         "dir": "mopm-0.0.1-linux-x86_64",
-        "release_pending": True,
     },
 }
 

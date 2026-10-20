@@ -56,7 +56,7 @@ jobs:
       - name: Every target of the tree is covered
         run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check
 
-      # //ci:mojo is not built: its packages need the pinned mopm tarball and a package channel, which are fetched through
+      # //ci:mojo is not built: its packages need a package channel, which is fetched through
       # buildrules.url_map from a mirror a public runner does not have (docs/contract.md section 14).
       - name: Build and test
         run: |

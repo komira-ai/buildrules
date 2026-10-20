@@ -7,7 +7,7 @@
 #
 #   tools         builds the stage tool and the command line from the candidate, and says which legs are ready (a leg that waits for something is planned)
 #   beta          ubuntu x86_64, one job per language: rust, cxx, zig, node, mixed
-#   beta_mojo     the Mojo leg: planned (this job is skipped) while the mopm that buildrules pins is a stand-in; it runs when the pin is a release
+#   beta_mojo     the Mojo leg: ubuntu x86_64, the pinned mopm release (rules/mopm/pins.bzl) building a Mojo package
 #   beta_arm      ubuntu-24.04-arm: planned and skipped; buildrules v0 targets linux-x86_64 only
 #   beta_macos    macos-14: planned and skipped; buildrules v0 targets linux-x86_64 only
 #   beta_farm     the same repositories built on a remote-execution farm, only when the repository variable FARM_ADDRESS is set (RELEASING.md)
@@ -107,7 +107,7 @@ jobs:
       - name: The repository, as a user starts it, built twice
         run: tool/stage beta --root "$GITHUB_WORKSPACE" --lang "$LANG_DIR" --work "$RUNNER_TEMP/beta" --origin "$ORIGIN" --commit "$COMMIT" --buck2 "$GITHUB_WORKSPACE/tool/buck2" --buildrules "$GITHUB_WORKSPACE/tool/buildrules" --exec local --summary "$GITHUB_STEP_SUMMARY"
 
-  # Planned until mopm's first release: tools/stage reads rules/mopm/pins.bzl, and while the pinned mopm is marked release_pending this job is skipped.
+  # The Mojo leg: the published mopm release that rules/mopm/pins.bzl pins builds beta/mojo. beta/mojo/STEPS has no `planned-until` line, so `tools/stage plan` says ready.
   beta_mojo:
     needs: [tools]
     if: ${{ needs.tools.outputs.mojo == 'ready' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}

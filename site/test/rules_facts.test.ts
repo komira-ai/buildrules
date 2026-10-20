@@ -424,11 +424,16 @@ describe('the Mojo page against the Mojo rules, mopm\'s pins and the contract', 
     expect(mojo).toContain('toolchains//:mopm_<version>');
   });
 
-  test('the mopm release is called pending exactly while the table says release_pending', () => {
-    const pending = /"release_pending": True/.test(mopm);
-    expect({ tableSaysPending: pending, pageSaysPending: mojo.includes('A published mopm release is pending') }).toEqual({ tableSaysPending: pending, pageSaysPending: pending });
-    expect({ tableSaysPending: pending, pageSaysStandIn: mojo.includes('stand-in') }).toEqual({ tableSaysPending: pending, pageSaysStandIn: pending });
-    expect(mopm).toContain('url_map');
+  test('the pinned mopm is the published 0.0.1 release: its asset digest and size, no release_pending, and the page says released', () => {
+    const row = /MOPM_VERSIONS = \{[^]*?\n {4}\},/.exec(mopm)![0];
+    expect(row).toContain('"url": "https://github.com/komira-ai/mopm/releases/download/v0.0.1/mopm-0.0.1-linux-x86_64.tar.gz"');
+    expect(row).toContain('"sha256": "80ac2ed492f0a9ab809d763fc9cf39cbb97d507dd69bd7a61be248a85d5b23dc"');
+    expect(row).toContain('"size": 980653');
+    expect(row).toContain('"dir": "mopm-0.0.1-linux-x86_64"');
+    expect(mopm).not.toContain('release_pending');
+    expect(mojo).toContain('mopm 0.0.1 is released and pinned');
+    expect(mojo).not.toContain('stand-in');
+    expect(mojo).not.toContain('release is pending');
     expect(mojo).toContain('`url_map`');
   });
 
@@ -638,16 +643,18 @@ describe('the stages of the release: the page, RELEASING.md, beta.yml and releas
     expect(rulesText).toContain('hello-world repositories (Rust, C and C++, Zig, Node, and one that mixes them)');
   });
 
-  test('mojo, arm and macos are planned everywhere they are named, and are in beta.yml as skipped jobs', () => {
+  test('arm and macos are planned everywhere they are named, and are in beta.yml as skipped jobs; the Mojo leg runs', () => {
     expect(beta).toMatch(/\n {2}beta_mojo:\n/);
     expect(beta).toContain('runs-on: ubuntu-24.04-arm');
     expect(beta).toContain('runs-on: macos-14');
     expect(beta.match(/if: \$\{\{ github\.event_name == 'planned' \}\}/g)!.length).toBe(2);
     expect(releasing).toContain('**planned**');
-    expect(rulesText).toContain("The Mojo leg is planned until mopm's first release, and the Arm and macOS legs are planned");
-    // the Mojo leg waits for the pin that the page calls pending
-    expect(repoFile('rules/mopm/pins.bzl')).toContain('"release_pending": True');
-    expect(repoFile('beta/mojo/STEPS')).toContain('planned-until mopm-release');
+    expect(rulesText).toContain('The Mojo leg builds a Mojo package with the pinned mopm 0.0.1 release, the same way, and the Arm and macOS legs are planned');
+    expect(rulesText).not.toContain("Mojo leg is planned");
+    // the Mojo leg is not waiting for anything: no pending pin, no planned-until line, and RELEASING.md lists it as running
+    expect(repoFile('rules/mopm/pins.bzl')).not.toContain('release_pending');
+    expect(repoFile('beta/mojo/STEPS')).not.toContain('planned-until');
+    expect(releasing).toMatch(/\| `mojo` \|[^\n]*\| ubuntu x86_64 \|/);
   });
 
   test('every repository variable the workflows read is documented in RELEASING.md, and every documented one is read', () => {

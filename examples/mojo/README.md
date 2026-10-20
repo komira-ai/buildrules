@@ -17,4 +17,4 @@ When `cnative`'s sources change, rebuild both, put the new sha256 and size in `w
 
 The URL in the lock is a placeholder channel; a machine that has the file points the download at it in the `.buckconfig.local` of the cell that declares it, for example
 `[buildrules] url_map = https://conda.mopm.dev/=http://mirror.invalid/channel/` in the root `.buckconfig.local` (the sha256 is still checked). The mopm tarball
-(`rules/mopm/pins.bzl`, a stand-in until a release exists) and the Mojo toolchain are downloads of the `toolchains` cell, whose `.buckconfig.local` needs the same section.
+(`rules/mopm/pins.bzl`, the published mopm 0.0.1) is a download of the `toolchains` cell from its release URL and needs no mirror.
