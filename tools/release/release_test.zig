@@ -6,5 +6,6 @@ test {
     _ = @import("assets.zig");
     _ = @import("page.zig");
     _ = @import("cmds.zig");
+    _ = @import("bump_test.zig");
     _ = @import("release.zig");
 }
