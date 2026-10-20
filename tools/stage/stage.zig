@@ -158,7 +158,7 @@ fn run(a: std.mem.Allocator, cmd: []const u8, rest: []const []const u8) !u8 {
             .passed => {
                 for (res.outputs) |x| io_mod.say("beta {s}: {s} {s} sha256 {s}\n", .{ lang, x.target, x.path, x.sha256 });
                 if (res.deterministic) |d| {
-                    io_mod.say("beta {s}: {d} output(s), {s} after buck2 clean and a rebuild\n", .{ lang, res.outputs.len, if (d) "identical bytes" else "DIFFERENT" });
+                    io_mod.say("beta {s}: {d} output(s), {s} after a rebuild in another directory\n", .{ lang, res.outputs.len, if (d) "identical bytes" else "DIFFERENT" });
                 }
                 try md.print(a, "- beta `{s}`: passed, {d} output(s); {s}\n", .{ lang, res.outputs.len, if (res.deterministic == null) "determinism not checked on a farm" else "identical bytes after a clean rebuild" });
                 for (res.outputs) |x| try md.print(a, "  - `{s}` sha256 `{s}`\n", .{ x.target, x.sha256 });

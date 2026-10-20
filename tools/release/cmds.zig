@@ -1,9 +1,11 @@
-//! The four steps of the automatic release (RELEASING.md), each a function of an `Io` (the commands it runs and the files it writes), so the
-//! tests drive them with a fake that records the calls:
+//! The steps of the automatic release (RELEASING.md), each a function of an `Io` (the commands it runs and the files it writes), so the
+//! tests drive them with a fake that records the calls. The order is plan, archive, verify, tag, publish: nothing is tagged until the archive
+//! of the tested commit is built, attested and verified, so a failure before the tag leaves no tag behind.
 //!
-//!  - `tag`: which version, if any, this commit is released as; creates the annotated tag (the one job that may write the repository);
-//!  - `archive`: the deterministic source archive of a tag and its SHA256SUMS;
+//!  - `plan`: which version, if any, this commit is released as (reads tags, writes nothing);
+//!  - `archive`: the deterministic source archive of a commit under the planned version's prefix, and its SHA256SUMS;
 //!  - `verify`: everything that must hold before a file is published (nothing here writes);
+//!  - `tag`: the annotated tag of the verified commit (the one step that writes the repository, with publish);
 //!  - `publish`: the GitHub release of the verified files, created once and never changed.
 const std = @import("std");
 const version = @import("version.zig");
@@ -57,7 +59,7 @@ fn trimNl(s: []const u8) []const u8 {
     return std.mem.trim(u8, s, " \r\n");
 }
 
-// ---- tag --------------------------------------------------------------------------------------------------------------------------------
+// ---- plan ---------------------------------------------------------------------------------------------------------------------------------
 
 const TagRef = struct { name: []const u8, v: version.Version, commit: []const u8 };
 
@@ -80,18 +82,17 @@ fn parseTagRefs(a: std.mem.Allocator, text: []const u8) ![]TagRef {
     return out.toOwnedSlice(a);
 }
 
-pub const TagOpts = struct {
+pub const PlanOpts = struct {
     root: []const u8,
-    repo: []const u8,
     sha: []const u8,
     /// The content of the `VERSION` file at `sha`.
     version_file: []const u8,
 };
 
-pub const TagResult = struct {
+pub const Plan = struct {
     released: bool,
-    /// This run made the tag (false when the commit already had one: a re-run).
-    created: bool = false,
+    /// The commit has no tag yet, so the tag job creates it (false when the commit already has one: a re-run).
+    new: bool = false,
     tag: []const u8 = "",
     number: []const u8 = "",
     previous: []const u8 = "",
@@ -99,10 +100,10 @@ pub const TagResult = struct {
 };
 
 /// The `key=value` lines the job appends to $GITHUB_OUTPUT.
-pub fn tagOutputs(a: std.mem.Allocator, r: TagResult) ![]u8 {
-    return std.fmt.allocPrint(a, "released={s}\ncreated={s}\ntag={s}\nnumber={s}\nprevious={s}\nreason={s}\n", .{
+pub fn planOutputs(a: std.mem.Allocator, r: Plan) ![]u8 {
+    return std.fmt.allocPrint(a, "released={s}\nnew={s}\ntag={s}\nnumber={s}\nprevious={s}\nreason={s}\n", .{
         if (r.released) "true" else "false",
-        if (r.created) "true" else "false",
+        if (r.new) "true" else "false",
         r.tag,
         r.number,
         r.previous,
@@ -117,7 +118,7 @@ fn tagOf(tags: []const TagRef, v: version.Version) []const u8 {
     return "";
 }
 
-pub fn tag(a: std.mem.Allocator, io: Io, o: TagOpts) !TagResult {
+pub fn plan(a: std.mem.Allocator, io: Io, o: PlanOpts) !Plan {
     if (!isSha(o.sha)) return error.BadSha;
     const mm = try version.parseMajorMinor(o.version_file);
     const refs = try must(io, a, &.{ "git", "-C", o.root, "for-each-ref", "--format=%(refname:strip=2)%09%(objecttype)%09%(objectname)%09%(*objectname)", "refs/tags/" });
@@ -165,24 +166,50 @@ pub fn tag(a: std.mem.Allocator, io: Io, o: TagOpts) !TagResult {
             return .{ .released = false, .previous = previous, .reason = "only documentation and CI changed since the last release" };
     }
 
-    const name = try version.tagName(a, next);
-    const number = try version.numberText(a, next);
+    return .{ .released = true, .new = true, .tag = try version.tagName(a, next), .number = try version.numberText(a, next), .previous = previous, .reason = "a release commit" };
+}
+
+// ---- tag ----------------------------------------------------------------------------------------------------------------------------------
+
+pub const TagOpts = struct {
+    root: []const u8,
+    repo: []const u8,
+    /// The planned tag, `vMAJOR.MINOR.PATCH`.
+    tag: []const u8,
+    /// The commit that was archived and verified.
+    sha: []const u8,
+};
+
+pub const TagMade = enum { created, existed };
+
+/// Creates the annotated tag `o.tag` at `o.sha`, after the archive of that commit was verified. A tag that already names `o.sha` is a re-run and
+/// stays as it is; a tag that names another commit is an error (another release took the number), and nothing is created.
+pub fn createTag(a: std.mem.Allocator, io: Io, o: TagOpts) !TagMade {
+    if (!isSha(o.sha)) return error.BadSha;
+    const v = version.parseTag(o.tag) orelse return error.BadTag;
+    const number = try version.numberText(a, v);
+    const have = try io.run(a, &.{ "git", "-C", o.root, "rev-parse", "--verify", "--quiet", try std.fmt.allocPrint(a, "refs/tags/{s}^{{commit}}", .{o.tag}) });
+    if (have.code == 0) {
+        if (std.mem.eql(u8, trimNl(have.stdout), o.sha)) return .existed;
+        std.debug.print("release: the tag {s} already names {s}, not {s}\n", .{ o.tag, trimNl(have.stdout), o.sha });
+        return error.TagNamesOtherCommit;
+    }
     const message = try std.fmt.allocPrint(a, "buildrules {s}\n\nautomatic release of commit {s}\n", .{ number, o.sha });
     const object = trimNl(try must(io, a, &.{
         "gh",                                                                  "api",                                                       "--method", "POST",
-        try std.fmt.allocPrint(a, "repos/{s}/git/tags", .{o.repo}),            "-f",                                                        try std.fmt.allocPrint(a, "tag={s}", .{name}),
+        try std.fmt.allocPrint(a, "repos/{s}/git/tags", .{o.repo}),            "-f",                                                        try std.fmt.allocPrint(a, "tag={s}", .{o.tag}),
         "-f",                                                                  try std.fmt.allocPrint(a, "message={s}", .{message}),       "-f",       try std.fmt.allocPrint(a, "object={s}", .{o.sha}),
         "-f",                                                                  "type=commit",                                               "-f",       "tagger[name]=" ++ bot_name,
         "-f",                                                                  "tagger[email]=" ++ bot_email,                               "--jq",     ".sha",
     }));
     if (!isSha(object)) return error.BadTagObject;
-    // A tag that exists is refused here by GitHub (422), which is the "fail if the tag already exists" for a race the listing above missed.
+    // A tag that exists is refused here by GitHub (422), which is the "fail if the tag already exists" for a race the check above missed.
     _ = try must(io, a, &.{
         "gh",  "api",                                                  "--method", "POST",
-        try std.fmt.allocPrint(a, "repos/{s}/git/refs", .{o.repo}), "-f",       try std.fmt.allocPrint(a, "ref=refs/tags/{s}", .{name}),
+        try std.fmt.allocPrint(a, "repos/{s}/git/refs", .{o.repo}), "-f",       try std.fmt.allocPrint(a, "ref=refs/tags/{s}", .{o.tag}),
         "-f",  try std.fmt.allocPrint(a, "sha={s}", .{object}),
     });
-    return .{ .released = true, .created = true, .tag = name, .number = number, .previous = previous, .reason = "a release commit" };
+    return .created;
 }
 
 // ---- archive ----------------------------------------------------------------------------------------------------------------------------
@@ -199,15 +226,16 @@ pub const Built = struct {
 
 pub const sums_name = "SHA256SUMS";
 
-/// The source archive of the tag: `git archive` of the tag's tree under `buildrules-<number>/`, every entry stamped `archive_mtime` and
+/// The source archive of the commit `sha` (the one that was tested, not a tag: the tag is made after the archive is verified): `git archive` of its tree under `buildrules-<number>/`, every entry stamped `archive_mtime` and
 /// with the modes of umask 022, compressed by `gz.gzip` (no gzip, no zlib, no git compression), named for the number.
-pub fn archive(a: std.mem.Allocator, io: Io, root: []const u8, tag_name: []const u8) !Built {
+pub fn archive(a: std.mem.Allocator, io: Io, root: []const u8, tag_name: []const u8, sha: []const u8) !Built {
+    if (!isSha(sha)) return error.BadSha;
     const v = version.parseTag(tag_name) orelse return error.BadTag;
     const number = try version.numberText(a, v);
     const prefix = try std.fmt.allocPrint(a, "buildrules-{s}/", .{number});
     const tar_bytes = try must(io, a, &.{
         "git", "-C", root, "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "tar.umask=0022",
-        "archive",                                          "--format=tar", try std.fmt.allocPrint(a, "--prefix={s}", .{prefix}), "--mtime=" ++ archive_mtime, try std.fmt.allocPrint(a, "refs/tags/{s}", .{tag_name}),
+        "archive",                                          "--format=tar", try std.fmt.allocPrint(a, "--prefix={s}", .{prefix}), "--mtime=" ++ archive_mtime, sha,
     });
     const archive_bytes = try gz.gzip(a, tar_bytes);
     const name = try std.fmt.allocPrint(a, "buildrules-{s}.tar.gz", .{number});
@@ -240,18 +268,15 @@ pub fn verify(a: std.mem.Allocator, io: Io, o: VerifyOpts) !assets.Findings {
     const number = try version.numberText(a, v);
     const want_name = try std.fmt.allocPrint(a, "buildrules-{s}.tar.gz", .{number});
     if (!std.mem.eql(u8, want_name, o.archive_name)) try assets.add(a, &f, "the archive is named {s}, the tag names {s}", .{ o.archive_name, want_name });
-    const tag_ref = try std.fmt.allocPrint(a, "refs/tags/{s}", .{o.tag});
 
     // 1. the archive is the file SHA256SUMS lists.
     assets.checkSums(o.sums, o.archive_name, o.archive) catch |e| try assets.add(a, &f, "SHA256SUMS does not match the archive: {s}", .{@errorName(e)});
 
-    // 2. the tag is an annotated tag of the commit being released.
-    const peeled = try io.run(a, &.{ "git", "-C", o.root, "rev-parse", "--verify", try std.fmt.allocPrint(a, "{s}^{{commit}}", .{tag_ref}) });
-    if (peeled.code != 0 or !std.mem.eql(u8, trimNl(peeled.stdout), o.sha)) try assets.add(a, &f, "the tag {s} does not name commit {s}", .{ o.tag, o.sha });
-    const kind = try io.run(a, &.{ "git", "-C", o.root, "cat-file", "-t", tag_ref });
-    if (kind.code != 0 or !std.mem.eql(u8, trimNl(kind.stdout), "tag")) try assets.add(a, &f, "the tag {s} is not an annotated tag", .{o.tag});
+    // 2. the checkout is the commit being released (no tag exists yet: it is made after this).
+    const head = try io.run(a, &.{ "git", "-C", o.root, "rev-parse", "--verify", "HEAD^{commit}" });
+    if (head.code != 0 or !std.mem.eql(u8, trimNl(head.stdout), o.sha)) try assets.add(a, &f, "the checkout is not commit {s}", .{o.sha});
 
-    // 3. both files carry an attestation of this workflow, for this tag's commit, on main.
+    // 3. both files carry an attestation of this workflow, for this commit, on main.
     const signer = try std.fmt.allocPrint(a, "{s}/{s}", .{ o.repo, o.workflow });
     for ([_][]const u8{ o.archive_name, sums_name }) |file| {
         const path = try std.fmt.allocPrint(a, "{s}/{s}", .{ o.dist, file });
@@ -264,15 +289,15 @@ pub fn verify(a: std.mem.Allocator, io: Io, o: VerifyOpts) !assets.Findings {
         if (r.code != 0) try assets.add(a, &f, "the attestation of {s} does not verify (workflow {s}, commit {s}, refs/heads/main): {s}", .{ file, signer, o.sha, trimNl(r.stderr) });
     }
 
-    // 4. building the archive again from the tag gives these very bytes.
-    if (archive(a, io, o.root, o.tag)) |again| {
-        if (!std.mem.eql(u8, again.archive, o.archive)) try assets.add(a, &f, "the archive does not reproduce: building {s} again from the tag gives other bytes", .{o.tag});
-    } else |e| try assets.add(a, &f, "the archive cannot be built again from the tag: {s}", .{@errorName(e)});
+    // 4. building the archive again from the commit gives these very bytes.
+    if (archive(a, io, o.root, o.tag, o.sha)) |again| {
+        if (!std.mem.eql(u8, again.archive, o.archive)) try assets.add(a, &f, "the archive does not reproduce: building {s} again from the commit gives other bytes", .{o.tag});
+    } else |e| try assets.add(a, &f, "the archive cannot be built again from the commit: {s}", .{@errorName(e)});
 
-    // 5. its files are the tag's tracked files, 6. and the scrub passes on them.
-    const tree = try io.run(a, &.{ "git", "-C", o.root, "ls-tree", "-r", "-z", "--name-only", tag_ref });
+    // 5. its files are the commit's tracked files, 6. and the scrub passes on them.
+    const tree = try io.run(a, &.{ "git", "-C", o.root, "ls-tree", "-r", "-z", "--name-only", o.sha });
     if (tree.code != 0) {
-        try assets.add(a, &f, "cannot list the files of the tag: {s}", .{trimNl(tree.stderr)});
+        try assets.add(a, &f, "cannot list the files of the commit: {s}", .{trimNl(tree.stderr)});
         return f;
     }
     var tracked = std.ArrayList([]const u8).empty;
@@ -280,7 +305,7 @@ pub fn verify(a: std.mem.Allocator, io: Io, o: VerifyOpts) !assets.Findings {
     while (it.next()) |p| {
         if (p.len != 0) try tracked.append(a, p);
     }
-    if (tracked.items.len == 0) try assets.add(a, &f, "the tag {s} tracks no file", .{o.tag});
+    if (tracked.items.len == 0) try assets.add(a, &f, "the commit {s} tracks no file", .{o.sha});
     const plain = gz.gunzip(a, o.archive) catch |e| {
         try assets.add(a, &f, "the archive is not a gzip file: {s}", .{@errorName(e)});
         return f;
@@ -346,10 +371,10 @@ pub fn publish(a: std.mem.Allocator, io: Io, o: PublishOpts) !PublishResult {
         std.debug.print("release: gh api exited {d}: {s}\n", .{ existing.code, existing.stderr });
         return error.CommandFailed;
     }
-    const plan = try assets.publishPlan(a, have, &ours);
+    const doing = try assets.publishPlan(a, have, &ours);
     const archive_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ o.dist, o.archive_name });
     const sums_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ o.dist, sums_name });
-    switch (plan) {
+    switch (doing) {
         .nothing => return .unchanged,
         .upload => |names| {
             var argv = std.ArrayList([]const u8).empty;
@@ -458,27 +483,80 @@ const no_tags = "";
 // name, object type, object, peeled commit (empty for a lightweight tag)
 const tags_v1 = "v0.0.1\ttag\t" ++ "1" ** 40 ++ "\t" ++ sha_b ++ "\n";
 
-test "the first release: no tag yet, so v0.0.1 is created as an annotated tag, through two API calls" {
+test "the first release: no tag yet, so the plan is v0.0.1 and it writes nothing" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fake = Fake{ .a = a, .rules = &.{.{ .needle = "for-each-ref", .out = ok(no_tags) }} };
+    const r = try plan(a, fake.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0\n" });
+    try t.expect(r.released and r.new);
+    try t.expectEqualStrings("v0.0.1", r.tag);
+    try t.expectEqualStrings("0.0.1", r.number);
+    try t.expectEqualStrings("", r.previous);
+    // planning only reads: no API call, no tag, so a failure after it leaves nothing behind
+    try t.expectEqual(@as(usize, 0), fake.count("gh "));
+    try t.expectEqual(@as(usize, 1), fake.calls.items.len);
+    const out = try planOutputs(a, r);
+    try t.expectEqualStrings("released=true\nnew=true\ntag=v0.0.1\nnumber=0.0.1\nprevious=\nreason=a release commit\n", out);
+}
+
+test "the tag step: an annotated tag at the verified commit, through two API calls" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     var fake = Fake{ .a = a, .rules = &.{
-        .{ .needle = "for-each-ref", .out = ok(no_tags) },
+        .{ .needle = "rev-parse", .out = fail(1, "") },
         .{ .needle = "git/tags", .out = ok(sha_c ++ "\n") },
         .{ .needle = "git/refs" },
     } };
-    const r = try tag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.0\n" });
-    try t.expect(r.released and r.created);
-    try t.expectEqualStrings("v0.0.1", r.tag);
-    try t.expectEqualStrings("0.0.1", r.number);
-    try t.expectEqualStrings("", r.previous);
+    try t.expectEqual(TagMade.created, try createTag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.1", .sha = sha_a }));
     try t.expectEqual(@as(usize, 1), fake.count("repos/o/n/git/tags"));
     try t.expectEqual(@as(usize, 1), fake.count("repos/o/n/git/refs"));
     // the tag object names the commit and is of type commit; the ref points at the tag object, not at the commit
     try t.expectEqual(@as(usize, 1), fake.count("object=" ++ sha_a ++ " -f type=commit"));
+    try t.expectEqual(@as(usize, 1), fake.count("tag=v0.0.1 "));
     try t.expectEqual(@as(usize, 1), fake.count("ref=refs/tags/v0.0.1 -f sha=" ++ sha_c));
-    const out = try tagOutputs(a, r);
-    try t.expectEqualStrings("released=true\ncreated=true\ntag=v0.0.1\nnumber=0.0.1\nprevious=\nreason=a release commit\n", out);
+}
+
+test "the tag step: a re-run keeps the tag it has; a tag on another commit, a bad sha or a bad tag create nothing" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var same = Fake{ .a = a, .rules = &.{.{ .needle = "rev-parse", .out = ok(sha_a ++ "\n") }} };
+    try t.expectEqual(TagMade.existed, try createTag(a, same.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.1", .sha = sha_a }));
+    try t.expectEqual(@as(usize, 0), same.count("gh "));
+    var other = Fake{ .a = a, .rules = &.{.{ .needle = "rev-parse", .out = ok(sha_b ++ "\n") }} };
+    try t.expectError(error.TagNamesOtherCommit, createTag(a, other.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.1", .sha = sha_a }));
+    try t.expectEqual(@as(usize, 0), other.count("gh "));
+    var none = Fake{ .a = a, .rules = &.{} };
+    try t.expectError(error.BadSha, createTag(a, none.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.1", .sha = "main" }));
+    try t.expectError(error.BadTag, createTag(a, none.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0", .sha = sha_a }));
+    try t.expectEqual(@as(usize, 0), none.calls.items.len);
+    // GitHub refuses a ref that exists (a race the check above missed): the step fails
+    var race = Fake{ .a = a, .rules = &.{
+        .{ .needle = "rev-parse", .out = fail(1, "") },
+        .{ .needle = "git/tags", .out = ok(sha_c ++ "\n") },
+        .{ .needle = "git/refs", .out = fail(1, "gh: Reference already exists (HTTP 422)") },
+    } };
+    try t.expectError(error.CommandFailed, createTag(a, race.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.1", .sha = sha_a }));
+    // a tag object GitHub answers with something that is not a sha
+    var odd = Fake{ .a = a, .rules = &.{
+        .{ .needle = "rev-parse", .out = fail(1, "") },
+        .{ .needle = "git/tags", .out = ok("{\"message\": \"Not Found\"}") },
+    } };
+    try t.expectError(error.BadTagObject, createTag(a, odd.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.1", .sha = sha_a }));
+    try t.expectEqual(@as(usize, 0), odd.count("git/refs"));
+}
+
+test "plan: a bad input is refused before any call" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var none = Fake{ .a = a, .rules = &.{} };
+    try t.expectError(error.BadSha, plan(a, none.io(), .{ .root = "/w", .sha = "main", .version_file = "0.0\n" }));
+    try t.expectError(error.BadSha, plan(a, none.io(), .{ .root = "/w", .sha = "A" ** 40, .version_file = "0.0\n" }));
+    try t.expectError(error.BadVersionFile, plan(a, none.io(), .{ .root = "/w", .sha = sha_a, .version_file = "v0.0\n" }));
+    try t.expectEqual(@as(usize, 0), none.calls.items.len);
 }
 
 test "the next release is the highest patch plus one, after code changed since the last tag" {
@@ -493,8 +571,8 @@ test "the next release is the highest patch plus one, after code changed since t
         .{ .needle = "git/tags", .out = ok(sha_c ++ "\n") },
         .{ .needle = "git/refs" },
     } };
-    const r = try tag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.0" });
-    try t.expect(r.released and r.created);
+    const r = try plan(a, fake.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0" });
+    try t.expect(r.released and r.new);
     try t.expectEqualStrings("v0.0.3", r.tag);
     try t.expectEqualStrings("v0.0.2", r.previous);
 }
@@ -508,8 +586,8 @@ test "documentation and CI alone make no release and no tag" {
         .{ .needle = "merge-base" },
         .{ .needle = "diff --name-only", .out = ok("README.md\x00docs/contract.md\x00.github/workflows/ci.yml\x00ci/BUCK\x00") },
     } };
-    const r = try tag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.0\n" });
-    try t.expect(!r.released and !r.created);
+    const r = try plan(a, fake.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0\n" });
+    try t.expect(!r.released and !r.new);
     try t.expectEqual(@as(usize, 0), fake.count("gh "));
     try t.expectEqualStrings("only documentation and CI changed since the last release", r.reason);
 }
@@ -522,7 +600,7 @@ test "a commit that is not after the last release is skipped, not released out o
         .{ .needle = "for-each-ref", .out = ok(tags_v1) },
         .{ .needle = "merge-base", .out = fail(1, "") },
     } };
-    const r = try tag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.0\n" });
+    const r = try plan(a, fake.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0\n" });
     try t.expect(!r.released);
     try t.expectEqual(@as(usize, 0), fake.count("gh "));
     // another failure of merge-base (a shallow clone, an unknown commit) is an error, not a skip
@@ -530,7 +608,7 @@ test "a commit that is not after the last release is skipped, not released out o
         .{ .needle = "for-each-ref", .out = ok(tags_v1) },
         .{ .needle = "merge-base", .out = fail(128, "fatal: bad object") },
     } };
-    try t.expectError(error.CommandFailed, tag(a, fake2.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.0\n" }));
+    try t.expectError(error.CommandFailed, plan(a, fake2.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0\n" }));
 }
 
 test "a re-run of a released commit creates nothing and carries on with the tag it has" {
@@ -539,8 +617,8 @@ test "a re-run of a released commit creates nothing and carries on with the tag 
     const a = arena.allocator();
     const refs = "v0.0.1\ttag\t" ++ "1" ** 40 ++ "\t" ++ sha_b ++ "\nv0.0.2\ttag\t" ++ "2" ** 40 ++ "\t" ++ sha_a ++ "\n";
     var fake = Fake{ .a = a, .rules = &.{.{ .needle = "for-each-ref", .out = ok(refs) }} };
-    const r = try tag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.0\n" });
-    try t.expect(r.released and !r.created);
+    const r = try plan(a, fake.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0\n" });
+    try t.expect(r.released and !r.new);
     try t.expectEqualStrings("v0.0.2", r.tag);
     try t.expectEqualStrings("v0.0.1", r.previous);
     try t.expectEqual(@as(usize, 1), fake.calls.items.len);
@@ -551,8 +629,8 @@ test "a lightweight tag counts as a release of its commit" {
     defer arena.deinit();
     const a = arena.allocator();
     var fake = Fake{ .a = a, .rules = &.{.{ .needle = "for-each-ref", .out = ok("v0.0.7\tcommit\t" ++ sha_a ++ "\t\n") }} };
-    const r = try tag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.0\n" });
-    try t.expect(r.released and !r.created);
+    const r = try plan(a, fake.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0\n" });
+    try t.expect(r.released and !r.new);
     try t.expectEqualStrings("v0.0.7", r.tag);
 }
 
@@ -567,37 +645,14 @@ test "bumping VERSION starts a new line at patch 1; a VERSION behind the tags is
         .{ .needle = "git/tags", .out = ok(sha_c ++ "\n") },
         .{ .needle = "git/refs" },
     } };
-    const r = try tag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.1\n" });
+    const r = try plan(a, fake.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.1\n" });
     try t.expectEqualStrings("v0.1.1", r.tag);
     try t.expectEqualStrings("v0.0.9", r.previous);
     var behind = Fake{ .a = a, .rules = &.{.{ .needle = "for-each-ref", .out = ok("v0.2.1\ttag\t" ++ "1" ** 40 ++ "\t" ++ sha_b ++ "\n") }} };
-    try t.expectError(error.TagsAheadOfVersionFile, tag(a, behind.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.1\n" }));
+    try t.expectError(error.TagsAheadOfVersionFile, plan(a, behind.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.1\n" }));
     try t.expectEqual(@as(usize, 0), behind.count("gh "));
 }
 
-test "a tag that already exists fails the job (GitHub refuses the ref), and a bad input is refused before any call" {
-    var arena = std.heap.ArenaAllocator.init(t.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var fake = Fake{ .a = a, .rules = &.{
-        .{ .needle = "for-each-ref", .out = ok(no_tags) },
-        .{ .needle = "git/tags", .out = ok(sha_c ++ "\n") },
-        .{ .needle = "git/refs", .out = fail(1, "gh: Reference already exists (HTTP 422)") },
-    } };
-    try t.expectError(error.CommandFailed, tag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.0\n" }));
-    var none = Fake{ .a = a, .rules = &.{} };
-    try t.expectError(error.BadSha, tag(a, none.io(), .{ .root = "/w", .repo = "o/n", .sha = "main", .version_file = "0.0\n" }));
-    try t.expectError(error.BadSha, tag(a, none.io(), .{ .root = "/w", .repo = "o/n", .sha = "A" ** 40, .version_file = "0.0\n" }));
-    try t.expectError(error.BadVersionFile, tag(a, none.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "v0.0\n" }));
-    try t.expectEqual(@as(usize, 0), none.calls.items.len);
-    // a tag object GitHub answers with something that is not a sha
-    var odd = Fake{ .a = a, .rules = &.{
-        .{ .needle = "for-each-ref", .out = ok(no_tags) },
-        .{ .needle = "git/tags", .out = ok("{\"message\": \"Not Found\"}") },
-    } };
-    try t.expectError(error.BadTagObject, tag(a, odd.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.0\n" }));
-    try t.expectEqual(@as(usize, 0), odd.count("git/refs"));
-}
 
 const sample_tar_entries = [_]tar.Entry{
     .{ .name = "buildrules-0.0.1/", .kind = .dir, .data = "" },
@@ -605,23 +660,23 @@ const sample_tar_entries = [_]tar.Entry{
     .{ .name = "buildrules-0.0.1/rules/zig.bzl", .kind = .file, .data = "def f(): pass\n" },
 };
 
-test "the archive command: git archive of the tag with the fixed prefix and time, gzip by this tool, SHA256SUMS of the result" {
+test "the archive command: git archive of the commit sha with the fixed prefix and time, gzip by this tool, SHA256SUMS of the result" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const tar_bytes = try tar.build(a, &sample_tar_entries);
     const rules = [_]Fake.Rule{.{ .needle = " archive ", .out = ok(tar_bytes) }};
     var fake = Fake{ .a = a, .rules = &rules };
-    const b = try archive(a, fake.io(), "/w", "v0.0.1");
+    const b = try archive(a, fake.io(), "/w", "v0.0.1", sha_a);
     try t.expectEqualStrings("buildrules-0.0.1.tar.gz", b.name);
     try t.expectEqualStrings("buildrules-0.0.1/", b.prefix);
-    try t.expectEqualStrings("git -C /w -c core.autocrlf=false -c core.eol=lf -c tar.umask=0022 archive --format=tar --prefix=buildrules-0.0.1/ --mtime=" ++ archive_mtime ++ " refs/tags/v0.0.1", fake.calls.items[0]);
+    try t.expectEqualStrings("git -C /w -c core.autocrlf=false -c core.eol=lf -c tar.umask=0022 archive --format=tar --prefix=buildrules-0.0.1/ --mtime=" ++ archive_mtime ++ " " ++ sha_a, fake.calls.items[0]);
     // the gzip is this tool's own and holds the tar
     const back = try gz.gunzip(a, b.archive);
     try t.expectEqualSlices(u8, tar_bytes, back);
     try assets.checkSums(b.sums, b.name, b.archive);
     // twice: the same bytes
-    const again = try archive(a, fake.io(), "/w", "v0.0.1");
+    const again = try archive(a, fake.io(), "/w", "v0.0.1", sha_a);
     try t.expectEqualSlices(u8, b.archive, again.archive);
     try t.expectEqualStrings(b.sums, again.sums);
 }
@@ -632,7 +687,12 @@ test "the archive command takes only a release tag" {
     const a = arena.allocator();
     var fake = Fake{ .a = a, .rules = &.{} };
     for ([_][]const u8{ "main", "v1", "v0.0.1-rc1", "0.0.1", "v0.0.1 --output=/x", "../v0.0.1", "v0.0.01" }) |bad| {
-        try t.expectError(error.BadTag, archive(a, fake.io(), "/w", bad));
+        try t.expectError(error.BadTag, archive(a, fake.io(), "/w", bad, sha_a));
+    }
+    try t.expectEqual(@as(usize, 0), fake.calls.items.len);
+    // and only a full commit sha (a tag name or a branch would archive what the workflow did not test)
+    for ([_][]const u8{ "v0.0.1", "main", "A" ** 40, "a" ** 39 }) |bad| {
+        try t.expectError(error.BadSha, archive(a, fake.io(), "/w", "v0.0.1", bad));
     }
     try t.expectEqual(@as(usize, 0), fake.calls.items.len);
 }
@@ -675,7 +735,7 @@ test "verify: a correct archive has no finding, and every check was made" {
     const tar_bytes = try tar.build(a, &sample_tar_entries);
     const rules = verifyRules(tar_bytes, tree_ok, ok(""), "tag\n", peeled_a);
     var fake = Fake{ .a = a, .rules = &rules };
-    const b = try archive(a, fake.io(), "/w", "v0.0.1");
+    const b = try archive(a, fake.io(), "/w", "v0.0.1", sha_a);
     const f = try verify(a, fake.io(), opts(b));
     try expectClean(f);
     // both files are attested, pinned to the workflow, the commit twice (signer and source) and main
@@ -691,7 +751,7 @@ test "verify mutants: each defect is a finding" {
     const tar_bytes = try tar.build(a, &sample_tar_entries);
     const good = verifyRules(tar_bytes, tree_ok, ok(""), "tag\n", peeled_a);
     var base = Fake{ .a = a, .rules = &good };
-    const b = try archive(a, base.io(), "/w", "v0.0.1");
+    const b = try archive(a, base.io(), "/w", "v0.0.1", sha_a);
 
     // SHA256SUMS lists another digest or another name
     var o = opts(b);
@@ -702,13 +762,10 @@ test "verify mutants: each defect is a finding" {
     o.sums = try assets.formatSums(a, "buildrules-0.0.2.tar.gz", b.archive);
     try expectFinding(try verify(a, fake.io(), o), "WrongName");
 
-    // the tag names another commit, or is not annotated
+    // the checkout is another commit than the one released (the tag does not exist yet, so there is none to check)
     const other = verifyRules(tar_bytes, tree_ok, ok(""), "tag\n", sha_b ++ "\n");
     fake = Fake{ .a = a, .rules = &other };
-    try expectFinding(try verify(a, fake.io(), opts(b)), "does not name commit " ++ sha_a);
-    const light = verifyRules(tar_bytes, tree_ok, ok(""), "commit\n", peeled_a);
-    fake = Fake{ .a = a, .rules = &light };
-    try expectFinding(try verify(a, fake.io(), opts(b)), "is not an annotated tag");
+    try expectFinding(try verify(a, fake.io(), opts(b)), "the checkout is not commit " ++ sha_a);
 
     // the attestation does not verify
     const bad_attest = verifyRules(tar_bytes, tree_ok, fail(1, "no matching attestations"), "tag\n", peeled_a);
@@ -716,13 +773,13 @@ test "verify mutants: each defect is a finding" {
     try expectFinding(try verify(a, fake.io(), opts(b)), "attestation of buildrules-0.0.1.tar.gz does not verify");
     try expectFinding(try verify(a, fake.io(), opts(b)), "attestation of SHA256SUMS does not verify");
 
-    // the archive is not what the tag builds (another tar, so other bytes)
+    // the archive is not what the commit builds (another tar, so other bytes)
     const tar2 = try tar.build(a, sample_tar_entries[0..2]);
     const rebuilt = verifyRules(tar2, tree_ok, ok(""), "tag\n", peeled_a);
     fake = Fake{ .a = a, .rules = &rebuilt };
     try expectFinding(try verify(a, fake.io(), opts(b)), "does not reproduce");
 
-    // the tag tracks a file the archive lacks, or the archive holds one the tag does not track
+    // the commit tracks a file the archive lacks, or the archive holds one the commit does not track
     const more = verifyRules(tar_bytes, tree_ok ++ "extra.txt\x00", ok(""), "tag\n", peeled_a);
     fake = Fake{ .a = a, .rules = &more };
     try expectFinding(try verify(a, fake.io(), opts(b)), "lacks extra.txt");
@@ -761,7 +818,7 @@ test "verify runs the scrub on the archive's contents" {
     const tar_bytes = try tar.build(a, &entries);
     const rules = verifyRules(tar_bytes, "NOTES.txt\x00blob.bin\x00", ok(""), "tag\n", peeled_a);
     var fake = Fake{ .a = a, .rules = &rules };
-    const b = try archive(a, fake.io(), "/w", "v0.0.1");
+    const b = try archive(a, fake.io(), "/w", "v0.0.1", sha_a);
     const f = try verify(a, fake.io(), opts(b));
     try expectFinding(f, "scrub: [");
     try expectFinding(f, "NOTES.txt:1");
@@ -773,7 +830,7 @@ fn publishCase(a: std.mem.Allocator) !struct { b: Built, o: PublishOpts } {
     const tar_bytes = try tar.build(a, &sample_tar_entries);
     const rules = [_]Fake.Rule{.{ .needle = " archive ", .out = ok(tar_bytes) }};
     var fake = Fake{ .a = a, .rules = &rules };
-    const b = try archive(a, fake.io(), "/w", "v0.0.2");
+    const b = try archive(a, fake.io(), "/w", "v0.0.2", sha_a);
     return .{ .b = b, .o = .{
         .root = "/w",
         .repo = "o/n",
@@ -982,8 +1039,8 @@ test "a tag with no release does not block the next tag: the next version is the
         .{ .needle = "git/tags", .out = ok(sha_c ++ "\n") },
         .{ .needle = "git/refs" },
     } };
-    const r = try tag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .sha = sha_a, .version_file = "0.0\n" });
-    try t.expect(r.released and r.created);
+    const r = try plan(a, fake.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0\n" });
+    try t.expect(r.released and r.new);
     try t.expectEqualStrings("v0.0.3", r.tag);
     try t.expectEqualStrings("v0.0.2", r.previous);
     try t.expectEqual(@as(usize, 0), fake.count("releases"));
@@ -996,7 +1053,7 @@ test "busybox tar, an independent reader, lists the archive this tool writes, wi
     const tar_bytes = try tar.build(a, &sample_tar_entries);
     const rules = [_]Fake.Rule{.{ .needle = " archive ", .out = ok(tar_bytes) }};
     var fake = Fake{ .a = a, .rules = &rules };
-    const b = try archive(a, fake.io(), "/w", "v0.0.1");
+    const b = try archive(a, fake.io(), "/w", "v0.0.1", sha_a);
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(.{ .sub_path = b.name, .data = b.archive });

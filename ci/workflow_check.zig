@@ -302,9 +302,67 @@ pub fn buck2Install(a: std.mem.Allocator, f: *Findings, workflow: []const u8, do
     } else try add(a, f, "tools/buck2 has no linux-x86_64 digest and url (this parser is blind)", .{});
 }
 
+/// `continue-on-error` lets a red job or step pass: a workflow that gates a release has none, at job or step level, unless it is `false`. Any other
+/// value (`true`, an expression, a quoted string) is a finding, wherever the key is (a flow mapping included).
+pub fn noContinueOnError(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !void {
+    var it = std.mem.splitScalar(u8, workflow, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \r");
+        if (line.len > 0 and line[0] == '#') continue;
+        const key = "continue-on-error:";
+        const i = std.mem.indexOf(u8, line, key) orelse continue;
+        var v = std.mem.trim(u8, line[i + key.len ..], " ");
+        if (std.mem.indexOf(u8, v, " #")) |h| v = std.mem.trim(u8, v[0..h], " ");
+        if (!std.mem.eql(u8, v, "false"))
+            try add(a, f, "`continue-on-error` is set to `{s}`: a red job or step would pass (only `false` is allowed)", .{v});
+    }
+}
+
+/// A `${{ }}` expression that reads `vars.` or `github.event.` inside the text of a `run:` (the one line, or the block scalar under it) is expanded into the
+/// script before the shell parses it, so a value with a quote or a `;` becomes code. The value goes through `env:` and the script reads `"$NAME"`.
+pub fn noInlineContext(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !void {
+    var it = std.mem.splitScalar(u8, workflow, '\n');
+    var block_indent: ?usize = null;
+    while (it.next()) |raw| {
+        const trimmed = std.mem.trimLeft(u8, raw, " ");
+        const indent = raw.len - trimmed.len;
+        if (block_indent) |bi| {
+            if (trimmed.len == 0 or indent > bi) {
+                try inlineExprs(a, f, trimmed);
+                continue;
+            }
+            block_indent = null;
+        }
+        if (trimmed.len > 0 and trimmed[0] == '#') continue;
+        var rest = trimmed;
+        if (std.mem.startsWith(u8, rest, "- ")) rest = std.mem.trimLeft(u8, rest[2..], " ");
+        if (!std.mem.startsWith(u8, rest, "run:")) continue;
+        const v = std.mem.trim(u8, rest["run:".len..], " \r");
+        if (v.len > 0 and (v[0] == '|' or v[0] == '>')) {
+            block_indent = indent;
+        } else try inlineExprs(a, f, v);
+    }
+}
+
+fn inlineExprs(a: std.mem.Allocator, f: *Findings, text: []const u8) !void {
+    var pos: usize = 0;
+    while (std.mem.indexOfPos(u8, text, pos, "${{")) |s| {
+        const e = std.mem.indexOfPos(u8, text, s, "}}") orelse text.len;
+        const expr = text[s..e];
+        for ([_][]const u8{ "vars.", "github.event." }) |ctx| {
+            if (std.mem.indexOf(u8, expr, ctx) != null)
+                try add(a, f, "a `run:` line expands `{s}` inline ({s}): pass it through `env:` and read it as \"$NAME\"", .{ ctx, text });
+        }
+        pos = e;
+    }
+}
+
 /// Everything wrong with `workflow`, given the dotslash file of the pinned buck2 and ci/BUCK.
 pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, ci_buck: []const u8) !Findings {
     var f = Findings.init(a);
+
+    try noContinueOnError(a, &f, workflow);
+    try noInlineContext(a, &f, workflow);
 
     // Every `uses:` is pinned to a full commit.
     const uses = try pinnedUses(a, &f, workflow, &.{});
@@ -741,4 +799,14 @@ test "kill and --version are exempt only alone, not when more words follow" {
     }
     // the flag after a separator belongs to the next command, not to the build before it
     try expectFinding(a, r, try std.mem.concat(a, u8, &.{ r.wf, "      - run: ./buck2 build //x:y && echo -c buildrules_re.mode=local\n" }), need);
+}
+
+test "ci.yml: continue-on-error and an inline vars or github.event expansion in a run line are found" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    try expectFinding(a, r, try mutate(a, r.wf, "    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    continue-on-error: true\n"), "`continue-on-error` is set to");
+    try expectFinding(a, r, try mutate(a, r.wf, "        run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check\n", "        run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check ${{ vars.X }}\n"), "expands `vars.` inline");
+    try expectFinding(a, r, try mutate(a, r.wf, "          ./buck2 --version\n", "          ./buck2 --version ${{ github.event.pull_request.title }}\n"), "expands `github.event.` inline");
 }

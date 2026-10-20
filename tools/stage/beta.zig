@@ -1,7 +1,7 @@
 //! The beta stage (RELEASING.md): a hello-world repository per language consumes the candidate commit of buildrules as an external Buck2 cell,
 //! the way a user does. `beta/<lang>/` holds the files a user writes and `STEPS` the commands a user types (steps.zig); this file copies the
 //! directory to a fresh place outside the checkout, runs the steps with the `buildrules` built from the candidate, builds, runs what was
-//! built, and (in local mode) builds twice from nothing to see that the outputs are the same bytes.
+//! built, and (in local mode) builds again from nothing in a copy of the repository at another path, to see that the outputs are the same bytes.
 //!
 //! The pure pieces (which leg is planned, the copy rules, the hashing of an output) are functions of their input; the steps are driven through
 //! an `Io`, so the tests run them against a fake that writes the files a build would.
@@ -127,14 +127,56 @@ fn lessThan(_: void, x: []const u8, y: []const u8) bool {
 }
 
 
+/// The place of the second build: next to the first, under another name, so that its absolute path differs from the first's.
+pub fn secondWorkDir(a: std.mem.Allocator, work: []const u8) ![]const u8 {
+    const trimmed = std.mem.trimRight(u8, work, "/");
+    return std.fmt.allocPrint(a, "{s}-second", .{trimmed});
+}
+
+/// Copies the repository at `src` to `dst` (made new: an existing `dst` is an error, since a stale one would hide what the build does) without
+/// `buck-out`, symlinks as symlinks, files with their modes. Returns the number of files.
+pub fn copyRepo(a: std.mem.Allocator, src: []const u8, dst: []const u8) !usize {
+    var sd = try std.fs.cwd().openDir(src, .{ .iterate = true });
+    defer sd.close();
+    std.fs.cwd().makeDir(dst) catch |e| {
+        if (e == error.PathAlreadyExists) std.debug.print("beta: {s} exists; the second build starts from an empty place\n", .{dst});
+        return e;
+    };
+    var dd = try std.fs.cwd().openDir(dst, .{});
+    defer dd.close();
+    var w = try sd.walk(a);
+    defer w.deinit();
+    var n: usize = 0;
+    while (try w.next()) |e| {
+        if (std.mem.eql(u8, e.path, "buck-out") or std.mem.startsWith(u8, e.path, "buck-out/")) continue;
+        switch (e.kind) {
+            .directory => try dd.makePath(e.path),
+            .file => {
+                if (std.fs.path.dirname(e.path)) |d| try dd.makePath(d);
+                try sd.copyFile(e.path, dd, e.path, .{});
+                n += 1;
+            },
+            .sym_link => {
+                var buf: [std.fs.max_path_bytes]u8 = undefined;
+                const target = try sd.readLink(e.path, &buf);
+                if (std.fs.path.dirname(e.path)) |d| try dd.makePath(d);
+                try dd.symLink(target, e.path, .{});
+                n += 1;
+            },
+            else => return error.UnexpectedFileKind,
+        }
+    }
+    return n;
+}
+
 /// `buck2 build` of the targets, with their outputs. Local mode passes the mode on the command; a farm run must report no local command.
-fn build(a: std.mem.Allocator, io: Io, o: Options, targets: []const []const u8) ![]const Output {
+fn build(a: std.mem.Allocator, io: Io, o: Options, cwd: []const u8, targets: []const []const u8) ![]const Output {
     var argv = std.ArrayList([]const u8).empty;
     try argv.appendSlice(a, &.{ o.buck2, "build", "--console", "simple" });
     if (o.exec == .local) try argv.appendSlice(a, &.{ "-c", "buildrules_re.mode=local" });
     try argv.append(a, "--show-output");
     try argv.appendSlice(a, targets);
-    const r = try io.run(a, o.work, argv.items);
+    const r = try io.run(a, cwd, argv.items);
     if (r.code != 0) {
         std.debug.print("beta {s}: `{s}` exited {d}\n{s}\n{s}\n", .{ o.lang, try std.mem.join(a, " ", argv.items), r.code, io_mod.tail(r.stderr, 60), io_mod.tail(r.stdout, 20) });
         return error.StepFailed;
@@ -174,8 +216,8 @@ fn trimNl(s: []const u8) []const u8 {
     return std.mem.trimRight(u8, s, "\r\n");
 }
 
-fn hashAll(a: std.mem.Allocator, o: Options, outs: []const Output) ![]Output {
-    var dir = try std.fs.cwd().openDir(o.work, .{});
+fn hashAll(a: std.mem.Allocator, cwd: []const u8, outs: []const Output) ![]Output {
+    var dir = try std.fs.cwd().openDir(cwd, .{});
     defer dir.close();
     var res = std.ArrayList(Output).empty;
     for (outs) |x| {
@@ -231,7 +273,7 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
         },
         .build => |ts| {
             io_mod.say("beta {s}: build {s}\n", .{ o.lang, try std.mem.join(a, " ", ts) });
-            _ = try build(a, io, o, ts);
+            _ = try build(a, io, o, o.work, ts);
             for (ts) |x| {
                 var dup = false;
                 for (targets.items) |y| {
@@ -241,7 +283,7 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
             }
         },
         .expect => |e| {
-            const outs = try build(a, io, o, &.{e.target});
+            const outs = try build(a, io, o, o.work, &.{e.target});
             const rel = outputOf(outs, e.target) orelse {
                 std.debug.print("beta {s}: {s} has no output to run\n", .{ o.lang, e.target });
                 return error.NoOutput;
@@ -255,7 +297,7 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
             io_mod.say("beta {s}: {s} printed `{s}`\n", .{ o.lang, e.target, e.text });
         },
         .expect_file => |e| {
-            const outs = try build(a, io, o, &.{e.target});
+            const outs = try build(a, io, o, o.work, &.{e.target});
             const rel = outputOf(outs, e.target) orelse {
                 std.debug.print("beta {s}: {s} has no output\n", .{ o.lang, e.target });
                 return error.NoOutput;
@@ -273,25 +315,29 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
         },
     };
 
-    const first = try hashAll(a, o, try build(a, io, o, targets.items));
+    const first = try hashAll(a, o.work, try build(a, io, o, o.work, targets.items));
     var res = Result{ .outcome = .passed, .outputs = first };
     if (o.exec == .farm) {
         io_mod.say("beta {s}: determinism not checked on a farm: its cache would answer the second build\n", .{o.lang});
         _ = try io.run(a, o.work, &.{ o.buck2, "kill" });
         return res;
     }
-    // From nothing: `buck2 clean` removes buck-out, so the toolchains are fetched and every action runs again.
-    const clean = try io.run(a, o.work, &.{ o.buck2, "clean" });
-    if (clean.code != 0) {
-        std.debug.print("beta {s}: `buck2 clean` exited {d}: {s}\n", .{ o.lang, clean.code, io_mod.tail(clean.stderr, 20) });
-        return error.StepFailed;
-    }
-    const second = try hashAll(a, o, try build(a, io, o, targets.items));
+    // From nothing, and from ANOTHER directory: the repository (without buck-out) is copied to a second place and built there, so the toolchains
+    // are fetched again, every action runs again, and an output that depends on the absolute path of the work directory (a compile directory in
+    // debug info, a path in a manifest) differs between the two builds and is found. A second build in the same directory could not see that.
+    _ = try io.run(a, o.work, &.{ o.buck2, "kill" });
+    const work2 = try secondWorkDir(a, o.work);
+    const copied = try copyRepo(a, o.work, work2);
+    io_mod.say("beta {s}: second build in {s} ({d} file(s) copied, no buck-out)\n", .{ o.lang, work2, copied });
+    const second = hashAll(a, work2, try build(a, io, o, work2, targets.items)) catch |e| {
+        _ = try io.run(a, work2, &.{ o.buck2, "kill" });
+        return e;
+    };
     var same = first.len == second.len;
     if (same) {
         for (first, second) |x, y| {
             if (!std.mem.eql(u8, x.target, y.target) or !std.mem.eql(u8, x.path, y.path) or !std.mem.eql(u8, &x.sha256, &y.sha256)) {
-                std.debug.print("beta {s}: NOT DETERMINISTIC: {s} {s}\n  first build  sha256 {s}\n  after clean  sha256 {s}\n", .{ o.lang, x.target, x.path, x.sha256, y.sha256 });
+                std.debug.print("beta {s}: NOT DETERMINISTIC: {s} {s}\n  first build  ({s})  sha256 {s}\n  second build ({s})  sha256 {s}\n", .{ o.lang, x.target, x.path, o.work, x.sha256, work2, y.sha256 });
                 same = false;
             }
         }
@@ -299,7 +345,7 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
         std.debug.print("beta {s}: NOT DETERMINISTIC: the first build had {d} output(s) and the second {d}\n", .{ o.lang, first.len, second.len });
     }
     res.deterministic = same;
-    _ = try io.run(a, o.work, &.{ o.buck2, "kill" });
+    _ = try io.run(a, work2, &.{ o.buck2, "kill" });
     if (!same) return error.NotDeterministic;
     return res;
 }
@@ -313,8 +359,14 @@ const Fake = struct {
     a: std.mem.Allocator,
     rules: []Rule,
     calls: std.ArrayList([]const u8) = .empty,
+    cwds: std.ArrayList([]const u8) = .empty,
 
-    const File = struct { path: []const u8, bytes: []const u8 };
+    const File = struct {
+        path: []const u8,
+        bytes: []const u8,
+        /// The directory the command ran in is appended to the bytes: an output that depends on the checkout path.
+        embed_cwd: bool = false,
+    };
     const Rule = struct {
         needle: []const u8,
         out: io_mod.Out = .{ .code = 0, .stdout = "", .stderr = "" },
@@ -328,6 +380,7 @@ const Fake = struct {
         const self: *Fake = @ptrCast(@alignCast(ctx));
         const line = try std.mem.join(a, " ", argv);
         try self.calls.append(self.a, line);
+        try self.cwds.append(self.a, try self.a.dupe(u8, cwd));
         for (self.rules) |*r| {
             if (r.times != 0 and r.used >= r.times) continue;
             if (std.mem.indexOf(u8, line, r.needle) == null) continue;
@@ -336,7 +389,8 @@ const Fake = struct {
             defer d.close();
             for (r.files) |f| {
                 if (std.fs.path.dirname(f.path)) |p| try d.makePath(p);
-                try d.writeFile(.{ .sub_path = f.path, .data = f.bytes });
+                const data = if (f.embed_cwd) try std.mem.concat(a, u8, &.{ f.bytes, cwd }) else f.bytes;
+                try d.writeFile(.{ .sub_path = f.path, .data = data });
             }
             return r.out;
         }
@@ -398,7 +452,7 @@ const Env = struct {
 
 const out_path = "buck-out/v2/art/root/app/bin";
 
-test "a local beta: copies the user's files, runs the steps, builds, runs the output, and builds again after a clean to the same bytes" {
+test "a local beta: copies the user's files, runs the steps, builds, runs the output, and builds again in another directory to the same bytes" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -408,7 +462,6 @@ test "a local beta: copies the user's files, runs the steps, builds, runs the ou
         .{ .needle = "/bin/buildrules init . --git https://example.invalid/r --commit " ++ "c" ** 40 },
         .{ .needle = "build --console simple -c buildrules_re.mode=local --show-output //app:bin", .out = okOut("root//app:bin " ++ out_path ++ "\n", local_stderr), .files = &.{.{ .path = out_path, .bytes = "ELF" }} },
         .{ .needle = "/buck-out/v2/art/root/app/bin", .out = okOut("Hello, world!\n", "") },
-        .{ .needle = "/bin/buck2 clean" },
         .{ .needle = "/bin/buck2 kill" },
     };
     var fake = Fake{ .a = a, .rules = &rules };
@@ -425,23 +478,91 @@ test "a local beta: copies the user's files, runs the steps, builds, runs the ou
     const cfg = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ env.work, ".buckconfig.local" }), 1 << 10);
     try t.expect(std.mem.indexOf(u8, cfg, "mode = local") != null);
     try t.expectEqual(fake.count("simple "), fake.count("-c buildrules_re.mode=local"));
-    // built three times (the step's build, the expect's, the first hash) and once more after the clean
+    // built three times (the step's build, the expect's, the first hash) in the work directory and once more in a second one
     try t.expectEqual(@as(usize, 4), fake.count("build --console simple"));
-    try t.expectEqual(@as(usize, 1), fake.count("buck2 clean"));
+    try t.expectEqual(@as(usize, 0), fake.count("buck2 clea" ++ "n"));
+    const second = try secondWorkDir(a, env.work);
+    try t.expect(!std.mem.eql(u8, second, env.work));
+    var in_first: usize = 0;
+    var in_second: usize = 0;
+    for (fake.calls.items, fake.cwds.items) |line, cwd| {
+        if (std.mem.indexOf(u8, line, "build --console simple") == null) continue;
+        if (std.mem.eql(u8, cwd, env.work)) in_first += 1;
+        if (std.mem.eql(u8, cwd, second)) in_second += 1;
+    }
+    try t.expectEqual(@as(usize, 3), in_first);
+    try t.expectEqual(@as(usize, 1), in_second);
+    // the second place holds the repository's files (the config too), and was not made from the first's build output
+    try t.expectEqualStrings("# the user's BUCK\n", try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ second, "app/BUCK" }), 1 << 10));
+    try t.expect(std.mem.indexOf(u8, try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ second, ".buckconfig.local" }), 1 << 10), "mode = local") != null);
 }
 
-test "a build that is not the same bytes after a clean is red, and names both digests" {
+test "an output that depends on the directory it was built in is red: the second build is in another directory" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     var env = try Env.make(a, demo_steps);
     defer env.tmp.cleanup();
-    // the first three builds write one content, the build after the clean another
+    // every build writes the directory it ran in into the binary (what a compile directory in debug info does)
     var rules = [_]Fake.Rule{
         .{ .needle = "init" },
-        .{ .needle = "buck2 clean", .out = okOut("", ""), .files = &.{.{ .path = out_path, .bytes = "SECOND" }} },
+        .{ .needle = "build --console simple", .out = okOut("root//app:bin " ++ out_path ++ "\n", local_stderr), .files = &.{.{ .path = out_path, .bytes = "ELF@", .embed_cwd = true }} },
+        .{ .needle = "/buck-out/v2/art/root/app/bin", .out = okOut("Hello, world!\n", "") },
+        .{ .needle = "buck2 kill" },
+    };
+    var fake = Fake{ .a = a, .rules = &rules };
+    try t.expectError(error.NotDeterministic, run(a, fake.io(), env.opts(.local)));
+    // the same directory twice could not have seen it: the same bytes in both places is green
+    var env2 = try Env.make(a, demo_steps);
+    defer env2.tmp.cleanup();
+    var rules2 = [_]Fake.Rule{
+        .{ .needle = "init" },
+        .{ .needle = "build --console simple", .out = okOut("root//app:bin " ++ out_path ++ "\n", local_stderr), .files = &.{.{ .path = out_path, .bytes = "ELF" }} },
+        .{ .needle = "/buck-out/v2/art/root/app/bin", .out = okOut("Hello, world!\n", "") },
+        .{ .needle = "buck2 kill" },
+    };
+    var fake2 = Fake{ .a = a, .rules = &rules2 };
+    const r = try run(a, fake2.io(), env2.opts(.local));
+    try t.expectEqual(@as(?bool, true), r.deterministic);
+}
+
+test "the second place is made new, without buck-out, with symlinks kept, and an existing one is refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("one/sub");
+    try tmp.dir.makePath("one/buck-out/v2");
+    try tmp.dir.writeFile(.{ .sub_path = "one/.buckconfig", .data = "x" });
+    try tmp.dir.writeFile(.{ .sub_path = "one/sub/f.txt", .data = "f" });
+    try tmp.dir.writeFile(.{ .sub_path = "one/buck-out/v2/out", .data = "stale" });
+    try tmp.dir.symLink("sub/f.txt", "one/link", .{});
+    const base = try tmp.dir.realpathAlloc(a, ".");
+    const src = try std.fs.path.join(a, &.{ base, "one" });
+    const dst = try secondWorkDir(a, src);
+    try t.expectEqualStrings(try std.fmt.allocPrint(a, "{s}-second", .{src}), dst);
+    try t.expectEqual(@as(usize, 3), try copyRepo(a, src, dst));
+    try t.expectEqualStrings("f", try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ dst, "sub/f.txt" }), 16));
+    try t.expectError(error.FileNotFound, std.fs.cwd().access(try std.fs.path.join(a, &.{ dst, "buck-out" }), .{}));
+    var buf: [64]u8 = undefined;
+    var dd = try std.fs.cwd().openDir(dst, .{});
+    defer dd.close();
+    try t.expectEqualStrings("sub/f.txt", try dd.readLink("link", &buf));
+    try t.expectError(error.PathAlreadyExists, copyRepo(a, src, dst));
+}
+
+test "a build that is not the same bytes in the second directory is red, and names both digests" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = try Env.make(a, demo_steps);
+    defer env.tmp.cleanup();
+    // the first three builds write one content, the build in the second directory another
+    var rules = [_]Fake.Rule{
+        .{ .needle = "init" },
         .{ .needle = "build --console simple", .out = okOut("root//app:bin " ++ out_path ++ "\n", local_stderr), .files = &.{.{ .path = out_path, .bytes = "FIRST" }}, .times = 3 },
-        .{ .needle = "build --console simple", .out = okOut("root//app:bin " ++ out_path ++ "\n", local_stderr) },
+        .{ .needle = "build --console simple", .out = okOut("root//app:bin " ++ out_path ++ "\n", local_stderr), .files = &.{.{ .path = out_path, .bytes = "SECOND" }} },
         .{ .needle = "/buck-out/v2/art/root/app/bin", .out = okOut("Hello, world!\n", "") },
         .{ .needle = "buck2 kill" },
     };
@@ -449,7 +570,7 @@ test "a build that is not the same bytes after a clean is red, and names both di
     try t.expectError(error.NotDeterministic, run(a, fake.io(), env.opts(.local)));
 }
 
-test "a build that makes a different number of outputs after a clean is red" {
+test "a build that makes a different number of outputs in the second directory is red" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -457,7 +578,6 @@ test "a build that makes a different number of outputs after a clean is red" {
     defer env.tmp.cleanup();
     var rules = [_]Fake.Rule{
         .{ .needle = "init" },
-        .{ .needle = "buck2 clean" },
         .{ .needle = "build --console simple", .out = okOut("root//app:bin " ++ out_path ++ "\n", local_stderr), .files = &.{.{ .path = out_path, .bytes = "A" }}, .times = 3 },
         .{ .needle = "build --console simple", .out = okOut("", local_stderr) },
         .{ .needle = "/buck-out/v2/art/root/app/bin", .out = okOut("Hello, world!\n", "") },
@@ -580,7 +700,6 @@ test "a file in the output of a target is checked, and a missing one is red" {
     defer env.tmp.cleanup();
     var rules = [_]Fake.Rule{
         .{ .needle = "build --console simple", .out = okOut("root//web:dist buck-out/dist\n", local_stderr), .files = &.{.{ .path = "buck-out/dist/hello.txt", .bytes = "Hello, world!\n" }} },
-        .{ .needle = "buck2 clean" },
         .{ .needle = "buck2 kill" },
     };
     var fake = Fake{ .a = a, .rules = &rules };
@@ -661,7 +780,6 @@ test "a leg that waits for mopm's release is planned while the pin is a stand-in
         .{ .needle = "init" },
         .{ .needle = "build --console simple", .out = okOut("root//app:bin " ++ out_path ++ "\n", local_stderr), .files = &.{.{ .path = out_path, .bytes = "ELF" }} },
         .{ .needle = "/buck-out/v2/art/root/app/bin", .out = okOut("Hello, world!\n", "") },
-        .{ .needle = "buck2 clean" },
         .{ .needle = "buck2 kill" },
     };
     var fake2 = Fake{ .a = a, .rules = &rules2 };

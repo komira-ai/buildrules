@@ -5,8 +5,9 @@ which declares `toolchains//:cxx` for the prelude's `cxx_library` / `cxx_binary`
 
 - compiler, assembler, archiver: `zig cc | c++ | ar | ranlib` of the pinned zig 0.12.0 (`rules/pins`), through
   `zig_cc_launcher` (expands the nested response files the prelude passes, fixes zig's cache directories);
-- target `x86_64-linux-gnu.2.34` (the glibc floor of the Rust rules), CPU baseline `x86_64`, `-fPIC`, `-g0`
-  (debug info would record the working directory);
+- target `x86_64-linux-gnu.2.34` (the glibc floor of the Rust rules), CPU baseline `x86_64`, `-fPIC`, `-g0` for compiles and `-Wl,--strip-debug` for links
+  (debug info would record the working directory; zig cc assembles the C runtime's start-up objects at link time with debug info of their
+  own, which `-g0` does not reach, so the link strips it; `hermetic_check` fails a binary that still has debug info or the link directory in its bytes);
 - `nm`, `objcopy`, `strip` and every Python tool of the prelude are refusals that name the tool (exit 2), never a
   search of the worker. Dependency files, header maps and thin LTO are off for the same reason.
 
@@ -18,6 +19,7 @@ which declares `toolchains//:cxx` for the prelude's `cxx_library` / `cxx_binary`
 | `prefix_header`, `prefixed_archive_check`, `checked_cxx_library` | rename every global symbol of a vendored library under a prefix and prove it (see below) |
 | `c_check` | run a built executable on the execution platform; validation: exit 0 and exact stdout |
 | `glibc_floor_check` | validation: the ELF needs no glibc symbol version newer than `max` |
+| `hermetic_check` | validation: the ELF has no `.debug_*` section and does not contain the path of the directory it was linked in (`examples/cxx`) |
 
 Symbol prefixing: `<lib>_unprefixed` is built with upstream names; `prefix_tool header` reads its archive's symbol
 table (`elfsyms`) and writes the renaming header; `<lib>_prefixed` force-includes it; `prefix_tool check` reads the

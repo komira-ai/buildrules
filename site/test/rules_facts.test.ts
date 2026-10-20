@@ -618,11 +618,16 @@ describe('the stages of the release: the page, RELEASING.md, beta.yml and releas
   const beta = repoFile('.github/workflows/beta.yml');
   const checkZig = repoFile('beta/check.zig');
 
-  test('the order is publish <- verify <- archive <- tag <- gamma <- beta <- gate, in the workflow and in RELEASING.md', () => {
+  test('the order is gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish, in the workflow and in RELEASING.md', () => {
     expect(release).toMatch(/\n {2}beta:\n {4}needs: \[gate\]\n/);
     expect(release).toMatch(/\n {2}gamma:\n {4}needs: \[beta, tool\]\n/);
-    expect(release).toMatch(/\n {2}tag:\n {4}needs: \[gate, beta, gamma, tool\]\n/);
-    expect(squash(releasing)).toContain('`publish` after `verify` after `archive` after `tag` after `gamma` after `beta` after `gate`');
+    expect(release).toMatch(/\n {2}plan:\n {4}needs: \[gamma, tool\]\n/);
+    expect(release).toMatch(/\n {2}archive:\n {4}needs: \[plan, tool\]\n/);
+    expect(release).toMatch(/\n {2}verify:\n {4}needs: \[plan, archive, tool\]\n/);
+    expect(release).toMatch(/\n {2}tag:\n {4}needs: \[plan, verify, tool\]\n/);
+    expect(release).toMatch(/\n {2}publish:\n {4}needs: \[plan, tag, verify, tool\]\n/);
+    expect(squash(releasing)).toContain('The order is `gate`, `beta`, `gamma`, `plan`, `archive`, `verify`, `tag`, `publish`');
+    expect(squash(releasing)).toContain('leaves no tag behind');
   });
 
   test('the languages of the beta stage are the beta directories, the beta matrix, RELEASING.md and the page', () => {

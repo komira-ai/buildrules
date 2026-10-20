@@ -12,23 +12,29 @@ one invocation each. `ci/release_check.zig` and `ci/stages_check.zig` (part of `
 | job | what it does | token |
 |---|---|---|
 | `gate` | the PR gate: calls `ci.yml`, the whole tree (`//ci:all`) and the completeness check, in local mode on the runner | read |
-| `beta` | calls `beta.yml`: hello-world repositories per language consume the candidate commit as a user would and are built twice (see "The beta stage") | read, `id-token` for its farm leg |
+| `beta` | calls `beta.yml`: hello-world repositories per language consume the candidate commit as a user would and are built twice, the second time in another directory (see "The beta stage") | read, `id-token` for its farm leg |
 | `gamma` | builds our own repositories with the candidate on the farm; fails the release when the farm is not configured (see "The gamma stage") | read, `id-token` write |
 | `tool` | builds `tools/release` and `tools/stage` with buck2 and hands the binaries to the later jobs, before any job that writes holds a token | read |
-| `tag` | decides whether this commit is released, takes the next version and creates the annotated tag. Fails if the tag exists | `contents: write` |
-| `archive` | `git archive` of the tag, compressed by the tool's own gzip, `SHA256SUMS`, and a build provenance attestation of both files | `id-token`, `attestations` write |
+| `plan` | read-only; decides whether this commit is released and which version; creates nothing | read |
+| `archive` | `git archive` of the tested commit (its sha, not a tag) under `buildrules-<planned version>/`, compressed by the tool's own gzip, `SHA256SUMS`, and a build provenance attestation of both files | `id-token`, `attestations` write |
 | `verify` | read-only; checks everything below before a file is published | read |
+| `tag` | the annotated tag at that sha, made only after the archive is verified. A tag that exists at the sha is kept; one at another commit fails the job | `contents: write` |
 | `site` | read-only; the page of the release (the pin snippet) as an artifact; nothing deploys it | read |
-| `publish` | creates the GitHub release from the verified files | `contents: write` |
+| `publish` | needs `tag` and `verify`; checks the tag peels to the verified sha, then creates the GitHub release from the verified files | `contents: write` |
 
-The order is `publish` after `verify` after `archive` after `tag` after `gamma` after `beta` after `gate`; a job runs only if the one before it
-succeeded (`tag` waits for each of `gate`, `beta` and `gamma`, so none can be dropped by editing another). A write scope
+The order is `gate`, `beta`, `gamma`, `plan`, `archive`, `verify`, `tag`, `publish` (`site` after `tag` and `verify`); a job runs only if the one before
+it succeeded. **Nothing before `tag` waits for it, so a failure in the archive, its attestation or its verification leaves no tag behind**: the tag is the
+first thing in the pipeline that cannot be taken back, and it is made last but for the release (`ci/release_check.zig` refuses a `needs: tag` in any job before it).
+A write scope
 exists only in `tag` and `publish` (`contents`), in `archive` (`id-token`, `attestations`), and `id-token` also in `gamma` and in the call of `beta`
 (the farm's network trusts the job's OIDC token; neither has `contents: write`), each of `tag` and `publish` under an exact `if:`
-(a push to `main`, not a fork, and for `publish` a commit the tag job released). The jobs that write run no buck2 and use only the checkout
+(a push to `main`, not a fork, and a commit the plan released). The jobs that write run no buck2 and use only the checkout
 and artifact-download actions; `gamma` runs no buck2 itself, the stage tool does. Every action is pinned by commit, but one: the farm-connect
 action is checked out of the repository and commit that two repository variables name, the checkout is verified to be that commit before the action
-runs, and it is then used from the checkout. Two runs never tag at once (concurrency group `release`, nothing cancelled).
+runs, and it is then used from the checkout. Two runs never tag at once (concurrency group `release`, nothing cancelled); two pushes that planned the
+same number race for the tag, and the loser fails at `tag` (the tag names the other commit) with nothing created. No job of the workflow carries
+`continue-on-error` (or only `false`), and no `run:` line expands a repository variable or event field inline: the values go through `env:`
+(`ci/release_check.zig` and `ci/stages_check.zig` refuse both).
 
 ## The beta stage
 
@@ -49,9 +55,18 @@ and then, from nothing, builds again.
 | `ubuntu-24.04-arm`, `macos-14` | the same | **planned**: buildrules v0 targets linux-x86_64 only |
 | farm | the ubuntu legs again, built on the farm | only when the repository variables `FARM_ADDRESS` and `FARM_CONNECT_REF` are set |
 
-The runner legs run every action on the runner (`-c buildrules_re.mode=local`; nothing is built anywhere else), and each is built **twice**: after the
-first build the tool records the sha256 of every output (a file's bytes, or a directory's names and bytes), runs `buck2 clean`, builds again, and compares.
-Any difference is red, with both digests. The check is of one environment against itself: the C and C++ outputs built on a GitHub runner and on the farm are not the same bytes as each other (the other languages are), each is the same across its own two builds, and a farm leg does not compare with a runner leg.
+The runner legs run every action on the runner (`-c buildrules_re.mode=local`; nothing is built anywhere else), and each is built **twice, in two different
+directories**: after the first build the tool records the sha256 of every output (a file's bytes, or a directory's names and bytes), stops the daemon, copies the
+repository without `buck-out` to a sibling directory (the work directory with `-second` appended), builds there from nothing, and compares. A second build in the
+same directory could not see an output that depends on the path it was built at (a compile directory in debug info, a path in a manifest); this one can.
+Any difference is red, with both digests and both directories.
+
+C and C++ outputs used to depend on the path: zig cc assembles the C runtime's start-up objects at link time with debug info, whatever `-g0` said for the compiles,
+and that DWARF names the action's working directory. The toolchain now links with `-Wl,--strip-debug`, and `hermetic_check` (`examples/cxx`, a validation in `//ci:all`)
+fails a C or C++ binary that has a `.debug_*` section or contains the path of the directory it was linked in (shown red without the flag and green with it, on the farm).
+What this establishes is that those two defects are gone and that each environment's two builds are compared across two paths. It does not establish that a binary
+built on a GitHub runner and one built on the farm are the same bytes: no run compares a runner leg with a farm leg (a farm leg does not repeat the build, below), so that
+claim is made only if a beta run shows it.
 A farm leg does not repeat the build, since the farm's cache would answer it; it requires every build to report `local: 0`.
 
 Planned legs are visible, not missing: the arm and macos jobs are in `beta.yml` with `if:` never true and their reason in the job name, so a run's page
@@ -102,7 +117,7 @@ A version is `v<MAJOR>.<MINOR>.<PATCH>`.
   Other tags (`v1`, `v0.0.1-rc1`, `latest`) are not releases and are ignored.
 
 To bump `MAJOR.MINOR`, edit `VERSION` (`0.1`, `1.0`) in a pull request. `VERSION` is not documentation, so merging it releases: the first
-release of the new line is `v0.1.1`, and `PATCH` counts again from 1. A `VERSION` lower than a tag that exists is refused (the tag job fails
+release of the new line is `v0.1.1`, and `PATCH` counts again from 1. A `VERSION` lower than a tag that exists is refused (the plan job fails
 and says so) rather than released.
 
 ## What is released
@@ -120,7 +135,7 @@ finishing late) is skipped, never released out of order. A re-run of a released 
 
 ## What a release holds
 
-- `buildrules-<version>.tar.gz`: the tracked files of the tag under `buildrules-<version>/`, e.g. `buildrules-0.0.1/`.
+- `buildrules-<version>.tar.gz`: the tracked files of the tested commit under `buildrules-<version>/`, e.g. `buildrules-0.0.1/`.
 - `SHA256SUMS`: one line, the archive's sha256 (`sha256sum --check` reads it).
 - The notes: how to pin it, and the commit subjects (no merge commits) since the previous tag.
 - A build provenance attestation (GitHub's, signed with the workflow's identity) of the archive and of `SHA256SUMS`.
@@ -129,16 +144,16 @@ The archive is reproducible, with one stated dependence. `git archive` writes th
 umask 022, and `core.autocrlf=false` and `core.eol=lf` (so no setting of the runner converts a line ending); the tool compresses it with its own gzip (a
 fixed 10-byte header with no name and no time, one DEFLATE block with a fixed Huffman code over a greedy LZ77 parse), so no `gzip` or zlib of the
 runner enters the bytes. The tar bytes themselves are git's: the same tag archived by another git version could differ in the tar, so the archive is
-made once, by `archive`, and `verify` builds it a second time from the tag, with the same git on the same runner, and requires the same bytes. A
+made once, by `archive`, and `verify` builds it a second time from the commit, with the same git on the same runner, and requires the same bytes. A
 consumer relies on the published file and its sha256, not on making the file again.
 
 `verify` checks, and `publish` refuses to go on without:
 
 1. the archive's sha256 is the one in `SHA256SUMS`;
-2. the tag is an annotated tag of the commit that was tested;
+2. the checkout is the commit that was tested (no tag exists yet; `publish` later requires the annotated tag to peel to that sha);
 3. the attestations of both files verify (`gh attestation verify`), pinned to this workflow, the commit, and `refs/heads/main`;
-4. building the archive again from the tag gives the same bytes;
-5. the archive's file list equals `git ls-tree -r` of the tag (a missing, extra or repeated file is a failure);
+4. building the archive again from the commit gives the same bytes;
+5. the archive's file list equals `git ls-tree -r` of the commit (a missing, extra or repeated file is a failure);
 6. the scrub (`tools/scrub`: dates, names, addresses and the like that a public repository must not hold) passes on the archive's contents.
 
 A re-run creates no second release and replaces no asset. If the release exists, each of the two files it already holds must have the sha256
@@ -178,14 +193,15 @@ same fact in git's terms.
 
 ## When something fails
 
-A red `gate`, `beta` or `gamma` releases nothing, and the next green push releases everything since the last tag. If a job after `tag` fails, the tag
-exists without its release: re-run the failed jobs of that run (`archive`, `verify`, `site` and `publish` are safe to repeat, and `publish` adds only
-what is missing). The tag job never creates a tag that exists; a `VERSION` behind the tags fails it until `VERSION` is fixed.
+A red `gate`, `beta`, `gamma`, `archive` or `verify` releases nothing and **leaves no tag**, and the next green push releases everything since the last
+tag. If `tag` or a job after it fails, re-run the failed jobs of that run: `tag` keeps a tag that already names the commit (and fails, creating nothing,
+when the number names another commit), and `archive`, `verify`, `site` and `publish` are safe to repeat, `publish` adding only what is missing. A `VERSION`
+behind the tags fails `plan` until `VERSION` is fixed.
 
 **An old run is never published after a newer one.** Before `publish` creates a release it lists the releases and refuses (the job fails and creates
 nothing) when one with a higher number exists, and the release it creates is marked the latest. So re-running the failed jobs of an old run after a newer
 release is a red run and not a release below the newest; adding a missing file to a release that exists is still allowed. A tag that has no release does
-**not** block the next tag: the tag job takes the highest tag plus one whether or not that tag was ever published, so one failed publish cannot stop
+**not** block the next tag: the plan takes the highest tag plus one whether or not that tag was ever published, so one failed publish cannot stop
 every later push. Such a tag stays without a release (its archive was never published); the next release's notes list the commits since it.
 
 ## Before the first release: rehearse (a step for the repository owner, proposed)

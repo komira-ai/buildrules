@@ -70,6 +70,8 @@ pub fn checkBeta(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, dir
     var f = Findings.init(a);
     const text = try rc.body(a, wf);
 
+    try wc.noContinueOnError(a, &f, text);
+    try wc.noInlineContext(a, &f, text);
     const uses = try wc.pinnedUses(a, &f, text, &.{farm_action});
     if (uses == 0) try add(a, &f, "no `uses:` line found (this parser is blind)", .{});
     if (std.mem.count(u8, text, "actions/checkout@") != std.mem.count(u8, text, "persist-credentials: false"))
@@ -636,4 +638,19 @@ test "rule: run lines are single invocations, and the tools job hands on the thr
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "      - run: chmod +x tool/stage tool/buildrules tool/buck2\n", "      - run: |\n          echo a\n          echo b\n"), "`run:` block in the job `beta`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "            ./buildrules\n", ""), "does not upload `stage`, `buildrules` and `buck2`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "name: beta-tools", "name: other"), "does not upload `stage`, `buildrules` and `buck2`");
+}
+
+test "rule: continue-on-error lets no red leg pass (G: the beta job), and nothing is expanded inline in a run line" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = fx();
+    const rule = "`continue-on-error` is set to";
+    // G: the beta job of beta.yml
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    timeout-minutes: 120\n", "    timeout-minutes: 120\n    continue-on-error: true\n"), rule);
+    // a step
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "        id: plan\n", "        id: plan\n        continue-on-error: true\n"), rule);
+    // the farm job
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "    timeout-minutes: 120\n", "    timeout-minutes: 120\n    continue-on-error: ${{ true }}\n"), rule);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "        run: ./stage plan --root \"$GITHUB_WORKSPACE\" --output \"$GITHUB_OUTPUT\"\n", "        run: ./stage plan --root \"${{ github.event.pull_request.title }}\"\n"), "expands `github.event.` inline");
 }

@@ -9,7 +9,7 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     rules/zig, rules/gate, rules/kpin, rules/node, rules/pins
                       generic rules; kpin is pins.toml / npm only
     rules/node        node_dist, npm_tarball (one pinned tarball), npm_modules, tsc_*, jest_test, ...; npm.bzl: the front door `npm_package(path = ".")` (docs/contract.md section 13)
-    rules/cxx, third_party/aws-lc   hermetic C/C++ on the pinned zig; AWS-LC 1.39.0 (crypto[static-pic]) with prefix, symbol and glibc-floor gates
+    rules/cxx, third_party/aws-lc   hermetic C/C++ on the pinned zig (binaries carry no debug info and no build path); AWS-LC 1.39.0 (crypto[static-pic]) with prefix, symbol and glibc-floor gates
     rules/mojo        mojo_package (docs/contract.md section 12): one `mopm unit build` action per unit of mopm's graph, tests, coverage, `:check`; mojo_launch, prebuilt_unpack
     rules/mopm        the pinned mopm (pins.bzl, toolchain.bzl)
     rules/coverage    kcov v42 built from source and the coverage path tools, cov_run, cov_summary

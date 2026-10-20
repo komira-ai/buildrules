@@ -7,8 +7,9 @@
 //!  - the token: `permissions: {}` at the top, every job states its own, and a write scope only where it belongs: `contents: write` in the
 //!    jobs `tag` and `publish` (and nowhere else), `id-token: write` and `attestations: write` in `archive` (and nowhere else), each of
 //!    `tag` and `publish` under its exact `if:`, and every `: write` of the file accounted for by a job's permissions block;
-//!  - the order publish <- verify <- archive <- tag <- gate, with gate a call of ci.yml that nothing can skip, a release made only when
-//!    the tag job released, and no status function (`always()`, `failure()`, `cancelled()`) that would let a job run after a red one;
+//!  - the order gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish, with gate a call of ci.yml that nothing can skip, no job before
+//!    the tag waiting for it (a failure before the tag leaves no tag), a release made only when the plan released, and no status function
+//!    (`always()`, `failure()`, `cancelled()`) or `continue-on-error` that would let a job run or pass after a red one;
 //!  - the jobs that write run no buck2 and only the checkout and download actions: the tool they run was built before any token existed;
 //!  - the attestation action is in `archive` only, every checkout drops its credentials, `run:` lines are single invocations (the
 //!    install of buck2 aside), no asset is ever replaced (`--clobber`), no secret is read.
@@ -19,10 +20,10 @@ const t = std.testing;
 const Findings = wc.Findings;
 const add = wc.add;
 
-pub const tag_if = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}";
-pub const publish_if = "${{ needs.tag.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}";
-/// archive and verify run only for a commit the tag job released.
-const released_clause = "needs.tag.outputs.released == 'true'";
+pub const tag_if = "${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}";
+pub const publish_if = tag_if;
+/// archive, verify, tag, publish and site run only for a commit the plan released.
+const released_clause = "needs.plan.outputs.released == 'true'";
 const ci_call = "./.github/workflows/ci.yml";
 const beta_call = "./.github/workflows/beta.yml";
 /// The farm-connect action, checked out of the repository a variable names at the commit another names, then used from the checkout.
@@ -30,24 +31,30 @@ const farm_action = "./farm-action/.github/actions/farm-connect";
 const tool_target = "//tools/release:release";
 const stage_target = "//tools/stage:stage";
 
-/// The jobs, and the job each one must wait for (`needs`): publish <- verify <- archive <- tag <- gamma <- beta <- gate.
+/// The jobs, and the job each one must wait for (`needs`): gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish (site after tag and verify).
 const order = [_][2][]const u8{
     .{ "beta", "gate" },
     .{ "gamma", "beta" },
-    .{ "tag", "gamma" },
-    .{ "tag", "beta" },
-    .{ "tag", "gate" },
-    .{ "archive", "tag" },
+    .{ "plan", "gamma" },
+    .{ "archive", "plan" },
     .{ "verify", "archive" },
-    .{ "site", "verify" },
+    .{ "tag", "plan" },
+    .{ "tag", "verify" },
+    .{ "publish", "plan" },
+    .{ "publish", "tag" },
     .{ "publish", "verify" },
+    .{ "site", "tag" },
+    .{ "site", "verify" },
 };
-const all_jobs = [_][]const u8{ "gate", "beta", "gamma", "tool", "tag", "archive", "verify", "site", "publish" };
+/// The jobs that run before the tag exists: none of them may wait for it, or a failure there could not be told from one after the tag.
+const before_tag = [_][]const u8{ "gate", "beta", "gamma", "plan", "archive", "verify" };
+const all_jobs = [_][]const u8{ "gate", "beta", "gamma", "tool", "plan", "archive", "verify", "tag", "site", "publish" };
 /// What each job runs of the tool.
 const tool_runs = [_][2][]const u8{
     .{ "gamma", "tool/stage gamma-vars " },
     .{ "gamma", "tool/stage action-ref " },
     .{ "gamma", "tool/stage gamma " },
+    .{ "plan", "tool/release plan " },
     .{ "tag", "tool/release tag " },
     .{ "archive", "tool/release archive " },
     .{ "verify", "tool/release verify " },
@@ -229,6 +236,8 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     const text = try body(a, wf);
 
     // Actions: every `uses:` pinned to a commit, but the call of ci.yml; a checkout drops its credentials.
+    try wc.noContinueOnError(a, &f, text);
+    try wc.noInlineContext(a, &f, text);
     const uses = try wc.pinnedUses(a, &f, text, &.{ ci_call, beta_call, farm_action });
     if (uses == 0) try add(a, &f, "no `uses:` line found (this parser is blind)", .{});
     if (std.mem.count(u8, text, "actions/checkout@") != std.mem.count(u8, text, "persist-credentials: false"))
@@ -290,19 +299,38 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     }
     if (std.mem.count(u8, text, "actions/attest-build-provenance@") != 1) try add(a, &f, "`actions/attest-build-provenance` is used other than once, in `archive`", .{});
 
-    // The order: publish <- verify <- archive <- tag <- gamma <- beta <- gate, and a release only for a commit the tag job released.
+    // The order: gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish, and a release only for a commit the plan released.
     for (order) |pair| {
         if (jobNamed(jobs, pair[0])) |j| {
-            if (!hasNeed(j, pair[1])) try add(a, &f, "the job `{s}` does not wait for `{s}` (order: publish <- verify <- archive <- tag <- gamma <- beta <- gate)", .{ pair[0], pair[1] });
+            if (!hasNeed(j, pair[1])) try add(a, &f, "the job `{s}` does not wait for `{s}` (order: gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish)", .{ pair[0], pair[1] });
         }
     }
     for ([_][]const u8{ "archive", "verify", "site" }) |name| {
         if (jobNamed(jobs, name)) |j| {
-            if (j.if_expr == null or std.mem.indexOf(u8, j.if_expr.?, released_clause) == null) try add(a, &f, "the job `{s}` runs even when the tag job released nothing (its `if:` lacks `{s}`)", .{ name, released_clause });
+            if (j.if_expr == null or std.mem.indexOf(u8, j.if_expr.?, released_clause) == null) try add(a, &f, "the job `{s}` runs even when the plan released nothing (its `if:` lacks `{s}`)", .{ name, released_clause });
         }
     }
     if (jobNamed(jobs, "publish")) |j| {
-        if (j.if_expr == null or std.mem.indexOf(u8, j.if_expr.?, released_clause) == null) try add(a, &f, "the job `publish` runs even when the tag job released nothing", .{});
+        if (j.if_expr == null or std.mem.indexOf(u8, j.if_expr.?, released_clause) == null) try add(a, &f, "the job `publish` runs even when the plan released nothing", .{});
+    }
+    // Nothing before the tag waits for it: the tag is made after the archive is verified, so a failure up to there leaves no tag behind.
+    for (before_tag) |name| {
+        if (jobNamed(jobs, name)) |j| {
+            if (hasNeed(j, "tag") or hasNeed(j, "publish")) try add(a, &f, "the job `{s}` waits for `tag` or `publish`: the tag is made after the archive is verified, not before", .{name});
+        }
+    }
+    // The plan only reads: it decides, and creates nothing.
+    if (jobNamed(jobs, "plan")) |j| {
+        if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read")) try add(a, &f, "the job `plan` is not `contents: read` alone", .{});
+        if (j.if_expr != null) try add(a, &f, "the job `plan` has an `if:`", .{});
+    }
+    // The archive is of the tested commit, and no step of the jobs before the tag names the tag by a ref.
+    for ([_][]const u8{ "archive", "verify" }) |name| {
+        if (jobNamed(jobs, name)) |j| {
+            const jt = try j.text(a);
+            if (std.mem.indexOf(u8, jt, "refs/tags/") != null) try add(a, &f, "the job `{s}` reads a tag by ref (`refs/tags/`): the tag does not exist yet, the archive is of the commit", .{name});
+            if (std.mem.indexOf(u8, jt, "--sha \"$GITHUB_SHA\"") == null) try add(a, &f, "the job `{s}` does not pass `--sha \"$GITHUB_SHA\"` (the archive is of the tested commit)", .{name});
+        }
     }
     if (jobNamed(jobs, "gate")) |j| {
         if (j.uses == null or !std.mem.eql(u8, j.uses.?, ci_call)) try add(a, &f, "the job `gate` does not call {s}", .{ci_call});
@@ -456,6 +484,12 @@ const fixture_wf =
     \\      id-token: write
     \\    env:
     \\      CONNECT_REF: ${{ vars.FARM_CONNECT_REF }}
+    \\      CONNECT_REPO: ${{ vars.FARM_CONNECT_REPO }}
+    \\      HAS_ADDRESS: ${{ vars.FARM_ADDRESS != '' }}
+    \\      HAS_INSTANCE: ${{ vars.FARM_INSTANCE != '' }}
+    \\      HAS_PROPERTIES: ${{ vars.FARM_LINUX_X86_64_PROPERTIES != '' }}
+    \\      HAS_TS_CLIENT_ID: ${{ vars.TS_CLIENT_ID != '' }}
+    \\      HAS_TS_AUDIENCE: ${{ vars.TS_AUDIENCE != '' }}
     \\      GAMMA_REPOS: ${{ vars.GAMMA_REPOS }}
     \\      GAMMA_TARGETS: ${{ vars.GAMMA_TARGETS || '//...' }}
     \\    steps:
@@ -468,7 +502,7 @@ const fixture_wf =
     \\          path: tool
     \\      - run: chmod +x tool/stage tool/buck2
     \\      - name: every repository variable gamma needs is set
-    \\        run: tool/stage gamma-vars --farm-address ${{ vars.FARM_ADDRESS != '' }} --farm-instance ${{ vars.FARM_INSTANCE != '' }} --farm-properties ${{ vars.FARM_LINUX_X86_64_PROPERTIES != '' }} --ts-client-id ${{ vars.TS_CLIENT_ID != '' }} --ts-audience ${{ vars.TS_AUDIENCE != '' }} --connect-repo "${{ vars.FARM_CONNECT_REPO }}" --connect-ref "$CONNECT_REF" --repos "$GAMMA_REPOS"
+    \\        run: tool/stage gamma-vars --farm-address "$HAS_ADDRESS" --farm-instance "$HAS_INSTANCE" --farm-properties "$HAS_PROPERTIES" --ts-client-id "$HAS_TS_CLIENT_ID" --ts-audience "$HAS_TS_AUDIENCE" --connect-repo "$CONNECT_REPO" --connect-ref "$CONNECT_REF" --repos "$GAMMA_REPOS"
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
     \\          repository: ${{ vars.FARM_CONNECT_REPO }}
@@ -531,16 +565,12 @@ const fixture_wf =
     \\          retention-days: 7
     \\          if-no-files-found: error
     \\
-    \\  tag:
-    \\    needs: [gate, beta, gamma, tool]
-    \\    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    \\  plan:
+    \\    needs: [gamma, tool]
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
-    \\    concurrency:
-    \\      group: release
-    \\      cancel-in-progress: false
     \\    permissions:
-    \\      contents: write
+    \\      contents: read
     \\    outputs:
     \\      released: ${{ steps.version.outputs.released }}
     \\      tag: ${{ steps.version.outputs.tag }}
@@ -555,15 +585,13 @@ const fixture_wf =
     \\          name: release-tool
     \\          path: tool
     \\      - run: chmod +x tool/release
-    \\      - name: The version of this commit, and its tag
+    \\      - name: The version of this commit, if it is released
     \\        id: version
-    \\        env:
-    \\          GH_TOKEN: ${{ github.token }}
-    \\        run: tool/release tag --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --output "$GITHUB_OUTPUT"
+    \\        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$GITHUB_SHA" --output "$GITHUB_OUTPUT"
     \\
     \\  archive:
-    \\    needs: [tag, tool]
-    \\    if: ${{ needs.tag.outputs.released == 'true' }}
+    \\    needs: [plan, tool]
+    \\    if: ${{ needs.plan.outputs.released == 'true' }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
     \\    permissions:
@@ -571,19 +599,18 @@ const fixture_wf =
     \\      id-token: write
     \\      attestations: write
     \\    env:
-    \\      TAG: ${{ needs.tag.outputs.tag }}
+    \\      TAG: ${{ needs.plan.outputs.tag }}
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
-    \\          ref: refs/tags/${{ needs.tag.outputs.tag }}
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
     \\          name: release-tool
     \\          path: tool
     \\      - run: chmod +x tool/release
-    \\      - name: The deterministic source archive of the tag, and its SHA256SUMS
-    \\        run: tool/release archive --root "$GITHUB_WORKSPACE" --tag "$TAG" --out dist
+    \\      - name: The deterministic source archive of the tested commit, and its SHA256SUMS
+    \\        run: tool/release archive --root "$GITHUB_WORKSPACE" --tag "$TAG" --sha "$GITHUB_SHA" --out dist
     \\      - name: Attest the archive and SHA256SUMS
     \\        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
     \\        with:
@@ -598,20 +625,19 @@ const fixture_wf =
     \\          if-no-files-found: error
     \\
     \\  verify:
-    \\    needs: [tag, archive, tool]
-    \\    if: ${{ needs.tag.outputs.released == 'true' }}
+    \\    needs: [plan, archive, tool]
+    \\    if: ${{ needs.plan.outputs.released == 'true' }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
     \\    permissions:
     \\      contents: read
     \\      attestations: read
     \\    env:
-    \\      TAG: ${{ needs.tag.outputs.tag }}
+    \\      TAG: ${{ needs.plan.outputs.tag }}
     \\      GH_TOKEN: ${{ github.token }}
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
-    \\          ref: refs/tags/${{ needs.tag.outputs.tag }}
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
@@ -625,16 +651,43 @@ const fixture_wf =
     \\      - name: The archive, its sums, attestations, file list and scrub
     \\        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --dist dist --workflow .github/workflows/release.yml
     \\
+    \\  tag:
+    \\    needs: [plan, verify, tool]
+    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    concurrency:
+    \\      group: release
+    \\      cancel-in-progress: false
+    \\    permissions:
+    \\      contents: write
+    \\    env:
+    \\      TAG: ${{ needs.plan.outputs.tag }}
+    \\    steps:
+    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    \\        with:
+    \\          fetch-depth: 0
+    \\          persist-credentials: false
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: release-tool
+    \\          path: tool
+    \\      - run: chmod +x tool/release
+    \\      - name: The annotated tag of the verified commit
+    \\        env:
+    \\          GH_TOKEN: ${{ github.token }}
+    \\        run: tool/release tag --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA"
+    \\
     \\  publish:
-    \\    needs: [tag, verify, tool]
-    \\    if: ${{ needs.tag.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    \\    needs: [plan, tag, verify, tool]
+    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
     \\    permissions:
     \\      contents: write
     \\    env:
-    \\      TAG: ${{ needs.tag.outputs.tag }}
-    \\      PREVIOUS: ${{ needs.tag.outputs.previous }}
+    \\      TAG: ${{ needs.plan.outputs.tag }}
+    \\      PREVIOUS: ${{ needs.plan.outputs.previous }}
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
@@ -655,14 +708,14 @@ const fixture_wf =
     \\        run: tool/release publish --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --previous "$PREVIOUS" --dist dist
     \\
     \\  site:
-    \\    needs: [tag, verify, tool]
-    \\    if: ${{ needs.tag.outputs.released == 'true' }}
+    \\    needs: [plan, tag, verify, tool]
+    \\    if: ${{ needs.plan.outputs.released == 'true' }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
     \\    permissions:
     \\      contents: read
     \\    env:
-    \\      TAG: ${{ needs.tag.outputs.tag }}
+    \\      TAG: ${{ needs.plan.outputs.tag }}
     \\    steps:
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
@@ -752,9 +805,9 @@ test "the jobs are parsed as the rules read them" {
     const a = ar.allocator();
     const r = try fx(a);
     const jobs = try parseJobs(a, try body(a, r.wf));
-    try t.expectEqual(@as(usize, 9), jobs.len);
+    try t.expectEqual(@as(usize, 10), jobs.len);
     const tg = jobNamed(jobs, "tag").?;
-    try t.expect(hasNeed(tg, "gate") and hasNeed(tg, "tool"));
+    try t.expect(hasNeed(tg, "plan") and hasNeed(tg, "verify") and hasNeed(tg, "tool"));
     try t.expectEqualStrings(tag_if, tg.if_expr.?);
     try t.expectEqualStrings("write", permLevel(tg, "contents").?);
     try t.expectEqualStrings("release", tg.group.?);
@@ -847,32 +900,46 @@ test "rule: tag and publish run under their exact if" {
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", " && github.ref == 'refs/heads/main'", ""), exact_tag);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", " && !github.event.repository.fork", ""), exact_tag);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "github.event_name == 'push' &&", "github.event_name == 'push' ||"), exact_tag);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}\n", ""), exact_tag);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "needs.plan.outputs.released == 'true' && ", ""), exact_tag);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}\n", ""), exact_tag);
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", " && github.ref == 'refs/heads/main'", ""), exact_pub);
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "github.event_name == 'push'", "true"), exact_pub);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs.tag.outputs.released == 'true' && ", ""), exact_pub);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "    if: ${{ needs.tag.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}\n", ""), exact_pub);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs.plan.outputs.released == 'true' && ", ""), exact_pub);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}\n", ""), exact_pub);
 }
 
-test "rule: the order publish <- verify <- archive <- tag <- gamma <- beta <- gate" {
+test "rule: the order gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish, and nothing before the tag waits for it" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try fx(a);
-    // tag waits for each of the three stages before it, so none can be dropped from its needs
-    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "needs: [gate, beta, gamma, tool]", "needs: [beta, gamma, tool]"), "`tag` does not wait for `gate`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "needs: [gate, beta, gamma, tool]", "needs: [gate, gamma, tool]"), "`tag` does not wait for `beta`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "needs: [gate, beta, gamma, tool]", "needs: [gate, beta, tool]"), "`tag` does not wait for `gamma`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "    needs: [gate, beta, gamma, tool]\n", ""), "`tag` does not wait for `gamma`");
     // gamma waits for beta, and beta for gate
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "needs: [beta, tool]", "needs: [tool]"), "`gamma` does not wait for `beta`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "needs: [beta, tool]", "needs: [beta]"), "`gamma` does not wait for `tool`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    needs: [gate]\n", ""), "`beta` does not wait for `gate`");
-    // the later jobs
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "needs: [tag, tool]", "needs: [tool]"), "`archive` does not wait for `tag`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [tag, archive, tool]", "needs: [tag, tool]"), "`verify` does not wait for `archive`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs: [tag, verify, tool]", "needs: [tag, tool]"), "`publish` does not wait for `verify`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "needs: [tag, verify, tool]", "needs: [tag, tool]"), "`site` does not wait for `verify`");
+    // the chain after the stages: plan after gamma, archive after plan, verify after archive, tag after verify, publish after tag
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "needs: [gamma, tool]", "needs: [tool]"), "`plan` does not wait for `gamma`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "needs: [plan, tool]", "needs: [tool]"), "`archive` does not wait for `plan`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [plan, archive, tool]", "needs: [plan, tool]"), "`verify` does not wait for `archive`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "needs: [plan, verify, tool]", "needs: [plan, tool]"), "`tag` does not wait for `verify`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "needs: [plan, verify, tool]", "needs: [verify, tool]"), "`tag` does not wait for `plan`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs: [plan, tag, verify, tool]", "needs: [plan, verify, tool]"), "`publish` does not wait for `tag`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs: [plan, tag, verify, tool]", "needs: [plan, tag, tool]"), "`publish` does not wait for `verify`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "needs: [plan, tag, verify, tool]", "needs: [plan, tag, tool]"), "`site` does not wait for `verify`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "needs: [plan, tag, verify, tool]", "needs: [plan, verify, tool]"), "`site` does not wait for `tag`");
+    // nothing before the tag waits for it: a failure there must leave no tag (the old order, archive after tag, is red)
+    const waits = "waits for `tag` or `publish`";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "needs: [plan, tool]", "needs: [plan, tag, tool]"), waits);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [plan, archive, tool]", "needs: [plan, archive, tag, tool]"), waits);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "needs: [gamma, tool]", "needs: [gamma, tag, tool]"), waits);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "needs: [beta, tool]", "needs: [beta, tool, tag]"), waits);
+    // the plan only reads and cannot be skipped
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "      contents: read\n", "      contents: write\n"), "job `plan` holds `contents: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "    timeout-minutes: 15\n", "    timeout-minutes: 15\n    if: ${{ vars.X == '' }}\n"), "`plan` has an `if:`");
+    // the archive and verify are of the commit: no ref of a tag (it does not exist yet), and the sha is passed
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          ref: refs/tags/${{ needs.plan.outputs.tag }}\n"), "reads a tag by ref");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "--sha \"$GITHUB_SHA\" ", ""), "`verify` does not pass `--sha");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "--sha \"$GITHUB_SHA\" ", ""), "`archive` does not pass `--sha");
     // gate is a call of ci.yml that cannot be skipped, with read access only
     try expectFinding(a, r, try mutate(a, r.wf, "    uses: ./.github/workflows/ci.yml\n", "    runs-on: ubuntu-latest\n"), "`gate` does not call");
     try expectFinding(a, r, try mutateIn(a, r.wf, "gate", "    permissions:\n", "    if: ${{ github.event_name == 'push' }}\n    permissions:\n"), "`gate` has an `if:`");
@@ -880,7 +947,7 @@ test "rule: the order publish <- verify <- archive <- tag <- gamma <- beta <- ga
     // ci.yml must be callable
     try expectFinding(a, .{ .wf = r.wf, .ds = r.ds, .ci = "on:\n  pull_request:\n" }, r.wf, "no `workflow_call:` trigger");
     // a missing job
-    for ([_][]const u8{ "publish", "verify", "beta", "gamma", "site" }) |name| {
+    for ([_][]const u8{ "publish", "verify", "beta", "gamma", "site", "plan", "tag" }) |name| {
         const from = try std.fmt.allocPrint(a, "\n  {s}:\n", .{name});
         const to = try std.fmt.allocPrint(a, "\n  {s}_x:\n", .{name});
         const want = try std.fmt.allocPrint(a, "the job `{s}` is missing", .{name});
@@ -944,21 +1011,21 @@ test "rule: the page of the release is made from the verified files by a job tha
     const r = try fx(a);
     try expectFinding(a, r, try mutateIn(a, r.wf, "site", "      contents: read\n", "      contents: write\n"), "job `site` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "site", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `site` holds `id-token: write`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "if: ${{ needs.tag.outputs.released == 'true' }}", "if: ${{ true }}"), "`site` runs even when the tag job released nothing");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ true }}"), "`site` runs even when the plan released nothing");
     try expectFinding(a, r, try mutateIn(a, r.wf, "site", "tool/release site ", "echo site "), "`site` does not run `tool/release site");
     try expectFinding(a, r, try mutateIn(a, r.wf, "site", "name: release-site", "name: other"), "does not upload the artifact `release-site`");
 }
 
-test "rule: a release is made only for a commit the tag job released, and no job runs after a red one" {
+test "rule: a release is made only for a commit the plan released, and no job runs after a red one" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try fx(a);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "    if: ${{ needs.tag.outputs.released == 'true' }}\n", ""), "`archive` runs even when the tag job released nothing");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs.tag.outputs.released == 'true'", "true"), "`verify` runs even when the tag job released nothing");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "if: ${{ needs.tag.outputs.released == 'true' }}", "if: ${{ always() && needs.tag.outputs.released == 'true' }}"), "`always()`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "if: ${{ needs.tag.outputs.released", "if: ${{ failure() || needs.tag.outputs.released"), "`failure()`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "if: ${{ needs.tag.outputs.released == 'true' }}", "if: ${{ cancelled() || needs.tag.outputs.released == 'true' }}"), "`cancelled()`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "    if: ${{ needs.plan.outputs.released == 'true' }}\n", ""), "`archive` runs even when the plan released nothing");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs.plan.outputs.released == 'true'", "true"), "`verify` runs even when the plan released nothing");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ always() && needs.plan.outputs.released == 'true' }}"), "`always()`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "if: ${{ needs.plan.outputs.released", "if: ${{ failure() || needs.plan.outputs.released"), "`failure()`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ cancelled() || needs.plan.outputs.released == 'true' }}"), "`cancelled()`");
 }
 
 test "rule: the tag job is in the release concurrency group and none is cancelled" {
@@ -1008,6 +1075,7 @@ test "rule: each step runs its command of the tool, and run lines are single inv
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "tool/release publish ", "echo publish "), "`publish` does not run `tool/release publish");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "tool/release archive ", "echo archive "), "`archive` does not run");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "tool/release tag ", "echo tag "), "`tag` does not run");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "tool/release plan ", "echo plan "), "`plan` does not run");
     // one invocation per run line: no chain, no pipe, no block
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", "      - run: chmod +x tool/release && echo hi\n"), "more than one invocation");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      - run: chmod +x tool/release\n", "      - run: echo a; echo b\n"), "more than one invocation");
@@ -1041,4 +1109,40 @@ test "rule: buck2 runs in local mode, as the literal ./buck2, from the pinned re
     try expectFinding(a, r, try mutate(a, r.wf, "1268fce33fb6", "0268fce33fb6"), "sha256 pinned");
     try expectFinding(a, .{ .wf = r.wf, .ds = try mutate(a, r.ds, "1268fce33fb6", "9999fce33fb6"), .ci = r.ci }, r.wf, "sha256 pinned");
     try expectFinding(a, r, "name: x\nuses: a/b@" ++ "0" ** 40 ++ "\n", "no `./buck2 build` command");
+}
+
+test "rule: continue-on-error lets no red stage pass (gamma job E, gamma step F, the beta caller B), and `false` is the one value allowed" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const rule = "`continue-on-error` is set to";
+    // E: the gamma job
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "    timeout-minutes: 240\n", "    timeout-minutes: 240\n    continue-on-error: true\n"), rule);
+    // F: a step of gamma
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "      - run: chmod +x tool/stage tool/buck2\n", "      - run: chmod +x tool/stage tool/buck2\n        continue-on-error: true\n"), rule);
+    // B: the job of release.yml that calls beta
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    needs: [gate]\n", "    needs: [gate]\n    continue-on-error: true\n"), rule);
+    // an expression, a quoted value and a flow mapping are no better than `true`
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "    timeout-minutes: 240\n", "    timeout-minutes: 240\n    continue-on-error: ${{ vars.X == '' }}\n"), rule);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "    timeout-minutes: 240\n", "    timeout-minutes: 240\n    continue-on-error: \"true\"\n"), rule);
+    // `false` is what the default is: no finding
+    const ok = try mutateIn(a, r.wf, "gamma", "    timeout-minutes: 240\n", "    timeout-minutes: 240\n    continue-on-error: false # the default, said\n");
+    try t.expectEqual(@as(usize, 0), (try checkRelease(a, ok, r.ds, r.ci)).items.len);
+}
+
+test "rule: no run line expands vars or github.event inline (the gamma-vars step reads its values from env)" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const rule = "expands `vars.` inline";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "--connect-repo \"$CONNECT_REPO\"", "--connect-repo \"${{ vars.FARM_CONNECT_REPO }}\""), rule);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "--farm-address \"$HAS_ADDRESS\"", "--farm-address ${{ vars.FARM_ADDRESS != '' }}"), rule);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "        run: tool/stage action-ref --dir farm-action --ref \"$CONNECT_REF\"\n", "        run: tool/stage action-ref --ref \"${{ github.event.head_commit.message }}\"\n"), "expands `github.event.` inline");
+    // the block form of `run:`
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "      - run: chmod +x tool/stage tool/buck2\n", "      - run: |\n          echo \"${{ vars.X }}\"\n"), rule);
+    // an expression in env, in `with:` or in `if:` is the safe place and is not a finding
+    const ok = try mutateIn(a, r.wf, "gamma", "    timeout-minutes: 240\n", "    timeout-minutes: 240\n    if: ${{ vars.X == '' }}\n");
+    for ((try checkRelease(a, ok, r.ds, r.ci)).items) |m| try t.expect(std.mem.indexOf(u8, m, "inline") == null);
 }

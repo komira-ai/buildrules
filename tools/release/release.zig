@@ -1,13 +1,14 @@
 //! `release`: the steps of the automatic release (RELEASING.md). The logic is in cmds.zig, version.zig, assets.zig, gz.zig and tar.zig, each
 //! tested; this file reads the command line and runs the real `git` and `gh`.
 //!
-//!   release tag     --root DIR --repo OWNER/NAME --sha SHA [--output FILE]
-//!   release archive --root DIR --tag TAG --out DIR
+//!   release plan    --root DIR --sha SHA [--output FILE]
+//!   release tag     --root DIR --repo OWNER/NAME --tag TAG --sha SHA
+//!   release archive --root DIR --tag TAG --sha SHA --out DIR
 //!   release verify  --root DIR --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --workflow PATH
 //!   release publish --root DIR --repo OWNER/NAME --tag TAG --sha SHA --previous TAG --dist DIR
 //!   release site    --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --out DIR
 //!
-//! Exit 0 when the step succeeded (`tag` also when it decided there is nothing to release), 1 when a check failed, 2 on a bad command line.
+//! Exit 0 when the step succeeded (`plan` also when it decided there is nothing to release), 1 when a check failed, 2 on a bad command line.
 const std = @import("std");
 const cmds = @import("cmds.zig");
 const version = @import("version.zig");
@@ -92,7 +93,7 @@ pub fn main() !u8 {
     const a = arena.allocator();
     const argv = try std.process.argsAlloc(a);
     if (argv.len < 2) {
-        std.debug.print("usage: release tag|archive|verify|publish|site --flag value ...\n", .{});
+        std.debug.print("usage: release plan|tag|archive|verify|publish|site --flag value ...\n", .{});
         return 2;
     }
     var unused: u8 = 0;
@@ -109,20 +110,27 @@ pub fn main() !u8 {
 }
 
 fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const u8) !u8 {
-    if (std.mem.eql(u8, cmd, "tag")) {
-        const g = try parseArgs(a, rest, &.{ "root", "repo", "sha", "output" });
+    if (std.mem.eql(u8, cmd, "plan")) {
+        const g = try parseArgs(a, rest, &.{ "root", "sha", "output" });
         const root = try g.need("root");
         const version_path = try join(a, root, "VERSION");
         const version_file = try std.fs.cwd().readFileAlloc(a, version_path, 1024);
-        const r = try cmds.tag(a, io, .{ .root = root, .repo = try g.need("repo"), .sha = try g.need("sha"), .version_file = version_file });
-        const out = try cmds.tagOutputs(a, r);
+        const r = try cmds.plan(a, io, .{ .root = root, .sha = try g.need("sha"), .version_file = version_file });
+        const out = try cmds.planOutputs(a, r);
         say("{s}", .{out});
         if (g.get("output")) |p| try appendFile(p, out);
         return 0;
     }
+    if (std.mem.eql(u8, cmd, "tag")) {
+        const g = try parseArgs(a, rest, &.{ "root", "repo", "tag", "sha" });
+        const tag = try g.need("tag");
+        const made = try cmds.createTag(a, io, .{ .root = try g.need("root"), .repo = try g.need("repo"), .tag = tag, .sha = try g.need("sha") });
+        say("release tag: {s} {s}\n", .{ tag, @tagName(made) });
+        return 0;
+    }
     if (std.mem.eql(u8, cmd, "archive")) {
-        const g = try parseArgs(a, rest, &.{ "root", "tag", "out" });
-        const b = try cmds.archive(a, io, try g.need("root"), try g.need("tag"));
+        const g = try parseArgs(a, rest, &.{ "root", "tag", "sha", "out" });
+        const b = try cmds.archive(a, io, try g.need("root"), try g.need("tag"), try g.need("sha"));
         const dir = try g.need("out");
         try std.fs.cwd().makePath(dir);
         try std.fs.cwd().writeFile(.{ .sub_path = try join(a, dir, b.name), .data = b.archive });
@@ -154,7 +162,7 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         });
         for (f.items) |m| std.debug.print("release verify: {s}\n", .{m});
         if (f.items.len != 0) return 1;
-        say("release verify: {s} is the archive of {s}; checked: sums, tag, attestations, reproduction, file list, scrub\n", .{ name, g.get("sha").? });
+        say("release verify: {s} is the archive of {s}; checked: sums, checkout, attestations, reproduction, file list, scrub\n", .{ name, g.get("sha").? });
         return 0;
     }
     if (std.mem.eql(u8, cmd, "publish")) {

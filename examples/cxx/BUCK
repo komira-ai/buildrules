@@ -1,0 +1,48 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/cxx:defs.bzl", "c_check", "hermetic_check")
+
+# A C and a C++ binary, each checked to be independent of the directory it was built in (rules/cxx/hermetic): no `.debug_*` section (zig cc assembles the
+# C runtime's start-up objects at link time with debug info that stamps the compile directory) and no occurrence of the build directory in its bytes.
+# The toolchain links with `-Wl,--strip-debug` (rules/cxx/toolchain.bzl); drop it and `hermetic_c` and `hermetic_cxx` fail. `runs_*` run the binaries,
+# so a stripped binary is shown to still work. //ci:all builds all four.
+cxx_binary(
+    name = "hello_c",
+    srcs = ["hello.c"],
+    compiler_flags = ["-O2"],
+    visibility = ["PUBLIC"],
+)
+
+cxx_binary(
+    name = "hello_cxx",
+    srcs = ["hello.cpp"],
+    compiler_flags = ["-O2"],
+    visibility = ["PUBLIC"],
+)
+
+hermetic_check(
+    name = "hermetic_c",
+    exe = ":hello_c",
+    visibility = ["PUBLIC"],
+)
+
+hermetic_check(
+    name = "hermetic_cxx",
+    exe = ":hello_cxx",
+    visibility = ["PUBLIC"],
+)
+
+c_check(
+    name = "runs_c",
+    exe = ":hello_c",
+    visibility = ["PUBLIC"],
+    expected_stdout = "hello from C",
+)
+
+c_check(
+    name = "runs_cxx",
+    exe = ":hello_cxx",
+    visibility = ["PUBLIC"],
+    expected_stdout = "hello from C++",
+)
+
+scrub_files()
