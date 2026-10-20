@@ -64,9 +64,9 @@ jobs:
         id: plan
         run: ./stage plan --root "$GITHUB_WORKSPACE" --output "$GITHUB_OUTPUT"
 
-      - name: the farm leg is not run (FARM_ADDRESS is not set)
-        if: ${{ vars.FARM_ADDRESS == '' }}
-        run: echo "::notice title=beta farm leg::the repository variable FARM_ADDRESS is not set, so the beta repositories were not built on a farm. Skipped; RELEASING.md says what to set."
+      - name: the farm leg is not run (FARM_ADDRESS or FARM_CONNECT_REF is not set)
+        if: ${{ vars.FARM_ADDRESS == '' || vars.FARM_CONNECT_REF == '' }}
+        run: echo "::notice title=beta farm leg::the repository variable FARM_ADDRESS or FARM_CONNECT_REF is not set, so the beta repositories were not built on a farm. Skipped; RELEASING.md says what to set."
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -157,7 +157,7 @@ jobs:
   # before the action runs. A job from a fork gets neither the variables nor the token, and is skipped like the other jobs.
   beta_farm:
     needs: [tools]
-    if: ${{ vars.FARM_ADDRESS != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_CONNECT_REF != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     name: beta ${{ matrix.lang }} (farm)
     runs-on: ubuntu-latest
     timeout-minutes: 120

@@ -47,17 +47,17 @@ and then, from nothing, builds again.
 | `mixed` | a Rust package, a C program, a Zig program and a Node package in one repository | ubuntu x86_64 |
 | `mojo` | a Mojo package | **planned** until mopm's first release |
 | `ubuntu-24.04-arm`, `macos-14` | the same | **planned**: buildrules v0 targets linux-x86_64 only |
-| farm | the ubuntu legs again, built on the farm | only when the repository variable `FARM_ADDRESS` is set |
+| farm | the ubuntu legs again, built on the farm | only when the repository variables `FARM_ADDRESS` and `FARM_CONNECT_REF` are set |
 
 The runner legs run every action on the runner (`-c buildrules_re.mode=local`; nothing is built anywhere else), and each is built **twice**: after the
 first build the tool records the sha256 of every output (a file's bytes, or a directory's names and bytes), runs `buck2 clean`, builds again, and compares.
-Any difference is red, with both digests.
+Any difference is red, with both digests. The check is of one environment against itself: the C and C++ outputs built on a GitHub runner and on the farm are not the same bytes as each other (the other languages are), each is the same across its own two builds, and a farm leg does not compare with a runner leg.
 A farm leg does not repeat the build, since the farm's cache would answer it; it requires every build to report `local: 0`.
 
 Planned legs are visible, not missing: the arm and macos jobs are in `beta.yml` with `if:` never true and their reason in the job name, so a run's page
 shows them skipped; the Mojo job runs when `tools/stage plan` finds that `rules/mopm/pins.bzl` no longer marks the pinned mopm `release_pending`, and
 until then it is skipped. The Mojo steps have not been run end to end yet; that is the first thing to watch when mopm's first release is pinned.
-The farm leg, when `FARM_ADDRESS` is empty, is skipped and the `tools` job says so with a notice.
+The farm leg, when `FARM_ADDRESS` or `FARM_CONNECT_REF` is empty, is skipped and the `tools` job says so with a notice.
 
 `beta/` is not part of this repository's Buck2 graph and is not built by `//ci:all` (`ci/all.bzl`, `OUTSIDE_THE_GRAPH`, says why): a user's `BUCK` file
 is kept as `BUCK.beta`, so that the directories are not packages here. `//beta:beta_check` holds it to that. A fork's pull request has no commit the
@@ -85,7 +85,7 @@ mopm repository has one and the other repository planned for this stage does not
 | `FARM_TLS` | optional; `true` when the farm speaks TLS (default `false`) |
 
 No endpoint or property set is written in this repository, and the farm's values are passed to steps as `${{ vars.X != '' }}` or read from the file the
-farm-connect action writes, so none is printed in a log by this repository's workflows. `FARM_ADDRESS` also turns on the beta farm leg.
+farm-connect action writes, so none is printed in a log by this repository's workflows. `FARM_ADDRESS` and `FARM_CONNECT_REF` together turn on the beta farm leg (it is skipped, with a notice, when either is empty; gamma fails instead).
 
 ## The release page
 

@@ -136,7 +136,7 @@ pub fn checkBeta(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, dir
         if (!contains(jt, "name: beta-tools") or !contains(jt, "\n./stage\n") or !contains(jt, "\n./buildrules\n") or !contains(jt, "\n./buck2\n"))
             try add(a, &f, "the job `tools` does not upload `stage`, `buildrules` and `buck2` as the artifact `beta-tools`", .{});
         if (!contains(jt, "./stage plan --root") or !contains(jt, "mojo: ${{ steps.plan.outputs.mojo }}")) try add(a, &f, "the job `tools` does not run `stage plan` and output `mojo`", .{});
-        if (!contains(jt, "if: ${{ vars.FARM_ADDRESS == '' }}") or !contains(jt, "::notice")) try add(a, &f, "the job `tools` does not say, with a notice, that the farm leg is not run when FARM_ADDRESS is not set", .{});
+        if (!contains(jt, "if: ${{ vars.FARM_ADDRESS == '' || vars.FARM_CONNECT_REF == '' }}") or !contains(jt, "::notice")) try add(a, &f, "the job `tools` does not say, with a notice, that the farm leg is not run when FARM_ADDRESS or FARM_CONNECT_REF is not set", .{});
     }
 
     // The ubuntu legs: one job per language of beta/ but Mojo, in local mode.
@@ -189,6 +189,7 @@ pub fn checkBeta(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, dir
     if (rc.jobNamed(jobs, "beta_farm")) |j| {
         const jt = try j.text(a);
         if (j.if_expr == null or !contains(j.if_expr.?, "vars.FARM_ADDRESS != ''")) try add(a, &f, "the job `beta_farm` runs when FARM_ADDRESS is not set", .{});
+        if (j.if_expr == null or !contains(j.if_expr.?, "vars.FARM_CONNECT_REF != ''")) try add(a, &f, "the job `beta_farm` runs when FARM_CONNECT_REF is not set, and would fail on a checkout of no commit", .{});
         if (!rc.hasNeed(j, "tools")) try add(a, &f, "the job `beta_farm` does not wait for `tools`", .{});
         const idt = rc.permLevel(j, "id-token");
         if (idt == null or !std.mem.eql(u8, idt.?, "write")) try add(a, &f, "the job `beta_farm` does not hold `id-token: write`, which joining the farm's network needs", .{});
@@ -290,9 +291,9 @@ const fixture_wf =
     \\        id: plan
     \\        run: ./stage plan --root "$GITHUB_WORKSPACE" --output "$GITHUB_OUTPUT"
     \\
-    \\      - name: the farm leg is not run (FARM_ADDRESS is not set)
-    \\        if: ${{ vars.FARM_ADDRESS == '' }}
-    \\        run: echo "::notice title=beta farm leg::the repository variable FARM_ADDRESS is not set, so the beta repositories were not built on a farm. Skipped; RELEASING.md says what to set."
+    \\      - name: the farm leg is not run (FARM_ADDRESS or FARM_CONNECT_REF is not set)
+    \\        if: ${{ vars.FARM_ADDRESS == '' || vars.FARM_CONNECT_REF == '' }}
+    \\        run: echo "::notice title=beta farm leg::the repository variable FARM_ADDRESS or FARM_CONNECT_REF is not set, so the beta repositories were not built on a farm. Skipped; RELEASING.md says what to set."
     \\
     \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
     \\        with:
@@ -377,7 +378,7 @@ const fixture_wf =
     \\
     \\  beta_farm:
     \\    needs: [tools]
-    \\    if: ${{ vars.FARM_ADDRESS != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    \\    if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_CONNECT_REF != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     \\    name: beta ${{ matrix.lang }} (farm)
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 120
@@ -613,6 +614,7 @@ test "rule: the farm leg runs only with a farm, joins it through a verified acti
     const a = ar.allocator();
     const r = fx();
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "vars.FARM_ADDRESS != '' && ", ""), "runs when FARM_ADDRESS is not set");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "vars.FARM_CONNECT_REF != '' && ", ""), "runs when FARM_CONNECT_REF is not set");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "    needs: [tools]\n", ""), "`beta_farm` does not wait for `tools`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "repository: ${{ vars.FARM_CONNECT_REPO }}", "repository: some/where"), "does not check the farm-connect action out");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "ref: ${{ vars.FARM_CONNECT_REF }}", "ref: main"), "does not check the farm-connect action out");
@@ -621,7 +623,7 @@ test "rule: the farm leg runs only with a farm, joins it through a verified acti
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "--exec farm", "--exec farm --exec local"), "is not `--exec farm` alone");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", " --farm-config \"$HOME/.buckconfig.d/farm.buckconfig\"", ""), "does not hand the farm-connect file");
     // the notice that says the leg was not run
-    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "if: ${{ vars.FARM_ADDRESS == '' }}", "if: ${{ github.event_name == 'planned' }}"), "does not say, with a notice");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "if: ${{ vars.FARM_ADDRESS == '' || vars.FARM_CONNECT_REF == '' }}", "if: ${{ github.event_name == 'planned' }}"), "does not say, with a notice");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "::notice", "::debug"), "does not say, with a notice");
 }
 
