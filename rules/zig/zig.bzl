@@ -24,6 +24,24 @@ load("@buildrules//rules/core:test_runtime.bzl", "RUNNER_ENV", "data_map")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/core:rerun.bzl", "RERUN_ATTRS", "rerun_env", "rerun_info")
 
+# What a `zig_test` runs, for the rule that runs the same test under coverage (rules/coverage/zig_cover.bzl): the same root, zig, target, data and tools.
+ZigTestInfo = provider(fields = {
+    # The tools, data and env of a driver test; empty for a test without them.
+    "data_manifest": provider_field(typing.Any),
+    "env": provider_field(dict),
+    # The compile's inputs other than the manifests: what the root names.
+    "hidden": provider_field(list),
+    # The root the compile is given: the source file, or the argument file naming the modules.
+    "root": provider_field(typing.Any),
+    "busybox": provider_field(typing.Any),
+    # The paths, from the repository root, of the test's own source and of every file it is built from (its imports and its modules'), sorted.
+    "sources": provider_field(list),
+    "src": provider_field(str),
+    "target": provider_field(str),
+    "tools_manifest": provider_field(typing.Any),
+    "zig": provider_field(typing.Any),
+})
+
 def busybox_sh(busybox, script, *args):
     """argv running `script` under the declared busybox shell.
 
@@ -156,6 +174,24 @@ zig_module_rule = rule(
     },
 )
 
+def _package_of(label):
+    """The package of a target label string (`cell//a/b:name` -> `a/b`)."""
+    return label.split("//", 1)[1].split(":", 1)[0]
+
+def _repo_path(package, artifact):
+    return (package + "/" if package else "") + artifact.short_path
+
+def _zig_sources(ctx):
+    """The repository paths of the source files `ctx`'s zig test is built from: `src`, `imports`, the roots of its modules and the files
+    those import. A build output (a module's `.passed`) is not a source."""
+    package = ctx.label.package
+    paths = [_repo_path(package, ctx.attrs.src)] + [_repo_path(package, i) for i in ctx.attrs.imports]
+    for e in _zig_closure(str(ctx.label.raw_target()), [d[ZigModuleInfo] for d in ctx.attrs.deps]):
+        owner = _package_of(e.label)
+        paths.append(_repo_path(owner, e.root))
+        paths += [_repo_path(owner, i) for i in e.inputs if i.is_source]
+    return sorted({p: True for p in paths if p.endswith(".zig")}.keys())
+
 def _zig_root(ctx):
     """What the compile is given as its root: `src`; with `deps`, an argument
     file naming `src` as the root module and each module it may import (the
@@ -279,6 +315,10 @@ def _zig_test_impl(ctx):
     env = {name: dep[DefaultInfo].default_outputs[0] for name, dep in ctx.attrs.env_tools.items()}
     env.update(rerun_env(ctx))
     hidden = list(ctx.attrs.imports)
+    root = _zig_root(ctx)
+    data_manifest = None
+    tools_manifest = None
+    driver_hidden = []
     if ctx.attrs.exec_tools or ctx.attrs.data:
         # A driver test: built tools by absolute path, fixtures in a writable
         # directory (BUILDRULES_TEST_WORK). Both come from manifests the launcher
@@ -294,23 +334,37 @@ def _zig_test_impl(ctx):
         data_manifest, _ = ctx.actions.write(ctx.label.name + ".data", [cmd_args(d, a, delimiter = "\t") for d, a in sorted(srcs.items())], allow_args = True)
         tools_manifest, _ = ctx.actions.write(ctx.label.name + ".tools", [cmd_args(n, t, delimiter = "\t") for n, t in sorted(tools.items())], allow_args = True)
         cmd.add("--data", data_manifest, "--tools", tools_manifest)
-        hidden += srcs.values() + tools.values()
+        driver_hidden = srcs.values() + tools.values()
+        hidden += driver_hidden
     cmd.add("--", "test")
     if _zig_optimize(ctx) != "Debug":
         cmd.add("-O" + ctx.attrs.optimize)
-    cmd.add("-target", ctx.attrs.target, _zig_root(ctx))
+    cmd.add("-target", ctx.attrs.target, root)
     ctx.actions.run(
         cmd_args(cmd, hidden = hidden),
         category = "zig_test",
         env = env,
+    )
+    info = ZigTestInfo(
+        busybox = bb,
+        data_manifest = data_manifest,
+        env = env,
+        hidden = hidden,
+        root = root,
+        sources = _zig_sources(ctx),
+        src = _repo_path(ctx.label.package, ctx.attrs.src),
+        target = ctx.attrs.target,
+        tools_manifest = tools_manifest,
+        zig = zig,
     )
     if validation:
         return [
             DefaultInfo(default_output = out),
             ValidationInfo(validations = [ValidationSpec(name = ctx.label.name, validation_result = out)]),
             rerun_info(ctx),
+            info,
         ]
-    return [DefaultInfo(default_output = out), rerun_info(ctx)]
+    return [DefaultInfo(default_output = out), rerun_info(ctx), info]
 
 # `zig test` of `src` (and the `test` blocks of the files it imports, the
 # `imports`), run as a build action: the target exists only if every test

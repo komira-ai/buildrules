@@ -1,4 +1,5 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("@buildrules//rules:matrix.bzl", "group", "isa_at", "rust_at")
 load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_OLDEST")
 load("@buildrules//rules/zig:zig.bzl", "zig_test")
@@ -161,7 +162,28 @@ zig_test(
     },
 )
 
-group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check", ":stages_check"])
+# The coverage of every package with Zig unit tests (rules/coverage/README.md, "Zig coverage"), each held to its floor (`coverage_floor.txt` beside its
+# BUCK file) both ways: a fall fails, and so does a rise the floor has not been raised to. Building this builds the tests again under kcov and with block
+# counters, one action per test.
+group(name = "floors", deps = [
+    "//cli:coverage_floor",
+    "//ci:coverage_floor",
+    "//rules/coverage:coverage_floor",
+    "//rules/cxx:coverage_floor",
+    "//rules/gate:coverage_floor",
+    "//rules/kpin:coverage_floor",
+    "//rules/mojo:coverage_floor",
+    "//rules/node:coverage_floor",
+    "//rules/rust:coverage_floor",
+    "//rules/rust:coverage_crate_patch_floor",
+    "//tools/release:coverage_floor",
+    "//tools/scrub:coverage_floor",
+    "//tools/stage:coverage_floor",
+    "//site:coverage_floor",
+    "//infra/site:coverage_floor",
+])
+
+group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check", ":stages_check", "//ci/negative:negative_check"])
 
 # Everything the public runner can build: the public CI builds this one target. It names what the other groups do not reach: the C/C++ rules and
 # aws-lc, the gate and kpin tools, the Node toolchain, the type checks of the sites, the cargo units outside the matrix. ci/completeness.bxl
@@ -169,6 +191,7 @@ group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_
 group(name = "all", deps = [
     ":matrix",
     ":workflow",
+    ":floors",
     "//cli:buildrules",
     "//cli:buildrules_linux_x86_64",
     "//cli:buildrules_linux_aarch64",
@@ -202,6 +225,19 @@ group(name = "all", deps = [
     "//examples/p4ws/crates/probe_ok:probe_ok-0.1.0_35cff8487e",
 ])
 
+# Read by //ci/negative:negative_check, which holds the planted defect's files to each other.
+export_file(
+    name = "negative.bzl",
+    src = "negative.bzl",
+    visibility = ["//ci/negative:"],
+)
+
+export_file(
+    name = "completeness.bxl",
+    src = "completeness.bxl",
+    visibility = ["//ci/negative:"],
+)
+
 # Read by //beta:beta_check, which requires the reason for leaving beta/ out of the graph to be written there.
 export_file(
     name = "all.bzl",
@@ -214,6 +250,14 @@ export_file(
     name = "BUCK.txt",
     src = "BUCK",
     visibility = ["//site:"],
+)
+
+# The coverage of the three workflow checks (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. They are built by zig 0.12, which
+# has no block counters, so the report is lines only; each file holds its tests, whose lines are counted with the rest.
+zig_coverage(
+    blocks = False,
+    test_targets = [":workflow_check", ":release_check", ":stages_check"],
+    expect = ["ci/workflow_check.zig", "ci/release_check.zig", "ci/stages_check.zig"],
 )
 
 scrub_files()

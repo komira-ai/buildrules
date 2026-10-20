@@ -193,7 +193,7 @@ export const node: Page = {
       ['Rule', 'Runs', 'Target is'],
       ['`tsc_check(name, modules, srcs, data, project)`', '`tsc --noEmit -p <project>`', 'a pass marker; a type error fails it'],
       ['`tsc_build(name, modules, srcs, data, project, out_dir)`', '`tsc -p <project>`', 'the `out_dir` the project writes'],
-      ['`jest_test(name, modules, srcs, data, config, max_workers)`', '`jest --ci` with its cache in the scratch copy and no watchman', 'a pass marker; a failing test fails it'],
+      ['`jest_test(name, modules, srcs, data, config, max_workers, coverage)`', '`jest --ci` with its cache in the scratch copy and no watchman; with `coverage`, `--coverage` too', 'a pass marker; a failing test fails it. With `coverage`, the `coverage` directory the run writes (a `coverage-summary.json` in it)'],
       ['`cdk_synth(name, modules, srcs, app, data, context, env)`', '`cdk synth` of `app`, with no AWS and no network', 'a pass marker'],
       ['`node_tree_test(name, modules, program, args, srcs, data, env, tools)`', 'any program of `node_modules` or the package', 'a pass marker if it exits 0'],
       ['`node_tree_build(name, modules, program, args, srcs, data, env, out_dir)`', 'the same, with a directory result', 'the `out_dir` the program writes'],

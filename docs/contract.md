@@ -656,8 +656,10 @@ and checked against their sha256, with the same command lines and inputs as on a
 `x86-64-v3` tests need a CPU with AVX2, BMI1/BMI2, FMA and MOVBE (the CI workflow checks `/proc/cpuinfo` first). Action cache keys do not depend on the mode.
 
 The public CI (`.github/workflows/ci.yml`) builds `//ci:all` this way on `ubuntu-latest`. `//ci:all` is every target of the tree except the ones `ci/all.bzl` lists with a reason each: the refusal fixtures
-(`probe_env`, `probe_tree`, `probe_usr`, `cnative:coverage`, which are red by design) and `ci/negative` (a planted defect that a wildcard build skips). Before it builds, the workflow runs
+(`probe_env`, `probe_tree`, `probe_usr`, `cnative:coverage`, which are red by design) and `ci/negative` (a planted defect that a wildcard build skips; the completeness check analyses it on the platform it breaks on and fails unless it is red for the reason it plants, `ci/negative.bzl`). Before it builds, the workflow runs
 `buck2 bxl //ci:completeness.bxl:check`, which fails and names every target of `//...` and `crates//...` that is in the closure of neither `//ci:all` nor `//ci:mojo` and is not excluded, so a new target cannot go unbuilt.
+`//ci:all` also builds `//ci:floors`: the Zig tests of each package run again under kcov and with LLVM's block counters, and the Node tests under `jest --coverage`, and each package's lines and branches
+are held to its `coverage_floor.txt` both ways (a fall fails, and so does a rise the floor has not been raised to); `rules/coverage/README.md` says what is measured and what is not.
 `//ci:mojo` is not built there: its packages need a package channel for `cnative` (the pinned mopm tarball is the published release, section 12.5); it is fetched
 through `buildrules.url_map` from a mirror a public runner does not have. `//ci:mojo` is built on a farm that has the mirror.
 

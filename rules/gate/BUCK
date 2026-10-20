@@ -1,4 +1,5 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/zig:zig.bzl", "zig_exe", "zig_test")
 
@@ -49,6 +50,13 @@ zig_exe(
     busybox = "buildrules//rules/pins:busybox",
     zig = _ZIG,
     visibility = ["PUBLIC"],
+)
+
+# The coverage of the sources the tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. proctab_darwin.zig is
+# the macOS half of proctab.zig and is compiled into no linux test.
+zig_coverage(
+    test_targets = [":" + t for t in _TESTS],
+    expect = ["rules/gate/" + f for f in _SRCS if f != "proctab_darwin.zig"],
 )
 
 scrub_files()

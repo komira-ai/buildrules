@@ -141,7 +141,7 @@ describe('rule pages against the rule sources', () => {
     const sigs: [string, string][] = [
       ['_tsc_check', 'tsc_check(name, modules, srcs, data, project)'],
       ['_tsc_build', 'tsc_build(name, modules, srcs, data, project, out_dir)'],
-      ['_jest_test', 'jest_test(name, modules, srcs, data, config, max_workers)'],
+      ['_jest_test', 'jest_test(name, modules, srcs, data, config, max_workers, coverage)'],
       ['_cdk_synth', 'cdk_synth(name, modules, srcs, app, data, context, env)'],
     ];
     for (const [fn, sig] of sigs) {

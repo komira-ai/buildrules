@@ -1,0 +1,17 @@
+# The planted defect of ci/negative must stay red (ci/negative.bzl says how it is held). The public CI runs this check as a part of
+# `buck2 bxl //ci:completeness.bxl:check`; run alone:
+#
+#   buck2 bxl //ci:negative.bxl:check
+
+load("@buildrules//ci:negative.bzl", "CONTROL", "FIXTURE", "PLATFORM", "negative_problems")
+
+def _impl(ctx):
+    problems = negative_problems(ctx)
+    if problems:
+        fail("ci/negative: {} problem(s):\n  ".format(len(problems)) + "\n  ".join(problems))
+    ctx.output.print("ok: {} is red on {} for the reason it plants, and {} analyses".format(FIXTURE, PLATFORM, CONTROL))
+
+check = bxl_main(
+    impl = _impl,
+    cli_args = {},
+)

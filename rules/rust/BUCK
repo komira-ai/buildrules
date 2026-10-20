@@ -1,4 +1,5 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("//rules:isa.bzl", "ISA_LEVELS", "exec_levels")
 load(":exec_isa.bzl", "exec_isa")
 load(":toolchain.bzl", "zig_exe")
@@ -102,7 +103,7 @@ seed_zig_exe(
 export_file(
     name = "test_run.bzl",
     src = "test_run.bzl",
-    visibility = ["//site:"],
+    visibility = ["//site:", "//ci/negative:"],
 )
 
 export_file(
@@ -115,6 +116,21 @@ export_file(
     name = "rust.bzl",
     src = "rust.bzl",
     visibility = ["//site:"],
+)
+
+# The coverage of the sources the tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. crate_patch.zig is
+# built and tested by zig 0.12, which has no block counters, so its report is lines only (coverage_crate_patch).
+zig_coverage(
+    test_targets = [":rustc_launch_unit", ":sync_stage_unit"],
+    expect = ["rules/rust/rustc_launch.zig", "rules/rust/sync_stage.zig"],
+)
+
+zig_coverage(
+    name = "coverage_crate_patch",
+    blocks = False,
+    floor = "coverage_crate_patch_floor.txt",
+    test_targets = [":crate_patch_unit"],
+    expect = ["rules/rust/crate_patch.zig"],
 )
 
 scrub_files()

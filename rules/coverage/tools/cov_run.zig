@@ -37,6 +37,8 @@ pub const Args = struct {
     maps: []const Map = &.{},
     includes: []const []const u8 = &.{},
     refuse: []const []const u8 = &.{},
+    /// Arguments of the test binary (zig_cover.zig gives the runner its report path); cov_run's own command line has none.
+    binary_args: []const []const u8 = &.{},
 };
 
 pub const UsageError = error{Usage};
@@ -133,6 +135,7 @@ pub fn kcovArgv(a: std.mem.Allocator, r: Args, share: []const u8, work: []const 
     try out.append(a, try inc.toOwnedSlice(a));
     try out.append(a, work);
     try out.append(a, r.binary);
+    try out.appendSlice(a, r.binary_args);
     return out.toOwnedSlice(a);
 }
 

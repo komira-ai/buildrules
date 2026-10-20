@@ -84,3 +84,56 @@ test "a line outside a class and a malformed line are refused" {
     try t.expectError(error.BadReport, S.addReport(a, &files, "<line number=\"1\" hits=\"1\"/>\n"));
     try t.expectError(error.BadReport, S.addReport(a, &files, "<class name=\"x\" filename=\"x\">\n<line number=\"x\" hits=\"1\"/>\n"));
 }
+
+const blocks_a = "# blocks v2\np/src/a.zig\t3\t1\t1\t1\np/src/a.zig\t4\t5\t0\t2\np/src/a.zig\t4\t9\t0\t1\np/tests/a_test.zig\t1\t1\t1\t1\n";
+const blocks_b = "# blocks v2\np/src/a.zig\t4\t5\t1\t2\np/src/a.zig\t4\t9\t0\t1\n";
+
+test "blocks: the blocks of a position that ran are the most any report hit; the listing follows the lines' and counts the expected files only" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var files: std.StringArrayHashMapUnmanaged(S.BlockPositions) = .empty;
+    try S.addBlocks(a, &files, blocks_a);
+    try S.addBlocks(a, &files, blocks_b);
+    const rows = try S.summarizeBlocks(a, &files);
+    try t.expectEqual(@as(usize, 2), rows.len);
+    // a.zig: position 3:1 ran (1/1), 4:5 ran one of its two blocks in the second report (1/2), 4:9 never (0/1).
+    try t.expectEqual(@as(usize, 2), rows[0].hit);
+    try t.expectEqual(@as(usize, 4), rows[0].total);
+    try t.expectEqualStrings(
+        "branches p/src/a.zig 2/4 50%\nbranches p/tests/a_test.zig 1/1 100% (not counted)\nbranches total 2/4 50%\n",
+        try S.renderWith(a, rows, &.{"p/src/a.zig"}, "branches "),
+    );
+    try t.expect(S.missing(rows, &.{ "p/src/a.zig", "p/src/b.zig" }) != null);
+}
+
+test "blocks: two blocks at one position are two blocks, and the same position in two reports is not summed" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var files: std.StringArrayHashMapUnmanaged(S.BlockPositions) = .empty;
+    try S.addBlocks(a, &files, "# blocks v2\np/a.zig\t5\t5\t1\t2\n");
+    try S.addBlocks(a, &files, "# blocks v2\np/a.zig\t5\t5\t1\t2\n");
+    const rows = try S.summarizeBlocks(a, &files);
+    try t.expectEqual(@as(usize, 1), rows[0].hit);
+    try t.expectEqual(@as(usize, 2), rows[0].total);
+}
+
+test "blocks: a report that is not zig_cover's is refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var files: std.StringArrayHashMapUnmanaged(S.BlockPositions) = .empty;
+    for ([_][]const u8{
+        "",
+        "p/a.zig\t1\t1\t1\t1\n",
+        "# blocks v1\np/a.zig\t1\t1\t1\n", // the old format
+        "# blocks v2\np/a.zig\t1\t1\t1\n",
+        "# blocks v2\np/a.zig\t1\t1\t2\t1\n", // more ran than there are
+        "# blocks v2\np/a.zig\t1\t1\t0\t0\n", // a position with no block
+        "# blocks v2\np/a.zig\tx\t1\t1\t1\n",
+        "# blocks v2\np/a.zig\t1\t1\t1\t1\tz\n",
+    }) |text| {
+        try t.expectError(error.BadReport, S.addBlocks(a, &files, text));
+    }
+}
