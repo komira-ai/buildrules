@@ -112,4 +112,11 @@ export_file(
     visibility = ["//site:"],
 )
 
+# Read by the buildrules.dev site tests (site/BUCK), which check its pages against this file.
+export_file(
+    name = "toolchain.bzl",
+    src = "toolchain.bzl",
+    visibility = ["//site:"],
+)
+
 scrub_files()

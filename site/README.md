@@ -35,7 +35,8 @@ the same tree check as the tests, so a broken link, a missing fragment or an inl
 
 The tests read the sources the pages describe (the Zig usage texts of the command line, `docs/contract.md`, the `.bzl` files of
 the rules, the Rust version table, the CPU-level table, `ci/BUCK`, the Mojo and mopm pins) and fail when a page names a command, flag, rule, rule argument, version, CPU level, matrix target or exit code that does not exist, or states a value that differs from its source (`test/facts.test.ts`, `test/rules_facts.test.ts`). A page that describes
-something not built must say so with a `planned` note.
+something not built must say so with a `planned` note. The Why and How pages repeat `docs/why.md` and `docs/how.md`; `test/docs_facts.test.ts`
+holds their pins, gates, platforms, release stages, flags and planned items to the sources, and the mopm pin in both of its states.
 
 ## Preview
 

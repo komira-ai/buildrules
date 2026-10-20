@@ -8,7 +8,11 @@ describe('the page list', () => {
   test('is exactly the pages the site promises', () => {
     expect(PAGES.map((p) => p.path)).toEqual([
       '/',
+      '/why/',
       '/getting-started/',
+      '/how/',
+      '/how/configure/',
+      '/how/examples/',
       '/concepts/',
       '/rules/',
       '/rules/rust/',
@@ -34,8 +38,8 @@ describe('the page list', () => {
       expect(p.lead.length).toBeGreaterThan(20);
     }
   });
-  test('the nav lists Home and the six top pages, in order', () => {
-    expect(NAV.map((n) => n.label)).toEqual(['Home', 'Getting started', 'Concepts', 'Rules', 'CLI', 'Remote execution', 'FAQ']);
+  test('the nav lists Home and the eight top pages, in order', () => {
+    expect(NAV.map((n) => n.label)).toEqual(['Home', 'Why', 'Getting started', 'How', 'Concepts', 'Rules', 'CLI', 'Remote execution', 'FAQ']);
   });
   test('every page is written to its own index.html', () => {
     for (const p of PAGES) expect(files.has(fileOf(p.path))).toBe(true);

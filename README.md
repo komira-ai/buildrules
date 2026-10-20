@@ -22,6 +22,8 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     beta/             the files and commands (STEPS) of those hello-world repositories, per language; not built by //ci:all (README.md in it)
     ci/               the CI matrix (`buck2 build //ci:matrix`): examples on the default and oldest Rust, both zigs, ISA v1 and v3, the refusals, examples/crates;
                       `//ci:mojo`: the Mojo examples; ci/negative planted defects
+    docs/             docs/why.md (the argument and the design) and docs/how.md (the manual): the site's Why and How pages repeat them and its tests check both against the sources;
+                      docs/contract.md, docs/pins.md, docs/cxx_mutants.md
     site/, infra/     the buildrules.dev site (built and tested on the farm) and its infrastructure
     examples/hello    rust_binary + rust_library + rust_test (welded) + run_check
     examples/isa      Rust and C built at an ISA level; isa_audit reads the machine code for ymm

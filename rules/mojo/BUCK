@@ -100,4 +100,10 @@ export_file(
     visibility = ["//site:"],
 )
 
+export_file(
+    name = "providers.bzl",
+    src = "providers.bzl",
+    visibility = ["//site:"],
+)
+
 scrub_files()

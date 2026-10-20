@@ -48,7 +48,9 @@ export const home: Page = {
     code('load("//:buildrules.bzl", "cargo_package")\n\ncargo_package(path = ".")', 'crates/hello/BUCK'),
     h2('Where to go next'),
     ul(
+      '[Why buildrules](/why/): the argument, the design and what is not done.',
       '[Getting started](/getting-started/): set up a repository and build a crate.',
+      '[How to use it](/how/): the manual, with [configuration](/how/configure/) and [examples by language](/how/examples/).',
       '[Concepts](/concepts/): how the lockfile, the pins and the sync model fit together.',
       '[Rules reference](/rules/): every rule family and what is planned.',
       '[CLI reference](/cli/): commands, flags and exit codes.',

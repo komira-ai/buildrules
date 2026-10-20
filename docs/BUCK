@@ -6,4 +6,30 @@ export_file(
     visibility = ["//site:"],
 )
 
+# The two parts of the documentation, and the list of planted C/C++ defects: the site's Why and How pages repeat their facts, and the
+# site tests (site/BUCK) check the pages and these files against the sources.
+export_file(
+    name = "why.md",
+    src = "why.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "how.md",
+    src = "how.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "cxx_mutants.md",
+    src = "cxx_mutants.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "pins.md",
+    src = "pins.md",
+    visibility = ["//site:"],
+)
+
 scrub_files()
