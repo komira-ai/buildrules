@@ -1,6 +1,6 @@
 # buildrules (v0 proof of concept)
 
-Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x86_64 only. Local, never pushed.
+Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x86_64 only.
 
     rules/core        pinned_file (sha256 + size download), run_check
     rules/rust        pins.bzl (the Rust version table: RUST_VERSIONS, RUST_DEFAULT, RUST_OLDEST), toolchain.bzl (one toolchain per version), rust.bzl, cargo.bzl

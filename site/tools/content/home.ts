@@ -11,7 +11,7 @@ export const home: Page = {
     'each dependency separately on any remote execution farm that speaks the REAPI protocol.',
   blocks: [
     info(
-      'buildrules is a v0 proof of concept. It builds for Linux x86_64 only, and only on a remote execution farm. The ' +
+      'buildrules is a v0 proof of concept. It builds for Linux x86_64 only. Actions run on a remote execution farm by default, or on your own machine if you opt in. The ' +
         'Rust, Node, Zig, C/C++ and Mojo rules exist; Python, macOS, Windows and published releases are planned. Every page says which parts are built and which are not.',
     ),
     h2('What it gives you'),
@@ -20,7 +20,7 @@ export const home: Page = {
       'Your native tools keep working. `cargo build`, `cargo test` and `npm test` run on the same files, with the same compiler version, as the Buck2 build. See [native-tool parity](/concepts/#native-tool-parity).',
       'Hermetic. The compiler, the Node.js runtime and the other tools are downloads pinned by sha256. An action has no `PATH` and no host compiler, and the Node actions have no network. See [hermetic pinned toolchains](/concepts/#hermetic-pinned-toolchains).',
       'Per-dependency caching. Each registry crate compiles in its own action and each npm package is its own pinned download, so a remote cache can reuse everything a change did not touch. See [per-crate caching](/concepts/#per-crate-caching).',
-      'Remote only. Actions run on a farm you connect with a gitignored `.buckconfig.local`; no endpoint is ever written into a repository. See [remote execution](/remote-execution/).',
+      'Remote by default, local on request. Actions run on a farm you connect with a gitignored `.buckconfig.local`; no endpoint is ever written into a repository. Without a farm, `-c buildrules_re.mode=local` runs them on your machine with the same pinned toolchains. See [remote execution](/remote-execution/).',
     ),
     h2('Rule families'),
     table(

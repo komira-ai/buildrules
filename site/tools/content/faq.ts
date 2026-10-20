@@ -15,11 +15,11 @@ export const faq: Page = {
     ),
     ...q(
       'Is it ready for production?',
-      'No. It is a v0 proof of concept for Linux x86_64. The Rust, Node, Zig, C/C++ and Mojo rules have run on a farm, but interfaces can still change, nothing is released, and the limits below are real.',
+      'No. It is a v0 proof of concept for Linux x86_64. The Rust, Node, Zig, C/C++ and Mojo rules have run on a farm. The public CI also builds everything except the Mojo packages in the opt-in local mode. Interfaces can still change, nothing is released, and the limits below are real.',
     ),
     ...q(
-      'Why does it need a remote farm?',
-      'The point is a shared, per-dependency cache and uniform workers, so the execution platform has no local fallback. See [Remote execution](/remote-execution/).',
+      'Does it need a remote farm?',
+      'By default, yes: the point is a shared, per-dependency cache and uniform workers, so the default execution platform has no local fallback and fails to load without a farm. If you have no farm, you can opt in with `-c buildrules_re.mode=local`, which runs every action on your machine with the same pinned toolchains; it is refused when a farm is also configured. See [Remote execution](/remote-execution/).',
     ),
     ...q(
       'Which farms work?',

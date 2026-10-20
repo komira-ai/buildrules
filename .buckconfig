@@ -1,4 +1,4 @@
-# buildrules v0 proof of concept: Rust on linux-x86_64 only.
+# buildrules v0: Rust, Node, Zig, C/C++ and Mojo on linux-x86_64 only.
 # Where actions run is NOT here: a remote-execution endpoint lives in
 # .buckconfig.local (gitignored); see .buckconfig.local.example.
 

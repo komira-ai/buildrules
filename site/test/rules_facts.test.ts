@@ -314,6 +314,16 @@ describe('the CPU level tables are the table in isa.bzl', () => {
     expect(pageText(page('/remote-execution/'))).toContain('`x86-64-v2`, `x86-64-v3` and `x86-64-v4`');
   });
 
+  test('pages that discuss where actions run name the local mode that docs/contract.md section 14 defines', () => {
+    expect(repoFile('docs/contract.md')).toContain('`-c buildrules_re.mode=local`');
+    for (const path of ['/', '/faq/', '/remote-execution/', '/getting-started/']) {
+      expect({ path, names: pageText(page(path)).includes('buildrules_re.mode=local') }).toEqual({ path, names: true });
+    }
+    for (const path of ['/', '/remote-execution/', '/getting-started/']) {
+      expect(pageText(page(path))).not.toMatch(/Remote only|only on a remote execution farm/);
+    }
+  });
+
   test('the test run is a separate target with the exec requirement, and the refusal says what the page quotes', () => {
     expect(isa).toContain('def test_exec_compatible_with()');
     expect(repoFile('rules/rust/test_run.bzl')).toContain('built for ISA {} but its execution platform reports ISA={}');

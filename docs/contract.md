@@ -264,7 +264,7 @@ is part of `MANIFEST_SHA256`); the rules compare the table with the pins. `sync`
 [project]          ignore = buck-out, .git
 ```
 
-`--git` takes an https URL, or `file:///absolute/path` for a local clone (the proof of concept); `--commit`
+`--git` takes an https URL, or `file:///absolute/path` for a local clone (for example in tests); `--commit`
 must be a full 40-hex SHA (a branch or tag is not a pin). `--path` must be inside the repository and
 normalized (Buck2 refuses `..`). An existing `.buckconfig` is never merged: `init` exits 1 and prints the
 config it needs. The remote-execution endpoint and worker properties are **not** here: they live in

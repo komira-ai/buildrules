@@ -11,7 +11,7 @@ export const gettingStarted: Page = {
     ul(
       'Linux on x86_64. Every command here runs there; other platforms are not supported yet.',
       '[Buck2](https://buck2.build). The repository pins the release it was tested with in `tools/buck2`.',
-      'A remote execution farm that speaks the [Remote Execution API](https://github.com/bazelbuild/remote-apis) (REAPI). buildrules registers no local execution platform, so without a farm nothing builds. [Remote execution](/remote-execution/) says how to connect one.',
+      'A remote execution farm that speaks the [Remote Execution API](https://github.com/bazelbuild/remote-apis) (REAPI). By default buildrules registers no local execution platform, so without a farm nothing builds unless you opt in to local mode with `-c buildrules_re.mode=local`. [Remote execution](/remote-execution/) says how to connect a farm and how local mode works.',
       'Git. Nothing else runs on your machine: the generator is part of the `buildrules` program, and it needs no interpreter.',
     ),
     h2('1. Get the command line'),
@@ -34,7 +34,7 @@ export const gettingStarted: Page = {
     h2('3. Connect the farm'),
     p('Copy the template and fill in your farm. The copy is gitignored; never commit it.'),
     code('cp .buckconfig.local.example .buckconfig.local\n# edit .buckconfig.local: the REAPI endpoints and the worker properties', 'shell'),
-    p('The settings are explained on [Remote execution](/remote-execution/). A build prints `local: 0` in its summary when all actions ran remotely, which is the only way buildrules builds.'),
+    p('The settings are explained on [Remote execution](/remote-execution/). A build prints `local: 0` in its summary when all actions ran remotely, which is what the default remote mode gives you. In local mode the summary shows local actions instead.'),
     h2('4. Create or adopt a crate'),
     code('buildrules cargo new crates/hello --lib', 'shell'),
     p('`cargo new` and `cargo init` create a package with Cargo, then adopt it. To use your own Cargo, or the one buildrules pins, pass `--cargo <path>`; without `--cargo` the Cargo step is skipped and a minimal manifest and source file are written instead. For a package that already builds with Cargo, run `adopt`:'),

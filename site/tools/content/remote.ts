@@ -5,10 +5,13 @@ export const remote: Page = {
   title: 'Remote execution',
   nav: 'Remote execution',
   description: 'Connect buildrules to any REAPI remote execution farm with a gitignored .buckconfig.local. No endpoint is ever committed.',
-  lead: 'buildrules runs every action on a remote execution farm and has no local fallback. You tell Buck2 where the farm is in a file that is never committed.',
+  lead: 'By default buildrules runs every action on a remote execution farm and has no local fallback; running on your own machine is an explicit opt-in. You tell Buck2 where the farm is in a file that is never committed.',
   blocks: [
-    h2('Why remote only'),
-    p('Building on a farm is what makes the cache shared and the toolchains uniform: the same pinned inputs run on the same kind of worker and give the same result. The execution platform buildrules registers has local execution disabled and remote execution enabled. If you have not configured a farm, loading the platform fails with a message that tells you what to set, instead of quietly compiling on your machine.'),
+    h2('Why remote by default'),
+    p('Building on a farm is what makes the cache shared and the toolchains uniform: the same pinned inputs run on the same kind of worker and give the same result. The default execution platform has local execution disabled and remote execution enabled. If you have not configured a farm, loading the platform fails with a message that tells you what to set, instead of quietly compiling on your machine.'),
+    h2('Without a farm: local mode'),
+    p('`[buildrules_re] mode` is `remote` (the default, also when unset) or `local`; any other value is refused. Pass `-c buildrules_re.mode=local` (or set it in `.buckconfig.local`) to run every action on the machine running Buck2, for example on a CI runner. It is refused when `[buck2_re_client] engine_address` or `cas_address`, or `linux_x86_64_properties`, is also set, so a machine that has a farm cannot slip into running locally.'),
+    p('Local mode is hermetic in what it runs, not in where: the tools are the same pinned toolchains, downloaded by Buck2 and checked against their sha256, with the same command lines and inputs as on a farm. The machine supplies Buck2, its kernel and its CPU; the CPU-level platforms run on that CPU, so a test built for `x86-64-v3` needs a CPU with AVX2, BMI1/BMI2, FMA and MOVBE. Cache keys do not depend on the mode.'),
     h2('Connect a farm'),
     p('`buildrules init` writes `.buckconfig.local.example` and adds `.buckconfig.local` to `.gitignore`. Copy the example and fill it in:'),
     code(
@@ -45,7 +48,7 @@ export const remote: Page = {
     code('buck2 build //crates/hello:test', 'shell'),
     p('The summary line shows where actions ran:'),
     code('Commands: 12 (cached: 9, remote: 3, local: 0)', 'example output'),
-    p('`local` is always `0`: there is no local executor. `cached` counts actions whose results the farm\'s action cache already had; run the same build twice and the second is all cached.'),
+    p('In the default remote mode `local` is always `0`: there is no local executor. In local mode, actions that run are counted as `local`. `cached` counts actions whose results the farm\'s action cache already had; run the same build twice and the second is all cached.'),
     h2('What the worker needs'),
     ul(
       'Linux on x86_64, with glibc 2.34 or newer.',
@@ -53,6 +56,6 @@ export const remote: Page = {
       'Nothing else. Compilers, `node`, shells and file utilities are inputs of the actions. No host `cargo`, `rustc`, `cc`, `node` or `npm` is read.',
     ),
     info('buildrules has been run on one farm. It uses plain REAPI v2 through Buck2, so other farms that implement it should work, but that has not been tested here. If yours differs, the first things to check are the worker properties and the glibc version.'),
-    limit('Builds have no local fallback and no Buck2 "hybrid" mode. Without a reachable farm there is nothing to run.'),
+    limit('There is no automatic fallback and no Buck2 "hybrid" mode: remote and local are separate modes you choose. In the default mode, without a reachable farm there is nothing to run.'),
   ],
 };
