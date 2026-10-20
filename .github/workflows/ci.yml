@@ -6,8 +6,8 @@ name: ci
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  # A push to main is tested by release.yml, which calls this workflow as its first stage (gate) and releases only when it is green.
+  workflow_call:
 
 permissions:
   contents: read

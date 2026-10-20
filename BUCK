@@ -9,9 +9,28 @@ export_file(
 )
 
 export_file(
+    name = "release.yml",
+    src = ".github/workflows/release.yml",
+    visibility = ["//ci:", "//site:"],
+)
+
+# Read by the buildrules.dev site tests (site/BUCK), which check the Releases section against these.
+export_file(
+    name = "RELEASING.md",
+    src = "RELEASING.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "VERSION",
+    src = "VERSION",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "buck2.pin",
     src = "tools/buck2",
     visibility = ["//ci:"],
 )
 
-scrub_files(extra = [".buckconfig", ".buckconfig.local.example", ".gitignore", ".github/workflows/ci.yml"])
+scrub_files(extra = [".buckconfig", ".buckconfig.local.example", ".gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml"])

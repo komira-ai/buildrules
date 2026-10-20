@@ -12,6 +12,9 @@
 //!    `$BUCK2`, or a shell wrapper (`bash -c`, `eval`, `env`, `sudo`, ...) around one is refused, because a command this check cannot
 //!    read as `./buck2 <subcommand> <args>` is a command whose mode it cannot check), or names a remote-execution endpoint;
 //!  - a buck2 install that drifted from the release pinned in tools/buck2 (url or sha256).
+//!  - a `push` trigger on ci.yml: a push to main is tested through release.yml (ci/release_check.zig), which calls this workflow.
+//!
+//! The pure checks that release.yml shares with this file (`pinnedUses`, `localMode`, `buck2Install`) are public here.
 const std = @import("std");
 const t = std.testing;
 
@@ -25,11 +28,11 @@ const completeness = "./buck2 bxl -c buildrules_re.mode=local //ci:completeness.
 
 pub const Findings = std.ArrayList([]const u8);
 
-fn add(a: std.mem.Allocator, f: *Findings, comptime fmt: []const u8, args: anytype) !void {
+pub fn add(a: std.mem.Allocator, f: *Findings, comptime fmt: []const u8, args: anytype) !void {
     try f.append(try std.fmt.allocPrint(a, fmt, args));
 }
 
-fn isHex40(s: []const u8) bool {
+pub fn isHex40(s: []const u8) bool {
     if (s.len != 40) return false;
     for (s) |c| {
         if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) return false;
@@ -38,7 +41,7 @@ fn isHex40(s: []const u8) bool {
 }
 
 /// The value of `"digest": "..."` and the first provider url inside the `linux-x86_64` block of a dotslash file.
-fn dotslashLinux(text: []const u8) ?struct { digest: []const u8, url: []const u8 } {
+pub fn dotslashLinux(text: []const u8) ?struct { digest: []const u8, url: []const u8 } {
     const at = std.mem.indexOf(u8, text, "\"linux-x86_64\"") orelse return null;
     const rest = text[at..];
     const end = std.mem.indexOf(u8, rest, "\"macos") orelse rest.len;
@@ -48,14 +51,14 @@ fn dotslashLinux(text: []const u8) ?struct { digest: []const u8, url: []const u8
     return .{ .digest = digest, .url = url };
 }
 
-fn between(s: []const u8, open: []const u8, close: []const u8) ?[]const u8 {
+pub fn between(s: []const u8, open: []const u8, close: []const u8) ?[]const u8 {
     const i = std.mem.indexOf(u8, s, open) orelse return null;
     const from = i + open.len;
     const j = std.mem.indexOfPos(u8, s, from, close) orelse return null;
     return s[from..j];
 }
 
-fn hasLine(text: []const u8, exact: []const u8) bool {
+pub fn hasLine(text: []const u8, exact: []const u8) bool {
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |line| {
         if (std.mem.eql(u8, std.mem.trimRight(u8, line, " \r"), exact)) return true;
@@ -76,7 +79,7 @@ fn hasTargetLine(text: []const u8, tg: []const u8) bool {
 
 /// The commands of the workflow's shell, one per logical line: a trailing `\` joins the next line, and a word that starts with `#` begins a
 /// comment that runs to the end of its physical line (so the rest of that line is not part of any command).
-fn commands(a: std.mem.Allocator, text: []const u8) ![]const []const u8 {
+pub fn commands(a: std.mem.Allocator, text: []const u8) ![]const []const u8 {
     var out = std.ArrayList([]const u8).init(a);
     var cur = std.ArrayList(u8).init(a);
     var it = std.mem.splitScalar(u8, text, '\n');
@@ -229,11 +232,9 @@ fn hasArgs(cmd: []const u8, args: []const u8) bool {
     return false;
 }
 
-/// Everything wrong with `workflow`, given the dotslash file of the pinned buck2 and ci/BUCK.
-pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, ci_buck: []const u8) !Findings {
-    var f = Findings.init(a);
-
-    // Every `uses:` is pinned to a full commit.
+/// Every `uses:` line of `workflow` is `owner/repo@<40 hex>`; returns how many there are. `local_ok`, when not empty, is the one value that
+/// may stand without a pin (a local reusable workflow, `./.github/workflows/ci.yml`).
+pub fn pinnedUses(a: std.mem.Allocator, f: *Findings, workflow: []const u8, local_ok: []const u8) !usize {
     var uses: usize = 0;
     var it = std.mem.splitScalar(u8, workflow, '\n');
     while (it.next()) |raw| {
@@ -243,9 +244,66 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
         uses += 1;
         var v = std.mem.trim(u8, line["uses:".len..], " ");
         if (std.mem.indexOfScalar(u8, v, '#')) |h| v = std.mem.trim(u8, v[0..h], " ");
+        if (local_ok.len > 0 and std.mem.eql(u8, v, local_ok)) continue;
         const at = std.mem.indexOfScalar(u8, v, '@');
-        if (at == null or !isHex40(v[at.? + 1 ..])) try add(a, &f, "`uses: {s}` is not pinned to a full commit sha", .{v});
+        if (at == null or !isHex40(v[at.? + 1 ..])) try add(a, f, "`uses: {s}` is not pinned to a full commit sha", .{v});
     }
+    return uses;
+}
+
+/// The local-mode rules for every `./buck2` command of `workflow`: the flag on each command that loads the graph (not on an echo, a comment
+/// or another command), no other value of the key anywhere (comments included), no buck2 run any way but the literal `./buck2`, and no
+/// remote-execution endpoint. Returns the number of `./buck2 build` commands.
+pub fn localMode(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !usize {
+    var builds: usize = 0;
+    var mode_uses: usize = 0;
+    var mode_on_graph: usize = 0;
+    for (try commands(a, workflow)) |cmd| {
+        mode_uses += std.mem.count(u8, cmd, mode_key);
+        try nonLiteralBuck2(a, f, cmd);
+        var from: usize = 0;
+        while (std.mem.indexOfPos(u8, cmd, from, buck2)) |i| {
+            const start = i + buck2.len;
+            const end = std.mem.indexOfPos(u8, cmd, start, buck2) orelse cmd.len;
+            const inv = untilSeparator(cmd[start..end]);
+            from = start;
+            if (!loadsGraph(inv)) continue;
+            if (std.mem.startsWith(u8, inv, "build ")) builds += 1;
+            mode_on_graph += std.mem.count(u8, inv, mode_key);
+            if (!inLocalMode(inv)) try add(a, f, "a `./buck2` command that loads the graph does not pass `-c buildrules_re.mode=local`: {s}", .{cmd});
+        }
+    }
+    if (mode_uses != mode_on_graph) try add(a, f, "`{s}` appears outside a `./buck2` command that loads the graph", .{mode_key});
+    var mit = std.mem.splitScalar(u8, workflow, '\n');
+    while (mit.next()) |line| {
+        var from: usize = 0;
+        while (std.mem.indexOfPos(u8, line, from, mode_key)) |i| : (from = i + mode_key.len) {
+            const rest = line[i + mode_key.len ..];
+            const ok = std.mem.startsWith(u8, rest, "=local") and (rest.len == "=local".len or rest["=local".len] == ' ' or rest["=local".len] == '`' or rest["=local".len] == ',' or rest["=local".len] == ')' or rest["=local".len] == '.');
+            if (!ok) try add(a, f, "`{s}` is set to something other than `local`: {s}", .{ mode_key, std.mem.trim(u8, line, " ") });
+        }
+    }
+    for ([_][]const u8{ "engine_address", "cas_address", "action_cache_address", "linux_x86_64_properties", "--no-remote-cache" }) |bad| {
+        if (std.mem.indexOf(u8, workflow, bad) != null) try add(a, f, "the workflow mentions `{s}`", .{bad});
+    }
+    return builds;
+}
+
+/// The buck2 the workflow downloads is the release pinned in tools/buck2 (url and sha256).
+pub fn buck2Install(a: std.mem.Allocator, f: *Findings, workflow: []const u8, dotslash: []const u8) !void {
+    if (dotslashLinux(dotslash)) |p| {
+        if (std.mem.indexOf(u8, workflow, p.url) == null) try add(a, f, "the workflow does not download the url pinned in tools/buck2", .{});
+        const line = try std.fmt.allocPrint(a, "{s}  buck2.zst", .{p.digest});
+        if (std.mem.indexOf(u8, workflow, line) == null) try add(a, f, "the workflow does not check the sha256 pinned in tools/buck2", .{});
+    } else try add(a, f, "tools/buck2 has no linux-x86_64 digest and url (this parser is blind)", .{});
+}
+
+/// Everything wrong with `workflow`, given the dotslash file of the pinned buck2 and ci/BUCK.
+pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, ci_buck: []const u8) !Findings {
+    var f = Findings.init(a);
+
+    // Every `uses:` is pinned to a full commit.
+    const uses = try pinnedUses(a, &f, workflow, "");
     if (uses == 0) try add(a, &f, "no `uses:` line found (the checkout step is missing, or this parser is blind)", .{});
 
     // Permissions: contents: read at the top level, nothing broader anywhere.
@@ -257,44 +315,14 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
 
     // Triggers and runner.
     if (!hasLine(workflow, "  pull_request:")) try add(a, &f, "`on: pull_request` is missing", .{});
-    if (!hasLine(workflow, "  push:") or !hasLine(workflow, "    branches: [main]")) try add(a, &f, "`on: push: branches: [main]` is missing", .{});
+    // A push to main is tested by release.yml (its gate stage calls this workflow), not twice.
+    if (!hasLine(workflow, "  workflow_call:")) try add(a, &f, "`on: workflow_call` is missing (release.yml calls this workflow as its gate stage)", .{});
+    if (hasLine(workflow, "  push:")) try add(a, &f, "`on: push` is present: a push to main is tested through release.yml, and would run this workflow twice", .{});
     if (std.mem.indexOf(u8, workflow, "runs-on: ubuntu-latest") == null) try add(a, &f, "`runs-on: ubuntu-latest` is missing", .{});
 
     // Local mode, never a remote-execution endpoint, every promised target.
-    // The flag is on each `./buck2` command that loads the graph (not on an echo, a comment or another command), a build command exists, and
-    // no other value of the key appears anywhere (comments included), nor the key outside such a command.
-    var builds: usize = 0;
-    var mode_uses: usize = 0;
-    var mode_on_graph: usize = 0;
-    for (try commands(a, workflow)) |cmd| {
-        mode_uses += std.mem.count(u8, cmd, mode_key);
-        try nonLiteralBuck2(a, &f, cmd);
-        var from: usize = 0;
-        while (std.mem.indexOfPos(u8, cmd, from, buck2)) |i| {
-            const start = i + buck2.len;
-            const end = std.mem.indexOfPos(u8, cmd, start, buck2) orelse cmd.len;
-            const inv = untilSeparator(cmd[start..end]);
-            from = start;
-            if (!loadsGraph(inv)) continue;
-            if (std.mem.startsWith(u8, inv, "build ")) builds += 1;
-            mode_on_graph += std.mem.count(u8, inv, mode_key);
-            if (!inLocalMode(inv)) try add(a, &f, "a `./buck2` command that loads the graph does not pass `-c buildrules_re.mode=local`: {s}", .{cmd});
-        }
-    }
+    const builds = try localMode(a, &f, workflow);
     if (builds == 0) try add(a, &f, "no `./buck2 build` command found (the build does not pass `-c buildrules_re.mode=local`; or this parser is blind)", .{});
-    if (mode_uses != mode_on_graph) try add(a, &f, "`{s}` appears outside a `./buck2` command that loads the graph", .{mode_key});
-    var mit = std.mem.splitScalar(u8, workflow, '\n');
-    while (mit.next()) |line| {
-        var from: usize = 0;
-        while (std.mem.indexOfPos(u8, line, from, mode_key)) |i| : (from = i + mode_key.len) {
-            const rest = line[i + mode_key.len ..];
-            const ok = std.mem.startsWith(u8, rest, "=local") and (rest.len == "=local".len or rest["=local".len] == ' ' or rest["=local".len] == '`' or rest["=local".len] == ',' or rest["=local".len] == ')' or rest["=local".len] == '.');
-            if (!ok) try add(a, &f, "`{s}` is set to something other than `local`: {s}", .{ mode_key, std.mem.trim(u8, line, " ") });
-        }
-    }
-    for ([_][]const u8{ "engine_address", "cas_address", "action_cache_address", "linux_x86_64_properties", "--no-remote-cache" }) |bad| {
-        if (std.mem.indexOf(u8, workflow, bad) != null) try add(a, &f, "the workflow mentions `{s}`", .{bad});
-    }
     for (targets) |tg| {
         if (!hasTargetLine(workflow, tg)) try add(a, &f, "target {s} is not built", .{tg});
     }
@@ -313,11 +341,7 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
     if (std.mem.indexOf(u8, workflow, "# //ci:mojo is not built") == null) try add(a, &f, "the comment that says why //ci:mojo is not built is missing", .{});
 
     // The buck2 install is the release pinned in tools/buck2.
-    if (dotslashLinux(dotslash)) |p| {
-        if (std.mem.indexOf(u8, workflow, p.url) == null) try add(a, &f, "the workflow does not download the url pinned in tools/buck2", .{});
-        const line = try std.fmt.allocPrint(a, "{s}  buck2.zst", .{p.digest});
-        if (std.mem.indexOf(u8, workflow, line) == null) try add(a, &f, "the workflow does not check the sha256 pinned in tools/buck2", .{});
-    } else try add(a, &f, "tools/buck2 has no linux-x86_64 digest and url (this parser is blind)", .{});
+    try buck2Install(a, &f, workflow, dotslash);
 
     // The cache is keyed on lock files.
     const key = std.mem.indexOf(u8, workflow, "key: buck-out-");
@@ -412,7 +436,8 @@ test "a missing trigger or runner is found" {
     const a = ar.allocator();
     const r = try real(a);
     try expectFinding(a, r, try mutate(a, r.wf, "  pull_request:\n", ""), "pull_request");
-    try expectFinding(a, r, try mutate(a, r.wf, "branches: [main]", "branches: [dev]"), "push");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", ""), "workflow_call");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  push:\n    branches: [main]\n"), "`on: push` is present");
     try expectFinding(a, r, try mutate(a, r.wf, "runs-on: ubuntu-latest", "runs-on: self-hosted"), "ubuntu-latest");
 }
 

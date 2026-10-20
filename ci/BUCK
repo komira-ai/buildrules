@@ -111,7 +111,7 @@ actionlint_check(
     name = "workflow_lint",
     exec_compatible_with = LINUX_X86_64,
     actionlint = "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
-    workflows = ["//:ci.yml"],
+    workflows = ["//:ci.yml", "//:release.yml"],
 )
 
 zig_test(
@@ -125,7 +125,24 @@ zig_test(
     },
 )
 
-group(name = "workflow", deps = [":workflow_lint", ":workflow_check"])
+# The release workflow (.github/workflows/release.yml, RELEASING.md): actionlint accepts it (above), and ci/release_check.zig holds it to its write
+# scopes and their exact conditions, the order publish <- verify <- archive <- tag <- gate, pinned actions and local mode. It reuses the rules of
+# workflow_check.zig and plants a defect for each of its own.
+zig_test(
+    name = "release_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "release_check.zig",
+    imports = ["workflow_check.zig"],
+    data = {
+        ".github/workflows/release.yml": "//:release.yml",
+        ".github/workflows/ci.yml": "//:ci.yml",
+        "tools/buck2": "//:buck2.pin",
+        # the tests of workflow_check.zig, which this file imports, run here too
+        "ci/BUCK": "BUCK",
+    },
+)
+
+group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check"])
 
 # Everything the public runner can build: the public CI builds this one target. It names what the other groups do not reach: the C/C++ rules and
 # aws-lc, the gate and kpin tools, the Node toolchain, the type checks of the sites, the cargo units outside the matrix. ci/completeness.bxl
@@ -141,6 +158,7 @@ group(name = "all", deps = [
     "//infra/site:test",
     "//infra/site:typecheck",
     "//tools/scrub:scrub",
+    "//tools/release:release",
     "//rules/gate:gate",
     "//rules/kpin:kpin",
     "//rules/node:esbuild_linux-x64",
