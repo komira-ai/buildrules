@@ -36,6 +36,9 @@ jest_test(
     name = "test",
     visibility = ["//ci:"],
     data = {
+        ".github/workflows/release.yml": "//:release.yml",
+        "RELEASING.md": "//:RELEASING.md",
+        "VERSION": "//:VERSION",
         "ci/BUCK": "//ci:BUCK.txt",
         "cli/src/buckgen.zig": "//cli:buckgen.zig",
         "cli/src/cargo_cmd.zig": "//cli:cargo_cmd.zig",
@@ -64,6 +67,8 @@ jest_test(
         "rules/rust/toolchain.bzl": "//rules/rust:toolchain.bzl",
         "rules/zig/zig.bzl": "//rules/zig:zig.bzl",
         "third_party/aws-lc/BUCK": "//third_party/aws-lc:BUCK.txt",
+        "tools/release/cmds.zig": "//tools/release:cmds.zig",
+        "tools/release/version.zig": "//tools/release:version.zig",
         "rules/cxx/archive.bzl": "//rules/cxx:archive.bzl",
         "rules/cxx/defs.bzl": "//rules/cxx:defs.bzl",
     },

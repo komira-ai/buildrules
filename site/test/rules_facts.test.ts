@@ -563,3 +563,50 @@ describe('the Zig releases the Concepts page names are pinned', () => {
     }
   });
 });
+
+describe('the Releases section against RELEASING.md, the release tool and the release workflow', () => {
+  const rulesText = pageText(page('/rules/'));
+  const releasing = repoFile('RELEASING.md');
+  const workflow = repoFile('.github/workflows/release.yml');
+  const cmds = repoFile('tools/release/cmds.zig');
+  const versionZig = repoFile('tools/release/version.zig');
+
+  test('MAJOR.MINOR is the VERSION file, and a tag is v<MAJOR>.<MINOR>.<PATCH>', () => {
+    expect(repoFile('VERSION')).toMatch(/^\d+\.\d+\n$/);
+    expect(rulesText).toContain('`MAJOR.MINOR` is the `VERSION` file');
+    expect(rulesText).toContain('`vMAJOR.MINOR.PATCH`');
+    expect(releasing).toContain('v<MAJOR>.<MINOR>.<PATCH>');
+    // the tool's rule: a leading v and three numbers
+    expect(versionZig).toContain("name[0] != 'v'");
+    expect(versionZig).toContain('const patch = number(body[d2 + 1 ..])');
+  });
+
+  test('the files a release holds are the ones the tool writes', () => {
+    expect(cmds).toContain('"buildrules-{s}.tar.gz"');
+    expect(cmds).toContain('pub const sums_name = "SHA256SUMS"');
+    expect(rulesText).toContain('`buildrules-<version>.tar.gz`');
+    expect(rulesText).toContain('`SHA256SUMS`');
+    expect(workflow).toContain('actions/attest-build-provenance@');
+    expect(rulesText).toContain('build provenance attestation');
+  });
+
+  test('every push to main, no human action, no binaries: the workflow, RELEASING.md and the page agree', () => {
+    expect(workflow).toMatch(/\non:\n {2}push:\n {4}branches: \[main\]\n/);
+    expect(workflow).not.toMatch(/\n {2}(workflow_dispatch|pull_request|schedule):/);
+    expect(squash(releasing)).toContain('released with no human action');
+    expect(rulesText).toContain('Every push to `main` is built and tested');
+    expect(rulesText).toContain('with no human action');
+    expect(rulesText).toContain('There are no binaries');
+    expect(releasing).toContain('There are no binaries');
+  });
+
+  test('the page points at RELEASING.md, which exists and says how to pin', () => {
+    expect(rulesText).toContain('https://github.com/komira-ai/buildrules/blob/main/RELEASING.md');
+    expect(releasing).toContain('## Pinning a release');
+    expect(releasing).toContain('sha256sum --check SHA256SUMS');
+  });
+
+  test('no page says that nothing is released, or that releases are only planned', () => {
+    expect(allText()).not.toMatch(/nothing is released|Nothing is released|Published releases are planned|no release binaries yet/);
+  });
+});
