@@ -102,11 +102,6 @@ pub const Patch = enum {
     signal_exit,
     /// engines/ptrace.cc: only the test's exit ends the run.
     first_child,
-    /// engines/ptrace_linux.cc (buildrules): a sandbox that refuses personality(ADDR_NO_RANDOMIZE) (a farm worker's container
-    /// answers ENOSYS) no longer ends the run. The test binaries kcov traces here are not position independent (zig links them
-    /// at a fixed address), and kcov is run with --skip-solibs, so address randomization does not move what it plants
-    /// breakpoints in.
-    no_aslr_control,
 
     pub fn expected(self: Patch) usize {
         _ = self;
@@ -146,15 +141,6 @@ pub fn applyPatch(a: A, patch: Patch, text: []const u8) ![]u8 {
                     if (spaceThen(line, "case ev_exit_first_process:")) in_range = false;
                 }
             },
-            .no_aslr_control => {
-                if (spaceThen(line, "perror(\"Can't set personality\");")) {
-                    in_range = true;
-                } else if (in_range and spaceThen(line, "return false;")) {
-                    const b = body(line);
-                    cur = try std.fmt.allocPrint(a, "{s}return true; /* {s}: a sandbox may refuse personality; the traced binary is not position independent */{s}", .{ b[0..leadingBlank(b)], marker, line[b.len..] });
-                    in_range = false;
-                }
-            },
             .first_child => {
                 const b = body(line);
                 const n = leadingBlank(b);
@@ -166,6 +152,15 @@ pub fn applyPatch(a: A, patch: Patch, text: []const u8) ![]u8 {
     }
     return out.toOwnedSlice(a);
 }
+
+/// The patches kcov_build applies, in order. There is none for
+/// personality(ADDR_NO_RANDOMIZE): kcov's own handling of it is kept.
+pub const patches = [_]struct { file: []const u8, p: Patch }{
+    .{ .file = "engines/ptrace_linux.cc", .p = .no_cpu_pin },
+    .{ .file = "collector.cc", .p = .not_other_exit },
+    .{ .file = "collector.cc", .p = .signal_exit },
+    .{ .file = "engines/ptrace.cc", .p = .first_child },
+};
 
 fn countMarked(text: []const u8) usize {
     var n: usize = 0;
@@ -485,13 +480,6 @@ pub fn main() !void {
     // The patches (README.md, "Patches"): each must add exactly one line
     // holding BUILDRULES PATCH; an expression that matches nothing (a new kcov)
     // fails here.
-    const patches = [_]struct { file: []const u8, p: Patch }{
-        .{ .file = "engines/ptrace_linux.cc", .p = .no_cpu_pin },
-        .{ .file = "collector.cc", .p = .not_other_exit },
-        .{ .file = "collector.cc", .p = .signal_exit },
-        .{ .file = "engines/ptrace.cc", .p = .first_child },
-        .{ .file = "engines/ptrace_linux.cc", .p = .no_aslr_control },
-    };
     for (patches) |pt| {
         const path = join(a, &.{ s, pt.file });
         const before = readFile(a, path);

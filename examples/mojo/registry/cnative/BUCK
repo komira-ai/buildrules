@@ -25,6 +25,7 @@ mojo_conda(
     mopm = "toolchains//:mopm",
     package = "cnative",
     version = "0.1.0",
+    visibility = ["//ci:"],
 )
 
 scrub_files()
