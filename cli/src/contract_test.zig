@@ -163,6 +163,9 @@ test "init's .buckconfig has every entry the contract lists, with the values it 
         try t.expect(kit.contains(spec, p ++ "->buildrules//platforms:linux_x86_64"));
     }
     try t.expectEqualStrings("deferred", ini(c, "buck2", "materializations").?);
+    // buck2's own default connect timeout is 5 s, which a busy download host exceeds (the first release's beta failed on it)
+    try t.expectEqualStrings("30000", ini(c, "http", "connect_timeout_ms").?);
+    try t.expectEqualStrings("120000", ini(c, "http", "read_timeout_ms").?);
     try t.expect(ini(c, "project", "ignore") != null);
 }
 

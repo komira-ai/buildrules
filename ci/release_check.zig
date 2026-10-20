@@ -4,15 +4,15 @@
 //! workflow_check.zig; what is here is what only the release has:
 //!
 //!  - the triggers: a push to main and nothing else (no pull request, no dispatch, no schedule, no workflow_run);
-//!  - the token: `permissions: {}` at the top, every job states its own, and a write scope only where it belongs: `contents: write` in the
-//!    jobs `tag` and `publish` (and nowhere else), `id-token: write` and `attestations: write` in `archive` (and nowhere else), each of
+//!  - the token: `permissions: {}` at the top, every job states its own, and a write scope only where it belongs: `contents: write` in the job
+//!    `publish` (and nowhere else; `tag` holds `contents: read` and writes with the release bot's token, minted by one step with exact inputs and used by the tag step alone), `id-token: write` and `attestations: write` in `archive` (and nowhere else), each of
 //!    `tag` and `publish` under its exact `if:`, and every `: write` of the file accounted for by a job's permissions block;
 //!  - the order gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish, with gate a call of ci.yml that nothing can skip, no job before
 //!    the tag waiting for it (a failure before the tag leaves no tag), a release made only when the plan released, and no status function
 //!    (`always()`, `failure()`, `cancelled()`) or `continue-on-error` that would let a job run or pass after a red one;
 //!  - the jobs that write run no buck2 and only the checkout and download actions: the tool they run was built before any token existed;
 //!  - the attestation action is in `archive` only, every checkout drops its credentials, `run:` lines are single invocations (the
-//!    install of buck2 aside), no asset is ever replaced (`--clobber`), no secret is read.
+//!    install of buck2 aside), no asset is ever replaced (`--clobber`), no secret is read but the release bot's private key (once, in `tag`).
 const std = @import("std");
 const wc = @import("workflow_check.zig");
 const t = std.testing;
@@ -61,8 +61,25 @@ const tool_runs = [_][2][]const u8{
     .{ "site", "tool/release site " },
     .{ "publish", "tool/release publish " },
 };
-/// The actions a job that writes may use.
+/// The actions a job that writes may use; `tag` also mints the release bot's token.
 const write_job_actions = [_][]const u8{ "actions/checkout", "actions/download-artifact" };
+const app_token_action = "actions/create-github-app-token";
+
+/// The step of `tag` that mints the release bot's token: every input exact. The v* tag ruleset lets only that App create a tag, so the tag
+/// is made with this token and not with GITHUB_TOKEN; the token is for this repository alone and for contents.
+const bot_step =
+    "      - name: The token of the release bot, for this repository alone\n" ++
+    "        id: bot\n" ++
+    "        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n" ++
+    "        with:\n" ++
+    "          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n" ++
+    "          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n" ++
+    "          owner: ${{ github.repository_owner }}\n" ++
+    "          repositories: buildrules\n" ++
+    "          permission-contents: write\n" ++
+    "      - name: The annotated tag of the verified commit\n"; // the next step: no input may follow the last one
+/// The tag step: the bot's token is its GH_TOKEN, here and nowhere else.
+const tag_step_env = "        env:\n          GH_TOKEN: ${{ steps.bot.outputs.token }}\n        run: tool/release tag ";
 
 const Perm = struct { scope: []const u8, level: []const u8 };
 
@@ -105,6 +122,20 @@ pub fn body(a: std.mem.Allocator, wf: []const u8) ![]u8 {
 pub fn stripComment(v: []const u8) []const u8 {
     if (std.mem.indexOf(u8, v, " #")) |i| return std.mem.trim(u8, v[0..i], " ");
     return std.mem.trim(u8, v, " ");
+}
+
+/// The text of one job as written (indentation kept, comments gone): from its `  name:` line to the next job's. Empty when there is no such job.
+fn jobBlock(text: []const u8, name: []const u8) []const u8 {
+    var buf: [64]u8 = undefined;
+    const header = std.fmt.bufPrint(&buf, "\n  {s}:\n", .{name}) catch return "";
+    const at = std.mem.indexOf(u8, text, header) orelse return "";
+    var i = at + header.len;
+    while (std.mem.indexOfPos(u8, text, i, "\n  ")) |p| {
+        const c = text[p + 3];
+        if (c != ' ' and c != '\n') return text[at..p];
+        i = p + 3;
+    }
+    return text[at..];
 }
 
 /// The jobs of the `jobs:` block, with what the rules read of each (its direct keys, its permissions and concurrency blocks).
@@ -189,17 +220,17 @@ pub fn permLevel(j: *const Job, scope: []const u8) ?[]const u8 {
     return null;
 }
 
-/// Whether a job may hold `scope: write`: `contents` in tag and publish; `id-token` in archive (the attestation), in gamma (the farm's network) and in
+/// Whether a job may hold `scope: write`: `contents` in publish (tag writes with the release bot's token, not its own); `id-token` in archive (the attestation), in gamma (the farm's network) and in
 /// beta (the call of beta.yml, whose farm leg joins the farm's network); `attestations` in archive.
 fn writeAllowed(job: []const u8, scope: []const u8) bool {
-    if (std.mem.eql(u8, scope, "contents")) return std.mem.eql(u8, job, "tag") or std.mem.eql(u8, job, "publish");
+    if (std.mem.eql(u8, scope, "contents")) return std.mem.eql(u8, job, "publish");
     if (std.mem.eql(u8, scope, "id-token")) return std.mem.eql(u8, job, "archive") or std.mem.eql(u8, job, "gamma") or std.mem.eql(u8, job, "beta");
     if (std.mem.eql(u8, scope, "attestations")) return std.mem.eql(u8, job, "archive");
     return false;
 }
 
 fn writeOwners(scope: []const u8) []const u8 {
-    if (std.mem.eql(u8, scope, "contents")) return "tag and publish";
+    if (std.mem.eql(u8, scope, "contents")) return "publish";
     if (std.mem.eql(u8, scope, "id-token")) return "archive, gamma and beta";
     if (std.mem.eql(u8, scope, "attestations")) return "archive";
     return "no job";
@@ -250,7 +281,8 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     for ([_][]const u8{ "pull_request_target", "workflow_run", "workflow_dispatch" }) |bad| {
         if (std.mem.indexOf(u8, text, bad) != null) try add(a, &f, "`{s}` appears in the workflow", .{bad});
     }
-    if (std.mem.indexOf(u8, text, "secrets.") != null) try add(a, &f, "the workflow reads a secret", .{});
+    // The one secret: the release bot's private key, read once, by the step of `tag` that mints the token. Any other `secrets.` is refused.
+    if (std.mem.count(u8, text, "secrets.") != std.mem.count(u8, text, "secrets.RELEASE_BOT_PRIVATE_KEY }}")) try add(a, &f, "the workflow reads a secret", .{});
     if (std.mem.indexOf(u8, text, "--clobber") != null or std.mem.indexOf(u8, text, "release delete") != null)
         try add(a, &f, "the workflow replaces or deletes a release asset (`--clobber`, `release delete`): a release is never changed", .{});
     for ([_][]const u8{ "always()", "failure()", "cancelled()" }) |fun| {
@@ -276,10 +308,27 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             }
         }
     }
-    if (std.mem.count(u8, text, ": write") != writes) try add(a, &f, "a `: write` is granted outside a job's `permissions:` block", .{});
+    // `permission-contents: write` is an input of the App-token action, not a grant of the job's token: it is counted by its own rule below.
+    if (std.mem.count(u8, text, ": write") - std.mem.count(u8, text, "permission-contents: write") != writes) try add(a, &f, "a `: write` is granted outside a job's `permissions:` block", .{});
     if (jobNamed(jobs, "tag")) |j| {
-        const l = permLevel(j, "contents");
-        if (l == null or !std.mem.eql(u8, l.?, "write")) try add(a, &f, "the job `tag` does not hold `contents: write`", .{});
+        // The job's own token only reads; the write is the release bot's token, minted by one step with exact inputs and used by one step.
+        if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read"))
+            try add(a, &f, "the job `tag` is not `contents: read` alone: it writes with the release bot's token, not its own", .{});
+        const jt = jobBlock(text, "tag"); // with its indentation: the bot steps are matched as written
+        const mint = std.mem.indexOf(u8, jt, bot_step);
+        if (mint == null) try add(a, &f, "the job `tag` does not mint the release bot's token with exactly the pinned inputs of `actions/create-github-app-token` (app-id, private-key, owner, repositories, permission-contents)", .{});
+        const use = std.mem.indexOf(u8, jt, tag_step_env);
+        if (use == null) try add(a, &f, "the step of `tag` that runs `tool/release tag` does not take the bot's token as its GH_TOKEN (`steps.bot.outputs.token`)", .{});
+        if (mint != null and use != null and mint.? > use.?) try add(a, &f, "the job `tag` uses the bot's token before the step that mints it", .{});
+        if (std.mem.count(u8, jt, "steps.bot.outputs.token") != 1) try add(a, &f, "the job `tag` uses the bot's token other than once, in the tag step", .{});
+        if (std.mem.indexOf(u8, jt, "github.token") != null or std.mem.indexOf(u8, jt, "secrets.GITHUB_TOKEN") != null) try add(a, &f, "the job `tag` uses GITHUB_TOKEN, which the ruleset refuses for a tag", .{});
+        if (std.mem.count(u8, jt, "secrets.") != 1) try add(a, &f, "the job `tag` reads other than the one secret of the release bot's key", .{});
+    }
+    // The token is minted in `tag` and nowhere else, once; the key and the token output appear nowhere else.
+    if (std.mem.count(u8, text, app_token_action ++ "@") != 1) try add(a, &f, "`actions/create-github-app-token` is used other than once, in `tag`", .{});
+    if (std.mem.count(u8, text, "secrets.RELEASE_BOT_PRIVATE_KEY") != 1 or std.mem.count(u8, text, "steps.bot.outputs.token") != 1 or std.mem.count(u8, text, "permission-") != 1)
+        try add(a, &f, "the release bot's key, token or permission input appears other than once, in `tag`", .{});
+    if (jobNamed(jobs, "tag")) |j| {
         if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, tag_if)) try add(a, &f, "the job `tag` is not under its exact `if:` ({s})", .{tag_if});
         if (j.group == null or !std.mem.eql(u8, j.group.?, "release") or j.cancel == null or !std.mem.eql(u8, j.cancel.?, "false"))
             try add(a, &f, "the job `tag` is not in the concurrency group `release` with `cancel-in-progress: false`", .{});
@@ -395,6 +444,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
                 for (write_job_actions) |w| {
                     if (std.mem.eql(u8, repo, w)) ok = true;
                 }
+                if (std.mem.eql(u8, name, "tag") and std.mem.eql(u8, repo, app_token_action)) ok = true;
                 if (!ok) try add(a, &f, "the job `{s}` holds a write scope and uses {s}", .{ name, repo });
             }
             if (std.mem.indexOf(u8, l, "buck2") != null and !std.mem.startsWith(u8, l, "#")) try add(a, &f, "the job `{s}` holds a write scope and runs buck2: {s}", .{ name, l });
@@ -660,7 +710,7 @@ const fixture_wf =
     \\      group: release
     \\      cancel-in-progress: false
     \\    permissions:
-    \\      contents: write
+    \\      contents: read
     \\    env:
     \\      TAG: ${{ needs.plan.outputs.tag }}
     \\    steps:
@@ -673,9 +723,18 @@ const fixture_wf =
     \\          name: release-tool
     \\          path: tool
     \\      - run: chmod +x tool/release
+    \\      - name: The token of the release bot, for this repository alone
+    \\        id: bot
+    \\        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+    \\        with:
+    \\          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+    \\          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+    \\          owner: ${{ github.repository_owner }}
+    \\          repositories: buildrules
+    \\          permission-contents: write
     \\      - name: The annotated tag of the verified commit
     \\        env:
-    \\          GH_TOKEN: ${{ github.token }}
+    \\          GH_TOKEN: ${{ steps.bot.outputs.token }}
     \\        run: tool/release tag --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA"
     \\
     \\  publish:
@@ -809,7 +868,7 @@ test "the jobs are parsed as the rules read them" {
     const tg = jobNamed(jobs, "tag").?;
     try t.expect(hasNeed(tg, "plan") and hasNeed(tg, "verify") and hasNeed(tg, "tool"));
     try t.expectEqualStrings(tag_if, tg.if_expr.?);
-    try t.expectEqualStrings("write", permLevel(tg, "contents").?);
+    try t.expectEqualStrings("read", permLevel(tg, "contents").?);
     try t.expectEqualStrings("release", tg.group.?);
     try t.expectEqualStrings("false", tg.cancel.?);
     const ar_job = jobNamed(jobs, "archive").?;
@@ -869,12 +928,12 @@ test "rule: write scopes only where they belong" {
     try expectFinding(a, r, try mutateIn(a, r.wf, "tool", "      contents: read\n", "      contents: write\n"), "job `tool` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "gate", "      contents: read\n", "      contents: write\n"), "job `gate` holds `contents: write`");
     // id-token and attestations write only in archive
-    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      contents: write\n", "      contents: write\n      id-token: write\n"), "job `tag` holds `id-token: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `tag` holds `id-token: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      contents: write\n", "      contents: write\n      attestations: write\n"), "job `publish` holds `attestations: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      attestations: read\n", "      attestations: write\n"), "job `verify` holds `attestations: write`");
     // any other scope
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      contents: read\n", "      contents: read\n      packages: write\n"), "job `verify` holds `packages: write`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      contents: write\n", "      contents: write\n      actions: write\n"), "job `tag` holds `actions: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      contents: read\n", "      contents: read\n      actions: write\n"), "job `tag` holds `actions: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      contents: read\n", "      contents: read\n      issues: admin\n"), "not read, write or none");
     // a write granted at the top, or by write-all, or outside any permissions block
     try expectFinding(a, r, try mutate(a, r.wf, "permissions: {}", "permissions:\n  contents: write"), "permissions: {}");
@@ -884,10 +943,48 @@ test "rule: write scopes only where they belong" {
     // a job with no permissions of its own would inherit the top
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "    permissions:\n      contents: read\n      attestations: read\n", ""), "states no `permissions:`");
     // the jobs that need their scope have it
-    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      contents: write\n", "      contents: read\n"), "`tag` does not hold `contents: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      contents: read\n", "      contents: write\n"), "job `tag` holds `contents: write`, which only publish may");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      contents: write\n", "      contents: read\n"), "`publish` does not hold `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      id-token: write\n", "      id-token: read\n"), "`archive` does not hold `id-token: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      attestations: write\n", ""), "`archive` does not hold `attestations: write`");
+}
+
+test "rule: the tag is made with the release bot's token, minted by `tag` alone with exact inputs, and used by the tag step alone" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const mint = "does not mint the release bot's token";
+    // the job's own token only reads
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      contents: read\n", "      contents: read\n      packages: read\n"), "`tag` is not `contents: read` alone");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      contents: read\n", "      contents: write\n"), "`tag` is not `contents: read` alone");
+    // each input of the mint is exact
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "app-id: ${{ vars.RELEASE_BOT_APP_ID }}", "app-id: 5395718"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "app-id: ${{ vars.RELEASE_BOT_APP_ID }}", "app-id: ${{ vars.RELEASE_TAGGER_APP_ID }}"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "owner: ${{ github.repository_owner }}\n", ""), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "owner: ${{ github.repository_owner }}\n", "owner: other\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "repositories: buildrules\n", ""), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "repositories: buildrules\n", "repositories: buildrules,mopm\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "permission-contents: write\n", "permission-contents: write\n          permission-actions: write\n"), "release bot's key, token or permission input appears other than once");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "permission-contents: write\n", "permission-contents: write\n          permission-actions: write\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "permission-contents: write\n", "permission-contents: read\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0", "v3.2.0"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0", "0000000000000000000000000000000000000000 # v3.2.0"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", "private-key: ${{ secrets.OTHER_KEY }}"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", "private-key: ${{ secrets.OTHER_KEY }}"), "reads a secret");
+    // the tag step takes the bot's token and not GITHUB_TOKEN
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "GH_TOKEN: ${{ steps.bot.outputs.token }}", "GH_TOKEN: ${{ github.token }}"), "does not take the bot's token as its GH_TOKEN");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "GH_TOKEN: ${{ steps.bot.outputs.token }}", "GH_TOKEN: ${{ github.token }}"), "uses GITHUB_TOKEN");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      TAG: ${{ needs.plan.outputs.tag }}\n", "      TAG: ${{ needs.plan.outputs.tag }}\n      GH_TOKEN: ${{ github.token }}\n"), "uses GITHUB_TOKEN");
+    // the minted token reaches no other step of `tag` and no other job
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      TAG: ${{ needs.plan.outputs.tag }}\n", "      TAG: ${{ needs.plan.outputs.tag }}\n      GH_TOKEN: ${{ steps.bot.outputs.token }}\n"), "other than once");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ steps.bot.outputs.token }}"), "other than once");
+    // nor is the key read, or the token minted, in any other job
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}"), "appears other than once");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than once, in `tag`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x tool/release\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than once, in `tag`");
+    // and publish still holds the job token's write, which creates no tag
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      contents: write\n", "      contents: read\n"), "`publish` does not hold `contents: write`");
 }
 
 test "rule: tag and publish run under their exact if" {

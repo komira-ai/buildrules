@@ -106,6 +106,10 @@ fn buckconfig(a: std.mem.Allocator, cell: []const u8, src: Source) ![]u8 {
         \\  sqlite_materializer_state = true
         \\  defer_write_actions = true
         \\
+        \\[http]
+        \\  connect_timeout_ms = 30000
+        \\  read_timeout_ms = 120000
+        \\
         \\[project]
         \\  ignore = buck-out, .git
         \\

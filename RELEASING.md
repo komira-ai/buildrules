@@ -18,16 +18,16 @@ one invocation each. `ci/release_check.zig` and `ci/stages_check.zig` (part of `
 | `plan` | read-only; decides whether this commit is released and which version; creates nothing | read |
 | `archive` | `git archive` of the tested commit (its sha, not a tag) under `buildrules-<planned version>/`, compressed by the tool's own gzip, `SHA256SUMS`, and a build provenance attestation of both files | `id-token`, `attestations` write |
 | `verify` | read-only; checks everything below before a file is published | read |
-| `tag` | the annotated tag at that sha, made only after the archive is verified. A tag that exists at the sha is kept; one at another commit fails the job | `contents: write` |
+| `tag` | the annotated tag at that sha, made only after the archive is verified, with the release bot's token (see "The tag ruleset"). A tag that exists at the sha is kept; one at another commit fails the job | read; the write is the bot's token, minted in this job and used by the tag step alone |
 | `site` | read-only; the page of the release (the pin snippet) as an artifact; nothing deploys it | read |
 | `publish` | needs `tag` and `verify`; checks the tag peels to the verified sha, then creates the GitHub release from the verified files | `contents: write` |
 
 The order is `gate`, `beta`, `gamma`, `plan`, `archive`, `verify`, `tag`, `publish` (`site` after `tag` and `verify`); a job runs only if the one before
 it succeeded. **Nothing before `tag` waits for it, so a failure in the archive, its attestation or its verification leaves no tag behind**: the tag is the
 first thing in the pipeline that cannot be taken back, and it is made last but for the release (`ci/release_check.zig` refuses a `needs: tag` in any job before it).
-A write scope
-exists only in `tag` and `publish` (`contents`), in `archive` (`id-token`, `attestations`), and `id-token` also in `gamma` and in the call of `beta`
-(the farm's network trusts the job's OIDC token; neither has `contents: write`), each of `tag` and `publish` under an exact `if:`
+A `GITHUB_TOKEN` write scope
+exists only in `publish` (`contents`), in `archive` (`id-token`, `attestations`), and `id-token` also in `gamma` and in the call of `beta`
+(the farm's network trusts the job's OIDC token; neither has `contents: write`); `tag` and `publish` are each under an exact `if:`
 (a push to `main`, not a fork, and a commit the plan released). The jobs that write run no buck2 and use only the checkout
 and artifact-download actions; `gamma` runs no buck2 itself, the stage tool does. Every action is pinned by commit, but one: the farm-connect
 action is checked out of the repository and commit that two repository variables name, the checkout is verified to be that commit before the action
@@ -98,6 +98,7 @@ mopm repository has one and the other repository planned for this stage does not
 | `GAMMA_REPOS` | the repositories to build, as `owner/name owner/name`, in order |
 | `GAMMA_TARGETS` | optional; the targets to build in each (`//...`) |
 | `FARM_TLS` | optional; `true` when the farm speaks TLS (default `false`) |
+| `RELEASE_BOT_APP_ID` | the App id of the release bot whose token the `tag` job makes the tag with (with the secret `RELEASE_BOT_PRIVATE_KEY`; see "The tag ruleset"); not the farm's, and read by `tag` alone |
 
 No endpoint or property set is written in this repository, and the farm's values are passed to steps as `${{ vars.X != '' }}` or read from the file the
 farm-connect action writes, so none is printed in a log by this repository's workflows. `FARM_ADDRESS` and `FARM_CONNECT_REF` together turn on the beta farm leg (it is skipped, with a notice, when either is empty; gamma fails instead).
@@ -190,6 +191,39 @@ gh attestation verify buildrules-0.0.1.tar.gz --repo OWNER/REPO
 
 **The tag and the hash, written down.** Keep `v0.0.1` and the sha256 from the release notes in your own pin file; the commit above is the
 same fact in git's terms.
+
+## The tag ruleset
+
+A ruleset on the repository lets only one GitHub App, the release bot (the repository owner's release bot, installed on this repository), create, update or delete a
+`v*` tag; GitHub does not accept the Actions integration as a bypass. So the `tag` job holds `contents: read` from `GITHUB_TOKEN` and mints the bot's
+installation token with `actions/create-github-app-token` (pinned by commit), restricted to this repository (`owner: ${{ github.repository_owner }}`, `repositories: buildrules`)
+and to `permission-contents: write`, from two things the repository owner creates **before the next release run**:
+
+| name | kind | what |
+|---|---|---|
+| `RELEASE_BOT_APP_ID` | repository variable | the App id of the release bot |
+| `RELEASE_BOT_PRIVATE_KEY` | repository secret | the App's private key (PEM) |
+
+Only the `tag` step receives that token (`GH_TOKEN: ${{ steps.bot.outputs.token }}`); `publish` keeps `GITHUB_TOKEN` with `contents: write`, which is enough
+because `gh release create --verify-tag` aborts when the tag does not exist and creates no tag (the tool passes it, `tools/release/cmds.zig`). If either name is
+missing the token step fails, `tag` is red, **no tag is made and nothing is published**; fix the name and re-run the failed jobs. `ci/release_check.zig` holds
+the workflow to all of this: `tag` is the only job that mints the token, with exactly these inputs, the secret is read once and in that job, the token output is
+used by the tag step alone, `tag` holds `contents: read` and no job but `publish` may hold `contents: write`.
+
+## Downloads that fail
+
+Every pin is a download (sha256 and size checked), and the second beta build starts with no `buck-out`, so it downloads all of them again. Three layers keep an
+upstream host that drops a request from blocking a release, and none of them can change the bytes (the hash is checked on every path):
+
+- **Timeouts.** buck2's own defaults are a 5 s connect and a 10 s read timeout (`DEFAULT_CONNECT_TIMEOUT_MS`, `DEFAULT_READ_TIMEOUT_MS` in the daemon), and buck2 itself retries
+  a failed download three times (2, 4 and 8 s). The first release failed with `Timed out while making request ... after 5 seconds` on all three. The repository and every
+  repository `buildrules init` writes now set `[http] connect_timeout_ms = 30000` and `read_timeout_ms = 120000`.
+- **Retry in the stage tool.** A beta `buck2 build` that fails with buck2's `materializing HTTP resource` error AND a transport cause (a timeout, a refused or reset
+  connection, a 5xx or 429) is made again, up to 3 times, waiting 20, 40 and 80 s. A compile error, a failed test, a wrong hash, a determinism difference, or a test
+  whose own output says "timed out" is **not** retried: the pair is required. The first retry asks the same host; the second and third pass
+  `-c buildrules.url_map=...` (`mirror_map` in `tools/stage/beta.zig`) so the pins come from their mirrors.
+- **Mirrors** (`docs/pins.md`, "Mirrors"): where a pin has a host that serves the identical bytes, the map names it. `pinned_file` applies `buildrules.url_map` to every
+  download it declares.
 
 ## When something fails
 

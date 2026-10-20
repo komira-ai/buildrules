@@ -261,6 +261,7 @@ is part of `MANIFEST_SHA256`); the rules compare the table with the pins. `sync`
                        target:buildrules//...->buildrules//platforms:linux_x86_64
 [build]            execution_platforms = CELL//platforms:exec
 [buck2]            materializations = deferred   sqlite_materializer_state = true   defer_write_actions = true
+[http]             connect_timeout_ms = 30000   read_timeout_ms = 120000   (buck2 defaults to 5 s to connect; a pinned download is retried by buck2 3 times, then fails)
 [project]          ignore = buck-out, .git
 ```
 
