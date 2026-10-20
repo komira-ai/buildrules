@@ -460,6 +460,13 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
     if (std.mem.indexOf(u8, workflow, "write-all") != null) try add(a, &f, "`write-all` is granted", .{});
     if (std.mem.indexOf(u8, workflow, "pull_request_target") != null) try add(a, &f, "`pull_request_target` runs fork code with the base repository's token", .{});
     if (std.mem.indexOf(u8, workflow, "secrets.") != null) try add(a, &f, "the workflow reads a secret", .{});
+    // This workflow runs for every pull request and as the gate of release.yml: no job of it declares an environment. The only environment of the
+    // repository, `release`, holds the release bot's key and belongs to the jobs of release.yml that read it (ci/release_check.zig).
+    var lines = std.mem.splitScalar(u8, workflow, '\n');
+    while (lines.next()) |line| {
+        const l = std.mem.trimLeft(u8, line, " ");
+        if (std.mem.startsWith(u8, l, "environment:")) try add(a, &f, "a job declares an `environment:` (only the jobs of release.yml that read the release bot's key do)", .{});
+    }
 
     // Triggers and runner.
     if (!hasLine(workflow, "  pull_request:")) try add(a, &f, "`on: pull_request` is missing", .{});
@@ -701,6 +708,9 @@ test "a broader token, a fork-code trigger or a secret is found" {
     try expectFinding(a, r, try mutate(a, r.wf, "permissions:\n  contents: read\n", ""), "permissions");
     try expectFinding(a, r, try mutate(a, r.wf, "  pull_request:", "  pull_request_target:"), "pull_request_target");
     try expectFinding(a, r, try mutate(a, r.wf, "persist-credentials: false", "token: ${{ secrets.X }}"), "secret");
+    // mutants: this workflow declares an environment, the release one or another
+    try expectFinding(a, r, try mutate(a, r.wf, "runs-on: ubuntu-latest", "runs-on: ubuntu-latest\n    environment: release"), "declares an `environment:`");
+    try expectFinding(a, r, try mutate(a, r.wf, "runs-on: ubuntu-latest", "runs-on: ubuntu-latest\n    environment: prod"), "declares an `environment:`");
 }
 
 test "a missing trigger or runner is found" {
