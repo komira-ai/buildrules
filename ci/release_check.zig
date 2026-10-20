@@ -73,6 +73,8 @@ const tool_runs = [_][2][]const u8{
 /// The actions a job that writes may use; `tag` also mints the release bot's token.
 const write_job_actions = [_][]const u8{ "actions/checkout", "actions/download-artifact" };
 const app_token_action = "actions/create-github-app-token";
+/// The environment that holds the release bot's key (restricted to main); declared by the jobs that read `RELEASE_BOT_*` and by no other.
+const release_environment = "release";
 
 /// The step of `tag` that mints the release bot's token: every input exact. The v* tag ruleset lets only that App create a tag, so the tag
 /// is made with this token and not with GITHUB_TOKEN; the token is for this repository alone and for contents.
@@ -132,6 +134,7 @@ pub const Job = struct {
     uses: ?[]const u8 = null,
     group: ?[]const u8 = null,
     cancel: ?[]const u8 = null,
+    environment: ?[]const u8 = null,
 
     pub fn text(self: Job, a: std.mem.Allocator) ![]u8 {
         return std.mem.join(a, "\n", self.lines.items);
@@ -216,6 +219,8 @@ pub fn parseJobs(a: std.mem.Allocator, wf: []const u8) ![]Job {
                 while (names.next()) |n| try j.needs.append(n);
             } else if (std.mem.eql(u8, key, "if")) {
                 j.if_expr = val;
+            } else if (std.mem.eql(u8, key, "environment")) {
+                j.environment = stripComment(val);
             } else if (std.mem.eql(u8, key, "uses")) {
                 j.uses = stripComment(val);
             } else if (std.mem.eql(u8, key, "permissions")) {
@@ -345,6 +350,17 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             } else if (!std.mem.eql(u8, p.level, "read") and !std.mem.eql(u8, p.level, "none")) {
                 try add(a, &f, "the job `{s}` has `{s}: {s}`, which is not read, write or none", .{ j.name, p.scope, p.level });
             }
+        }
+    }
+    // The release bot's key is an environment secret of `release_environment`, restricted to main: exactly the jobs that read `RELEASE_BOT_*` declare it, and no
+    // other job declares an environment.
+    for (jobs) |*j| {
+        const jt = try j.text(a);
+        if (std.mem.indexOf(u8, jt, "RELEASE_BOT") != null) {
+            if (j.environment == null or !std.mem.eql(u8, j.environment.?, release_environment))
+                try add(a, &f, "the job `{s}` reads `RELEASE_BOT_*` but does not declare `environment: {s}` (it has {s})", .{ j.name, release_environment, j.environment orelse "none" });
+        } else if (j.environment) |e| {
+            try add(a, &f, "the job `{s}` declares `environment: {s}`; only the jobs that read `RELEASE_BOT_*` (`tag`, `bump`) declare one", .{ j.name, e });
         }
     }
     // `permission-contents: write` and `permission-pull-requests: write` are inputs of the App-token action, not grants of a job's token: they are counted by their own rules below.
@@ -779,6 +795,7 @@ const fixture_wf =
     \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
+    \\    environment: release
     \\    concurrency:
     \\      group: release
     \\      cancel-in-progress: false
@@ -844,6 +861,7 @@ const fixture_wf =
     \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
+    \\    environment: release
     \\    permissions:
     \\      contents: read
     \\    env:
@@ -1058,6 +1076,24 @@ test "rule: write scopes only where they belong" {
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      contents: write\n", "      contents: read\n"), "`publish` does not hold `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      id-token: write\n", "      id-token: read\n"), "`archive` does not hold `id-token: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      attestations: write\n", ""), "`archive` does not hold `attestations: write`");
+}
+
+test "rule: exactly the jobs that read the release bot's key declare the environment release, and no other job declares one" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const env = "    environment: release\n";
+    const reads = "reads `RELEASE_BOT_*` but does not declare `environment: release`";
+    // mutant: tag without it; bump without it
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", env, ""), "the job `tag` " ++ reads);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", env, ""), "the job `bump` " ++ reads);
+    // mutant: the wrong name, on either
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", env, "    environment: relase\n"), "the job `tag` " ++ reads);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", env, "    environment: prod\n"), "the job `bump` " ++ reads);
+    // mutant: the environment on a job that does not read the key
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "    timeout-minutes: 15\n", "    timeout-minutes: 15\n" ++ env), "the job `publish` declares `environment: release`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "    timeout-minutes: 15\n", "    timeout-minutes: 15\n" ++ env), "the job `verify` declares `environment: release`");
 }
 
 test "rule: the tag is made with the release bot's token, minted by `tag` alone with exact inputs, and used by the tag step alone" {

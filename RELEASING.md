@@ -99,7 +99,7 @@ mopm repository has one and the other repository planned for this stage does not
 | `GAMMA_REPOS` | the repositories to build, as `owner/name owner/name`, in order |
 | `GAMMA_TARGETS` | optional; the targets to build in each (`//...`) |
 | `FARM_TLS` | optional; `true` when the farm speaks TLS (default `false`) |
-| `RELEASE_BOT_APP_ID` | the App id of the release bot whose token the `tag` job makes the tag with (with the secret `RELEASE_BOT_PRIVATE_KEY`; see "The tag ruleset"); not the farm's, and read by `tag` and `bump` |
+| `RELEASE_BOT_APP_ID` | the App id of the release bot whose token the `tag` job makes the tag with (with the secret `RELEASE_BOT_PRIVATE_KEY`, an environment secret of `release`; see "The tag ruleset"); not the farm's, and read by `tag` and `bump` |
 | `BUMP_REPOSITORY` | the name, without its owner, of the internal repository whose `buildrules` submodule the `bump` job moves to each release (see "The submodule bump"); read by `bump` alone |
 
 No endpoint or property set is written in this repository, and the farm's values are passed to steps as `${{ vars.X != '' }}` or read from the file the
@@ -204,7 +204,9 @@ and to `permission-contents: write`, from two things the repository owner create
 | name | kind | what |
 |---|---|---|
 | `RELEASE_BOT_APP_ID` | repository variable | the App id of the release bot |
-| `RELEASE_BOT_PRIVATE_KEY` | repository secret | the App's private key (PEM) |
+| `RELEASE_BOT_PRIVATE_KEY` | secret of the environment `release` | the App's private key (PEM); not a repository secret |
+
+The key lives in the environment `release`, restricted to the `main` branch (deployment branches: `main` only), so a workflow run from any other branch cannot read it. The repository-level copy is removed (the owner's held script creates the environment, moves the secret into it and deletes the repository copy). `tag` and `bump`, the only jobs that read `RELEASE_BOT_*`, declare `environment: release`; no other job declares an environment. `ci/release_check.zig` holds this: exactly the jobs that read `RELEASE_BOT_*` declare `environment: release`, any other job with an environment is a finding, a job that reads them without it is a finding, and `ci/workflow_check.zig` refuses an `environment:` in `ci.yml`. Until that script has run, a job that declares `environment: release` still reads the repository-level secret (GitHub creates an empty environment on first use), so the order is: merge the change, then run the script.
 
 Only the `tag` step receives that token (`GH_TOKEN: ${{ steps.bot.outputs.token }}`); `publish` keeps `GITHUB_TOKEN` with `contents: write`, which is enough
 because `gh release create --verify-tag` aborts when the tag does not exist and creates no tag (the tool passes it, `tools/release/cmds.zig`). If either name is
