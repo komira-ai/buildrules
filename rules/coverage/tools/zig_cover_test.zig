@@ -155,6 +155,24 @@ test "blocks: counted per source position, not merged: an arm that never ran is 
     try t.expectEqualStrings("# blocks v2\npkg/a.zig\t3\t1\t0\t1\npkg/a.zig\t10\t5\t1\t2\npkg/a.zig\t10\t9\t1\t1\npkg/b.zig\t9\t3\t0\t1\n", out);
 }
 
+test "blocks: a position whose first block ran and whose second did not counts one of two, whatever the order" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const raw = HEAD ++
+        "/w/pkg/a.zig\t20\t2\t3\tf\n" ++ // the first block at this position ran
+        "/w/pkg/a.zig\t20\t2\t0\tf\n" ++ // the second did not: it must not be counted as run because the first was
+        "/w/pkg/a.zig\t21\t2\t0\tf\n" ++
+        "/w/pkg/a.zig\t21\t2\t3\tf\n" ++ // the other order
+        "/w/pkg/a.zig\t22\t2\t3\tf\n" ++
+        "/w/pkg/a.zig\t22\t2\t3\tf\n" ++ // both ran
+        "/w/pkg/a.zig\t23\t2\t0\tf\n" ++
+        "/w/pkg/a.zig\t23\t2\t0\tf\n"; // neither
+    const bs = try Z.blocks(a, raw, "/w", &.{"pkg/a.zig"});
+    const out = try Z.render(a, bs);
+    try t.expectEqualStrings("# blocks v2\npkg/a.zig\t20\t2\t1\t2\npkg/a.zig\t21\t2\t1\t2\npkg/a.zig\t22\t2\t2\t2\npkg/a.zig\t23\t2\t0\t2\n", out);
+}
+
 test "blocks: what is not the code under test is left out" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();

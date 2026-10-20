@@ -1568,3 +1568,105 @@ test "busybox tar, an independent reader, lists the archive this tool writes, wi
     try t.expectEqual(@as(u8, 0), r.term.Exited);
     try t.expectEqualStrings("buildrules-0.0.1/\nbuildrules-0.0.1/BUCK\nbuildrules-0.0.1/rules/zig.bzl\n", r.stdout);
 }
+
+/// Runs `ctx.call(allocator)` with the allocator failing at its 1st, 2nd, ... allocation, until a run meets no failure. `call` answers whether the step
+/// reported success (a plan, a tag, an archive, a publish that returned; a verify with no finding). A run in which an allocation failed must
+/// not have reported success: an out-of-memory that a step swallowed would pass a release no check had finished.
+fn sweepOutOfMemory(ctx: anytype) !void {
+    var backing = std.heap.ArenaAllocator.init(t.allocator);
+    defer backing.deinit();
+    var i: usize = 0;
+    while (i < 100_000) : (i += 1) {
+        _ = backing.reset(.retain_capacity);
+        var fa = std.testing.FailingAllocator.init(backing.allocator(), .{ .fail_index = i });
+        const reported = ctx.call(fa.allocator()) catch false;
+        if (!fa.has_induced_failure) {
+            try t.expect(reported);
+            try t.expect(i > 0);
+            return;
+        }
+        if (reported) {
+            std.debug.print("the step reported success although allocation {d} failed\n", .{i});
+            return error.SwallowedOutOfMemory;
+        }
+    }
+    return error.SweepDidNotEnd;
+}
+
+test "out of memory: plan, tag, archive, verify and publish fail or find, and never report success" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const tar_bytes = try tar.build(a, &sample_tar_entries);
+
+    const Plan_ = struct {
+        a: std.mem.Allocator,
+        fn call(self: @This(), x: std.mem.Allocator) !bool {
+            const refs = "v0.0.2\ttag\t" ++ "2" ** 40 ++ "\t" ++ sha_b ++ "\n" ++ tags_v1 ++ "latest\ttag\t" ++ "3" ** 40 ++ "\t" ++ sha_c ++ "\nv1\tcommit\t" ++ sha_c ++ "\t\n";
+            var fake = Fake{ .a = self.a, .rules = &.{
+                .{ .needle = "for-each-ref", .out = ok(refs) },
+                .{ .needle = "merge-base --is-ancestor " ++ sha_b ++ " " ++ sha_a },
+                .{ .needle = "diff --name-only -z " ++ sha_b ++ " " ++ sha_a, .out = ok("README.md\x00rules/zig/zig.bzl\x00") },
+            } };
+            const r = try plan(x, fake.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0" });
+            _ = try planOutputs(x, r);
+            return r.released;
+        }
+    };
+    try sweepOutOfMemory(Plan_{ .a = a });
+
+    const Tag_ = struct {
+        a: std.mem.Allocator,
+        fn call(self: @This(), x: std.mem.Allocator) !bool {
+            var fake = Fake{ .a = self.a, .rules = &.{
+                .{ .needle = "rev-parse", .out = fail(1, "") },
+                .{ .needle = "git/tags", .out = ok(sha_c ++ "\n") },
+                .{ .needle = "git/refs" },
+            } };
+            return (try createTag(x, fake.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.1", .sha = sha_a })) == .created;
+        }
+    };
+    try sweepOutOfMemory(Tag_{ .a = a });
+
+    const Archive_ = struct {
+        a: std.mem.Allocator,
+        tar_bytes: []const u8,
+        fn call(self: @This(), x: std.mem.Allocator) !bool {
+            var fake = Fake{ .a = self.a, .rules = &.{.{ .needle = " archive ", .out = ok(self.tar_bytes) }} };
+            const b = try archive(x, fake.io(), "/w", "v0.0.1", sha_a);
+            return b.name.len != 0;
+        }
+    };
+    try sweepOutOfMemory(Archive_{ .a = a, .tar_bytes = tar_bytes });
+
+    const r = try releaseOf(a, tar_bytes, "v0.0.1", "0.0.1");
+    const Verify_ = struct {
+        a: std.mem.Allocator,
+        tar_bytes: []const u8,
+        r: Release,
+        fn call(self: @This(), x: std.mem.Allocator) !bool {
+            const rules = verifyRules(self.tar_bytes, tree_ok, ok(""), "tag\n", peeled_a);
+            var fake = Fake{ .a = self.a, .rules = &rules };
+            const f = try verify(x, fake.io(), opts(self.r));
+            return f.items.len == 0;
+        }
+    };
+    try sweepOutOfMemory(Verify_{ .a = a, .tar_bytes = tar_bytes, .r = r });
+
+    const c = try publishCase(a);
+    const Publish_ = struct {
+        a: std.mem.Allocator,
+        c: Case,
+        fn call(self: @This(), x: std.mem.Allocator) !bool {
+            var fake = Fake{ .a = self.a, .rules = &.{
+                .{ .needle = "rev-parse", .out = ok(peeled_a) },
+                .{ .needle = "releases/tags/v0.0.2", .out = fail(1, "gh: Not Found (HTTP 404)") },
+                .{ .needle = "log --no-merges", .out = ok("rules: one thing\nci: another\n") },
+                .{ .needle = "releases?per_page", .out = ok("v0.0.1\n") },
+                .{ .needle = "release create" },
+            } };
+            return (try publish(x, fake.io(), self.c.o)) == PublishResult.created;
+        }
+    };
+    try sweepOutOfMemory(Publish_{ .a = a, .c = c });
+}

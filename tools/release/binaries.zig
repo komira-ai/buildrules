@@ -1069,3 +1069,80 @@ test "sign --dry makes every check of sign and signs nothing" {
     try t.expectError(error.StrayTarball, signWith(a, fake.io(), dir.path, "cosign", true));
     try t.expectEqual(@as(usize, 0), fake.calls.items.len);
 }
+
+/// Runs `ctx.call(allocator)` with the allocator failing at its 1st, 2nd, ... allocation, until a run meets no failure. A run in which an allocation
+/// failed must not report success: a swallowed out-of-memory would package, record, accept or list a release no check had finished.
+fn sweepOutOfMemory(ctx: anytype) !void {
+    var backing = std.heap.ArenaAllocator.init(t.allocator);
+    defer backing.deinit();
+    var i: usize = 0;
+    while (i < 100_000) : (i += 1) {
+        _ = backing.reset(.retain_capacity);
+        var fa = std.testing.FailingAllocator.init(backing.allocator(), .{ .fail_index = i });
+        const reported = ctx.call(fa.allocator()) catch false;
+        if (!fa.has_induced_failure) {
+            try t.expect(reported);
+            try t.expect(i > 0);
+            return;
+        }
+        if (reported) {
+            std.debug.print("the step reported success although allocation {d} failed\n", .{i});
+            return error.SwallowedOutOfMemory;
+        }
+    }
+    return error.SweepDidNotEnd;
+}
+
+test "out of memory: package, record, tested and sums fail, and never report success" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fx = try Fixture.make(a);
+    defer fx.dir.tmp.cleanup();
+
+    const Package_ = struct {
+        a: std.mem.Allocator,
+        fx: *Fixture,
+        fn call(self: @This(), x: std.mem.Allocator) !bool {
+            const o = try self.fx.opts(self.a, "linux", "linux-x86_64", .native);
+            const p = try package(x, self.fx.fake.io(), o);
+            return p.name.len != 0;
+        }
+    };
+    try sweepOutOfMemory(Package_{ .a = a, .fx = &fx });
+
+    var dir = try Dir.make(a);
+    defer dir.tmp.cleanup();
+    try dir.release(a);
+    const tb = try join(a, dir.path, "buildrules-cli-" ++ V ++ "-macos-arm64.tar.gz");
+    const rec = try join(a, dir.path, "rec");
+
+    const Record_ = struct {
+        tb: []const u8,
+        rec: []const u8,
+        fn call(self: @This(), x: std.mem.Allocator) !bool {
+            return (try record(x, self.tb, self.rec, null)).len != 0;
+        }
+    };
+    try sweepOutOfMemory(Record_{ .tb = tb, .rec = rec });
+
+    try recordTested(a, &dir);
+    const Tested_ = struct {
+        dir: []const u8,
+        rec: []const u8,
+        fn call(self: @This(), x: std.mem.Allocator) !bool {
+            try tested(x, self.dir, self.rec);
+            return true;
+        }
+    };
+    try sweepOutOfMemory(Tested_{ .dir = dir.path, .rec = rec });
+
+    const Sums_ = struct {
+        dir: []const u8,
+        fn call(self: @This(), x: std.mem.Allocator) !bool {
+            const d = try sums(x, self.dir);
+            return d.version.len != 0;
+        }
+    };
+    try sweepOutOfMemory(Sums_{ .dir = dir.path });
+}
