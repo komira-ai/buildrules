@@ -301,10 +301,11 @@ mopm's answer as cached Buck2 actions, as it runs rustc on Cargo's answer.
 `mopm-toolchain.toml` names the mopm and Mojo versions. It is required (as `rust-toolchain.toml` is),
 found by walking up from the package directory.
 
-The Mojo rules and mopm's own releases have different clocks. While the mopm row of
-`rules/mopm/pins.bzl` is marked `release_pending`, the pin is a stand-in built from a development
-tree, and its hash is not that of the published mopm release at the same URL. Re-pointing the pin at
-the published release is planned (section 9); the row loses `release_pending` when it is done.
+The Mojo rules and mopm's own releases have different clocks. A mopm row of `rules/mopm/pins.bzl`
+marked `release_pending` is a stand-in built from a development tree, and its hash is not that of
+the published mopm release at the same URL; the Mojo beta leg is skipped while a row is marked. A row
+without that mark is the published release, and the leg runs. The file shows which it is, and a test
+fails if the file, `beta/mojo/STEPS` and `RELEASING.md` disagree.
 
 ### 5.6 The Zig family and C/C++
 
@@ -345,7 +346,7 @@ download. Where the tools come from:
 | Zig | `rules/pins/pins.bzl` | 0.12.0 (default), 0.15.2 |
 | busybox (the shell and file utilities) | `rules/pins/pins.bzl` | 1.35.0, static |
 | Node.js | `rules/node/pins.bzl` | 24.21.0, linux x64 |
-| mopm | `rules/mopm/pins.bzl` | 0.0.1 (a stand-in while the row is marked `release_pending`; see section 5.5) |
+| mopm | `rules/mopm/pins.bzl` | 0.0.1 (a stand-in only if the row is marked `release_pending`; see section 5.5) |
 | Mojo | not pinned by buildrules: named by mopm's graph | the one version mopm pins |
 | libgcc, libstdcxx (conda-forge) | `rules/pins/pins.bzl` | 15.3.0 |
 
@@ -385,8 +386,8 @@ cached under a lower level's key.
   (256-bit AVX2) instructions at v3 or v4 and none below. A flag that never reached the compiler
   would otherwise leave a green, cached, wrong build.
 
-Only the x86-64 half is exercised. The Arm rows are data: there is no Arm worker and no Arm
-execution platform, and an Arm test finds no platform and is refused.
+Only the x86-64 half is exercised. The Arm rows are data: there is no Arm worker and no
+execution platform that carries an Arm level, and an Arm test finds no platform and is refused.
 
 ### 5.9 Where actions run
 
@@ -541,10 +542,8 @@ is built from the source archive on your farm or machine (part 2). Other channel
 
 - Release binaries for the command line, a Homebrew formula, an apt repository, an install script:
   none exist for buildrules (all planned). The command line is built from the source archive.
-- Pinning the published mopm release (planned). Until then the Mojo beta leg is skipped (`beta.yml`
-  says so), and it has not run end to end; it is the first thing to watch when the pin moves.
-- Arm and macOS hosts (planned): their beta legs, which `beta.yml` declares and skips, and Arm
-  execution platforms.
+- Arm and macOS hosts (planned): their beta legs, which `beta.yml` declares and skips, and execution
+  platforms for the Arm instruction-set levels.
 - A published, deployed `buildrules.dev` (the site is built and tested; its hosting stack is a step
   the repository owner runs).
 

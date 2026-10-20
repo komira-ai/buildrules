@@ -100,6 +100,44 @@ describe('pins stated in the pages are the pins in the sources', () => {
       expect({ who, awslc: t.includes('AWS-LC 1.39.0') }).toEqual({ who, awslc: true });
     }
   });
+  test('the How pages and docs/how.md state the default Zig, the second Zig and its target', () => {
+    // the sentence is one claim; both texts repeat it, so a mutated version in either is caught here
+    expect(pins).toContain('download/0.12.0/zig-linux-x86_64-0.12.0.tar.xz');
+    expect(pins).toContain('download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz');
+    expect(repoFile('rules/pins/pins.bzl')).toMatch(/"zig": \{[^}]*0\.12\.0/);
+    expect(repoFile('rules/pins/pins.bzl')).toMatch(/"zig_next": \{[^}]*0\.15\.2/);
+    for (const [who, t] of ALL.filter(([w]) => /how/i.test(w))) {
+      const flat = t.replace(/\s+/g, ' ');
+      expect({ who, has: flat.includes('Zig 0.12.0 by default; for 0.15.2 add `zig = "buildrules//rules/pins:zig_next"` to both rules') }).toEqual({ who, has: true });
+    }
+  });
+  test('every version a text states next to a pinned tool is a version the sources pin (or a named example of one that is not)', () => {
+    const rustPins = [...rust.matchAll(/^(?:RUST_DEFAULT|RUST_OLDEST) = "([\d.]+)"/gm)].map((m) => m[1]);
+    const tools: [string, RegExp, string[]][] = [
+      ['Rust', /\b(?:Rust|rustc)\b/g, [...rustPins, '1.86.0']], // 1.86.0 is the page's example of a version that is not pinned
+      ['Zig', /\bZig\b|\bzig\b/g, [...pins.matchAll(/download\/([\d.]+)\//g)].map((m) => m[1])],
+      ['Node.js', /\bNode(?:\.js)?\b/g, [(/"version": "([\d.]+)"/.exec(node) as RegExpExecArray)[1]]],
+      ['busybox', /\bbusybox\b/g, [(/busybox[^]*?([\d.]+)-x86_64-linux-musl/.exec(pins) as RegExpExecArray)[1]]],
+      ['kcov', /\bkcov\b/g, []],
+      ['mopm', /\bmopm\b/g, ['0.0.1', '0.0.2']], // 0.0.2 is the page's example of a version that is not pinned
+    ];
+    let seen = 0;
+    for (const [who, t] of ALL) {
+      const flat = t.replace(/\s+/g, ' ');
+      for (const [tool, name, allowed] of tools) {
+        for (const m of flat.matchAll(name)) {
+          // the first dotted number within 60 characters after the name, when no other pinned tool's name comes first
+          const after = flat.slice(m.index! + m[0].length, m.index! + m[0].length + 60);
+          const v = /\b(\d+\.\d+\.\d+)\b/.exec(after);
+          if (v === null) continue;
+          if (/[A-Za-z]{3,}.*(?:Rust|rustc|Zig|zig|Node|busybox|kcov|mopm|Mojo)/.test(after.slice(0, v.index))) continue;
+          seen++;
+          expect({ who, tool, v: v[1], pinned: allowed.includes(v[1]) }).toEqual({ who, tool, v: v[1], pinned: true });
+        }
+      }
+    }
+    expect(seen).toBeGreaterThanOrEqual(12);
+  });
   test('the pin files the pages name hold the tools the pages put in them', () => {
     // the table of the Why page: tool -> file
     for (const f of ['rules/rust/pins.bzl', 'rules/pins/pins.bzl', 'rules/node/pins.bzl', 'rules/mopm/pins.bzl']) {
@@ -162,6 +200,28 @@ describe('where actions run', () => {
     expect(whyText).toContain('it is refused when a farm is also configured');
     expect(howText).toContain('Local mode is refused if an engine or CAS address or a worker property set is also configured');
     expect(howText).toContain('Any other value is refused');
+    // the same sentences in the Markdown documents, whose lines wrap
+    const flat = (t: string): string => t.replace(/\s+/g, ' ');
+    expect(flat(WHY_MD)).toContain('It is refused when a farm is also configured');
+    expect(flat(HOW_MD)).toContain('Local mode is refused if an engine or CAS address or a worker property set is also configured');
+    expect(flat(HOW_MD)).toContain('Any other value is refused');
+    expect(flat(HOW_MD)).toContain('`remote` (the default, also when unset) or `local`');
+    expect(flat(howText)).toContain('`remote` (the default, also when unset) or `local`');
+  });
+  test('a host that is not linux x86_64 gets no ISA platform, with or without a host table', () => {
+    // A tree may also hold platforms that local mode registers on another host (`host_platforms`); that host still gets no ISA platform,
+    // because the texts say no execution platform carries an Arm level.
+    expect(plat).toMatch(/def buildrules_execution_platforms\(name, linux_x86_64, isa_platforms = \{\}, (?:host_platforms = \{\}, )?visibility = None\):/);
+    if (plat.includes('host_platforms')) expect(plat).toMatch(/local_platform = host_platforms\[host\]\n\s*isa_platforms = \{\}/);
+    expect(repoFile('rules/isa.bzl')).toMatch(/ISA_LEVELS\[l\]\["family"\] == "x86_64"/);
+    let seen = 0;
+    for (const [who, t] of ALL) {
+      const flat = t.replace(/\s+/g, ' ');
+      if (!/there is no Arm worker/i.test(flat)) continue;
+      seen++;
+      expect({ who, carries: flat.includes('no execution platform that carries an Arm level') }).toEqual({ who, carries: true });
+    }
+    expect(seen).toBe(4);
   });
 });
 
@@ -244,6 +304,18 @@ describe('the release pipeline', () => {
     const table = WHY.blocks.find((b) => b.kind === 'table' && b.head[0] === 'Stage') as Extract<Block, { kind: 'table' }>;
     expect(table.rows.map((r) => r[0])).toEqual([...stages, 'bump']);
   });
+  test('the stage table of docs/why.md says what the Why page table says, row by row', () => {
+    const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
+    const md = WHY_MD.slice(WHY_MD.indexOf('## 8. Releases')).split('\n')
+      .filter((l) => new RegExp(`^\\| (?:${[...stages, 'bump'].join('|')}) \\| `).test(l))
+      .map((l) => {
+        const cells = l.replace(/^\| /, '').replace(/ \|$/, '').split(' | ');
+        return [norm(cells[0]), norm(cells.slice(1).join(' | '))];
+      });
+    const table = WHY.blocks.find((b) => b.kind === 'table' && b.head[0] === 'Stage') as Extract<Block, { kind: 'table' }>;
+    expect(md).toEqual(table.rows.map((r) => [norm(r[0]), norm(r[1])]));
+    expect(md).toHaveLength(9);
+  });
   test('verify before tag: tag needs verify, nothing before tag needs tag, publish needs both', () => {
     expect(jobBlock('tag')).toMatch(/needs: \[[^\]]*\bverify\b[^\]]*\]/);
     expect(jobBlock('publish')).toMatch(/needs: \[[^\]]*\btag\b[^\]]*\bverify\b[^\]]*\]/);
@@ -325,26 +397,65 @@ describe('what is planned is marked planned', () => {
     const release = repoFile('.github/workflows/release.yml');
     expect(release).not.toMatch(/brew\b|apt-get install buildrules|install\.sh/);
     expect(repoFile('RELEASING.md')).toContain('There are no binaries');
-    // a host other than linux x86_64 has no execution platform
-    expect(repoFile('rules/platforms.bzl')).toContain('def buildrules_execution_platforms(name, linux_x86_64, isa_platforms = {}, visibility = None):');
+    // the platforms of another host, where a tree has them, are pins and a local-mode platform; the check above ('a host that is not linux x86_64
+    // gets no ISA platform') holds either way
   });
 });
 
 describe('the mopm pin, in both states', () => {
+  // The texts say what each state is (a row marked `release_pending` is a stand-in and the Mojo beta leg is skipped; a row without the mark is the
+  // published release and the leg runs) and send the reader to the file for which one it is today, so no text goes stale when the pin moves. What
+  // must agree, in either state, is the data: the pin file, the Mojo beta steps and the RELEASING.md leg table. `disagreements` is that check; it is run
+  // on this tree and on both states made from it, so each state's rule is asserted whichever state the tree is in.
   const pins = repoFile('rules/mopm/pins.bzl');
-  const pending = /"release_pending": True/.test(pins);
   const mojoSteps = repoFile('beta/mojo/STEPS');
-  test('while the row is release_pending, the pages say so and say pinning the release is planned; once it is not, they do not', () => {
-    const planned = plannedText(WHY) + '\n' + plannedText(HOW[2]);
-    if (pending) {
-      expect(mojoSteps).toContain('planned-until mopm-release');
-      expect(planned).toMatch(/release_pending/);
-      expect(planned).toMatch(/Pinning the published (mopm )?release is planned/);
-      expect(whyText).toMatch(/stand-in/);
-      expect(HOW_MD).toMatch(/\(\*\*planned\*\*\)/);
-    } else {
-      // The pin moved: the Mojo beta leg must run. The pages' wording is conditional ("while the row is marked release_pending"), so it stays true.
-      expect(mojoSteps).not.toContain('planned-until mopm-release');
+  const releasing = repoFile('RELEASING.md');
+  const MARK = '"release_pending": True,';
+  const PLANNED_STEP = 'planned-until mopm-release';
+  const mojoRow = (r: string): string => r.split('\n').find((l) => l.startsWith('| `mojo` |')) as string;
+
+  const disagreements = (p: string, steps: string, rel: string): string[] => {
+    const pending = p.includes(MARK);
+    const out: string[] = [];
+    if (steps.includes(PLANNED_STEP) !== pending) out.push(`beta/mojo/STEPS ${pending ? 'lacks' : 'has'} ${PLANNED_STEP}`);
+    if (mojoRow(rel).includes('**planned**') !== pending) out.push(`RELEASING.md marks the mojo leg ${pending ? 'as running' : 'planned'}`);
+    return out;
+  };
+  const asPending = (p: string): string => (p.includes(MARK) ? p : p.replace(/(\n {8}"dir": "[^"]+",)/, `$1\n        ${MARK}`));
+  const asReleased = (p: string): string => p.replace(/\n\s*"release_pending": True,/, '');
+  const stepsPending = (s: string): string => (s.includes(PLANNED_STEP) ? s : `${PLANNED_STEP}\n${s}`);
+  const stepsReleased = (s: string): string => s.replace(`${PLANNED_STEP}\n`, '');
+  const relPending = (r: string): string => r.replace(mojoRow(r), '| `mojo` | a Mojo package | **planned** until mopm\'s first release |');
+  const relReleased = (r: string): string => r.replace(mojoRow(r), '| `mojo` | a Mojo package, built by the pinned mopm release | ubuntu x86_64 |');
+
+  test('this tree: the pin file, beta/mojo/STEPS and RELEASING.md say the same', () => {
+    expect(disagreements(pins, mojoSteps, releasing)).toEqual([]);
+  });
+  test('the pending state: a marked row needs the planned step and the planned table row', () => {
+    expect(disagreements(asPending(pins), stepsPending(mojoSteps), relPending(releasing))).toEqual([]);
+    expect(disagreements(asPending(pins), stepsReleased(mojoSteps), relPending(releasing))).toEqual([`beta/mojo/STEPS lacks ${PLANNED_STEP}`]);
+    expect(disagreements(asPending(pins), stepsPending(mojoSteps), relReleased(releasing))).toEqual(['RELEASING.md marks the mojo leg as running']);
+  });
+  test('the released state: an unmarked row needs neither', () => {
+    expect(asReleased(pins)).not.toContain(MARK);
+    expect(disagreements(asReleased(pins), stepsReleased(mojoSteps), relReleased(releasing))).toEqual([]);
+    expect(disagreements(asReleased(pins), stepsPending(mojoSteps), relReleased(releasing))).toEqual([`beta/mojo/STEPS has ${PLANNED_STEP}`]);
+    expect(disagreements(asReleased(pins), stepsReleased(mojoSteps), relPending(releasing))).toEqual(['RELEASING.md marks the mojo leg planned']);
+  });
+  test('the texts describe both states and name the file that decides, and none calls the release planned', () => {
+    const flat = (t: string): string => t.replace(/\s+/g, ' ');
+    for (const [who, t] of ALL) {
+      const f = flat(t);
+      expect({ who, stand: /marked `release_pending` is a stand-in/.test(f) }).toEqual({ who, stand: true });
+      expect({ who, released: /A row without that mark is the published release, and the leg runs/.test(f) }).toEqual({ who, released: true });
+      expect({ who, file: f.includes('The file shows which it is') }).toEqual({ who, file: true });
+    }
+    // nothing about mopm is a planned item: a planned note or a "(planned)" / "(**planned**)" tag beside mopm would be false once the pin is the release
+    expect(plannedText(WHY) + '\n' + HOW.map(plannedText).join('\n')).not.toMatch(/mopm|release_pending/);
+    for (const [who, t] of ALL.filter(([w]) => w.startsWith('docs/'))) {
+      for (const para of t.split(/\n\s*\n/).filter((x) => /mopm/.test(x))) {
+        expect({ who, para: para.slice(0, 60), planned: /\(planned\)|\(\*\*planned\*\*\)|is \*\*planned\*\*/.test(para) }).toEqual({ who, para: para.slice(0, 60), planned: false });
+      }
     }
   });
   test('the pin the pages name is the pin in the table', () => {

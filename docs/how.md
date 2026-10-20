@@ -361,7 +361,7 @@ buck2 build --target-platforms buildrules//platforms:linux_x86_64_v3 //examples/
 ```
 
 Levels are `x86-64-v1` to `v4` (platforms `linux_x86_64_v1` ... `v4`). Arm levels (`linux_armv8_0` ...
-`linux_armv8_4`) exist as data; there is no Arm worker or Arm execution platform, so an Arm test is
+`linux_armv8_4`) exist as data; there is no Arm worker and no execution platform that carries an Arm level, so an Arm test is
 refused. A test at a level runs on a worker that reports at least that level, so your farm must
 schedule on the `ISA` property. In local mode the test runs on your CPU, which must have the level.
 
@@ -380,8 +380,9 @@ A substitution that stops matching after a version bump fails the build.
 
 Sections 3.1 to 3.4 and 3.6 are repositories that the release pipeline's beta stage builds twice from
 nothing as a user would; the files are under `beta/` in the repository, with the commands in each
-`STEPS` file. The Mojo example (3.5) has a `beta/mojo` leg that is **planned**: it is skipped until
-the pinned mopm is a published release. Sections 3.7 and 3.8 are built from `examples/` by `//ci:matrix`.
+`STEPS` file. The Mojo example (3.5) has a `beta/mojo` leg that runs when the pinned mopm is a published
+release and is skipped while the mopm row of `rules/mopm/pins.bzl` is marked `release_pending` (section
+3.5 says which it is). Sections 3.7 and 3.8 are built from `examples/` by `//ci:matrix`.
 Replace `<origin>` and `<commit>` as in section 1.3.
 
 ### 3.1 Rust
@@ -566,11 +567,12 @@ binaries), `:coverage` (line coverage under kcov; red if a library source is in 
 `natives = {"libx.so.1": "//path:target"}`. `mopm` is separate software: see <https://mopm.dev> for
 its install and the registry.
 
-While the mopm row of `rules/mopm/pins.bzl` is marked `release_pending` (it is today), the `0.0.1` pin is a
-stand-in: its sha256 and size are those of a development build, not of the published mopm v0.0.1 release at
-the same URL. The download therefore fails its hash check, and a fresh clone cannot run this flow end to end
-until the pin is updated to the published release (**planned**). Until then, point the download at a copy of
-the stand-in tarball with `buildrules.url_map`, or pin a different mopm version you supply yourself in
+Which mopm this flow downloads is the mopm row of `rules/mopm/pins.bzl`. A row marked `release_pending` is a
+stand-in: its sha256 and size are those of a development build, not of the published mopm release at the
+same URL, so the download fails its hash check, a fresh clone cannot run this flow end to end, and the
+`beta/mojo` leg is skipped. A row without that mark is the published release, and the leg runs. The file
+shows which it is. Against a stand-in, point the download at a copy of its tarball with
+`buildrules.url_map`; with either, you can pin a different mopm version you supply yourself in
 `buildrules-pins.toml`:
 
 ```toml
