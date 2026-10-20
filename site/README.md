@@ -16,7 +16,8 @@ declarations), and nothing from `node_modules` is imported by the rendering code
 | `tools/build.ts` | the build program: render, hash the stylesheet, check, write `dist/` |
 | `static/` | the stylesheet and the icon |
 | `serve.js`, `preview.bzl` | the local preview server and the `buck2 run` rule that starts it |
-| `test/` | render tests, the link check, tests that compare the pages with the rule sources, the CLI usage text and the contract |
+| `test/` | render tests, the link check, tests that compare the pages with the rule sources, the CLI usage text and the contract; `docs_facts.test.ts` for the Why and How pages and `docs/why.md`, `docs/how.md` |
+| `tools/content/why.ts`, `how.ts` | the Why page and the three How pages: the site's copy of `docs/why.md` and `docs/how.md` |
 | `pins.toml`, `pins.lock.bzl`, `package-lock.json` | the npm packages, pinned by hash |
 
 ## Build and test
