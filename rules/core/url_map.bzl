@@ -1,7 +1,7 @@
 """`buildrules.url_map`: a machine's mirror of pinned downloads.
 
 `-c buildrules.url_map="<from-prefix>=<to-prefix> ..."` (in `.buckconfig.local`, never committed) replaces the leading part of a
-download's URL, for the downloads the Mojo family declares (the mopm tarball, the Mojo toolchain packages, registry packages).
+download's URL, for every `pinned_file` (the zig, node, rust, conda and busybox pins, the mopm tarball, the Mojo packages).
 It exists for a machine whose copy of a file is not where the pin says (a release that is not published yet, an offline
 mirror). The sha256 and size of every download are still checked, so a mirror cannot change the bytes; it changes where they
 are fetched from, and nothing in an action key.

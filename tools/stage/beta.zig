@@ -30,7 +30,30 @@ pub const Options = struct {
     buck2: []const u8,
     buildrules: []const u8,
     exec: Exec,
+    /// How many times a build is made again after it failed only because a download of a pin failed (`isDownloadFlake`). Never for any other failure.
+    download_retries: u8 = 3,
+    /// The wait before the first retry; each retry waits twice as long as the one before.
+    retry_delay_ms: u64 = 20_000,
 };
+
+/// `buildrules.url_map`: the mirrors of the pinned downloads, each checked byte-identical to the primary (docs/pins.md, "Mirrors"). A pin with no
+/// entry here (the rust tarballs, the github releases, the npm and crates.io packages) has no mirror and is fetched from its own host.
+pub const mirror_map = "https://busybox.net/=https://web.archive.org/web/2024id_/https://busybox.net/" ++
+    " https://ziglang.org/download/=https://zig.linus.dev/zig/" ++
+    " https://conda.anaconda.org/conda-forge/=https://repo.prefix.dev/conda-forge/" ++
+    " https://nodejs.org/dist/=https://registry.npmmirror.com/-/binary/node/";
+
+/// Whether the stderr of a failed `buck2 build` says that a pinned download did not arrive: buck2 names the failed step ("materializing HTTP
+/// resource") and a transport cause (a timeout, a refused or reset connection, a server error). A wrong hash, a compile error, a test failure
+/// and every other message are NOT a flake: they carry no such pair, so they stay fatal on the first run.
+pub fn isDownloadFlake(stderr: []const u8) bool {
+    if (std.mem.indexOf(u8, stderr, "materializing HTTP resource") == null) return false;
+    const causes = [_][]const u8{ "Timed out", "timed out", "Connection refused", "Connection reset", "connection closed", "error sending request", "dns error", "HTTP status 5", "HTTP status 429", "Service Unavailable", "Bad Gateway", "Gateway Timeout" };
+    for (causes) |c| {
+        if (std.mem.indexOf(u8, stderr, c) != null) return true;
+    }
+    return false;
+}
 
 pub const Output = struct { target: []const u8, path: []const u8, sha256: [64]u8 };
 
@@ -174,9 +197,30 @@ fn build(a: std.mem.Allocator, io: Io, o: Options, cwd: []const u8, targets: []c
     var argv = std.ArrayList([]const u8).empty;
     try argv.appendSlice(a, &.{ o.buck2, "build", "--console", "simple" });
     if (o.exec == .local) try argv.appendSlice(a, &.{ "-c", "buildrules_re.mode=local" });
+    const show_at = argv.items.len;
     try argv.append(a, "--show-output");
     try argv.appendSlice(a, targets);
-    const r = try io.run(a, cwd, argv.items);
+    var r = try io.run(a, cwd, argv.items);
+    // The second build starts with no buck-out, so every pin is downloaded again; an upstream server that drops it must not block a release.
+    // Only that failure is made again (and the build is the same command, so what it builds is unchanged); a compile, test or hash failure is not.
+    var wait_ms = o.retry_delay_ms;
+    var left = o.download_retries;
+    while (r.code != 0 and left > 0 and isDownloadFlake(r.stderr)) : (left -= 1) {
+        io_mod.say("beta {s}: a pinned download failed ({d} retries left); waiting {d} ms\n{s}\n", .{ o.lang, left, wait_ms, io_mod.tail(r.stderr, 6) });
+        if (wait_ms > 0) std.Thread.sleep(wait_ms * std.time.ns_per_ms);
+        wait_ms *= 2;
+        // The first retry asks the same host again (a throttle ends); from the second on the pins are fetched from their mirrors
+        // (`mirror_map`, rules/core/url_map.bzl). The sha256 and size of every download are still checked, so the bytes are the same.
+        if (left <= 2) {
+            var m = std.ArrayList([]const u8).empty;
+            try m.appendSlice(a, argv.items[0..show_at]);
+            try m.appendSlice(a, &.{ "-c", "buildrules.url_map=" ++ mirror_map });
+            try m.appendSlice(a, argv.items[show_at..]);
+            r = try io.run(a, cwd, m.items);
+        } else {
+            r = try io.run(a, cwd, argv.items);
+        }
+    }
     if (r.code != 0) {
         std.debug.print("beta {s}: `{s}` exited {d}\n{s}\n{s}\n", .{ o.lang, try std.mem.join(a, " ", argv.items), r.code, io_mod.tail(r.stderr, 60), io_mod.tail(r.stdout, 20) });
         return error.StepFailed;
@@ -446,7 +490,7 @@ const Env = struct {
     }
 
     fn opts(self: Env, exec: Exec) Options {
-        return .{ .lang = "demo", .root = self.root, .work = self.work, .origin = "https://example.invalid/r", .commit = "c" ** 40, .buck2 = "/bin/buck2", .buildrules = "/bin/buildrules", .exec = exec };
+        return .{ .lang = "demo", .root = self.root, .work = self.work, .origin = "https://example.invalid/r", .commit = "c" ** 40, .buck2 = "/bin/buck2", .buildrules = "/bin/buildrules", .exec = exec, .retry_delay_ms = 0 };
     }
 };
 
@@ -480,6 +524,7 @@ test "a local beta: copies the user's files, runs the steps, builds, runs the ou
     try t.expectEqual(fake.count("simple "), fake.count("-c buildrules_re.mode=local"));
     // built three times (the step's build, the expect's, the first hash) in the work directory and once more in a second one
     try t.expectEqual(@as(usize, 4), fake.count("build --console simple"));
+    try t.expectEqual(@as(usize, 0), fake.count("buildrules.url_map="));
     try t.expectEqual(@as(usize, 0), fake.count("buck2 clea" ++ "n"));
     const second = try secondWorkDir(a, env.work);
     try t.expect(!std.mem.eql(u8, second, env.work));
@@ -495,6 +540,95 @@ test "a local beta: copies the user's files, runs the steps, builds, runs the ou
     // the second place holds the repository's files (the config too), and was not made from the first's build output
     try t.expectEqualStrings("# the user's BUCK\n", try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ second, "app/BUCK" }), 1 << 10));
     try t.expect(std.mem.indexOf(u8, try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ second, ".buckconfig.local" }), 1 << 10), "mode = local") != null);
+}
+
+const flake_stderr = "Error materializing HTTP resource declared by target toolchains//:busybox_pin\n\nCaused by:\n    Timed out while making request to URI: https://busybox.net/downloads/busybox after 5 seconds\nBUILD FAILED\n";
+
+fn failOut(stderr: []const u8) io_mod.Out {
+    return .{ .code = 1, .stdout = "", .stderr = stderr };
+}
+
+test "a build that failed only because a pinned download timed out is made again, and then passes" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = try Env.make(a, demo_steps);
+    defer env.tmp.cleanup();
+    var rules = [_]Fake.Rule{
+        .{ .needle = "init" },
+        // the very first build fails twice with the download error; the third try succeeds
+        .{ .needle = "build --console simple", .out = failOut(flake_stderr), .times = 2 },
+        .{ .needle = "build --console simple", .out = okOut("root//app:bin " ++ out_path ++ "\n", local_stderr), .files = &.{.{ .path = out_path, .bytes = "ELF" }} },
+        .{ .needle = "/buck-out/v2/art/root/app/bin", .out = okOut("Hello, world!\n", "") },
+        .{ .needle = "buck2 kill" },
+    };
+    var fake = Fake{ .a = a, .rules = &rules };
+    const r = try run(a, fake.io(), env.opts(.local));
+    try t.expectEqual(Outcome.passed, r.outcome);
+    try t.expectEqual(@as(?bool, true), r.deterministic);
+    // 2 failed + 4 good ones (the step's build, the expect's, the first hash, the second directory's)
+    try t.expectEqual(@as(usize, 6), fake.count("build --console simple"));
+    // the first retry asks the same host, the second goes to the mirrors
+    try t.expectEqual(@as(usize, 1), fake.count("buildrules.url_map=https://busybox.net/=https://web.archive.org/"));
+}
+
+test "a download that keeps failing is red after the retries, and a compile or hash failure is not made again" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // always failing: 1 + download_retries tries, then the failure
+    var env = try Env.make(a, demo_steps);
+    defer env.tmp.cleanup();
+    var rules = [_]Fake.Rule{
+        .{ .needle = "init" },
+        .{ .needle = "build --console simple", .out = failOut(flake_stderr) },
+    };
+    var fake = Fake{ .a = a, .rules = &rules };
+    try t.expectError(error.StepFailed, run(a, fake.io(), env.opts(.local)));
+    try t.expectEqual(@as(usize, 4), fake.count("build --console simple"));
+    try t.expectEqual(@as(usize, 2), fake.count("buildrules.url_map="));
+
+    // a compile failure: one try
+    var env2 = try Env.make(a, demo_steps);
+    defer env2.tmp.cleanup();
+    var rules2 = [_]Fake.Rule{
+        .{ .needle = "init" },
+        .{ .needle = "build --console simple", .out = failOut("error: expected ';' after statement\nBUILD FAILED\n") },
+    };
+    var fake2 = Fake{ .a = a, .rules = &rules2 };
+    try t.expectError(error.StepFailed, run(a, fake2.io(), env2.opts(.local)));
+    try t.expectEqual(@as(usize, 1), fake2.count("build --console simple"));
+
+    // a test failure whose output mentions a timeout: one try (the message names no download)
+    var env3 = try Env.make(a, demo_steps);
+    defer env3.tmp.cleanup();
+    var rules3 = [_]Fake.Rule{
+        .{ .needle = "init" },
+        .{ .needle = "build --console simple", .out = failOut("test_net: Timed out waiting for the server\nBUILD FAILED\n") },
+    };
+    var fake3 = Fake{ .a = a, .rules = &rules3 };
+    try t.expectError(error.StepFailed, run(a, fake3.io(), env3.opts(.local)));
+    try t.expectEqual(@as(usize, 1), fake3.count("build --console simple"));
+
+    // a wrong hash on a pin: the step is named but the cause is not the transport
+    var env4 = try Env.make(a, demo_steps);
+    defer env4.tmp.cleanup();
+    var rules4 = [_]Fake.Rule{
+        .{ .needle = "init" },
+        .{ .needle = "build --console simple", .out = failOut("Error materializing HTTP resource declared by target toolchains//:busybox_pin\n\nCaused by:\n    Invalid hash: expected 6e12, got 0000\n") },
+    };
+    var fake4 = Fake{ .a = a, .rules = &rules4 };
+    try t.expectError(error.StepFailed, run(a, fake4.io(), env4.opts(.local)));
+    try t.expectEqual(@as(usize, 1), fake4.count("build --console simple"));
+}
+
+test "isDownloadFlake needs both the failed download step and a transport cause" {
+    try t.expect(isDownloadFlake(flake_stderr));
+    try t.expect(isDownloadFlake("Error materializing HTTP resource x\nCaused by: HTTP status 503 Service Unavailable"));
+    try t.expect(!isDownloadFlake("Timed out while making request"));
+    try t.expect(!isDownloadFlake("Error materializing HTTP resource x\nCaused by: Invalid hash"));
+    try t.expect(!isDownloadFlake(""));
 }
 
 test "an output that depends on the directory it was built in is red: the second build is in another directory" {

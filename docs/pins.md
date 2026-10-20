@@ -21,3 +21,22 @@ sha256 of every pin on download (a wrong hash fails: `Invalid sha256 digest. Exp
 xz variants (not used): rustc 80351960 / 8426a3d1...dfc15; rust-std 29573972 / 047ea709...aa382; cargo 10984780 / e74edd2c...07425.
 `rustc --version` must start with `rustc 1.95.0 (` and `cargo --version` with `cargo 1.95.0 (`; an action refuses the toolchain otherwise.
 Host floor: a Linux x86_64 kernel, glibc >= 2.34, and `libgcc_s.so.1` (rustc's driver needs it; it is not pinned yet).
+
+## Mirrors
+
+`buildrules.url_map` (rules/core/url_map.bzl) replaces the leading part of a download's URL and nothing else: the sha256 and size are still checked, so a mirror
+cannot change the bytes. buck2's `http_file` and `download_file` take one URL and have no fallback, so a mirror is not a second URL on a pin; it is a map a machine
+(or the beta stage's retry, `mirror_map` in tools/stage/beta.zig) sets when the primary host fails. Each row below was downloaded from both hosts and the sha256 compared
+with the pin's (2026-10-20):
+
+| primary prefix | mirror prefix | pins | identical |
+|---|---|---|---|
+| `https://busybox.net/` | `https://web.archive.org/web/2024id_/https://busybox.net/` | busybox 1.35.0 | yes, 1131168 bytes, `6e123e7f...1348` |
+| `https://ziglang.org/download/` | `https://zig.linus.dev/zig/` (listed in ziglang.org's community-mirrors.txt) | zig 0.12.0, zig 0.15.2 | yes, both |
+| `https://conda.anaconda.org/conda-forge/` | `https://repo.prefix.dev/conda-forge/` | libgcc, libstdcxx | yes, both |
+| `https://nodejs.org/dist/` | `https://registry.npmmirror.com/-/binary/node/` | node 24 | yes |
+
+busybox.net has no mirror of its own that serves this binary: the byte-identical copy is the Internet Archive's capture of busybox.net, which is a fallback and not a
+host to depend on (no SLA; it can be slow). No mirror was found or checked for `static.rust-lang.org` (CloudFront), `github.com` releases, `registry.npmjs.org`
+or `static.crates.io`; those are fetched from their own hosts. A pin that must not depend on any of these hosts is the repository owner's decision: host the pins as assets of a
+dedicated, immutable buildrules release (the upload is a step only the repository owner can do).

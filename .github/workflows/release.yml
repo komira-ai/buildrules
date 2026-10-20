@@ -13,13 +13,13 @@
 #            and time, the tool's own gzip), SHA256SUMS, and the attestations.
 #   verify   read-only: the sums, the checkout being the commit, the attestations (this workflow, this commit, main), a second build of the archive
 #            from the sha giving the same bytes, its file list equal to the commit's tracked files, and the scrub on its contents.
-#   tag      the job that writes the repository, with publish: the annotated tag at that sha, made only after the archive was built, attested and
+#   tag      the job that creates the tag, with the release bot's token (the v* tag ruleset allows only that App; GITHUB_TOKEN here only reads): the annotated tag at that sha, made only after the archive was built, attested and
 #            verified, so a failure before it leaves no tag behind. A tag that exists at the sha is kept; one at another commit fails the job.
 #   site     the page of the release (the tag, the commit to pin in .buckconfig, the archive url and its sha256), as an artifact. Nothing deploys it.
 #   publish  creates the GitHub release from the verified files, once the tag exists and peels to the verified sha. A re-run creates no second
 #            release and replaces no asset: a file the release holds must be the same bytes or the job fails, and a missing file is added.
 #
-# `contents: write` is held by tag and publish only, each under the exact `if:` below; `id-token: write` by archive (the attestation), by gamma (the
+# `contents: write` is held by publish only (tag writes with the bot token), each of tag and publish under the exact `if:` below; `id-token: write` by archive (the attestation), by gamma (the
 # farm network) and by the call of beta (its farm leg), and `attestations: write` by archive only.
 # No job that writes runs buck2. ci/release_check.zig (`//ci:workflow`) holds this file to all of that, to the order
 # gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish (no job before the tag waits for it), to actions pinned by commit, and to local
@@ -235,7 +235,7 @@ jobs:
       group: release
       cancel-in-progress: false
     permissions:
-      contents: write
+      contents: read
     env:
       TAG: ${{ needs.plan.outputs.tag }}
     steps:
@@ -248,9 +248,20 @@ jobs:
           name: release-tool
           path: tool
       - run: chmod +x tool/release
+      # The v* tag ruleset lets only the release bot create a tag, so the write goes through the bot's token (this repository alone, contents only),
+      # not through GITHUB_TOKEN. It is minted here and used by the next step alone.
+      - name: The token of the release bot, for this repository alone
+        id: bot
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: buildrules
+          permission-contents: write
       - name: The annotated tag of the verified commit
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
         run: tool/release tag --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA"
 
   publish:
