@@ -1,0 +1,215 @@
+//! `release`: the steps of the automatic release (RELEASING.md). The logic is in cmds.zig, version.zig, assets.zig, gz.zig and tar.zig, each
+//! tested; this file reads the command line and runs the real `git` and `gh`.
+//!
+//!   release tag     --root DIR --repo OWNER/NAME --sha SHA [--output FILE]
+//!   release archive --root DIR --tag TAG --out DIR
+//!   release verify  --root DIR --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --workflow PATH
+//!   release publish --root DIR --repo OWNER/NAME --tag TAG --sha SHA --previous TAG --dist DIR
+//!
+//! Exit 0 when the step succeeded (`tag` also when it decided there is nothing to release), 1 when a check failed, 2 on a bad command line.
+const std = @import("std");
+const cmds = @import("cmds.zig");
+const version = @import("version.zig");
+
+const Args = struct {
+    names: []const []const u8,
+    values: []const []const u8,
+
+    fn get(self: Args, name: []const u8) ?[]const u8 {
+        for (self.names, self.values) |n, v| {
+            if (std.mem.eql(u8, n, name)) return v;
+        }
+        return null;
+    }
+
+    fn need(self: Args, name: []const u8) ![]const u8 {
+        return self.get(name) orelse {
+            std.debug.print("release: --{s} is required\n", .{name});
+            return error.Usage;
+        };
+    }
+};
+
+fn parseArgs(a: std.mem.Allocator, argv: []const []const u8, allowed: []const []const u8) !Args {
+    var names = std.ArrayList([]const u8).empty;
+    var values = std.ArrayList([]const u8).empty;
+    var i: usize = 0;
+    while (i < argv.len) : (i += 2) {
+        const flag = argv[i];
+        if (!std.mem.startsWith(u8, flag, "--") or i + 1 >= argv.len) {
+            std.debug.print("release: expected --flag VALUE, got `{s}`\n", .{flag});
+            return error.Usage;
+        }
+        var known = false;
+        for (allowed) |n| {
+            if (std.mem.eql(u8, flag[2..], n)) known = true;
+        }
+        if (!known) {
+            std.debug.print("release: unknown flag {s}\n", .{flag});
+            return error.Usage;
+        }
+        try names.append(a, flag[2..]);
+        try values.append(a, argv[i + 1]);
+    }
+    return .{ .names = names.items, .values = values.items };
+}
+
+fn realRun(_: *anyopaque, a: std.mem.Allocator, argv: []const []const u8) anyerror!cmds.Out {
+    const r = try std.process.Child.run(.{ .allocator = a, .argv = argv, .max_output_bytes = 1 << 30 });
+    const code: u8 = switch (r.term) {
+        .Exited => |c| c,
+        else => 255,
+    };
+    return .{ .code = code, .stdout = r.stdout, .stderr = r.stderr };
+}
+
+fn realWrite(_: *anyopaque, path: []const u8, bytes: []const u8) anyerror!void {
+    try std.fs.cwd().writeFile(.{ .sub_path = path, .data = bytes });
+}
+
+fn say(comptime fmt: []const u8, args: anytype) void {
+    var buf: [2048]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    std.fs.File.stdout().writeAll(s) catch {};
+}
+
+fn join(a: std.mem.Allocator, dir: []const u8, name: []const u8) ![]u8 {
+    return std.fs.path.join(a, &.{ dir, name });
+}
+
+fn appendFile(path: []const u8, bytes: []const u8) !void {
+    const f = try std.fs.cwd().createFile(path, .{ .truncate = false });
+    defer f.close();
+    try f.seekFromEnd(0);
+    try f.writeAll(bytes);
+}
+
+pub fn main() !u8 {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const argv = try std.process.argsAlloc(a);
+    if (argv.len < 2) {
+        std.debug.print("usage: release tag|archive|verify|publish --flag value ...\n", .{});
+        return 2;
+    }
+    var unused: u8 = 0;
+    const io = cmds.Io{ .ctx = &unused, .run_fn = realRun, .write_fn = realWrite };
+    const cmd = argv[1];
+    const rest = argv[2..];
+    return run(a, io, cmd, rest) catch |e| switch (e) {
+        error.Usage => 2,
+        else => {
+            std.debug.print("release {s}: {s}\n", .{ cmd, @errorName(e) });
+            return 1;
+        },
+    };
+}
+
+fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const u8) !u8 {
+    if (std.mem.eql(u8, cmd, "tag")) {
+        const g = try parseArgs(a, rest, &.{ "root", "repo", "sha", "output" });
+        const root = try g.need("root");
+        const version_path = try join(a, root, "VERSION");
+        const version_file = try std.fs.cwd().readFileAlloc(a, version_path, 1024);
+        const r = try cmds.tag(a, io, .{ .root = root, .repo = try g.need("repo"), .sha = try g.need("sha"), .version_file = version_file });
+        const out = try cmds.tagOutputs(a, r);
+        say("{s}", .{out});
+        if (g.get("output")) |p| try appendFile(p, out);
+        return 0;
+    }
+    if (std.mem.eql(u8, cmd, "archive")) {
+        const g = try parseArgs(a, rest, &.{ "root", "tag", "out" });
+        const b = try cmds.archive(a, io, try g.need("root"), try g.need("tag"));
+        const dir = try g.need("out");
+        try std.fs.cwd().makePath(dir);
+        try std.fs.cwd().writeFile(.{ .sub_path = try join(a, dir, b.name), .data = b.archive });
+        try std.fs.cwd().writeFile(.{ .sub_path = try join(a, dir, cmds.sums_name), .data = b.sums });
+        say("{s}", .{b.sums});
+        return 0;
+    }
+    if (std.mem.eql(u8, cmd, "verify")) {
+        const g = try parseArgs(a, rest, &.{ "root", "repo", "tag", "sha", "dist", "workflow" });
+        const tag = try g.need("tag");
+        const v = version.parseTag(tag) orelse {
+            std.debug.print("release: `{s}` is not a release tag\n", .{tag});
+            return 1;
+        };
+        const dist = try g.need("dist");
+        const name = try std.fmt.allocPrint(a, "buildrules-{s}.tar.gz", .{try version.numberText(a, v)});
+        const archive = try std.fs.cwd().readFileAlloc(a, try join(a, dist, name), 1 << 30);
+        const sums = try std.fs.cwd().readFileAlloc(a, try join(a, dist, cmds.sums_name), 1 << 20);
+        const f = try cmds.verify(a, io, .{
+            .root = try g.need("root"),
+            .repo = try g.need("repo"),
+            .tag = tag,
+            .sha = try g.need("sha"),
+            .dist = dist,
+            .archive_name = name,
+            .archive = archive,
+            .sums = sums,
+            .workflow = try g.need("workflow"),
+        });
+        for (f.items) |m| std.debug.print("release verify: {s}\n", .{m});
+        if (f.items.len != 0) return 1;
+        say("release verify: {s} is the archive of {s}; checked: sums, tag, attestations, reproduction, file list, scrub\n", .{ name, g.get("sha").? });
+        return 0;
+    }
+    if (std.mem.eql(u8, cmd, "publish")) {
+        const g = try parseArgs(a, rest, &.{ "root", "repo", "tag", "sha", "previous", "dist" });
+        const tag = try g.need("tag");
+        const v = version.parseTag(tag) orelse {
+            std.debug.print("release: `{s}` is not a release tag\n", .{tag});
+            return 1;
+        };
+        const dist = try g.need("dist");
+        const name = try std.fmt.allocPrint(a, "buildrules-{s}.tar.gz", .{try version.numberText(a, v)});
+        const archive = try std.fs.cwd().readFileAlloc(a, try join(a, dist, name), 1 << 30);
+        const sums = try std.fs.cwd().readFileAlloc(a, try join(a, dist, cmds.sums_name), 1 << 20);
+        const r = try cmds.publish(a, io, .{
+            .root = try g.need("root"),
+            .repo = try g.need("repo"),
+            .tag = tag,
+            .sha = try g.need("sha"),
+            .previous = try g.need("previous"),
+            .dist = dist,
+            .archive_name = name,
+            .archive = archive,
+            .sums = sums,
+            .notes_path = try join(a, dist, "notes.md"),
+        });
+        say("release publish: {s} {s}\n", .{ tag, @tagName(r) });
+        return 0;
+    }
+    std.debug.print("release: unknown command `{s}`\n", .{cmd});
+    return error.Usage;
+}
+
+// ---- tests ------------------------------------------------------------------------------------------------------------------------------
+
+const t = std.testing;
+
+test "flags are --name VALUE pairs of a known name" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const g = try parseArgs(a, &.{ "--root", "/w", "--previous", "" }, &.{ "root", "previous", "tag" });
+    try t.expectEqualStrings("/w", g.get("root").?);
+    try t.expectEqualStrings("", g.get("previous").?);
+    try t.expect(g.get("tag") == null);
+    try t.expectError(error.Usage, g.need("tag"));
+    try t.expectError(error.Usage, parseArgs(a, &.{ "--bogus", "x" }, &.{"root"}));
+    try t.expectError(error.Usage, parseArgs(a, &.{"--root"}, &.{"root"}));
+    try t.expectError(error.Usage, parseArgs(a, &.{ "root", "x" }, &.{"root"}));
+}
+
+test "an unknown command, and a command missing a flag, are usage errors that run nothing" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var unused_ctx: u8 = 0;
+    const io = cmds.Io{ .ctx = &unused_ctx, .run_fn = realRun, .write_fn = realWrite };
+    try t.expectError(error.Usage, run(a, io, "frobnicate", &.{}));
+    try t.expectError(error.Usage, run(a, io, "archive", &.{ "--root", "/w" }));
+    try t.expectError(error.Usage, run(a, io, "publish", &.{ "--tag", "v0.0.1", "--bogus", "x" }));
+}
