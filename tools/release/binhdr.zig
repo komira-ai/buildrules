@@ -1,10 +1,10 @@
 //! What a command-line binary of the release must be, read from its file header: an ELF of the machine the target names (static, with no
 //! interpreter), or a 64-bit Mach-O executable of the cpu the target names. Used by `release package` (it refuses a binary labelled for a
-//! target it was not built for) and by cli/header_test.zig (it checks the four built binaries). The module is `binhdr`.
+//! target it was not built for) and by cli/header_test.zig (it checks the three built binaries). The module is `binhdr`.
 const std = @import("std");
 
 /// The release targets, as the asset names spell them (`buildrules-cli-<V>-<target>.tar.gz`).
-pub const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64" };
+pub const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" };
 
 const Want = struct { elf_machine: u16 = 0, macho_cputype: u32 = 0 };
 
@@ -12,7 +12,6 @@ fn want(target: []const u8) ?Want {
     if (std.mem.eql(u8, target, "linux-x86_64")) return .{ .elf_machine = 62 }; // EM_X86_64
     if (std.mem.eql(u8, target, "linux-aarch64")) return .{ .elf_machine = 183 }; // EM_AARCH64
     if (std.mem.eql(u8, target, "macos-arm64")) return .{ .macho_cputype = 0x0100000c }; // CPU_TYPE_ARM64
-    if (std.mem.eql(u8, target, "macos-x86_64")) return .{ .macho_cputype = 0x01000007 }; // CPU_TYPE_X86_64
     return null;
 }
 
@@ -109,7 +108,6 @@ test "each target accepts its own header and refuses every other target's" {
         .{ .target = "linux-x86_64", .bytes = &elf(62, 1) },
         .{ .target = "linux-aarch64", .bytes = &elf(183, 1) },
         .{ .target = "macos-arm64", .bytes = &macho(0x0100000c, 2) },
-        .{ .target = "macos-x86_64", .bytes = &macho(0x01000007, 2) },
     };
     for (files) |f| {
         for (targets) |tgt| {
@@ -150,6 +148,8 @@ test "a header that is not an executable of the right class is refused" {
 test "an ELF is not a macOS binary, nor a Mach-O a Linux one" {
     try t.expect(problem(&elf(183, 1), "macos-arm64") != null);
     try t.expect(problem(&macho(0x0100000c, 2), "linux-aarch64") != null);
+    // An Intel Mach-O (cputype x86_64) is no release binary: refused under the one macOS target, whose cpu is arm64.
+    try t.expect(problem(&macho(0x01000007, 2), "macos-arm64") != null);
 }
 
 test "a program header table past the end of the file is refused, not read" {

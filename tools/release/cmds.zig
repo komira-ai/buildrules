@@ -315,7 +315,7 @@ pub const VerifyOpts = struct {
     dist: []const u8,
     archive_name: []const u8,
     archive: []const u8,
-    /// The SHA256SUMS of the source archive and the four command-line tarballs.
+    /// The SHA256SUMS of the source archive and the three command-line tarballs.
     sums: []const u8,
     /// The workflow that signed the attestations, `.github/workflows/release.yml`.
     workflow: []const u8,
@@ -324,9 +324,9 @@ pub const VerifyOpts = struct {
     cli: []const u8,
     /// The bytes of that file: they must be the program inside the linux-x86_64 tarball, so the version it prints is the version of the file that ships.
     cli_bytes: []const u8 = "",
-    /// The four command-line tarballs of `dist`, exactly as they are to be published.
+    /// The three command-line tarballs of `dist`, exactly as they are to be published.
     tarballs: []const Blob = &.{},
-    /// The same four tarballs, made again from a fresh build of the commit: byte for byte the same, or the build is not reproducible.
+    /// The same three tarballs, made again from a fresh build of the commit: byte for byte the same, or the build is not reproducible.
     rebuilt: []const Blob = &.{},
     /// The dry run of a pull request: nothing is signed or attested there, so the signatures and attestations are not checked. Everything else is.
     dry: bool = false,
@@ -344,7 +344,7 @@ pub fn verify(a: std.mem.Allocator, io: Io, o: VerifyOpts) !assets.Findings {
     const want_name = try std.fmt.allocPrint(a, "buildrules-{s}" ++ tar_suffix, .{number});
     if (!std.mem.eql(u8, want_name, o.archive_name)) try assets.add(a, &f, "the archive is named {s}, the tag names {s}", .{ o.archive_name, want_name });
 
-    // 0. the command-line tarballs are the four of this version, each once, and nothing else.
+    // 0. the command-line tarballs are the three of this version, each once, and nothing else.
     var want_tarballs = std.ArrayList([]const u8).empty;
     for (binhdr.targets) |tg| try want_tarballs.append(a, try cliName(a, number, tg));
     for (want_tarballs.items) |n| {
@@ -488,16 +488,16 @@ pub const PublishOpts = struct {
     archive: []const u8,
     sums: []const u8,
     notes_path: []const u8,
-    /// The four command-line tarballs of `dist`.
+    /// The three command-line tarballs of `dist`.
     tarballs: []const Blob = &.{},
-    /// The `<file>.sigstore.json` of each of the six files above (the archive, the four tarballs and SHA256SUMS).
+    /// The `<file>.sigstore.json` of each of the five files above (the archive, the three tarballs and SHA256SUMS).
     bundles: []const Blob = &.{},
 };
 
 pub const PublishResult = enum { created, uploaded, unchanged };
 
-/// The files a release holds, in the order they are listed: the source archive, the four tarballs (target order), SHA256SUMS, then the signature bundle of each
-/// of those six. A tarball or a bundle that is missing, empty or not expected is an error: a release is made of exactly these twelve files.
+/// The files a release holds, in the order they are listed: the source archive, the three tarballs (target order), SHA256SUMS, then the signature bundle of each
+/// of those five. A tarball or a bundle that is missing, empty or not expected is an error: a release is made of exactly these ten files.
 fn releaseFiles(a: std.mem.Allocator, o: PublishOpts, number: []const u8) ![]Blob {
     var out = std.ArrayList(Blob).empty;
     try out.append(a, .{ .name = o.archive_name, .bytes = o.archive });
@@ -519,7 +519,7 @@ fn releaseFiles(a: std.mem.Allocator, o: PublishOpts, number: []const u8) ![]Blo
     return out.toOwnedSlice(a);
 }
 
-/// Creates the release of the tag with the archive, the four command-line tarballs, SHA256SUMS, a signature bundle for each of them and the notes, or adds
+/// Creates the release of the tag with the archive, the three command-line tarballs, SHA256SUMS, a signature bundle for each of them and the notes, or adds
 /// the files an existing release lacks, or does nothing. A release that already holds a file with other bytes fails the job and changes nothing: no asset
 /// is replaced.
 pub fn publish(a: std.mem.Allocator, io: Io, o: PublishOpts) !PublishResult {
@@ -961,7 +961,7 @@ test "the archive command takes only a release tag" {
 const cli_path = "cli/buildrules";
 const cli_program = "the linux-x86_64 program";
 
-/// The four command-line tarballs of release `number`: each holds `buildrules-cli-<number>-<target>/{buildrules,LICENSE}`, the program being `cli_program`
+/// The three command-line tarballs of release `number`: each holds `buildrules-cli-<number>-<target>/{buildrules,LICENSE}`, the program being `cli_program`
 /// for linux-x86_64 and the target's own name for the others.
 fn cliTarballs(a: std.mem.Allocator, number: []const u8) ![]Blob {
     var out = std.ArrayList(Blob).empty;
@@ -978,7 +978,7 @@ fn cliTarballs(a: std.mem.Allocator, number: []const u8) ![]Blob {
     return out.items;
 }
 
-/// A release's files: the source archive (built through a fake git), the four tarballs and the SHA256SUMS of those five.
+/// A release's files: the source archive (built through a fake git), the three tarballs and the SHA256SUMS of those five.
 const Release = struct { b: Built, tarballs: []Blob, sums: []const u8 };
 
 fn releaseOf(a: std.mem.Allocator, tar_bytes: []const u8, tag: []const u8, number: []const u8) !Release {
@@ -1055,13 +1055,13 @@ test "verify: a correct release has no finding, and every check was made on ever
     var fake = Fake{ .a = a, .rules = &rules };
     const r = try releaseOf(a, tar_bytes, "v0.0.1", "0.0.1");
     try expectClean(try verify(a, fake.io(), opts(r)));
-    // all six files are attested, pinned to the workflow, the commit twice (signer and source) and main
-    try t.expectEqual(@as(usize, 6), fake.count("gh attestation verify dist/"));
+    // all five files are attested, pinned to the workflow, the commit twice (signer and source) and main
+    try t.expectEqual(@as(usize, 5), fake.count("gh attestation verify dist/"));
     try t.expectEqual(@as(usize, 1), fake.count("verify dist/buildrules-0.0.1.tar.gz --repo o/n --signer-workflow o/n/.github/workflows/release.yml --signer-digest " ++ sha_a ++ " --source-digest " ++ sha_a ++ " --source-ref refs/heads/main --deny-self-hosted-runners"));
     try t.expectEqual(@as(usize, 1), fake.count("verify dist/SHA256SUMS "));
     for (binhdr.targets) |tg| try t.expectEqual(@as(usize, 1), fake.count(try std.fmt.allocPrint(a, "verify dist/buildrules-cli-0.0.1-{s}.tar.gz ", .{tg})));
-    // and signed: cosign checks each of the six against the workflow's identity, the commit, the trigger and the repository
-    try t.expectEqual(@as(usize, 6), fake.count("cosign verify-blob --bundle dist/"));
+    // and signed: cosign checks each of the five against the workflow's identity, the commit, the trigger and the repository
+    try t.expectEqual(@as(usize, 5), fake.count("cosign verify-blob --bundle dist/"));
     try t.expectEqual(@as(usize, 1), fake.count("cosign verify-blob --bundle dist/buildrules-0.0.1.tar.gz.sigstore.json --certificate-identity https://github.com/o/n/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-sha " ++ sha_a ++ " --certificate-github-workflow-trigger push --certificate-github-workflow-repository o/n dist/buildrules-0.0.1.tar.gz"));
     try t.expectEqual(@as(usize, 1), fake.count("--bundle dist/SHA256SUMS.sigstore.json "));
     // the program is run once, as a user runs it
@@ -1093,7 +1093,7 @@ test "verify --dry checks everything but the signatures and attestations, which 
     for (real.items) |m| {
         if (std.mem.indexOf(u8, m, "does not verify") != null) n += 1;
     }
-    try t.expectEqual(@as(usize, 6), n);
+    try t.expectEqual(@as(usize, 5), n);
 }
 
 test "verify mutants: each defect is a finding" {
@@ -1106,12 +1106,12 @@ test "verify mutants: each defect is a finding" {
 
     // SHA256SUMS: another digest for the archive or a tarball, another name, a missing line, a line twice, the one-line file of the old releases
     var o = opts(r);
-    o.sums = try assets.formatSumsFiles(a, &.{ .{ .name = r.b.name, .bytes = "other bytes" }, .{ .name = r.tarballs[0].name, .bytes = r.tarballs[0].bytes }, .{ .name = r.tarballs[1].name, .bytes = r.tarballs[1].bytes }, .{ .name = r.tarballs[2].name, .bytes = r.tarballs[2].bytes }, .{ .name = r.tarballs[3].name, .bytes = r.tarballs[3].bytes } });
+    o.sums = try assets.formatSumsFiles(a, &.{ .{ .name = r.b.name, .bytes = "other bytes" }, .{ .name = r.tarballs[0].name, .bytes = r.tarballs[0].bytes }, .{ .name = r.tarballs[1].name, .bytes = r.tarballs[1].bytes }, .{ .name = r.tarballs[2].name, .bytes = r.tarballs[2].bytes } });
     var fake = Fake{ .a = a, .rules = &good };
     try expectFinding(try verify(a, fake.io(), o), "SHA256SUMS does not match the release files: WrongDigest");
     o = opts(r);
     var tb = try a.dupe(Blob, r.tarballs);
-    tb[3].bytes = "a tarball changed after the sums were written";
+    tb[2].bytes = "a tarball changed after the sums were written";
     o.tarballs = tb;
     o.rebuilt = tb;
     try expectFinding(try verify(a, fake.io(), o), "SHA256SUMS does not match the release files: WrongDigest");
@@ -1130,7 +1130,7 @@ test "verify mutants: each defect is a finding" {
     fake = Fake{ .a = a, .rules = &other };
     try expectFinding(try verify(a, fake.io(), opts(r)), "the checkout is not commit " ++ sha_a);
 
-    // an attestation does not verify: each of the six files is checked
+    // an attestation does not verify: each of the five files is checked
     const bad_attest = verifyRules(tar_bytes, tree_ok, fail(1, "no matching attestations"), "tag\n", peeled_a);
     fake = Fake{ .a = a, .rules = &bad_attest };
     const f_att = try verify(a, fake.io(), opts(r));
@@ -1173,7 +1173,7 @@ test "verify mutants: each defect is a finding" {
     // not a gzip file
     o = opts(r);
     o.archive = "not gzip at all";
-    o.sums = try assets.formatSumsFiles(a, &.{ .{ .name = r.b.name, .bytes = o.archive }, .{ .name = r.tarballs[0].name, .bytes = r.tarballs[0].bytes }, .{ .name = r.tarballs[1].name, .bytes = r.tarballs[1].bytes }, .{ .name = r.tarballs[2].name, .bytes = r.tarballs[2].bytes }, .{ .name = r.tarballs[3].name, .bytes = r.tarballs[3].bytes } });
+    o.sums = try assets.formatSumsFiles(a, &.{ .{ .name = r.b.name, .bytes = o.archive }, .{ .name = r.tarballs[0].name, .bytes = r.tarballs[0].bytes }, .{ .name = r.tarballs[1].name, .bytes = r.tarballs[1].bytes }, .{ .name = r.tarballs[2].name, .bytes = r.tarballs[2].bytes } });
     fake = Fake{ .a = a, .rules = &good };
     try expectFinding(try verify(a, fake.io(), o), "not a gzip file");
 
@@ -1193,7 +1193,7 @@ test "verify mutants: each defect is a finding" {
     try expectFinding(try verify(a, fake.io(), opts(r)), "cannot be run: UnscriptedCommand");
 }
 
-test "verify: the command-line tarballs are the four of this version, once each, and the second build gives the same bytes" {
+test "verify: the command-line tarballs are the three of this version, once each, and the second build gives the same bytes" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -1202,7 +1202,7 @@ test "verify: the command-line tarballs are the four of this version, once each,
     var fake = Fake{ .a = a, .rules = &good };
     const r = try releaseOf(a, tar_bytes, "v0.0.1", "0.0.1");
     // a second build that differs in one target: named, with both digests
-    for (0..4) |i| {
+    for (0..3) |i| {
         var rebuilt = try a.dupe(Blob, r.tarballs);
         rebuilt[i].bytes = "bytes of a build that is not reproducible";
         var o = opts(r);
@@ -1213,21 +1213,21 @@ test "verify: the command-line tarballs are the four of this version, once each,
     }
     // a second build with a tarball missing, or with a stray one
     var o = opts(r);
-    o.rebuilt = r.tarballs[0..3];
-    try expectFinding(try verify(a, fake.io(), o), "the second build holds no buildrules-cli-0.0.1-macos-x86_64.tar.gz");
-    try expectFinding(try verify(a, fake.io(), o), "the second build holds 3 tarballs, not 4");
-    var five = try a.dupe(Blob, r.tarballs);
-    five = try std.mem.concat(a, Blob, &.{ five, &.{.{ .name = "buildrules-cli-0.0.1-windows.tar.gz", .bytes = "x" }} });
+    o.rebuilt = r.tarballs[0..2];
+    try expectFinding(try verify(a, fake.io(), o), "the second build holds no buildrules-cli-0.0.1-macos-arm64.tar.gz");
+    try expectFinding(try verify(a, fake.io(), o), "the second build holds 2 tarballs, not 3");
+    var four = try a.dupe(Blob, r.tarballs);
+    four = try std.mem.concat(a, Blob, &.{ four, &.{.{ .name = "buildrules-cli-0.0.1-windows.tar.gz", .bytes = "x" }} });
     o = opts(r);
-    o.rebuilt = five;
-    try expectFinding(try verify(a, fake.io(), o), "the second build holds 5 tarballs, not 4");
-    // dist: a tarball missing (its sums line is missing too), one of another version, a fifth file
+    o.rebuilt = four;
+    try expectFinding(try verify(a, fake.io(), o), "the second build holds 4 tarballs, not 3");
+    // dist: a tarball missing (its sums line is missing too), one of another version, a fourth file
     o = opts(r);
     o.tarballs = r.tarballs[1..];
     try expectFinding(try verify(a, fake.io(), o), "dist holds 0 files named buildrules-cli-0.0.1-linux-x86_64.tar.gz");
     o = opts(r);
-    o.tarballs = five;
-    try expectFinding(try verify(a, fake.io(), o), "dist holds 5 command-line tarballs, not 4");
+    o.tarballs = four;
+    try expectFinding(try verify(a, fake.io(), o), "dist holds 4 command-line tarballs, not 3");
     const twice = try std.mem.concat(a, Blob, &.{ r.tarballs, r.tarballs[0..1] });
     o = opts(r);
     o.tarballs = twice;
@@ -1259,7 +1259,7 @@ test "verify: the program that printed the version is the very file the linux-x8
     o = opts(r);
     o.tarballs = tb;
     o.rebuilt = tb;
-    o.sums = try assets.formatSumsFiles(a, &.{ .{ .name = r.b.name, .bytes = r.b.archive }, tb[0], tb[1], tb[2], tb[3] });
+    o.sums = try assets.formatSumsFiles(a, &.{ .{ .name = r.b.name, .bytes = r.b.archive }, tb[0], tb[1], tb[2] });
     try expectFinding(try verify(a, fake.io(), o), "holds no readable `buildrules`: NoBinaryInTarball");
 }
 
@@ -1290,7 +1290,7 @@ const Case = struct { r: Release, o: PublishOpts, bundles: []Blob };
 fn publishCase(a: std.mem.Allocator) !Case {
     const tar_bytes = try tar.build(a, &sample_tar_entries);
     const r = try releaseOf(a, tar_bytes, "v0.0.2", "0.0.2");
-    // the six files, in order, and a bundle for each
+    // the five files, in order, and a bundle for each
     var names = std.ArrayList([]const u8).empty;
     try names.append(a, r.b.name);
     for (r.tarballs) |tb| try names.append(a, tb.name);
@@ -1313,11 +1313,11 @@ fn publishCase(a: std.mem.Allocator) !Case {
     } };
 }
 
-/// The twelve paths `gh release create` is given, in order.
-const twelve = "dist/buildrules-0.0.2.tar.gz dist/buildrules-cli-0.0.2-linux-x86_64.tar.gz dist/buildrules-cli-0.0.2-linux-aarch64.tar.gz dist/buildrules-cli-0.0.2-macos-arm64.tar.gz dist/buildrules-cli-0.0.2-macos-x86_64.tar.gz dist/SHA256SUMS " ++
-    "dist/buildrules-0.0.2.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-linux-x86_64.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-linux-aarch64.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-macos-arm64.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-macos-x86_64.tar.gz.sigstore.json dist/SHA256SUMS.sigstore.json";
+/// The ten paths `gh release create` is given, in order.
+const ten = "dist/buildrules-0.0.2.tar.gz dist/buildrules-cli-0.0.2-linux-x86_64.tar.gz dist/buildrules-cli-0.0.2-linux-aarch64.tar.gz dist/buildrules-cli-0.0.2-macos-arm64.tar.gz dist/SHA256SUMS " ++
+    "dist/buildrules-0.0.2.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-linux-x86_64.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-linux-aarch64.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-macos-arm64.tar.gz.sigstore.json dist/SHA256SUMS.sigstore.json";
 
-test "publish: with no release yet, one is created with all twelve files, the notes and a verified tag" {
+test "publish: with no release yet, one is created with all ten files, the notes and a verified tag" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -1330,12 +1330,12 @@ test "publish: with no release yet, one is created with all twelve files, the no
         .{ .needle = "release create" },
     } };
     try t.expectEqual(PublishResult.created, try publish(a, fake.io(), c.o));
-    try t.expectEqual(@as(usize, 1), fake.count("gh release create v0.0.2 " ++ twelve ++ " --repo o/n --verify-tag --title buildrules 0.0.2 --notes-file dist/notes.md --latest"));
+    try t.expectEqual(@as(usize, 1), fake.count("gh release create v0.0.2 " ++ ten ++ " --repo o/n --verify-tag --title buildrules 0.0.2 --notes-file dist/notes.md --latest"));
     try t.expectEqual(@as(usize, 1), fake.count("refs/tags/v0.0.1..refs/tags/v0.0.2"));
     try t.expectEqual(@as(usize, 1), fake.files.items.len);
     try t.expect(std.mem.startsWith(u8, fake.files.items[0], "dist/notes.md\n"));
     try t.expect(std.mem.indexOf(u8, fake.files.items[0], "- rules: one thing\n- ci: another\n") != null);
-    // the notes list the four tarballs with the sha256 the release holds
+    // the notes list the three tarballs with the sha256 the release holds
     const h = assets.sha256Hex(c.r.tarballs[2].bytes);
     try t.expect(std.mem.indexOf(u8, fake.files.items[0], try std.fmt.allocPrint(a, "buildrules-cli-0.0.2-macos-arm64.tar.gz sha256 `{s}`", .{&h})) != null);
     // never a replacement
@@ -1373,7 +1373,7 @@ fn releaseJson(a: std.mem.Allocator, listed: []const Listed) ![]u8 {
     return s.toOwnedSlice(a);
 }
 
-/// What the release of `c` holds when every file is there with the right bytes, in the order of `twelve`.
+/// What the release of `c` holds when every file is there with the right bytes, in the order of `ten`.
 fn allListed(a: std.mem.Allocator, c: Case) ![]Listed {
     var out = std.ArrayList(Listed).empty;
     var payload = std.ArrayList(Blob).empty;
@@ -1392,7 +1392,7 @@ test "publish: a re-run changes nothing, adds only the missing files, and refuse
     const c = try publishCase(a);
     const all = try allListed(a, c);
 
-    // all twelve there, same bytes: no call that writes
+    // all ten there, same bytes: no call that writes
     var fake = Fake{ .a = a, .rules = &.{
         .{ .needle = "rev-parse", .out = ok(peeled_a) },
         .{ .needle = "releases/tags/v0.0.2", .out = ok(try releaseJson(a, all)) },
@@ -1403,17 +1403,17 @@ test "publish: a re-run changes nothing, adds only the missing files, and refuse
     try t.expectEqual(@as(usize, 0), fake.files.items.len);
 
     // a run that died between uploads: the sums file and the last two bundles are missing, and only they are added, never with --clobber
-    const part = try releaseJson(a, all[0..5]);
+    const part = try releaseJson(a, all[0..4]);
     fake = Fake{ .a = a, .rules = &.{
         .{ .needle = "rev-parse", .out = ok(peeled_a) },
         .{ .needle = "releases/tags/v0.0.2", .out = ok(part) },
         .{ .needle = "release upload" },
     } };
     try t.expectEqual(PublishResult.uploaded, try publish(a, fake.io(), c.o));
-    try t.expectEqual(@as(usize, 1), fake.count("gh release upload v0.0.2 dist/SHA256SUMS dist/buildrules-0.0.2.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-linux-x86_64.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-linux-aarch64.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-macos-arm64.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-macos-x86_64.tar.gz.sigstore.json dist/SHA256SUMS.sigstore.json --repo o/n"));
+    try t.expectEqual(@as(usize, 1), fake.count("gh release upload v0.0.2 dist/SHA256SUMS dist/buildrules-0.0.2.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-linux-x86_64.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-linux-aarch64.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-macos-arm64.tar.gz.sigstore.json dist/SHA256SUMS.sigstore.json --repo o/n"));
     try t.expectEqual(@as(usize, 0), fake.count("clobber"));
 
-    // any one of the twelve there with other bytes: the job fails, nothing is uploaded or created
+    // any one of the ten there with other bytes: the job fails, nothing is uploaded or created
     for (0..all.len) |i| {
         var differs = try a.dupe(Listed, all);
         differs[i].digest = "0" ** 64;
@@ -1446,7 +1446,7 @@ test "publish: refuses before any release call when the files, the tag or the AP
     o.sums = try assets.formatSums(a, c.r.b.name, c.r.b.archive);
     try t.expectError(error.MissingLine, publish(a, fake.io(), o));
     o = c.o;
-    o.sums = try assets.formatSumsFiles(a, &.{ .{ .name = c.r.b.name, .bytes = "other" }, c.r.tarballs[0], c.r.tarballs[1], c.r.tarballs[2], c.r.tarballs[3] });
+    o.sums = try assets.formatSumsFiles(a, &.{ .{ .name = c.r.b.name, .bytes = "other" }, c.r.tarballs[0], c.r.tarballs[1], c.r.tarballs[2] });
     try t.expectError(error.WrongDigest, publish(a, fake.io(), o));
     // a tarball is missing, a fifth one is there, a bundle is missing, empty or not expected
     o = c.o;
@@ -1525,7 +1525,7 @@ test "publish: a release is never created below one that exists, however the job
     const all = try allListed(a, c);
     fake = Fake{ .a = a, .rules = &.{
         .{ .needle = "rev-parse", .out = ok(peeled_a) },
-        .{ .needle = "releases/tags/v0.0.2", .out = ok(try releaseJson(a, all[0..11])) },
+        .{ .needle = "releases/tags/v0.0.2", .out = ok(try releaseJson(a, all[0..9])) },
         .{ .needle = "release upload" },
     } };
     try t.expectEqual(PublishResult.uploaded, try publish(a, fake.io(), c.o));

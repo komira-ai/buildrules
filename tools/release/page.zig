@@ -27,7 +27,7 @@ fn isHex(s: []const u8, n: usize) bool {
 }
 
 /// The digest of the line for `name` in a SHA256SUMS file (the format `assets.checkSumsFiles` accepts: a line per release file, here the source archive and
-/// the four command-line tarballs). Every line must be well formed, `name` must appear once, and a file with no line for it is `WrongName`.
+/// the three command-line tarballs). Every line must be well formed, `name` must appear once, and a file with no line for it is `WrongName`.
 pub fn digestOf(sums: []const u8, name: []const u8) Error![]const u8 {
     if (!std.mem.endsWith(u8, sums, "\n")) return error.BadSums;
     var found: ?[]const u8 = null;
@@ -172,7 +172,7 @@ test "the digest is read from a SHA256SUMS of exactly one line for the archive" 
     try t.expectEqualSlices(u8, &assets.sha256Hex("bytes"), try digestOf(sums, "buildrules-0.0.2.tar.gz"));
 }
 
-test "digestOf reads the line of a five-line SHA256SUMS: the archive's digest, and no other file's" {
+test "digestOf reads the line of a four-line SHA256SUMS: the archive's digest, and no other file's" {
     // The defect: the one-line reader, which refuses the SHA256SUMS of a release that holds the command-line tarballs (the page job would fail every release),
     // or one that takes the first line whatever the name (the page would show a tarball's digest as the archive's).
     var arena = std.heap.ArenaAllocator.init(t.allocator);
@@ -183,7 +183,6 @@ test "digestOf reads the line of a five-line SHA256SUMS: the archive's digest, a
         .{ .name = "buildrules-cli-0.0.2-linux-aarch64.tar.gz", .bytes = "a" },
         .{ .name = "buildrules-cli-0.0.2-linux-x86_64.tar.gz", .bytes = "b" },
         .{ .name = "buildrules-cli-0.0.2-macos-arm64.tar.gz", .bytes = "c" },
-        .{ .name = "buildrules-cli-0.0.2-macos-x86_64.tar.gz", .bytes = "d" },
     };
     const sums = try assets.formatSumsFiles(a, &files);
     try t.expectEqualSlices(u8, &assets.sha256Hex("source"), try digestOf(sums, "buildrules-0.0.2.tar.gz"));

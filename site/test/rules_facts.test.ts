@@ -602,8 +602,8 @@ describe('the Releases section against RELEASING.md, the release tool and the re
     expect(squash(releasing)).toContain('released with no human action');
     expect(rulesText).toContain('Every push to `main` is built and tested');
     expect(rulesText).toContain('with no human action');
-    // the release carries the command line for four platforms, and says which were run by a user beta
-    for (const target of ['linux-x86_64', 'linux-aarch64', 'macos-arm64', 'macos-x86_64']) {
+    // the release carries the command line for three platforms, and says which were run by a user beta
+    for (const target of ['linux-x86_64', 'linux-aarch64', 'macos-arm64']) {
       expect(rulesText).toContain(target);
       expect(releasing).toContain(target);
     }

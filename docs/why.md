@@ -30,7 +30,7 @@ Four ideas carry the design:
    table, and a second command (`buildrules check`) refuses a table that has gone stale.
 
 Status: version 0, linux x86_64 only for the rules. The public repository's releases hold a
-source archive and the command line for four platforms (section 8). Section 9 lists what is not done.
+source archive and the command line for three platforms (section 8). Section 9 lists what is not done.
 
 Planned and not built: Arm and macOS (and Windows) hosts for the rules, a Homebrew formula, an apt
 repository, an install script, and Python rules.
@@ -472,14 +472,14 @@ described in `RELEASING.md`) runs these stages in order, each only if the previo
 |---|---|
 | gate | the whole tree (`//ci:all`) and the completeness check, in local mode on a runner |
 | plan | decides whether this commit is released and the version; creates nothing; the one place a repository variable can freeze every release |
-| build-cli | builds the command line for the four release targets from the tested commit with the planned version stamped in, and packages the four tarballs |
+| build-cli | builds the command line for the three release targets from the tested commit with the planned version stamped in, and packages the three tarballs |
 | beta | hello-world repositories per language, consuming the candidate commit as a user would and run with the linux x86_64 command line that build-cli built, each built twice in two directories |
 | gamma | the maintainers' own repositories built on the farm with the candidate; fails the release if no farm is configured |
-| archive | a deterministic source archive of the tested commit, the four tarballs (the one the beta ran is checked to hold the very file it ran), and `SHA256SUMS` over the five files |
-| attest | a keyless signature and a GitHub build provenance attestation of each of the six files |
-| verify | read-only: the sums match; the checkout is the tested commit; the attestations and signatures verify, pinned to this workflow, commit and `refs/heads/main`; rebuilding the archive and the four binaries gives the same bytes; the shipped program prints the release version; the file list equals the commit's tree; the public-repository scrub passes |
+| archive | a deterministic source archive of the tested commit, the three tarballs (the one the beta ran is checked to hold the very file it ran), and `SHA256SUMS` over the three files |
+| attest | a keyless signature and a GitHub build provenance attestation of each of the five files |
+| verify | read-only: the sums match; the checkout is the tested commit; the attestations and signatures verify, pinned to this workflow, commit and `refs/heads/main`; rebuilding the archive and the three binaries gives the same bytes; the shipped program prints the release version; the file list equals the commit's tree; the public-repository scrub passes |
 | tag | the annotated tag, made only after everything is built, signed and verified |
-| publish | the GitHub release, from the verified files: twelve in all |
+| publish | the GitHub release, from the verified files: ten in all |
 | bump | after `publish`: opens a pull request, with auto-merge, in a downstream repository named by a repository variable, moving its `buildrules` submodule to the released commit; nothing waits for it, and a failed bump un-releases nothing |
 
 Two properties are deliberate:
@@ -502,11 +502,11 @@ A version is `v<MAJOR>.<MINOR>.<PATCH>`. `MAJOR.MINOR` is the `VERSION` file; `P
 existing tag plus one. An old run is never published after a newer one.
 
 What a release holds: `buildrules-<version>.tar.gz`, the command line as
-`buildrules-cli-<version>-<target>.tar.gz` for `linux-x86_64`, `linux-aarch64`, `macos-arm64` and
-`macos-x86_64`, `SHA256SUMS` over those five files, a keyless signature and a build provenance
-attestation of each of those six files, and notes. The archive is reproducible with one stated
+`buildrules-cli-<version>-<target>.tar.gz` for `linux-x86_64`, `linux-aarch64` and `macos-arm64`,
+`SHA256SUMS` over those four files, a keyless signature and a build provenance
+attestation of each of those five files, and notes. The archive is reproducible with one stated
 dependence: the tar bytes are git's, so the archive is made once and verified against a second build
-with the same git on the same runner. The four tarballs are built twice, on two runners, and must be the
+with the same git on the same runner. The three tarballs are built twice, on two runners, and must be the
 same bytes. A consumer relies on the published file and its sha256, not on remaking it. The user beta
 runs the linux x86_64 program only; the other three are built from the same source behind the same
 tests and checked for their file header and their version, and are not yet run on their own

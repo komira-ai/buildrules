@@ -1,14 +1,14 @@
 //! The command-line binaries of a release (RELEASING.md): `release package`, `record`, `tested`, `sums` and `sign`. Each release carries, besides the
-//! source archive `buildrules-<V>.tar.gz`, four tarballs `buildrules-cli-<V>-<target>.tar.gz` (the name keeps them apart from the source archive,
+//! source archive `buildrules-<V>.tar.gz`, three tarballs `buildrules-cli-<V>-<target>.tar.gz` (the name keeps them apart from the source archive,
 //! which the pipeline finds by the glob `buildrules-*.tar.gz` minus `cli-`), each holding `buildrules-cli-<V>-<target>/{buildrules,LICENSE}`.
 //!
 //!   package   one binary and the LICENSE into its tarball, after checking the file header is the target's (binhdr.zig) and that it says it is version V
 //!   record    the sha256 of a tarball the user beta ran, to a file beside the others
 //!   tested    refuses unless every tarball the user beta ran is, byte for byte, the tarball to be attested
-//!   sums      SHA256SUMS over the source archive and the four tarballs, then read back
-//!   sign      a keyless `cosign sign-blob` bundle per file (the five and SHA256SUMS), none empty, none stale
+//!   sums      SHA256SUMS over the source archive and the three tarballs, then read back
+//!   sign      a keyless `cosign sign-blob` bundle per file (the four and SHA256SUMS), none empty, none stale
 //!
-//! A program that is not run here (the Intel macOS binary on a Linux runner) is not run by `package`: its header and its stamped version text are
+//! A program that is not run here (the macOS binary on a Linux runner) is not run by `package`: its header and its stamped version text are
 //! checked, and the beta legs that do run it on its own platform are what prove it works. Nothing here uploads anything. The commands it runs go through
 //! `cmds.Io`, so a test scripts them.
 const std = @import("std");
@@ -21,7 +21,7 @@ const binhdr = @import("binhdr");
 
 pub const targets = binhdr.targets;
 
-/// The targets whose tarball the user beta walks on a machine of its own (the Intel macOS binary has no runner).
+/// The targets whose tarball the user beta walks on a machine of its own (every release target).
 pub const tested_targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" };
 
 const cli_prefix = "buildrules-cli-";
@@ -145,7 +145,7 @@ pub fn package(a: std.mem.Allocator, io: cmds.Io, o: PackageOpts) !Packaged {
 pub const PackageAllOpts = struct {
     /// `0.0.7`
     version: []const u8,
-    /// A directory holding `<target>/buildrules` for each of the four release targets (what `//cli:release_binaries` builds).
+    /// A directory holding `<target>/buildrules` for each of the three release targets (what `//cli:release_binaries` builds).
     bins: []const u8,
     license: []const u8,
     out: []const u8,
@@ -153,7 +153,7 @@ pub const PackageAllOpts = struct {
     native: []const []const u8,
 };
 
-/// `package` for each of the four release targets, from `<bins>/<target>/buildrules`. A target missing from `bins` is an error, and so is a `native` that
+/// `package` for each of the three release targets, from `<bins>/<target>/buildrules`. A target missing from `bins` is an error, and so is a `native` that
 /// names no release target (a typo would quietly turn the run of a binary into the weaker text check).
 pub fn packageAll(a: std.mem.Allocator, io: cmds.Io, o: PackageAllOpts) ![]Packaged {
     for (o.native) |n| {
@@ -302,7 +302,7 @@ pub fn testedFor(a: std.mem.Allocator, dist_dir: []const u8, tested_dir: []const
 pub const Dist = struct {
     /// `0.0.7`
     version: []const u8,
-    /// The source archive and the four tarballs, sorted by name.
+    /// The source archive and the three tarballs, sorted by name.
     files: []const []const u8,
 };
 
@@ -382,7 +382,7 @@ pub fn checkSums(a: std.mem.Allocator, dist_dir: []const u8, files: []const []co
     }
 }
 
-/// Writes `<dist>/SHA256SUMS` over the source archive and the four tarballs, then reads it back. If the file exists (the archive step wrote the
+/// Writes `<dist>/SHA256SUMS` over the source archive and the three tarballs, then reads it back. If the file exists (the archive step wrote the
 /// source archive's line), the line of the source archive in it must be the one computed now.
 pub fn sums(a: std.mem.Allocator, dist_dir: []const u8) !Dist {
     const d = try collect(a, dist_dir);
@@ -401,13 +401,13 @@ pub fn sums(a: std.mem.Allocator, dist_dir: []const u8) !Dist {
     return d;
 }
 
-/// `cosign sign-blob --yes --bundle <file>.sigstore.json <file>` for the five release files and SHA256SUMS, after SHA256SUMS is checked. A bundle that
+/// `cosign sign-blob --yes --bundle <file>.sigstore.json <file>` for the four release files and SHA256SUMS, after SHA256SUMS is checked. A bundle that
 /// exists beforehand is refused (a command that wrote nothing would pass on it), and one that is empty afterwards is refused.
 pub fn sign(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign: []const u8) !usize {
     return signWith(a, io, dist_dir, cosign, false);
 }
 
-/// `sign`, or with `dry` the dry run of a pull request: every check `sign` makes before it signs (the five release files and a SHA256SUMS that is exactly their
+/// `sign`, or with `dry` the dry run of a pull request: every check `sign` makes before it signs (the four release files and a SHA256SUMS that is exactly their
 /// sha256, no stray tarball, no bundle already there) and the list of files it would sign, and then no `cosign` is run and no bundle is written. The count is the
 /// number of files that would be signed.
 pub fn signWith(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign: []const u8, dry: bool) !usize {
@@ -623,33 +623,33 @@ test "package refuses a binary of another target, and a dynamic one, before it r
 }
 
 test "package of a binary this machine cannot run checks its header and its version text, and runs nothing" {
-    // The defect: the Intel macOS binary stamped with another version, which only a run on a Mac would show.
+    // The defect: the macOS binary stamped with another version, which only a run on a Mac would show.
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     var fx = try Fixture.make(a);
     defer fx.dir.tmp.cleanup();
-    try fx.dir.put("mac", try machoBytes(a, 0x01000007, "buildrules \x00\x00" ++ V ++ "\x00file:"));
-    try fx.dir.put("mac_old", try machoBytes(a, 0x01000007, "...0.0.3-poc..."));
+    try fx.dir.put("mac", try machoBytes(a, 0x0100000c, "buildrules \x00\x00" ++ V ++ "\x00file:"));
+    try fx.dir.put("mac_old", try machoBytes(a, 0x0100000c, "...0.0.3-poc..."));
     // The version is a prefix, a suffix or a middle of another one, or has no terminator: not this version.
-    try fx.dir.put("mac_070", try machoBytes(a, 0x01000007, "buildrules \x00\x00" ++ V ++ "0\x00file:"));
-    try fx.dir.put("mac_1007", try machoBytes(a, 0x01000007, "\x0010." ++ V[2..] ++ "\x00"));
-    try fx.dir.put("mac_dotted", try machoBytes(a, 0x01000007, "\x001." ++ V ++ "\x00"));
-    try fx.dir.put("mac_open", try machoBytes(a, 0x01000007, "buildrules " ++ V));
+    try fx.dir.put("mac_070", try machoBytes(a, 0x0100000c, "buildrules \x00\x00" ++ V ++ "0\x00file:"));
+    try fx.dir.put("mac_1007", try machoBytes(a, 0x0100000c, "\x0010." ++ V[2..] ++ "\x00"));
+    try fx.dir.put("mac_dotted", try machoBytes(a, 0x0100000c, "\x001." ++ V ++ "\x00"));
+    try fx.dir.put("mac_open", try machoBytes(a, 0x0100000c, "buildrules " ++ V));
     // Text glued to the front of the version: a longer string that ends with it (the NUL before is what makes the string its own).
-    try fx.dir.put("mac_prefixed", try machoBytes(a, 0x01000007, "\x00x" ++ V ++ "\x00"));
-    try fx.dir.put("mac_spaced", try machoBytes(a, 0x01000007, "\x00 " ++ V ++ "\x00"));
-    try fx.dir.put("mac_text", try machoBytes(a, 0x01000007, "...buildrules " ++ V ++ " extra\n"));
+    try fx.dir.put("mac_prefixed", try machoBytes(a, 0x0100000c, "\x00x" ++ V ++ "\x00"));
+    try fx.dir.put("mac_spaced", try machoBytes(a, 0x0100000c, "\x00 " ++ V ++ "\x00"));
+    try fx.dir.put("mac_text", try machoBytes(a, 0x0100000c, "...buildrules " ++ V ++ " extra\n"));
     // A longer version first and the real one after it: the search goes on past the first hit.
-    try fx.dir.put("mac_both", try machoBytes(a, 0x01000007, "\x00" ++ V ++ "0\x00\x00" ++ V ++ "\x00"));
+    try fx.dir.put("mac_both", try machoBytes(a, 0x0100000c, "\x00" ++ V ++ "0\x00\x00" ++ V ++ "\x00"));
     for ([_][]const u8{ "mac_070", "mac_1007", "mac_dotted", "mac_open", "mac_text", "mac_prefixed", "mac_spaced" }) |bad| {
-        try t.expectError(error.WrongVersion, package(a, fx.fake.io(), try fx.opts(a, bad, "macos-x86_64", .none)));
+        try t.expectError(error.WrongVersion, package(a, fx.fake.io(), try fx.opts(a, bad, "macos-arm64", .none)));
     }
-    _ = try package(a, fx.fake.io(), try fx.opts(a, "mac_both", "macos-x86_64", .none));
-    const p = try package(a, fx.fake.io(), try fx.opts(a, "mac", "macos-x86_64", .none));
-    try t.expectEqualStrings("buildrules-cli-" ++ V ++ "-macos-x86_64.tar.gz", p.name);
-    try t.expectError(error.WrongVersion, package(a, fx.fake.io(), try fx.opts(a, "mac_old", "macos-x86_64", .none)));
-    try t.expectError(error.WrongBinary, package(a, fx.fake.io(), try fx.opts(a, "mac", "macos-arm64", .none)));
+    _ = try package(a, fx.fake.io(), try fx.opts(a, "mac_both", "macos-arm64", .none));
+    const p = try package(a, fx.fake.io(), try fx.opts(a, "mac", "macos-arm64", .none));
+    try t.expectEqualStrings("buildrules-cli-" ++ V ++ "-macos-arm64.tar.gz", p.name);
+    try t.expectError(error.WrongVersion, package(a, fx.fake.io(), try fx.opts(a, "mac_old", "macos-arm64", .none)));
+    try t.expectError(error.WrongBinary, package(a, fx.fake.io(), try fx.opts(a, "mac", "linux-aarch64", .none)));
     try t.expectEqual(@as(usize, 0), fx.fake.calls.items.len);
 }
 
@@ -760,8 +760,10 @@ test "tested refuses a missing record, a missing tarball, a stray record, a seco
     try dir.release(a);
     try recordTested(a, &dir);
     const rec = try join(a, dir.path, "rec");
-    // a record for a target the beta did not run is not allowed either: the set is exactly the tested targets
-    _ = try record(a, try join(a, dir.path, "buildrules-cli-" ++ V ++ "-macos-x86_64.tar.gz"), rec, null);
+    // `record` writes none for a target that is no release target (the Intel macOS one, dropped); a record put there by hand is not allowed either: the set is exactly the tested targets
+    try dir.put("buildrules-cli-" ++ V ++ "-macos-x86_64.tar.gz", "intel");
+    try t.expectError(error.NotAnAsset, record(a, try join(a, dir.path, "buildrules-cli-" ++ V ++ "-macos-x86_64.tar.gz"), rec, null));
+    try dir.put("rec/buildrules-cli-" ++ V ++ "-macos-x86_64.tar.gz.sha256", "e" ** 64 ++ "  buildrules-cli-" ++ V ++ "-macos-x86_64.tar.gz\n");
     try t.expectError(error.ExtraRecords, tested(a, dir.path, rec));
     try dir.tmp.dir.deleteFile("rec/buildrules-cli-" ++ V ++ "-macos-x86_64.tar.gz.sha256");
     // a second record of one target (another version's) is ambiguous
@@ -797,7 +799,7 @@ test "tested refuses records of two versions and a malformed record" {
     try t.expectError(error.BadRecord, tested(a, dir.path, rec));
 }
 
-test "sums lists the source archive and the four tarballs in name order, and reads the file back" {
+test "sums lists the source archive and the three tarballs in name order, and reads the file back" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -817,7 +819,7 @@ test "sums lists the source archive and the four tarballs in name order, and rea
         try t.expect(std.mem.lessThan(u8, prev, line[66..]));
         prev = line[66..];
     }
-    try t.expectEqual(@as(usize, 5), lines);
+    try t.expectEqual(@as(usize, 4), lines);
     try t.expect(std.mem.indexOf(u8, text, assets.sha256Hex("source archive")[0..]) != null);
     // a second run is the same file
     _ = try sums(a, dir.path);
@@ -832,12 +834,16 @@ test "sums refuses a missing tarball, a stray one, a second source archive, and 
     var dir = try Dir.make(a);
     defer dir.tmp.cleanup();
     try dir.release(a);
-    try dir.tmp.dir.deleteFile("buildrules-cli-" ++ V ++ "-macos-x86_64.tar.gz");
+    try dir.tmp.dir.deleteFile("buildrules-cli-" ++ V ++ "-macos-arm64.tar.gz");
     try t.expectError(error.MissingTarball, sums(a, dir.path));
-    try dir.put("buildrules-cli-" ++ V ++ "-macos-x86_64.tar.gz", "back");
-    try dir.put("buildrules-cli-0.0.6-macos-x86_64.tar.gz", "stale");
+    try dir.put("buildrules-cli-" ++ V ++ "-macos-arm64.tar.gz", "back");
+    try dir.put("buildrules-cli-0.0.6-macos-arm64.tar.gz", "stale");
     try t.expectError(error.StrayTarball, sums(a, dir.path));
-    try dir.tmp.dir.deleteFile("buildrules-cli-0.0.6-macos-x86_64.tar.gz");
+    try dir.tmp.dir.deleteFile("buildrules-cli-0.0.6-macos-arm64.tar.gz");
+    // the Intel macOS tarball of an earlier plan is no release target either
+    try dir.put("buildrules-cli-" ++ V ++ "-macos-x86_64.tar.gz", "intel");
+    try t.expectError(error.StrayTarball, sums(a, dir.path));
+    try dir.tmp.dir.deleteFile("buildrules-cli-" ++ V ++ "-macos-x86_64.tar.gz");
     try dir.put("buildrules-0.0.6.tar.gz", "second source");
     try t.expectError(error.TwoSources, sums(a, dir.path));
     try dir.tmp.dir.deleteFile("buildrules-0.0.6.tar.gz");
@@ -858,7 +864,7 @@ test "sums refuses when the archive step's SHA256SUMS lists another digest for t
     try dir.release(a);
     try dir.put("SHA256SUMS", "d" ** 64 ++ "  buildrules-" ++ V ++ ".tar.gz\n");
     try t.expectError(error.WrongSums, sums(a, dir.path));
-    // the digest the archive step would have written is accepted, and replaced by the five lines
+    // the digest the archive step would have written is accepted, and replaced by the four lines
     try dir.put("SHA256SUMS", try std.fmt.allocPrint(a, "{s}  buildrules-{s}.tar.gz\n", .{ assets.sha256Hex("source archive"), V }));
     _ = try sums(a, dir.path);
 }
@@ -890,7 +896,7 @@ test "checkSums refuses a file that is not exactly the sha256 of the release fil
     try t.expectError(error.WrongSums, checkSums(a, dir.path, d.files));
 }
 
-test "sign runs cosign sign-blob on the five files and SHA256SUMS, and leaves a bundle for each" {
+test "sign runs cosign sign-blob on the four files and SHA256SUMS, and leaves a bundle for each" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -899,8 +905,8 @@ test "sign runs cosign sign-blob on the five files and SHA256SUMS, and leaves a 
     try dir.release(a);
     _ = try sums(a, dir.path);
     var fake = FakeCosign{ .a = a };
-    try t.expectEqual(@as(usize, 6), try sign(a, fake.io(), dir.path, "cosign"));
-    try t.expectEqual(@as(usize, 6), fake.calls.items.len);
+    try t.expectEqual(@as(usize, 5), try sign(a, fake.io(), dir.path, "cosign"));
+    try t.expectEqual(@as(usize, 5), fake.calls.items.len);
     for (fake.calls.items) |c| try t.expect(std.mem.startsWith(u8, c, "cosign sign-blob --yes --bundle "));
     for (targets) |tg| {
         const n = try std.fmt.allocPrint(a, "buildrules-cli-{s}-{s}.tar.gz.sigstore.json", .{ V, tg });
@@ -985,7 +991,7 @@ test "record --ran-binary: the tarball must hold the very file the user beta ran
     try t.expectError(error.NoBinaryInTarball, record(a, empty, rec, try join(a, fx.dir.path, "linux")));
 }
 
-test "package-all packages the four targets from <bins>/<target>/buildrules, runs only the native ones, and refuses a typo" {
+test "package-all packages the three targets from <bins>/<target>/buildrules, runs only the native ones, and refuses a typo" {
     // The defects: a target missing from the directory, the run of a binary quietly turned into the weaker text check by a misspelt native target.
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -996,14 +1002,12 @@ test "package-all packages the four targets from <bins>/<target>/buildrules, run
     try fx.dir.tmp.dir.makePath("bins/linux-x86_64");
     try fx.dir.tmp.dir.makePath("bins/linux-aarch64");
     try fx.dir.tmp.dir.makePath("bins/macos-arm64");
-    try fx.dir.tmp.dir.makePath("bins/macos-x86_64");
     try fx.dir.put("bins/linux-x86_64/buildrules", try elfBytes(a, 62, 1, tail));
     try fx.dir.put("bins/linux-aarch64/buildrules", try elfBytes(a, 183, 1, tail));
     try fx.dir.put("bins/macos-arm64/buildrules", try machoBytes(a, 0x0100000c, tail));
-    try fx.dir.put("bins/macos-x86_64/buildrules", try machoBytes(a, 0x01000007, tail));
     const o = PackageAllOpts{ .version = V, .bins = try join(a, fx.dir.path, "bins"), .license = try join(a, fx.dir.path, "LICENSE"), .out = fx.out, .native = &.{"linux-x86_64"} };
     const done = try packageAll(a, fx.fake.io(), o);
-    try t.expectEqual(@as(usize, 4), done.len);
+    try t.expectEqual(@as(usize, 3), done.len);
     for (targets, done) |tg, p| try t.expectEqualStrings(try assetName(a, V, tg), p.name);
     // only the native target was run
     try t.expectEqual(@as(usize, 1), fx.fake.calls.items.len);
@@ -1012,10 +1016,10 @@ test "package-all packages the four targets from <bins>/<target>/buildrules, run
     var typo = o;
     typo.native = &.{"linux-x86-64"};
     try t.expectError(error.UnknownTarget, packageAll(a, fx.fake.io(), typo));
-    try fx.dir.tmp.dir.deleteFile("bins/macos-x86_64/buildrules");
+    try fx.dir.tmp.dir.deleteFile("bins/macos-arm64/buildrules");
     try t.expectError(error.FileNotFound, packageAll(a, fx.fake.io(), o));
-    // each target's binary is held to its own header: the arm64 file in the x86_64 place is refused
-    try fx.dir.put("bins/macos-x86_64/buildrules", try machoBytes(a, 0x0100000c, tail));
+    // each target's binary is held to its own header: the Intel Mach-O file in the arm64 place is refused
+    try fx.dir.put("bins/macos-arm64/buildrules", try machoBytes(a, 0x01000007, tail));
     try t.expectError(error.WrongBinary, packageAll(a, fx.fake.io(), o));
 }
 
@@ -1052,7 +1056,7 @@ test "sign --dry makes every check of sign and signs nothing" {
     try dir.release(a);
     _ = try sums(a, dir.path);
     var fake = FakeCosign{ .a = a };
-    try t.expectEqual(@as(usize, 6), try signWith(a, fake.io(), dir.path, "cosign", true));
+    try t.expectEqual(@as(usize, 5), try signWith(a, fake.io(), dir.path, "cosign", true));
     try t.expectEqual(@as(usize, 0), fake.calls.items.len);
     try t.expectError(error.FileNotFound, dir.tmp.dir.statFile("SHA256SUMS.sigstore.json"));
     // the same refusals: a stale bundle, sums that no longer match, a stray tarball, and a missing tarball

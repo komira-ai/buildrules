@@ -464,7 +464,7 @@ const fixture_ds =
     \\      "digest": "1268fce33fb600000000000000000000000000000000000000000000000000ff",
     \\      "providers": [{"url": "https://example.invalid/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst"}]
     \\    },
-    \\    "macos-x86_64": {}
+    \\    "macos-aarch64": {}
     \\  }
     \\}
     \\

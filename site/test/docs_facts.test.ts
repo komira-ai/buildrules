@@ -162,7 +162,7 @@ describe('C and C++', () => {
       for (const s of ['x86_64-linux-gnu.2.34', '-g0', '-Wl,--strip-debug']) expect({ who, s, has: t.includes(s) }).toEqual({ who, s, has: true });
     }
   });
-  test('the four gates exist and the page names exactly those four', () => {
+  test('the three gates exist and the page names exactly those four', () => {
     const gates = ['hermetic_check', 'glibc_floor_check', 'prefixed_archive_check', 'c_check'];
     for (const g of gates) {
       expect({ g, defined: new RegExp(`^${g} = `, 'm').test(defs) }).toEqual({ g, defined: true });
@@ -338,14 +338,18 @@ describe('the release pipeline', () => {
     // the page names the downstream repository by role only
     expect(whyText).not.toMatch(/internal/i);
   });
-  test('the release holds a source archive, the command line for four platforms, sums, signatures and attestations', () => {
+  test('the release holds a source archive, the command line for three platforms, sums, signatures and attestations', () => {
     expect(release).toContain('buildrules-cli-<version>-<target>.tar.gz');
     expect(releasing).toContain('buildrules-cli-<version>-<target>.tar.gz');
     expect(releasing).not.toContain('There are no binaries');
-    for (const target of ['linux-x86_64', 'linux-aarch64', 'macos-arm64', 'macos-x86_64']) {
+    for (const target of ['linux-x86_64', 'linux-aarch64', 'macos-arm64']) {
       expect({ target, why: whyText.includes(target) }).toEqual({ target, why: true });
       expect({ target, how: howText.includes(target) }).toEqual({ target, how: true });
     }
+    // no program for an Intel Mac: the release names no such target on either page, and the tool lists exactly the three
+    expect(whyText).not.toContain('macos-x86_64');
+    expect(howText).not.toContain('macos-x86_64');
+    expect(repoFile('tools/release/binhdr.zig')).toContain('pub const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" };');
     expect(whyText).toContain('buildrules-cli-<version>-<target>.tar.gz');
     const cmds = repoFile('tools/release/cmds.zig');
     expect(cmds).toContain('SHA256SUMS');

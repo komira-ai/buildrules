@@ -14,7 +14,7 @@
 //!  - the dry run of a pull request: `attest-dry` and `verify-dry` (under the exact pull-request `if:`) are the twins of `attest` and `verify` with no signature,
 //!    attestation or token, and `verify-dry` is `verify` step for step (but for the cosign install and the `--dry` flag), so what the pull request proved is what the release does;
 //!  - RELEASE_FREEZE is read in `plan` and nowhere else, and the plan is told whether this is a dry run by the event alone;
-//!  - the binaries: the stamped build of `//cli:release_binaries` and its four tarballs in `build-cli`, the very file the beta runs handed on as `release-cli-bin`
+//!  - the binaries: the stamped build of `//cli:release_binaries` and its three tarballs in `build-cli`, the very file the beta runs handed on as `release-cli-bin`
 //!    and checked against the tarball in `archive`, the second build in `verify` that must give the same tarballs, and `release-dist` as the one set of files
 //!    that `verify`, `publish` and `site` read;
 //!  - `bump`, the last step (the pull request that moves the internal repository's submodule to the release): `contents: read` for its own token, the exact
@@ -352,7 +352,7 @@ pub fn usesRepo(line: []const u8) ?[]const u8 {
     return v[0 .. std.mem.indexOfScalar(u8, v, '@') orelse v.len];
 }
 
-const release_targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64" };
+const release_targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" };
 
 /// An expression `${{ ... }}` and nothing else: the variable that stands for a version or a target.
 fn isExpression(s: []const u8) bool {
@@ -388,8 +388,8 @@ fn isVersionTarget(s: []const u8) bool {
 }
 
 /// The one spelling of a cosign bundle's name: `<file>.sigstore.json` for exactly the files `release sign` signs (tools/release/binaries.zig): `SHA256SUMS`, the
-/// source archive `buildrules-<V>.tar.gz` and the four tarballs `buildrules-cli-<V>-<target>.tar.gz`, with `V` a version written out or as a variable and `<target>`
-/// one of the four release targets or a variable. Every word of the workflow that mentions `sigstore` (but the install of cosign, which is not a file) must be one
+/// source archive `buildrules-<V>.tar.gz` and the three tarballs `buildrules-cli-<V>-<target>.tar.gz`, with `V` a version written out or as a variable and `<target>`
+/// one of the three release targets or a variable. Every word of the workflow that mentions `sigstore` (but the install of cosign, which is not a file) must be one
 /// of those shapes, so a bundle a step uploads or verifies by another name (`.sigstore`, `.bundle`, `.sigstore.json.json`, a glob, a stem that is no release file)
 /// is not one `sign` wrote.
 pub fn sigstoreName(word: []const u8) bool {
@@ -459,7 +459,7 @@ fn hasLineEnd(text: []const u8, needle: []const u8) bool {
     return false;
 }
 
-/// The stamp of the planned version and the build of the four binaries, in `build-cli` (into `cli-bins`) and in the two verifies (into `rebuilt-bins`).
+/// The stamp of the planned version and the build of the three binaries, in `build-cli` (into `cli-bins`) and in the two verifies (into `rebuilt-bins`).
 fn buildBinaries(out_dir: []const u8) []const u8 {
     return if (std.mem.eql(u8, out_dir, "cli-bins"))
         "./buck2 build --console simple -c buildrules_re.mode=local -c \"buildrules.release_version=$NUMBER\" --out cli-bins //cli:release_binaries"
@@ -635,7 +635,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         if (std.mem.indexOf(u8, jt, "tool/release sign --dist dist --dry false") == null) try add(a, &f, "the job `attest` does not sign (`tool/release sign --dist dist --dry false`)", .{});
         if (std.mem.indexOf(u8, jt, "--dry true") != null) try add(a, &f, "the job `attest` runs a dry signing", .{});
         // the attested files are the archive, the tarballs and SHA256SUMS: the subject glob names them all
-        if (std.mem.indexOf(u8, jt, "subject-path: |\ndist/buildrules-*.tar.gz\ndist/SHA256SUMS\n") == null) try add(a, &f, "the job `attest` does not attest `dist/buildrules-*.tar.gz` (the archive and the four tarballs) and `dist/SHA256SUMS`", .{});
+        if (std.mem.indexOf(u8, jt, "subject-path: |\ndist/buildrules-*.tar.gz\ndist/SHA256SUMS\n") == null) try add(a, &f, "the job `attest` does not attest `dist/buildrules-*.tar.gz` (the archive and the three tarballs) and `dist/SHA256SUMS`", .{});
         // sign comes before the attestation, and both before the upload of what verify and publish read
         const i_sign = std.mem.indexOf(u8, jt, "tool/release sign ");
         const i_att = std.mem.indexOf(u8, jt, "actions/attest-build-provenance@");
@@ -793,15 +793,15 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
                 try add(a, &f, "the job `gamma` holds the farm's token and runs buck2 itself: {s}", .{l});
         }
     }
-    // build-cli: the four binaries, stamped with the planned version, in one directory, packaged as the four tarballs; the linux-x86_64 binary is handed to the beta as the file it runs.
+    // build-cli: the three binaries, stamped with the planned version, in one directory, packaged as the three tarballs; the linux-x86_64 binary is handed to the beta as the file it runs.
     if (jobNamed(jobs, "build-cli")) |j| {
         const jt = try j.text(a);
         if (!hasNeed(j, "tool")) try add(a, &f, "the job `build-cli` does not wait for `tool`, which hands on the buck2 it runs", .{});
         if (std.mem.indexOf(u8, jt, "NUMBER: ${{ needs.plan.outputs.number }}") == null) try add(a, &f, "the job `build-cli` does not take the planned version from the plan (`NUMBER: ${{{{ needs.plan.outputs.number }}}}`)", .{});
         if (!hasLineEnd(jt, buildBinaries("cli-bins"))) try add(a, &f, "the job `build-cli` does not build //cli:release_binaries with the planned version stamped in (`-c \"buildrules.release_version=$NUMBER\"`, `--out cli-bins`)", .{});
         if (!hasLineEnd(jt, "tool/release package-all --version \"$NUMBER\" --bins cli-bins --license LICENSE --out cli-dist --native linux-x86_64"))
-            try add(a, &f, "the job `build-cli` does not package the four tarballs of the stamped build (`package-all --version \"$NUMBER\" --bins cli-bins`, running only the linux-x86_64 binary)", .{});
-        if (std.mem.indexOf(u8, jt, "name: release-cli-tarballs\npath: cli-dist\n") == null) try add(a, &f, "the job `build-cli` does not upload the four tarballs as the artifact `release-cli-tarballs`", .{});
+            try add(a, &f, "the job `build-cli` does not package the three tarballs of the stamped build (`package-all --version \"$NUMBER\" --bins cli-bins`, running only the linux-x86_64 binary)", .{});
+        if (std.mem.indexOf(u8, jt, "name: release-cli-tarballs\npath: cli-dist\n") == null) try add(a, &f, "the job `build-cli` does not upload the three tarballs as the artifact `release-cli-tarballs`", .{});
         if (std.mem.indexOf(u8, jt, "name: release-cli-bin\npath: cli-bins/linux-x86_64/buildrules\n") == null) try add(a, &f, "the job `build-cli` does not upload the linux-x86_64 binary it packaged as the artifact `release-cli-bin`", .{});
     }
     // archive: the tarballs the build made, the file the beta ran, and the check that the tarball holds that very file.
@@ -831,8 +831,8 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         const jt = try j.text(a);
         if (!hasNeed(j, "tool")) try add(a, &f, "the job `{s}` does not wait for `tool`, which hands on the buck2 it runs", .{name});
         if (std.mem.indexOf(u8, jt, "NUMBER: ${{ needs.plan.outputs.number }}") == null) try add(a, &f, "the job `{s}` does not take the planned version from the plan (`NUMBER: ${{{{ needs.plan.outputs.number }}}}`)", .{name});
-        if (!hasLineEnd(jt, buildBinaries("rebuilt-bins"))) try add(a, &f, "the job `{s}` does not build the four binaries again with the planned version stamped in (`--out rebuilt-bins //cli:release_binaries`)", .{name});
-        if (!hasLineEnd(jt, "tool/release package-all --version \"$NUMBER\" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64")) try add(a, &f, "the job `{s}` does not package the second build's four tarballs", .{name});
+        if (!hasLineEnd(jt, buildBinaries("rebuilt-bins"))) try add(a, &f, "the job `{s}` does not build the three binaries again with the planned version stamped in (`--out rebuilt-bins //cli:release_binaries`)", .{name});
+        if (!hasLineEnd(jt, "tool/release package-all --version \"$NUMBER\" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64")) try add(a, &f, "the job `{s}` does not package the second build's three tarballs", .{name});
         if (std.mem.indexOf(u8, jt, " --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry ") == null) try add(a, &f, "the job `{s}` does not pass `--cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist` to verify, so the shipped program's version and the second build are not checked", .{name});
         if (std.mem.indexOf(u8, jt, "name: release-dist") == null or std.mem.indexOf(u8, jt, "release-unsigned") != null) try add(a, &f, "the job `{s}` does not read `release-dist` (what attest made) alone", .{name});
     }
@@ -1048,9 +1048,9 @@ const fixture_wf =
     \\          name: release-tool
     \\          path: tool
     \\      - run: chmod +x buck2 tool/release
-    \\      - name: Build the command line for the four targets with the release version stamped in
+    \\      - name: Build the command line for the three targets with the release version stamped in
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out cli-bins //cli:release_binaries
-    \\      - name: Package the four tarballs
+    \\      - name: Package the three tarballs
     \\        run: tool/release package-all --version "$NUMBER" --bins cli-bins --license LICENSE --out cli-dist --native linux-x86_64
     \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
     \\        with:
@@ -1161,7 +1161,7 @@ const fixture_wf =
     \\        run: tool/release record --tarball "dist/buildrules-cli-$NUMBER-linux-x86_64.tar.gz" --ran-binary ran/buildrules --out tested
     \\      - name: Attest only the tarballs a user beta ran
     \\        run: tool/release tested --dist dist --tested tested --targets linux-x86_64
-    \\      - name: SHA256SUMS over the archive and the four tarballs
+    \\      - name: SHA256SUMS over the archive and the three tarballs
     \\        run: tool/release sums --dist dist
     \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
     \\        with:
@@ -1190,9 +1190,9 @@ const fixture_wf =
     \\          path: dist
     \\      - run: chmod +x tool/release
     \\      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-    \\      - name: Sign the six files, keyless
+    \\      - name: Sign the five files, keyless
     \\        run: tool/release sign --dist dist --dry false
-    \\      - name: Attest the archive, the four tarballs and SHA256SUMS
+    \\      - name: Attest the archive, the three tarballs and SHA256SUMS
     \\        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
     \\        with:
     \\          subject-path: |
@@ -1263,9 +1263,9 @@ const fixture_wf =
     \\          path: dist
     \\      - run: chmod +x buck2 tool/release
     \\      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-    \\      - name: Build the command line again for the four targets
+    \\      - name: Build the command line again for the three targets
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
-    \\      - name: Package the four tarballs again
+    \\      - name: Package the three tarballs again
     \\        run: tool/release package-all --version "$NUMBER" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64
     \\      - name: The archive and the tarballs, their sums, the second build, file list and scrub, the command line's version, and (not in the dry run) the attestations and signatures
     \\        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$CANDIDATE" --dist dist --workflow .github/workflows/release.yml --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry false
@@ -1299,9 +1299,9 @@ const fixture_wf =
     \\          name: release-dist
     \\          path: dist
     \\      - run: chmod +x buck2 tool/release
-    \\      - name: Build the command line again for the four targets
+    \\      - name: Build the command line again for the three targets
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
-    \\      - name: Package the four tarballs again
+    \\      - name: Package the three tarballs again
     \\        run: tool/release package-all --version "$NUMBER" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64
     \\      - name: The archive and the tarballs, their sums, the second build, file list and scrub, the command line's version, and (not in the dry run) the attestations and signatures
     \\        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$CANDIDATE" --dist dist --workflow .github/workflows/release.yml --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry true
@@ -1443,7 +1443,7 @@ const fixture_ds =
     \\      "digest": "1268fce33fb600000000000000000000000000000000000000000000000000ff",
     \\      "providers": [{"url": "https://example.invalid/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst"}]
     \\    },
-    \\    "macos-x86_64": {}
+    \\    "macos-aarch64": {}
     \\  }
     \\}
     \\
@@ -1981,7 +1981,7 @@ test "rule: a pull request signs, attests, tags, publishes and bumps nothing; it
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "--dry false", "--dry true"), "the `--dry` flags are not exactly");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify-dry", "--rebuilt rebuilt-dist --dry true", "--rebuilt rebuilt-dist --dry true --cosign cosign"), "the steps of `verify-dry` are not the steps of `verify`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify-dry", "      - run: chmod +x buck2 tool/release\n", "      - run: chmod +x buck2 tool/release\n      - run: echo only the dry run does this\n"), "the steps of `verify-dry` are not the steps of `verify`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - name: Package the four tarballs again\n", "      - name: Package the four tarballs once more\n"), "the steps of `verify-dry` are not the steps of `verify`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - name: Package the three tarballs again\n", "      - name: Package the three tarballs once more\n"), "the steps of `verify-dry` are not the steps of `verify`");
     // verify installs cosign to check the signatures; the dry twin has none to check
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "does not install cosign");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "used other than twice");
@@ -2066,13 +2066,13 @@ test "rule: the signature and the attestation are made in attest, once, in that 
     // a second attestation elsewhere
     const second = "      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2\n        with:\n          subject-path: x\n      - run: chmod +x buck2 tool/release\n";
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release\n", second), "used other than once");
-    // the subject: the archive, the four tarballs (one glob) and SHA256SUMS; a narrower subject leaves files unattested
+    // the subject: the archive, the three tarballs (one glob) and SHA256SUMS; a narrower subject leaves files unattested
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "            dist/buildrules-*.tar.gz\n", "            dist/buildrules-0.0.1.tar.gz\n"), "does not attest `dist/buildrules-*.tar.gz`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "            dist/SHA256SUMS\n", ""), "does not attest `dist/buildrules-*.tar.gz`");
     // cosign is installed in attest, and sign comes before the attestation, and both before the upload
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "does not install cosign");
     {
-        const sign_step = "      - name: Sign the six files, keyless\n        run: tool/release sign --dist dist --dry false\n";
+        const sign_step = "      - name: Sign the five files, keyless\n        run: tool/release sign --dist dist --dry false\n";
         const moved = try mutateIn(a, r.wf, "attest", sign_step, "");
         const after = try mutateIn(a, moved, "attest", "      - uses: actions/upload-artifact@", sign_step ++ "      - uses: actions/upload-artifact@");
         try expectFinding(a, r, after, "does not sign, then attest, then upload `release-dist`");
@@ -2091,16 +2091,16 @@ test "rule: the binaries are built stamped, packaged, run by the beta, checked a
     defer ar.deinit();
     const a = ar.allocator();
     const r = try fx(a);
-    // build-cli: the planned number, the stamp, the one target that builds all four, the packaging, the two artifacts
+    // build-cli: the planned number, the stamp, the one target that builds all three, the packaging, the two artifacts
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", " -c \"buildrules.release_version=$NUMBER\"", ""), "`build-cli` does not build //cli:release_binaries with the planned version stamped in");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "needs.plan.outputs.number", "needs.plan.outputs.tag"), "`build-cli` does not take the planned version from the plan");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "//cli:release_binaries", "//cli:buildrules"), "`build-cli` does not build //cli:release_binaries");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "--out cli-bins //cli", "--out other //cli"), "`build-cli` does not build //cli:release_binaries");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", " -c buildrules_re.mode=local", ""), "does not pass `-c buildrules_re.mode=local`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "tool/release package-all --version \"$NUMBER\"", "tool/release package-all --version \"$TAG\""), "`build-cli` does not package the four tarballs");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", " --native linux-x86_64", " --native linux-x86_64,macos-arm64"), "`build-cli` does not package the four tarballs");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", " --native linux-x86_64", ""), "`build-cli` does not package the four tarballs");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-tarballs", "name: other"), "`build-cli` does not upload the four tarballs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "tool/release package-all --version \"$NUMBER\"", "tool/release package-all --version \"$TAG\""), "`build-cli` does not package the three tarballs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", " --native linux-x86_64", " --native linux-x86_64,macos-arm64"), "`build-cli` does not package the three tarballs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", " --native linux-x86_64", ""), "`build-cli` does not package the three tarballs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-tarballs", "name: other"), "`build-cli` does not upload the three tarballs");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-bin", "name: other"), "`build-cli` does not upload the linux-x86_64 binary");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "path: cli-bins/linux-x86_64/buildrules", "path: cli-bins/macos-arm64/buildrules"), "`build-cli` does not upload the linux-x86_64 binary");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "needs: [plan, tool]", "needs: [plan]"), "`build-cli` does not wait for `tool`");
@@ -2116,16 +2116,16 @@ test "rule: the binaries are built stamped, packaged, run by the beta, checked a
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "name: release-unsigned", "name: release-dist"), "does not upload `dist` as the artifact `release-unsigned`");
     {
         // sums before tested: the order of the tool is archive, record, tested, sums
-        const sums = "      - name: SHA256SUMS over the archive and the four tarballs\n        run: tool/release sums --dist dist\n";
+        const sums = "      - name: SHA256SUMS over the archive and the three tarballs\n        run: tool/release sums --dist dist\n";
         const moved = try mutateIn(a, r.wf, "archive", sums, "");
         const before = try mutateIn(a, moved, "archive", "      - name: The tarball to attest holds the file the beta ran\n", sums ++ "      - name: The tarball to attest holds the file the beta ran\n");
         try expectFinding(a, r, before, "has no `tool/release sums ` after the step before it");
     }
     // verify and verify-dry: the second build, with the same stamp, compared, and the shipped program run
     for ([_][]const u8{ "verify", "verify-dry" }) |name| {
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, " -c \"buildrules.release_version=$NUMBER\"", ""), "does not build the four binaries again with the planned version stamped in");
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, "--out rebuilt-bins //cli:release_binaries", "--out rebuilt-bins //cli:buildrules"), "does not build the four binaries again");
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, "--bins rebuilt-bins ", "--bins cli-bins "), "does not package the second build's four tarballs");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, " -c \"buildrules.release_version=$NUMBER\"", ""), "does not build the three binaries again with the planned version stamped in");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "--out rebuilt-bins //cli:release_binaries", "--out rebuilt-bins //cli:buildrules"), "does not build the three binaries again");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "--bins rebuilt-bins ", "--bins cli-bins "), "does not package the second build's three tarballs");
         try expectFinding(a, r, try mutateIn(a, r.wf, name, " --rebuilt rebuilt-dist", ""), "does not pass `--cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist`");
         try expectFinding(a, r, try mutateIn(a, r.wf, name, " --cli rebuilt-bins/linux-x86_64/buildrules", " --cli built-cli/buildrules"), "does not pass `--cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist`");
         try expectFinding(a, r, try mutateIn(a, r.wf, name, "name: release-dist", "name: release-unsigned"), "does not read `release-dist` (what attest made) alone");
@@ -2256,7 +2256,6 @@ test "rule: a cosign bundle is named <file>.sigstore.json, for the files release
         "dist/buildrules-cli-0.0.7-linux-x86_64.tar.gz.sigstore.json",
         "dist/buildrules-cli-0.0.7-linux-aarch64.tar.gz.sigstore.json",
         "dist/buildrules-cli-0.0.7-macos-arm64.tar.gz.sigstore.json",
-        "dist/buildrules-cli-0.0.7-macos-x86_64.tar.gz.sigstore.json",
         "dist/buildrules-cli-${{needs.plan.outputs.number}}-linux-x86_64.tar.gz.sigstore.json",
         "dist/buildrules-cli-${{needs.plan.outputs.number}}-${{matrix.target}}.tar.gz.sigstore.json",
         "dist/buildrules-cli-0.12.345-${{matrix.target}}.tar.gz.sigstore.json",
@@ -2279,6 +2278,8 @@ test "rule: a cosign bundle is named <file>.sigstore.json, for the files release
         "dist/buildrules-0.0.7.tar.gz.sigstore",
         "dist/buildrules-cli-0.0.7-linux-x86.tar.gz.sigstore.json",
         "dist/buildrules-cli-0.0.7-windows-x86_64.tar.gz.sigstore.json",
+        // the Intel macOS tarball was dropped from the release: its bundle is no file `release sign` writes
+        "dist/buildrules-cli-0.0.7-macos-x86_64.tar.gz.sigstore.json",
         "dist/cli-0.0.7-linux-x86_64.tar.gz.sigstore.json",
         // a stem that is no release file: not a version, not a target, a glob, a missing piece
         "dist/buildrules-foo.tar.gz.sigstore.json",

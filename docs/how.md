@@ -23,10 +23,10 @@ formula, an apt repository and an install script.
 
 ### 1.2 Get the command line
 
-A release carries the command line as a static program for four platforms, and a source archive (a
+A release carries the command line as a static program for three platforms, and a source archive (a
 Homebrew formula, an apt repository and an install script are **planned**). Pick a release from the
 [releases page](https://github.com/komira-ai/buildrules/releases). To use a program, unpack the
-tarball of your platform (`linux-x86_64`, `linux-aarch64`, `macos-arm64` or `macos-x86_64`), check it,
+tarball of your platform (`linux-x86_64`, `linux-aarch64`, or `macos-arm64`), check it,
 and put `buildrules` on your `PATH`:
 
 ```sh
@@ -41,7 +41,7 @@ tar -xzf "buildrules-cli-$v-$t.tar.gz"
 
 `--version` prints `buildrules <version>`, the number of the release. Each tarball carries a
 build provenance attestation and a signature, checked with `gh attestation verify` as for the source
-archive below. The macOS programs are not code-signed or notarised, and only the linux x86_64 program
+archive below. The macOS program (Apple silicon: there is no program for an Intel Mac) is not code-signed or notarised, and only the linux x86_64 program
 is run by the release's user beta. The rules themselves run on a linux x86_64 farm or machine.
 
 Or build the command line from source with Buck2. Check the source archive:
@@ -288,7 +288,7 @@ its hashes in `buildrules-pins.toml`.
 ### 2.5 Your own pins: `buildrules-pins.toml`
 
 Optional, at the repository root, hand-written. An unknown Rust version is refused unless this file
-supplies the hashes of all four components:
+supplies the hashes of all three components:
 
 ```toml
 [rust."1.86.0".rustc]

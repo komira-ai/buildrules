@@ -1,9 +1,9 @@
 # Releasing buildrules
 
 A release is automatic. Every push to `main` is tested in stages, and a green one that changes more than documentation or CI is released with
-no human action: a tag, and a GitHub release carrying a source archive, the command line for four platforms (`buildrules-cli-<version>-<target>.tar.gz` for
-`linux-x86_64`, `linux-aarch64`, `macos-arm64` and `macos-x86_64`), `SHA256SUMS` over those five files, a keyless signature and a build provenance attestation of
-each of those six files, and the notes. A consumer of the rules pins the tag and the archive's sha256 (or the tag's commit); a user of the command line unpacks
+no human action: a tag, and a GitHub release carrying a source archive, the command line for three platforms (`buildrules-cli-<version>-<target>.tar.gz` for
+`linux-x86_64`, `linux-aarch64` and `macos-arm64`), `SHA256SUMS` over those four files, a keyless signature and a build provenance attestation of
+each of those five files, and the notes. A consumer of the rules pins the tag and the archive's sha256 (or the tag's commit); a user of the command line unpacks
 the tarball of the platform. A pull request runs the same pipeline as a dry run, up to everything but the tag, the publication and the bump (see "The dry run").
 
 `.github/workflows/release.yml` is the pipeline. `tools/release` and `tools/stage` (Zig, tested as build actions) do each step; the workflow's `run:` lines are
@@ -16,17 +16,17 @@ one invocation each. `ci/release_check.zig` and `ci/stages_check.zig` (part of `
 | `gate` | the PR gate: calls `ci.yml`, the whole tree (`//ci:all`) and the completeness check, in local mode on the runner; a pull request from a fork does not run it | read |
 | `tool` | builds `tools/release` and `tools/stage` with buck2 and hands the binaries to the later jobs, before any job that writes holds a token | read |
 | `plan` | read-only; decides whether this commit is released and which version; creates nothing. It is the one job that reads `RELEASE_FREEZE` (see "The freeze"), and on a pull request it plans the dry run | read |
-| `build-cli` | builds `//cli:release_binaries` (the command line for the four release targets in one directory) from the tested commit with the planned version stamped in (`-c buildrules.release_version=<version>`), in local mode, and packages the four tarballs (`release package-all`). The linux-x86_64 binary is also uploaded as the file the beta will run | read |
+| `build-cli` | builds `//cli:release_binaries` (the command line for the three release targets in one directory) from the tested commit with the planned version stamped in (`-c buildrules.release_version=<version>`), in local mode, and packages the three tarballs (`release package-all`). The linux-x86_64 binary is also uploaded as the file the beta will run | read |
 | `beta` | calls `beta.yml` with that linux-x86_64 binary: hello-world repositories per language consume the candidate commit as a user would and are built twice, the second time in another directory (see "The beta stage") | read, `id-token` for its farm leg |
 | `gamma` | builds our own repositories with the candidate on the farm; fails the release when the farm is not configured (see "The gamma stage") | read, `id-token` write |
-| `archive` | `git archive` of the tested commit (its sha, not a tag) under `buildrules-<planned version>/`, compressed by the tool's own gzip; checks that the linux-x86_64 tarball holds the very file the beta ran and lets through only the tarballs a user beta ran (`release record`, `release tested`); `SHA256SUMS` over the archive and the four tarballs | read |
-| `attest` | only on a push to `main`: a keyless cosign signature (`<file>.sigstore.json`) of the six files and a build provenance attestation of all six | `id-token`, `attestations` write |
+| `archive` | `git archive` of the tested commit (its sha, not a tag) under `buildrules-<planned version>/`, compressed by the tool's own gzip; checks that the linux-x86_64 tarball holds the very file the beta ran and lets through only the tarballs a user beta ran (`release record`, `release tested`); `SHA256SUMS` over the archive and the three tarballs | read |
+| `attest` | only on a push to `main`: a keyless cosign signature (`<file>.sigstore.json`) of the five files and a build provenance attestation of all five | `id-token`, `attestations` write |
 | `attest-dry` | only on a pull request: every check `attest` makes before it signs, and no signing, no attestation and no token beyond reading | read |
-| `verify` | read-only, only on a push to `main`; checks everything below before a file is published, and builds the four binaries again to compare | read, `attestations` read |
+| `verify` | read-only, only on a push to `main`; checks everything below before a file is published, and builds the three binaries again to compare | read, `attestations` read |
 | `verify-dry` | only on a pull request: `verify` step for step but for the attestations and signatures, which a pull request has none of | read |
 | `tag` | the annotated tag at that sha, made only after everything is built, tested, signed and verified, with the release bot's token (see "The tag ruleset"). A tag that exists at the sha is kept; one at another commit fails the job | read; the write is the bot's token, minted in this job and used by the tag step alone |
 | `site` | read-only; the page of the release (the pin snippet) as an artifact; nothing deploys it | read |
-| `publish` | needs `tag` and `verify`; checks the tag peels to the verified sha, then creates the GitHub release from the verified files: the archive, the four tarballs, `SHA256SUMS` and the six signature bundles | `contents: write` |
+| `publish` | needs `tag` and `verify`; checks the tag peels to the verified sha, then creates the GitHub release from the verified files: the archive, the three tarballs, `SHA256SUMS` and the five signature bundles | `contents: write` |
 | `bump` | needs `plan`, `tag`, `publish` and `tool`; opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge (see "The submodule bump"). Nothing waits for it | read; the write is the bot's token for the internal repository, minted in this job and used by the bump step alone |
 
 The order is `gate`, `plan`, `build-cli`, `beta`, `gamma`, `archive`, `attest`, `verify`, `tag`, `publish` (`tool` beside `gate`; `site` after `tag` and `verify`);
@@ -49,8 +49,8 @@ expands a repository variable or event field inline: the values go through `env:
 
 A pull request from a branch of this repository runs `release.yml` too (a pull request from a fork runs nothing: it has neither the farm nor a commit the cell can be
 fetched at). It walks every stage but `tag`, `publish` and `bump`: the plan names the version the pull request would be released as (whatever the pull request changes, and
-whatever `RELEASE_FREEZE` says), `build-cli` builds and packages the four binaries, the beta and the gamma run, `archive` makes the archive and the sums, `attest-dry` makes the
-checks of the signing without signing, and `verify-dry` builds the four binaries again and compares, runs the shipped program and checks the archive and the scrub. What it cannot do is check an
+whatever `RELEASE_FREEZE` says), `build-cli` builds and packages the three binaries, the beta and the gamma run, `archive` makes the archive and the sums, `attest-dry` makes the
+checks of the signing without signing, and `verify-dry` builds the three binaries again and compares, runs the shipped program and checks the archive and the scrub. What it cannot do is check an
 attestation or a signature, since nothing was signed: the real `verify` does, and `ci/release_check.zig` holds `verify-dry` to be `verify` step for step (but for the installation of cosign and the flag
 `--dry`), so what the pull request proved is what the release does. The jobs that sign, attest, tag, publish and bump are under an `if:` that a pull request cannot satisfy, and
 `attest-dry` and `verify-dry` under one that only a pull request can. The pull request builds the head of the branch, not the merge commit.
@@ -157,14 +157,14 @@ and says so) rather than released.
 - a release build passes the planned version, `-c buildrules.release_version=<MAJOR.MINOR.PATCH>` (`build-cli` and, for the second build, `verify` do; nothing else sets it), and the program prints that number;
 - any other build (a checkout, your own farm) prints `<MAJOR.MINOR>-dev` of the `VERSION` file, so a program that was not released never claims a release number.
 
-`cli/src/version_test.zig` holds the stamp to that shape against the `VERSION` file, as a test welded to the program. The release holds the other end: `verify` builds the four binaries again, runs
+`cli/src/version_test.zig` holds the stamp to that shape against the `VERSION` file, as a test welded to the program. The release holds the other end: `verify` builds the three binaries again, runs
 the linux-x86_64 one (which must be the file inside the linux-x86_64 tarball, and the tarballs must be the same bytes as the ones that ship) and fails the release unless it prints the release's own number.
 `//cli:header_unit` also requires every built binary to hold its version (`<MAJOR.MINOR>-dev` outside a release) as a string of its own, with a NUL before and after it, which is the check `release package`
 makes of a binary it cannot run.
 
 ### The command-line binaries
 
-`cli/BUCK` builds the program for the four release targets, from one source and the same tests (only zig's `-target` differs; all are built on the Linux execution
+`cli/BUCK` builds the program for the three release targets, from one source and the same tests (only zig's `-target` differs; all are built on the Linux execution
 platform, as a pure-Zig program needs no SDK to cross-compile):
 
 | release target | target | zig `-target` |
@@ -172,14 +172,13 @@ platform, as a pure-Zig program needs no SDK to cross-compile):
 | `linux-x86_64` | `//cli:buildrules_linux_x86_64` | `x86_64-linux-musl` |
 | `linux-aarch64` | `//cli:buildrules_linux_aarch64` | `aarch64-linux-musl` |
 | `macos-arm64` | `//cli:buildrules_macos_arm64` | `aarch64-macos` |
-| `macos-x86_64` | `//cli:buildrules_macos_x86_64` | `x86_64-macos` |
 
 Two tests hold each target to its name. An analysis test per target (`zig_exe_target_test`, spelled with the triple again, so a change to one side alone is red) checks the triple the
-rule was given; `//cli:header_unit` reads the four built files and requires an ELF of the right machine with no dynamic loader (Linux), or a 64-bit Mach-O executable of the
+rule was given; `//cli:header_unit` reads the three built files and requires an ELF of the right machine with no dynamic loader (Linux), or a 64-bit Mach-O executable of the
 right cpu (macOS), and that no binary passes as another target's (`tools/release/binhdr.zig`).
 A third (`same_tests_as` of the same rule) requires each cross executable to wait for exactly the unit tests of `//cli:buildrules`, and not for none, so a cross binary cannot be built with fewer tests than the program that is tested.
 
-`//cli:release_binaries` copies the four into one directory, `<release target>/buildrules` for each (`cli/release.bzl`), so that `build-cli` and the second build of `verify` are one command each
+`//cli:release_binaries` copies the three into one directory, `<release target>/buildrules` for each (`cli/release.bzl`), so that `build-cli` and the second build of `verify` are one command each
 (`buck2 build --out DIR //cli:release_binaries`); `//cli:header_unit` holds each file of the directory to the header of its path. `zig_exe_target_test` takes `same_tests_as` as a required
 attribute (no default), and `ci/negative` holds a planted copy of a program with other tests that the rule must refuse. `tools/release` packages them (`binaries.zig`); the release workflow calls it as follows.
 
@@ -187,15 +186,15 @@ attribute (no default), and `ci/negative` holds a planted copy of a program with
   and `LICENSE`, every entry with time 0 and the tool's own gzip, so the same inputs make the same bytes. The name keeps the tarball apart from the source archive
   `buildrules-V.tar.gz`. It refuses a binary whose header is another target's, and one that does not say `buildrules V`: with `--exec native` it runs `--version`; with `--exec none`
   (a binary this machine cannot run) it looks in the file for the version as a string of its own (the version with a NUL right after it and a NUL, or the start of the file, right before it: `0.0.7` is not found in `0.0.70`, `10.0.7`, `x0.0.7` or `0.0.7-dev`), a weaker check that a run on the target's own platform must back. (The program prints `buildrules ` and its version as two strings, so `buildrules <V>` is not contiguous in the file.)
-- `release package-all --version V --bins DIR --license PATH --out DIR [--native T,T]` is `package` for the four targets from `DIR/<target>/buildrules`; it runs only the binaries named by `--native`
+- `release package-all --version V --bins DIR --license PATH --out DIR [--native T,T]` is `package` for the three targets from `DIR/<target>/buildrules`; it runs only the binaries named by `--native`
   (`linux-x86_64`, which the runner can run) and checks the others by header and version text.
 - `release record --tarball PATH --out DIR [--ran-binary PATH]` writes the sha256 of a tarball a user-beta leg ran (with `--ran-binary`, only if the tarball's `buildrules` is that very file), and
   `release tested --dist DIR --tested DIR [--targets T,T]` refuses unless the tarballs to attest are, byte for byte, the ones recorded for the targets walked, of one version, and nothing else is recorded. The
-  targets that a user beta can walk are `linux-x86_64`, `linux-aarch64` and `macos-arm64` (the Intel macOS binary has no runner); **the release walks `linux-x86_64` only** (`--targets linux-x86_64`):
+  targets that a user beta can walk are `linux-x86_64`, `linux-aarch64` and `macos-arm64`; **the release walks `linux-x86_64` only** (`--targets linux-x86_64`):
   the beta legs for the Arm Linux and macOS platforms are planned (see "The beta stage"), and until they run, the other three tarballs are attested and verified (header, version, reproduction) but
   not run by a user beta. The workflow names the targets, so the day a leg is added the list grows with it.
-- `release sums --dist DIR` writes `SHA256SUMS` over the source archive and the four tarballs in name order (five lines) and reads it back; it refuses a missing, stray or other-version tarball.
-- `release sign --dist DIR [--cosign PATH] [--dry true|false]` runs keyless `cosign sign-blob` on those five files and `SHA256SUMS`, and refuses a bundle that is missing, empty or already there. With `--dry true` (the
+- `release sums --dist DIR` writes `SHA256SUMS` over the source archive and the three tarballs in name order (four lines) and reads it back; it refuses a missing, stray or other-version tarball.
+- `release sign --dist DIR [--cosign PATH] [--dry true|false]` runs keyless `cosign sign-blob` on those four files and `SHA256SUMS`, and refuses a bundle that is missing, empty or already there. With `--dry true` (the
   pull request's `attest-dry`) it makes every check and the list of files it would sign, and runs no `cosign`.
 
 ## What is released
@@ -214,13 +213,13 @@ finishing late) is skipped, never released out of order. A re-run of a released 
 ## What a release holds
 
 - `buildrules-<version>.tar.gz`: the tracked files of the tested commit under `buildrules-<version>/`, e.g. `buildrules-0.0.1/`.
-- `buildrules-cli-<version>-<target>.tar.gz` for `linux-x86_64`, `linux-aarch64` (static musl executables), `macos-arm64` and `macos-x86_64`: a directory of that name holding `buildrules` (0755) and `LICENSE`,
-  every entry with time 0 and the tool's own gzip. `buildrules --version` prints `buildrules <version>`. The macOS programs are not code-signed or notarised.
-- `SHA256SUMS`: five lines, the sha256 of the archive and of the four tarballs in name order (`sha256sum --check` reads it).
-- `<file>.sigstore.json` for each of those six files: a keyless cosign signature (Sigstore) made by the `attest` job, whose identity is this workflow on `refs/heads/main`.
+- `buildrules-cli-<version>-<target>.tar.gz` for `linux-x86_64`, `linux-aarch64` (static musl executables) and `macos-arm64`: a directory of that name holding `buildrules` (0755) and `LICENSE`,
+  every entry with time 0 and the tool's own gzip. `buildrules --version` prints `buildrules <version>`. The macOS program is for Apple silicon (arm64); there is no program for an Intel Mac. It is not code-signed or notarised.
+- `SHA256SUMS`: four lines, the sha256 of the archive and of the three tarballs in name order (`sha256sum --check` reads it).
+- `<file>.sigstore.json` for each of those five files: a keyless cosign signature (Sigstore) made by the `attest` job, whose identity is this workflow on `refs/heads/main`.
 - The notes: how to pin it, the tarballs with their sha256, how to verify, and the commit subjects (no merge commits) since the previous tag.
-- A build provenance attestation (GitHub's, signed with the workflow's identity) of each of the six files.
-Twelve files in all; `publish` refuses a release that would hold any other.
+- A build provenance attestation (GitHub's, signed with the workflow's identity) of each of the five files.
+Ten files in all; `publish` refuses a release that would hold any other.
 
 The archive is reproducible, with one stated dependence. `git archive` writes the tar with a fixed prefix, a fixed modification time, the modes of
 umask 022, and `core.autocrlf=false` and `core.eol=lf` (so no setting of the runner converts a line ending); the tool compresses it with its own gzip (a
@@ -231,21 +230,21 @@ consumer relies on the published file and its sha256, not on making the file aga
 
 `verify` checks, and `publish` refuses to go on without:
 
-1. `SHA256SUMS` is exactly the sha256 of the archive and of the four tarballs, one line each in name order, and nothing else (`verify` and `publish` read all five lines; the one-line reader of the
-   earlier releases is gone), and the four tarballs are the four of this version, once each;
+1. `SHA256SUMS` is exactly the sha256 of the archive and of the three tarballs, one line each in name order, and nothing else (`verify` and `publish` read all three lines; the one-line reader of the
+   earlier releases is gone), and the three tarballs are the three of this version, once each;
 2. the checkout is the commit that was tested (no tag exists yet; `publish` later requires the annotated tag to peel to that sha);
-3. the attestations of all six files verify (`gh attestation verify`), pinned to this workflow, the commit, and `refs/heads/main`, and so do the six keyless signatures (`cosign verify-blob`, pinned to the
+3. the attestations of all five files verify (`gh attestation verify`), pinned to this workflow, the commit, and `refs/heads/main`, and so do the five keyless signatures (`cosign verify-blob`, pinned to the
    identity of this workflow on `refs/heads/main`, the issuer, the commit, the push trigger and this repository) (`verify` only, not in the dry run: a pull request has neither);
 4. building the archive again from the commit gives the same bytes;
-5. building the four binaries again from the commit, on another runner with the same stamp, packaging them, gives the same four tarballs byte for byte;
+5. building the three binaries again from the commit, on another runner with the same stamp, packaging them, gives the same three tarballs byte for byte;
 6. the program built in that second build prints the release version (`buildrules --version` is `buildrules <MAJOR.MINOR.PATCH>`, the planned number: see "The version of the command line") and is the very file the
    linux-x86_64 tarball holds, so the version checked is the version of the file that ships;
 7. the archive's file list equals `git ls-tree -r` of the commit (a missing, extra or repeated file is a failure);
 8. the scrub (`tools/scrub`: dates, names, addresses and the like that a public repository must not hold) passes on the archive's contents.
 
-`publish` repeats the check of `SHA256SUMS` and requires all six signature bundles to be there and not empty.
+`publish` repeats the check of `SHA256SUMS` and requires all five signature bundles to be there and not empty.
 
-A re-run creates no second release and replaces no asset. If the release exists, each of the twelve files it already holds must have the sha256
+A re-run creates no second release and replaces no asset. If the release exists, each of the ten files it already holds must have the sha256
 of ours or the job fails and changes nothing; a file it lacks is added. A release is never edited by the pipeline.
 
 ## Pinning a release
@@ -282,7 +281,7 @@ same fact in git's terms.
 
 ## Installing the command line
 
-Pick the tarball of your platform from the release (`linux-x86_64`, `linux-aarch64`, `macos-arm64`, `macos-x86_64`), check it, unpack it and put `buildrules` on your `PATH`:
+Pick the tarball of your platform from the release (`linux-x86_64`, `linux-aarch64`, `macos-arm64`), check it, unpack it and put `buildrules` on your `PATH`:
 
 ```
 curl -fsSLO https://github.com/komira-ai/buildrules/releases/download/v0.0.1/buildrules-cli-0.0.1-linux-x86_64.tar.gz
@@ -293,8 +292,8 @@ buildrules-cli-0.0.1-linux-x86_64/buildrules --version
 gh attestation verify buildrules-cli-0.0.1-linux-x86_64.tar.gz --repo OWNER/REPO
 ```
 
-(`v0.0.1` and `0.0.1` stand for the release you take.) `--version` prints `buildrules <version>`, the number of the release. The program is static, so it needs nothing else on the machine. The macOS programs
-are not code-signed or notarised, and the release is not a promise that they run: the user beta walks the linux-x86_64 program only (see "The command-line binaries").
+(`v0.0.1` and `0.0.1` stand for the release you take.) `--version` prints `buildrules <version>`, the number of the release. The program is static, so it needs nothing else on the machine. The macOS program
+is not code-signed or notarised, and the release is not a promise that it runs: the user beta walks the linux-x86_64 program only (see "The command-line binaries").
 
 ## The tag ruleset
 

@@ -81,6 +81,7 @@ jest_test(
         "tools/release/cmds.zig": "//tools/release:cmds.zig",
         "tools/release/version.zig": "//tools/release:version.zig",
         "tools/release/page.zig": "//tools/release:page.zig",
+        "tools/release/binhdr.zig": "//tools/release:binhdr.zig",
         "tools/stage/gamma.zig": "//tools/stage:gamma.zig",
         "beta/mojo/STEPS": "//beta:mojo_steps",
         "rules/cxx/archive.bzl": "//rules/cxx:archive.bzl",

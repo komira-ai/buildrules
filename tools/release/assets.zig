@@ -441,7 +441,7 @@ test "the first release and an empty range say so; a long range is cut" {
 }
 
 test "checkSumsFiles: exactly one correct line per file, in name order, and nothing else" {
-    // The defect: a reader of one line (the old checkSums) used on a SHA256SUMS of five, which refuses a good release, or a reader of many that
+    // The defect: a reader of one line (the old checkSums) used on a SHA256SUMS of four, which refuses a good release, or a reader of many that
     // takes a file without a line, a line for a stranger, a wrong digest or a repeated line.
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();

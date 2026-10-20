@@ -10,10 +10,10 @@
 //!   release bump-check    --internal-repo OWNER/NAME
 //!   release bump-internal --repo OWNER/NAME --tag TAG --sha SHA --internal-repo OWNER/NAME --submodule PATH --workdir EMPTYDIR   (GH_TOKEN: the release bot's)
 //!   release package --version V --target T --binary PATH --license PATH --out DIR --exec native|none   (binaries.zig: buildrules-cli-V-T.tar.gz)
-//!   release package-all --version V --bins DIR --license PATH --out DIR [--native T,T]   the four, from DIR/<target>/buildrules
+//!   release package-all --version V --bins DIR --license PATH --out DIR [--native T,T]   the three, from DIR/<target>/buildrules
 //!   release record  --tarball PATH --out DIR [--ran-binary PATH]   the sha256 of a tarball a user-beta leg ran (and the file it ran is the tarball's)
 //!   release tested  --dist DIR --tested DIR [--targets T,T]   the tarballs to attest are the ones the user beta ran
-//!   release sums    --dist DIR                      SHA256SUMS over the source archive and the four tarballs
+//!   release sums    --dist DIR                      SHA256SUMS over the source archive and the three tarballs
 //!   release sign    --dist DIR [--cosign PATH] [--dry true|false]   a keyless cosign bundle per file (dry: the checks, no signing)
 //!
 //! Exit 0 when the step succeeded (`plan` also when it decided there is nothing to release), 1 when a check failed, 2 on a bad command line.
@@ -227,7 +227,7 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         });
         for (f.items) |m| std.debug.print("release verify: {s}\n", .{m});
         if (f.items.len != 0) return 1;
-        say("release verify: {s} is the archive of {s}; checked: sums, checkout, {s}, reproduction of the archive and the four command-line tarballs, the built program's version, file list, scrub\n", .{ name, g.get("sha").?, if (dry) "no attestations or signatures (dry run)" else "attestations and signatures" });
+        say("release verify: {s} is the archive of {s}; checked: sums, checkout, {s}, reproduction of the archive and the three command-line tarballs, the built program's version, file list, scrub\n", .{ name, g.get("sha").?, if (dry) "no attestations or signatures (dry run)" else "attestations and signatures" });
         return 0;
     }
     if (std.mem.eql(u8, cmd, "publish")) {
