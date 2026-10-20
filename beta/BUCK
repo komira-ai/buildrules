@@ -26,7 +26,7 @@ export_file(
     visibility = ["//ci:", "//site:"],
 )
 
-# Read by the buildrules.dev site tests (site/BUCK): the Mojo leg is planned until mopm's first release.
+# Read by the buildrules.dev site tests (site/BUCK): the Mojo leg runs; its STEPS carry no planned-until line.
 export_file(
     name = "mojo_steps",
     src = "mojo/STEPS",

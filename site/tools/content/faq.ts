@@ -67,7 +67,7 @@ export const faq: Page = {
     ),
     ...q(
       'What about Mojo and Python?',
-      'Mojo has rules, built on mopm: see [Mojo](/rules/mojo/). They build with the one Mojo version mopm pins, and the mopm release they pin is a stand-in until a release is published. Python is planned and has none: see [Python](/rules/python/).',
+      'Mojo has rules, built on mopm: see [Mojo](/rules/mojo/). They build with the one Mojo version mopm pins, and the mopm they pin is the published 0.0.1 release. Python is planned and has none: see [Python](/rules/python/).',
     ),
     ...q(
       'Does this site track me?',

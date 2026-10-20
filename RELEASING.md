@@ -51,7 +51,7 @@ and then, from nothing, builds again.
 | `zig` | a Zig program with its unit test welded to the executable | ubuntu x86_64 |
 | `node` | a Node package: `npm sync`, `npm check`, test and build scripts, a `dist` directory | ubuntu x86_64 |
 | `mixed` | a Rust package, a C program, a Zig program and a Node package in one repository | ubuntu x86_64 |
-| `mojo` | a Mojo package | **planned** until mopm's first release |
+| `mojo` | a Mojo package, built by the pinned mopm 0.0.1 release | ubuntu x86_64 |
 | `ubuntu-24.04-arm`, `macos-14` | the same | **planned**: buildrules v0 targets linux-x86_64 only |
 | farm | the ubuntu legs again, built on the farm | only when the repository variables `FARM_ADDRESS` and `FARM_CONNECT_REF` are set |
 
@@ -70,8 +70,8 @@ claim is made only if a beta run shows it.
 A farm leg does not repeat the build, since the farm's cache would answer it; it requires every build to report `local: 0`.
 
 Planned legs are visible, not missing: the arm and macos jobs are in `beta.yml` with `if:` never true and their reason in the job name, so a run's page
-shows them skipped; the Mojo job runs when `tools/stage plan` finds that `rules/mopm/pins.bzl` no longer marks the pinned mopm `release_pending`, and
-until then it is skipped. The Mojo steps have not been run end to end yet; that is the first thing to watch when mopm's first release is pinned.
+shows them skipped; the Mojo job runs: `beta/mojo/STEPS` no longer carries `planned-until mopm-release`, and `tools/stage plan` reports the leg ready (mopm 0.0.1, the
+published release, is pinned in `rules/mopm/pins.bzl`).
 The farm leg, when `FARM_ADDRESS` or `FARM_CONNECT_REF` is empty, is skipped and the `tools` job says so with a notice.
 
 `beta/` is not part of this repository's Buck2 graph and is not built by `//ci:all` (`ci/all.bzl`, `OUTSIDE_THE_GRAPH`, says why): a user's `BUCK` file

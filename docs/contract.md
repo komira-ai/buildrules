@@ -503,8 +503,8 @@ tables use, and `cov_normalize` maps the report to repository paths. `cov_run` r
 
 ### 12.5 Versions: pinned mopm, the Mojo version
 
-`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.1` is a **stand-in**: built on the farm from a development tree
-of mopm (`//:mopm-tarball`, with a `RELEASE-PENDING` file), at a URL where the release job will publish it; until then a machine points the download at its copy with `url_map`.
+`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.1` is the published mopm release (its linux-x86_64 tarball,
+sha256 80ac2ed4...23dc, checked against the release's `SHA256SUMS`); a machine that mirrors the download points it at its copy with `url_map`.
 A version not in the table is refused by `mojo sync` (the message names `buildrules-pins.toml` and the table to add) unless `buildrules-pins.toml` has `[mopm."V"]` with `url`, `sha256`, `size`.
 The mopm binary is an input of every unit action: a mopm bump re-keys every unit on purpose. The Mojo version comes from the graph: mopm pins one (`1.0.0`) today, so no package here
 builds for two Mojo versions; `mopm lock` writes the lock for each version `[package] mojo` lists and `plan --mojo M` makes the graph for one, so two versions would be two units, two actions,
@@ -658,7 +658,7 @@ and checked against their sha256, with the same command lines and inputs as on a
 The public CI (`.github/workflows/ci.yml`) builds `//ci:all` this way on `ubuntu-latest`. `//ci:all` is every target of the tree except the ones `ci/all.bzl` lists with a reason each: the refusal fixtures
 (`probe_env`, `probe_tree`, `probe_usr`, `cnative:coverage`, which are red by design) and `ci/negative` (a planted defect that a wildcard build skips). Before it builds, the workflow runs
 `buck2 bxl //ci:completeness.bxl:check`, which fails and names every target of `//...` and `crates//...` that is in the closure of neither `//ci:all` nor `//ci:mojo` and is not excluded, so a new target cannot go unbuilt.
-`//ci:mojo` is not built there: its packages need the pinned mopm tarball, a stand-in that is published nowhere yet (section 12.5), and a package channel for `cnative`; both are fetched
+`//ci:mojo` is not built there: its packages need a package channel for `cnative` (the pinned mopm tarball is the published release, section 12.5); it is fetched
 through `buildrules.url_map` from a mirror a public runner does not have. `//ci:mojo` is built on a farm that has the mirror.
 
 `ci.yml` runs on pull requests, and `.github/workflows/release.yml` calls it as the first stage for a push to `main`; a green push that changes more than documentation or CI is then tagged and released with no human action (RELEASING.md). `//ci:workflow` checks the three workflows (`ci/workflow_check.zig`, `ci/release_check.zig`, `ci/stages_check.zig`).
