@@ -16,7 +16,8 @@ declarations), and nothing from `node_modules` is imported by the rendering code
 | `tools/build.ts` | the build program: render, hash the stylesheet, check, write `dist/` |
 | `static/` | the stylesheet and the icon |
 | `serve.js`, `preview.bzl` | the local preview server and the `buck2 run` rule that starts it |
-| `test/` | render tests, the link check, tests that compare the pages with the rule sources, the CLI usage text and the contract |
+| `test/` | render tests, the link check, tests that compare the pages with the rule sources, the CLI usage text and the contract; `docs_facts.test.ts` for the Why and How pages and `docs/why.md`, `docs/how.md` |
+| `tools/content/why.ts`, `how.ts` | the Why page and the three How pages: the site's copy of `docs/why.md` and `docs/how.md` |
 | `pins.toml`, `pins.lock.bzl`, `package-lock.json` | the npm packages, pinned by hash |
 
 ## Build and test
@@ -35,7 +36,8 @@ the same tree check as the tests, so a broken link, a missing fragment or an inl
 
 The tests read the sources the pages describe (the Zig usage texts of the command line, `docs/contract.md`, the `.bzl` files of
 the rules, the Rust version table, the CPU-level table, `ci/BUCK`, the Mojo and mopm pins) and fail when a page names a command, flag, rule, rule argument, version, CPU level, matrix target or exit code that does not exist, or states a value that differs from its source (`test/facts.test.ts`, `test/rules_facts.test.ts`). A page that describes
-something not built must say so with a `planned` note.
+something not built must say so with a `planned` note. The Why and How pages repeat `docs/why.md` and `docs/how.md`; `test/docs_facts.test.ts`
+holds their pins, gates, platforms, release stages, flags and planned items to the sources, and the mopm pin in both of its states.
 
 ## Preview
 

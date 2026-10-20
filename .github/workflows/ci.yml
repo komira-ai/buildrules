@@ -66,3 +66,44 @@ jobs:
       - name: Stop buck2
         if: always()
         run: ./buck2 kill
+
+  # The linux-aarch64 host (docs/pins.md, "Other hosts"; rules/pins/hosts.bzl). The same buck2 release as above for this machine, the execution
+  # platform that local mode registers on it (platforms:linux_aarch64, chosen by host_info()), and every pinned download of the aarch64 hosts, which
+  # buck2 checks against the sha256 and the size in the table. Nothing is compiled here yet: no rule runs on this host until a pinned busybox exists
+  # for it (hosts.bzl says why), and this job is where that work becomes visible as a red or a green leg.
+  host_arm:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The release pinned in tools/buck2 for linux-aarch64 (the digest is the sha256 of the .zst); ci/workflow_check.zig compares both.
+      - name: Install buck2
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-aarch64-unknown-linux-gnu.zst
+          echo "e35027a8e3f702fd9f080074ac64ebc80e2a0fe8d669d46d85afc31b0ec4a463  buck2.zst" | sha256sum --check --strict -
+          zstd --decompress --quiet buck2.zst -o buck2
+          chmod +x buck2
+          ./buck2 --version
+
+      - name: The machine is aarch64
+        run: test "$(uname -m)" = aarch64
+
+      - name: The execution platform of this machine is platforms:linux_aarch64
+        run: |
+          ./buck2 audit execution-platform-resolution -c buildrules_re.mode=local //rules/pins:host_downloads \
+            | grep --fixed-strings --quiet "Execution platform: buildrules//platforms:linux_aarch64"
+
+      - name: Download and verify the pins of the aarch64 hosts
+        run: |
+          ./buck2 build --console simple -c buildrules_re.mode=local \
+            --target-platforms buildrules//platforms:linux_aarch64 \
+            //rules/pins:host_downloads
+
+      - name: Stop buck2
+        if: always()
+        run: ./buck2 kill

@@ -5,6 +5,8 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("//rules/core:pinned_file.bzl", "pinned_file")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/zig:zig.bzl", "zig_dist", "zig_test")
+load("//rules:matrix.bzl", "group")
+load(":hosts.bzl", "HOST_PINS", "host_downloads")
 load(":pins.bzl", "PINS", "strip_prefix")
 
 [
@@ -54,6 +56,38 @@ export_file(
     name = "pins.bzl",
     src = "pins.bzl",
     visibility = ["//site:"],
+)
+
+
+# ---- the other hosts (hosts.bzl) -----------------------------------------------------------------
+# Downloads of linux-aarch64 and macos-aarch64: zig, node, rustc and its components. Nothing unpacks them yet (hosts.bzl says why); each is
+# a download buck2 verifies against the sha256 and the size, so `host_downloads` is the check that the table is right. It needs no execution
+# platform of its own, so it builds on the farm and on every runner.
+[
+    pinned_file(
+        name = h + "__" + d["name"],
+        url = d["url"],
+        sha256 = d["sha256"],
+        size_bytes = d["size"],
+        visibility = ["PUBLIC"],
+    )
+    for h in HOST_PINS
+    for d in host_downloads(h)
+]
+
+[
+    group(
+        name = "host_downloads_" + h.replace("-", "_"),
+        deps = [":" + h + "__" + d["name"] for d in host_downloads(h)],
+        visibility = ["PUBLIC"],
+    )
+    for h in HOST_PINS
+]
+
+group(
+    name = "host_downloads",
+    deps = [":host_downloads_" + h.replace("-", "_") for h in HOST_PINS],
+    visibility = ["PUBLIC"],
 )
 
 scrub_files()

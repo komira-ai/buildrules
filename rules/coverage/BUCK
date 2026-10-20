@@ -261,4 +261,11 @@ zig_exe(
     visibility = ["PUBLIC"],
 )
 
+# Read by the buildrules.dev site tests (site/BUCK), which check its pages against this file.
+export_file(
+    name = "pins.bzl",
+    src = "pins.bzl",
+    visibility = ["//site:"],
+)
+
 scrub_files()

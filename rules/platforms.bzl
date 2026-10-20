@@ -74,12 +74,14 @@ def _executor(props):
     )
 
 def _impl(ctx):
-    cfg = ctx.attrs.linux_x86_64[PlatformInfo].configuration
+    # Local mode on a host that is not linux x86_64 registers that host's platform (platforms/BUCK) instead.
+    first = ctx.attrs.local_platform or ctx.attrs.linux_x86_64
+    cfg = first[PlatformInfo].configuration
     platforms = [
         ExecutionPlatformInfo(
             # Named after the platform whose configuration it uses: the
             # configuration keys every exec dep and appears in output paths.
-            label = ctx.attrs.linux_x86_64.label.raw_target(),
+            label = first.label.raw_target(),
             configuration = cfg,
             executor_config = _executor(None if ctx.attrs.local else ctx.attrs.properties),
         ),
@@ -99,21 +101,39 @@ _exec_platforms = rule(
     attrs = {
         "isa_platforms": attrs.dict(attrs.string(), attrs.dep(providers = [PlatformInfo]), default = {}),
         "linux_x86_64": attrs.dep(providers = [PlatformInfo]),
+        "local_platform": attrs.option(attrs.dep(providers = [PlatformInfo]), default = None),
         # Empty in local mode.
         "properties": attrs.dict(attrs.string(), attrs.string()),
         "local": attrs.bool(default = False),
     },
 )
 
-def buildrules_execution_platforms(name, linux_x86_64, isa_platforms = {}, visibility = None):
+def host_name():
+    """The machine running buck2, as `<os>-<cpu>` (`linux-x86_64`, `linux-aarch64`, `macos-aarch64`): the spelling of tools/buck2 and rules/pins/hosts.bzl."""
+    h = host_info()
+    os = "linux" if h.os.is_linux else ("macos" if h.os.is_macos else "other")
+    cpu = "x86_64" if h.arch.is_x86_64 else ("aarch64" if h.arch.is_aarch64 else "other")
+    return os + "-" + cpu
+
+def buildrules_execution_platforms(name, linux_x86_64, isa_platforms = {}, host_platforms = {}, visibility = None):
     """`isa_platforms`: REAPI `ISA` value (`x86-64-v3`) -> the execution platform of that level (platforms/BUCK `exec_<id>`).
+    `host_platforms`: `<os>-<cpu>` -> the platform local mode registers on a machine of that kind (linux x86_64 needs none: it is `linux_x86_64`).
 
     Remote unless `[buildrules_re] mode = local` (the module doc)."""
+    local_platform = None
     if _mode() == "local":
         _refuse_local_beside_remote("linux_x86_64_properties")
+        host = host_name()
+        if host != "linux-x86_64":
+            if host not in host_platforms:
+                fail("`[buildrules_re] mode = local` on a {} machine: buildrules knows linux-x86_64 and {}.".format(host, ", ".join(sorted(host_platforms.keys())) or "no other host"))
+            # The x86-64 ISA platforms cannot run here, so none is registered.
+            local_platform = host_platforms[host]
+            isa_platforms = {}
     _exec_platforms(
         name = name,
         linux_x86_64 = linux_x86_64,
+        local_platform = local_platform,
         isa_platforms = isa_platforms,
         properties = _properties("linux_x86_64_properties") if _mode() == "remote" else {},
         local = _mode() == "local",
