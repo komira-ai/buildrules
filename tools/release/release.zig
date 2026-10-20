@@ -7,10 +7,13 @@
 //!   release verify  --root DIR --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --workflow PATH --cli PATH
 //!   release publish --root DIR --repo OWNER/NAME --tag TAG --sha SHA --previous TAG --dist DIR
 //!   release site    --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --out DIR
+//!   release bump-check    --internal-repo OWNER/NAME
+//!   release bump-internal --repo OWNER/NAME --tag TAG --sha SHA --internal-repo OWNER/NAME --submodule PATH --workdir EMPTYDIR   (GH_TOKEN: the release bot's)
 //!
 //! Exit 0 when the step succeeded (`plan` also when it decided there is nothing to release), 1 when a check failed, 2 on a bad command line.
 const std = @import("std");
 const cmds = @import("cmds.zig");
+const bump = @import("bump.zig");
 const version = @import("version.zig");
 const page = @import("page.zig");
 
@@ -93,7 +96,7 @@ pub fn main() !u8 {
     const a = arena.allocator();
     const argv = try std.process.argsAlloc(a);
     if (argv.len < 2) {
-        std.debug.print("usage: release plan|tag|archive|verify|publish|site --flag value ...\n", .{});
+        std.debug.print("usage: release plan|tag|archive|verify|publish|site|bump-check|bump-internal --flag value ...\n", .{});
         return 2;
     }
     var unused: u8 = 0;
@@ -209,6 +212,37 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         say("release site: {s}/index.html for {s}\n", .{ dir, tag });
         return 0;
     }
+    if (std.mem.eql(u8, cmd, "bump-check")) {
+        const g = try parseArgs(a, rest, &.{"internal-repo"});
+        const name = try g.need("internal-repo");
+        if (!bump.ownerName(name)) {
+            std.debug.print("release bump-check: `{s}` is not OWNER/NAME: the repository variable that names the internal repository is empty or malformed, and a token minted without it would reach more than that repository\n", .{name});
+            return 1;
+        }
+        say("release bump-check: {s}\n", .{name});
+        return 0;
+    }
+    if (std.mem.eql(u8, cmd, "bump-internal")) {
+        const g = try parseArgs(a, rest, &.{ "repo", "tag", "sha", "internal-repo", "submodule", "workdir" });
+        const env = try std.process.getEnvMap(a);
+        const o = bump.Options{
+            .repo = try g.need("repo"),
+            .tag = try g.need("tag"),
+            .sha = try g.need("sha"),
+            .dest_repo = try g.need("internal-repo"),
+            .submodule = try g.need("submodule"),
+            .workdir = try g.need("workdir"),
+            .token = std.process.getEnvVarOwned(a, "GH_TOKEN") catch "",
+            .base_env = &env,
+        };
+        const r = bump.run(a, bump.real_runner, o);
+        if (r.ok) {
+            say("{s}", .{r.text});
+            return 0;
+        }
+        std.debug.print("{s}\n", .{r.text});
+        return 1;
+    }
     std.debug.print("release: unknown command `{s}`\n", .{cmd});
     return error.Usage;
 }
@@ -240,6 +274,22 @@ test "an unknown command, and a command missing a flag, are usage errors that ru
     try t.expectError(error.Usage, run(a, io, "frobnicate", &.{}));
     try t.expectError(error.Usage, run(a, io, "archive", &.{ "--root", "/w" }));
     try t.expectError(error.Usage, run(a, io, "publish", &.{ "--tag", "v0.0.1", "--bogus", "x" }));
+    try t.expectError(error.Usage, run(a, io, "bump-internal", &.{ "--repo", "org/name" }));
+    try t.expectError(error.Usage, run(a, io, "bump-internal", &.{ "--repo", "org/name", "--tag", "v0.0.1", "--sha", "e" ** 40, "--internal-repo", "org/other", "--submodule", "name", "--workdir", "w", "--bogus", "x" }));
+    try t.expectError(error.Usage, run(a, io, "bump-check", &.{}));
+}
+
+test "bump-check refuses an internal repository name that is empty or malformed, so no token is minted without it" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var unused_ctx: u8 = 0;
+    const io = cmds.Io{ .ctx = &unused_ctx, .run_fn = realRun, .write_fn = realWrite };
+    try t.expectEqual(@as(u8, 0), try run(a, io, "bump-check", &.{ "--internal-repo", "org/internal-repo" }));
+    // an empty variable makes `<owner>/`; a token minted for an empty `repositories` list reaches every repository of the installation
+    try t.expectEqual(@as(u8, 1), try run(a, io, "bump-check", &.{ "--internal-repo", "org/" }));
+    try t.expectEqual(@as(u8, 1), try run(a, io, "bump-check", &.{ "--internal-repo", "" }));
+    try t.expectEqual(@as(u8, 1), try run(a, io, "bump-check", &.{ "--internal-repo", "org/a b" }));
 }
 
 test "site writes the page of the verified release from its SHA256SUMS, and refuses what is not a release" {

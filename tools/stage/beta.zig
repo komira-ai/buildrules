@@ -46,11 +46,29 @@ pub const mirror_map = "https://busybox.net/=https://web.archive.org/web/2024id_
 /// Whether the stderr of a failed `buck2 build` says that a pinned download did not arrive: buck2 names the failed step ("materializing HTTP
 /// resource") and a transport cause (a timeout, a refused or reset connection, a server error). A wrong hash, a compile error, a test failure
 /// and every other message are NOT a flake: they carry no such pair, so they stay fatal on the first run.
+///
+/// Matched without regard to case: buck2 writes its transport messages capitalised ("Error sending request", "No route to host"), the HTTP
+/// client under it in lower case ("tcp connect error"), and a cause that is a chain of lines has both.
 pub fn isDownloadFlake(stderr: []const u8) bool {
-    if (std.mem.indexOf(u8, stderr, "materializing HTTP resource") == null) return false;
-    const causes = [_][]const u8{ "Timed out", "timed out", "Connection refused", "Connection reset", "connection closed", "error sending request", "dns error", "HTTP status 5", "HTTP status 429", "Service Unavailable", "Bad Gateway", "Gateway Timeout" };
+    if (std.ascii.indexOfIgnoreCase(stderr, "materializing HTTP resource") == null) return false;
+    const causes = [_][]const u8{
+        "Timed out",
+        "Connection refused",
+        "Connection reset",
+        "Connection closed",
+        "Error sending request",
+        "tcp connect error",
+        "No route to host",
+        "Network is unreachable",
+        "dns error",
+        "HTTP status 5",
+        "HTTP status 429",
+        "Service Unavailable",
+        "Bad Gateway",
+        "Gateway Timeout",
+    };
     for (causes) |c| {
-        if (std.mem.indexOf(u8, stderr, c) != null) return true;
+        if (std.ascii.indexOfIgnoreCase(stderr, c) != null) return true;
     }
     return false;
 }
@@ -636,6 +654,49 @@ test "isDownloadFlake needs both the failed download step and a transport cause"
     try t.expect(!isDownloadFlake("Timed out while making request"));
     try t.expect(!isDownloadFlake("Error materializing HTTP resource x\nCaused by: Invalid hash"));
     try t.expect(!isDownloadFlake(""));
+}
+
+/// What buck2 printed when a pinned download could not connect (copied from a failed run: the cause is a chain of lines, the transport
+/// message is capitalised, and none of the words of the first list of causes is in it).
+const connect_stderr = "Error materializing HTTP resource declared by target toolchains//:busybox_pin\n\nCaused by:\n    0: HTTP: Error sending request for url (https://busybox.net/downloads/busybox)\n    1: client error (Connect)\n    2: tcp connect error\n    3: No route to host (os error 113)\nBUILD FAILED\n";
+
+test "isDownloadFlake reads buck2's real transport messages, whatever their case, and keeps every other failure fatal" {
+    try t.expect(isDownloadFlake(connect_stderr));
+    // one cause at a time, in the case buck2 writes it and in another
+    const causes = [_][]const u8{ "Error sending request", "tcp connect error", "No route to host (os error 113)", "Network is unreachable (os error 101)", "Connection reset by peer", "Timed out while making request", "TIMED OUT", "connection refused" };
+    for (causes) |c| {
+        var buf: [256]u8 = undefined;
+        const text = try std.fmt.bufPrint(&buf, "Error materializing HTTP resource x\n\nCaused by:\n    {s}\n", .{c});
+        try t.expect(isDownloadFlake(text));
+        var lower: [256]u8 = undefined;
+        try t.expect(isDownloadFlake(std.ascii.lowerString(&lower, text)));
+    }
+    // the cause alone is not a download: a test that cannot connect, or a message with no failed download step
+    try t.expect(!isDownloadFlake("test_net: tcp connect error\nBUILD FAILED\n"));
+    try t.expect(!isDownloadFlake("Caused by:\n    3: No route to host (os error 113)\n"));
+    // the failed download step with a cause that is the pin's fault stays fatal
+    try t.expect(!isDownloadFlake("Error materializing HTTP resource x\n\nCaused by:\n    HTTP status 404 Not Found\n"));
+    try t.expect(!isDownloadFlake("Error materializing HTTP resource x\n\nCaused by:\n    Invalid hash: expected 6e12, got 0000\n"));
+}
+
+test "a build that failed with buck2's real connect error is made again" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = try Env.make(a, demo_steps);
+    defer env.tmp.cleanup();
+    var rules = [_]Fake.Rule{
+        .{ .needle = "init" },
+        .{ .needle = "build --console simple", .out = failOut(connect_stderr), .times = 1 },
+        .{ .needle = "build --console simple", .out = okOut("root//app:bin " ++ out_path ++ "\n", local_stderr), .files = &.{.{ .path = out_path, .bytes = "ELF" }} },
+        .{ .needle = "/buck-out/v2/art/root/app/bin", .out = okOut("Hello, world!\n", "") },
+        .{ .needle = "buck2 kill" },
+    };
+    var fake = Fake{ .a = a, .rules = &rules };
+    const r = try run(a, fake.io(), env.opts(.local));
+    try t.expectEqual(Outcome.passed, r.outcome);
+    // 1 failed + 4 good ones (the step's build, the expect's, the first hash, the second directory's)
+    try t.expectEqual(@as(usize, 5), fake.count("build --console simple"));
 }
 
 test "an output that depends on the directory it was built in is red: the second build is in another directory" {
