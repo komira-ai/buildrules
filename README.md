@@ -16,7 +16,7 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     cli/              the `buildrules` command line (Zig): init, cargo new/init/adopt, sync, check, npm sync/check, mojo sync/check. The unit-graph generator is part of it
     rules/platforms.bzl   the execution platforms: remote by default (properties come from .buckconfig.local), local on request (`-c buildrules_re.mode=local`, docs/contract.md section 14)
     toolchains/       the `toolchains` cell: rust_toolchains(), cxx_toolchains(), mopm_toolchains(), mojo_toolchains() (the last from mopm's graphs)
-    platforms/        linux_x86_64, linux_x86_64_v1..v4 and linux_armv8_*, linux_x86_64_rust_<v>; platforms/exec (the execution platforms: agnostic + one per ISA level)
+    platforms/        linux_x86_64, linux_aarch64 and macos_aarch64 (the other hosts: pins only, docs/pins.md), linux_x86_64_v1..v4 and linux_armv8_*, linux_x86_64_rust_<v>; platforms/exec (the execution platforms: agnostic + one per ISA level)
     tools/release     the release tool (Zig): version, deterministic source archive, checks, GitHub release, the release page (RELEASING.md); tools/scrub: the public-repository scrub
     tools/stage       the beta and gamma stages of the release (Zig): hello-world repositories that consume the candidate as a user does, and our own repositories on the farm
     beta/             the files and commands (STEPS) of those hello-world repositories, per language; not built by //ci:all (README.md in it)

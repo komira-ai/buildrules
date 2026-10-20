@@ -11,6 +11,11 @@ load("//rules:platforms.bzl", "buildrules_execution_platforms")
 buildrules_execution_platforms(
     name = "exec",
     linux_x86_64 = "//platforms:linux_x86_64",
+    # Local mode on a machine that is not linux x86_64 (rules/platforms.bzl): the platform of its own kind.
+    host_platforms = {
+        "linux-aarch64": "//platforms:linux_aarch64",
+        "macos-aarch64": "//platforms:macos_aarch64",
+    },
     isa_platforms = {ISA_LEVELS[l]["property"]: "//platforms:exec_" + ISA_LEVELS[l]["id"] for l in exec_levels()},
     visibility = ["PUBLIC"],
 )

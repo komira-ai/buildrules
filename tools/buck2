@@ -15,6 +15,16 @@
         {"url": "https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst"}
       ]
     },
+    "linux-aarch64": {
+      "size": 38370160,
+      "hash": "sha256",
+      "digest": "e35027a8e3f702fd9f080074ac64ebc80e2a0fe8d669d46d85afc31b0ec4a463",
+      "format": "zst",
+      "path": "buck2",
+      "providers": [
+        {"url": "https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-aarch64-unknown-linux-gnu.zst"}
+      ]
+    },
     "macos-aarch64": {
       "size": 34806620,
       "hash": "sha256",
