@@ -4,24 +4,7 @@ load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/zig:zig.bzl", "zig_test")
 load("@buildrules//rules/rust:test_run.bzl", "test_run")
 
-# PLANTED DEFECTS that must stay red. Each is compatible only with the platform it breaks on, so a wildcard build of the
-# repository skips it, and building it by name on that platform must FAIL while the build graph is analysed:
-#
-#   buck2 build --target-platforms buildrules//platforms:linux_x86_64_v3 //ci/negative:v3_test_without_isa_property
-#
-# It is the run of the x86-64-v3 test with `exec_compatible_with` left out: the rule would run on any worker, and the AVX2
-# instruction in it would die with SIGILL on one that lacks AVX2. The rule refuses it (test_run.bzl).
-#
-# `buck2 bxl //ci:negative.bxl:check` (the public CI runs it as a part of `//ci:completeness.bxl:check`) analyses it on that platform and REQUIRES the
-# refusal, with the reason above, and requires the control below to analyse. Make the fixture valid and that check is red.
-test_run(
-    name = "v3_test_without_isa_property",
-    unit = "//examples/isa:isa_lib_test__bin",
-    required_isa = required_isa(),
-    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
-)
-
-# The control of the bxl check below: the same run of the same test, with the one line the fixture above leaves out. It must analyse, on the platform the
+# The control of the bxl check (ci/negative.bzl) on the fixture below: the same run of the same test, with the one line the fixture leaves out. It must analyse, on the platform the
 # fixture does not, or the fixture could be red for another reason.
 test_run(
     name = "v3_test_with_isa_property",
@@ -31,7 +14,7 @@ test_run(
     target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
 )
 
-# The files that make the fixture a planted defect, held to each other: the pair above, ci/negative.bzl, the CI step (ci/completeness.bxl) and the rule's message.
+# The files that make the fixture a planted defect, held to each other: the pair, ci/negative.bzl, the CI step (ci/completeness.bxl) and the rule's message.
 # The bxl check holds the build itself; this is the part of it that //ci:all builds.
 zig_test(
     name = "negative_check",
@@ -46,6 +29,23 @@ zig_test(
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
     visibility = ["//ci:"],
+)
+
+# PLANTED DEFECTS that must stay red. Each is compatible only with the platform it breaks on, so a wildcard build of the
+# repository skips it, and building it by name on that platform must FAIL while the build graph is analysed:
+#
+#   buck2 build --target-platforms buildrules//platforms:linux_x86_64_v3 //ci/negative:v3_test_without_isa_property
+#
+# It is the run of the x86-64-v3 test with `exec_compatible_with` left out: the rule would run on any worker, and the AVX2
+# instruction in it would die with SIGILL on one that lacks AVX2. The rule refuses it (test_run.bzl).
+#
+# `buck2 bxl //ci:negative.bxl:check` (the public CI runs it as a part of `//ci:completeness.bxl:check`) analyses it on that platform and REQUIRES the
+# refusal, with the reason above, and requires the control (above) to analyse. Make the fixture valid and that check is red.
+test_run(
+    name = "v3_test_without_isa_property",
+    unit = "//examples/isa:isa_lib_test__bin",
+    required_isa = required_isa(),
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
 )
 
 scrub_files()
