@@ -595,14 +595,23 @@ describe('the Releases section against RELEASING.md, the release tool and the re
     expect(rulesText).toContain('build provenance attestation');
   });
 
-  test('every push to main, no human action, no binaries: the workflow, RELEASING.md and the page agree', () => {
-    expect(workflow).toMatch(/\non:\n {2}push:\n {4}branches: \[main\]\n/);
-    expect(workflow).not.toMatch(/\n {2}(workflow_dispatch|pull_request|schedule):/);
+  test('every push to main, no human action, with the command line: the workflow, RELEASING.md and the page agree', () => {
+    // a push to main releases; a pull request does not run this workflow at all (it runs ci.yml: build and unit tests); nothing else triggers it
+    expect(workflow).toMatch(/\non:\n {2}push:\n {4}branches: \[main\]\n\npermissions: \{\}\n/);
+    expect(workflow).not.toMatch(/\n {2}pull_request:/);
+    expect(workflow).not.toMatch(/\n {2}(workflow_dispatch|schedule|workflow_run|pull_request_target):/);
     expect(squash(releasing)).toContain('released with no human action');
     expect(rulesText).toContain('Every push to `main` is built and tested');
     expect(rulesText).toContain('with no human action');
-    expect(rulesText).toContain('There are no binaries');
-    expect(releasing).toContain('There are no binaries');
+    // the release carries the command line for three platforms, and says which were run by a user beta
+    for (const target of ['linux-x86_64', 'linux-aarch64', 'macos-arm64']) {
+      expect(rulesText).toContain(target);
+      expect(releasing).toContain(target);
+    }
+    expect(rulesText).toContain('`buildrules-cli-<version>-<target>.tar.gz`');
+    expect(releasing).toContain('buildrules-cli-<version>-<target>.tar.gz');
+    expect(releasing).not.toContain('There are no binaries');
+    expect(rulesText).not.toContain('There are no binaries');
   });
 
   test('the page points at RELEASING.md, which exists and says how to pin', () => {
@@ -623,15 +632,17 @@ describe('the stages of the release: the page, RELEASING.md, beta.yml and releas
   const beta = repoFile('.github/workflows/beta.yml');
   const checkZig = repoFile('beta/check.zig');
 
-  test('the order is gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish, in the workflow and in RELEASING.md', () => {
-    expect(release).toMatch(/\n {2}beta:\n {4}needs: \[gate\]\n/);
-    expect(release).toMatch(/\n {2}gamma:\n {4}needs: \[beta, tool\]\n/);
-    expect(release).toMatch(/\n {2}plan:\n {4}needs: \[gamma, tool\]\n/);
-    expect(release).toMatch(/\n {2}archive:\n {4}needs: \[plan, tool\]\n/);
-    expect(release).toMatch(/\n {2}verify:\n {4}needs: \[plan, archive, cli, tool\]\n/);
+  test('the order is gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish, in the workflow and in RELEASING.md', () => {
+    expect(release).toMatch(/\n {2}plan:\n {4}needs: \[gate, tool\]\n/);
+    expect(release).toMatch(/\n {2}build-cli:\n {4}needs: \[plan, tool\]\n/);
+    expect(release).toMatch(/\n {2}beta:\n {4}needs: \[plan, build-cli\]\n/);
+    expect(release).toMatch(/\n {2}gamma:\n {4}needs: \[plan, beta, tool\]\n/);
+    expect(release).toMatch(/\n {2}archive:\n {4}needs: \[plan, build-cli, beta, gamma, tool\]\n/);
+    expect(release).toMatch(/\n {2}attest:\n {4}needs: \[plan, archive, tool\]\n/);
+    expect(release).toMatch(/\n {2}verify:\n {4}needs: \[plan, attest, tool\]\n/);
     expect(release).toMatch(/\n {2}tag:\n {4}needs: \[plan, verify, tool\]\n/);
     expect(release).toMatch(/\n {2}publish:\n {4}needs: \[plan, tag, verify, tool\]\n/);
-    expect(squash(releasing)).toContain('The order is `gate`, `beta`, `gamma`, `plan`, `archive`, `verify`, `tag`, `publish`');
+    expect(squash(releasing)).toContain('The order is `gate`, `plan`, `build-cli`, `beta`, `gamma`, `archive`, `attest`, `verify`, `tag`, `publish`');
     expect(squash(releasing)).toContain('leaves no tag behind');
   });
 
@@ -673,9 +684,11 @@ describe('the stages of the release: the page, RELEASING.md, beta.yml and releas
     expect(squash(releasing)).toContain('**With no farm configured gamma fails**');
     expect(release).toContain('tool/stage gamma-vars ');
     expect(repoFile('tools/stage/gamma.zig')).toContain('the farm is not configured, so our own repositories were not built with this candidate. A release is not made without it.');
-    const gammaJob = release.slice(release.indexOf('\n  gamma:\n'), release.indexOf('\n  tool:\n'));
+    const gammaJob = release.slice(release.indexOf('\n  gamma:\n'), release.indexOf('\n  archive:\n'));
     expect(gammaJob).toContain('tool/stage gamma ');
-    expect(gammaJob).not.toMatch(/\n {4}if:/);
+    // it runs for every commit the plan released and for no narrower condition (a farm variable in it would let an unconfigured farm pass)
+    expect(gammaJob).toMatch(/\n {4}if: \$\{\{ needs\.plan\.outputs\.released == 'true' \}\}\n/);
+    expect(gammaJob.match(/\n {4}if:/g)!.length).toBe(1);
   });
 
   test('the release page is made by the site job from the verified files and is only an artifact', () => {

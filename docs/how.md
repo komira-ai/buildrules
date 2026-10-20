@@ -4,8 +4,8 @@ Part 2 of 2. Part 1 ([why.md](why.md)) is the argument and the design. This part
 get started, configure, and examples per language.
 
 Everything here is version 0 and runs on **linux x86_64 only**. It describes the repository at its
-current `main`. Items marked **planned** do not exist yet: Arm and macOS hosts, release binaries of
-the command line, a Homebrew formula, an apt repository and an install script.
+current `main`. Items marked **planned** do not exist yet: Arm and macOS hosts for the rules, a Homebrew
+formula, an apt repository and an install script.
 
 ## 1. Getting started
 
@@ -23,12 +23,28 @@ the command line, a Homebrew formula, an apt repository and an install script.
 
 ### 1.2 Get the command line
 
-There are no release binaries for buildrules (a Homebrew formula, an apt repository and an install
-script are **planned**). A release is a source archive. You build the command line from source with
-Buck2.
+A release carries the command line as a static program for three platforms, and a source archive (a
+Homebrew formula, an apt repository and an install script are **planned**). Pick a release from the
+[releases page](https://github.com/komira-ai/buildrules/releases). To use a program, unpack the
+tarball of your platform (`linux-x86_64`, `linux-aarch64`, or `macos-arm64`), check it,
+and put `buildrules` on your `PATH`:
 
-Pick a release from the
-[releases page](https://github.com/komira-ai/buildrules/releases) and check it:
+```sh
+v=0.0.1     # the release you chose
+t=linux-x86_64     # your platform
+curl -fsSLO "https://github.com/komira-ai/buildrules/releases/download/v$v/buildrules-cli-$v-$t.tar.gz"
+curl -fsSLO "https://github.com/komira-ai/buildrules/releases/download/v$v/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf "buildrules-cli-$v-$t.tar.gz"
+"buildrules-cli-$v-$t/buildrules" --version
+```
+
+`--version` prints `buildrules <version>`, the number of the release. Each tarball carries a
+build provenance attestation and a signature, checked with `gh attestation verify` as for the source
+archive below. The macOS program (Apple silicon: there is no program for an Intel Mac) is not code-signed or notarised, and only the linux x86_64 program
+is run by the release's user beta. The rules themselves run on a linux x86_64 farm or machine.
+
+Or build the command line from source with Buck2. Check the source archive:
 
 ```sh
 v=0.0.1     # the release you chose
@@ -53,8 +69,8 @@ buck2 build -c buildrules_re.mode=local //cli:buildrules --show-output
 `buildrules --help` lists the commands and `buildrules <command> --help` their flags. Exit codes are
 the same everywhere: `0` ok, `1` failed or stale (the fix is printed), `2` usage.
 
-(The program's `--version` prints its own version string, which is not the release tag; use the
-release you downloaded as the version.)
+(A program built from the source archive prints `<MAJOR.MINOR>-dev` for `--version`: only the
+released tarballs are stamped with the release number.)
 
 ### 1.3 Initialize your repository
 
@@ -272,7 +288,7 @@ its hashes in `buildrules-pins.toml`.
 ### 2.5 Your own pins: `buildrules-pins.toml`
 
 Optional, at the repository root, hand-written. An unknown Rust version is refused unless this file
-supplies the hashes of all four components:
+supplies the hashes of all three components:
 
 ```toml
 [rust."1.86.0".rustc]

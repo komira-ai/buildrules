@@ -1,32 +1,39 @@
-# The automatic release (RELEASING.md): every push to main is tested in stages, and a green one that changes more than documentation or CI is
-# released with no human action. The release is a tag `v<MAJOR>.<MINOR>.<PATCH>`, a GitHub release carrying the source archive
-# `buildrules-<version>.tar.gz` with its SHA256SUMS and the notes, and a build provenance attestation of both files. There are no binaries.
+# The automatic release (RELEASING.md): every push to main is tested in stages, and a green one that changes more than documentation or CI is released with
+# no human action. The release is a tag `v<MAJOR>.<MINOR>.<PATCH>` and a GitHub release carrying the source archive `buildrules-<version>.tar.gz`, the command
+# line for three platforms `buildrules-cli-<version>-<target>.tar.gz`, their SHA256SUMS, a keyless signature (`<file>.sigstore.json`) and a build provenance
+# attestation of each of those five files, and the notes.
 #
-#   gate     the PR gate, the whole CI (ci.yml, called as a workflow): //ci:all and the completeness check, in local mode on the runner.
-#   beta     hello-world repositories per language that consume the candidate commit as a user would, built twice, the second time in a copy at another path, to prove the outputs are the same
-#            bytes (beta.yml, called as a workflow; Mojo, arm and macos legs are planned; a farm leg runs when FARM_ADDRESS is set).
-#   gamma    our own repositories built with the candidate on the farm (tools/stage gamma). It FAILS the release when the farm is not configured.
-#   tool     builds the release tool (tools/release, Zig) before any job holds a token, and hands the binary on.
-#   plan     read-only: decides whether this commit is released (docs and CI alone are not) and which version (the highest patch of VERSION's
-#            MAJOR.MINOR plus one). It creates nothing.
-#   cli      builds the command line from the tested commit with the planned version stamped in (not a release asset); verify runs it.
-#   archive  the deterministic archive of the TESTED COMMIT (git archive of the sha, not of a tag; a fixed prefix `buildrules-<planned version>/`
-#            and time, the tool's own gzip), SHA256SUMS, and the attestations.
-#   verify   read-only: the sums, the checkout being the commit, `buildrules --version` of the cli job printing the release version, the attestations (this workflow, this commit, main), a second build of the archive
-#            from the sha giving the same bytes, its file list equal to the commit's tracked files, and the scrub on its contents.
-#   tag      the job that creates the tag, with the release bot's token (the v* tag ruleset allows only that App; GITHUB_TOKEN here only reads): the annotated tag at that sha, made only after the archive was built, attested and
-#            verified, so a failure before it leaves no tag behind. A tag that exists at the sha is kept; one at another commit fails the job.
-#   site     the page of the release (the tag, the commit to pin in .buckconfig, the archive url and its sha256), as an artifact. Nothing deploys it.
-#   publish  creates the GitHub release from the verified files, once the tag exists and peels to the verified sha. A re-run creates no second
-#            release and replaces no asset: a file the release holds must be the same bytes or the job fails, and a missing file is added.
-#   bump     after publish: opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge,
-#            using the release bot's token for that repository alone (`contents: read` for its own token). Nothing waits for it.
+#   gate       the PR gate, the whole CI (ci.yml, called as a workflow): //ci:all and the completeness check, in local mode on the runner.
+#   tool       builds the release tool (tools/release, Zig) and the stage tool (tools/stage) before any job holds a token, and hands the binaries on.
+#   plan       read-only: decides whether this commit is released (docs and CI alone are not; a RELEASE_FREEZE of `true` stops every release, and only this
+#              job reads it) and which version (the highest patch of VERSION's MAJOR.MINOR plus one). It creates nothing.
+#   build-cli  builds the command line for the three release targets from the tested commit with the planned version stamped in, and packages the three tarballs.
+#   beta       hello-world repositories per language that consume the candidate commit as a user would, with the linux-x86_64 command line that build-cli
+#              built (beta.yml, called as a workflow), built twice, the second time in a copy at another path, to prove the outputs are the same bytes.
+#   gamma      our own repositories built with the candidate on the farm (tools/stage gamma). It FAILS the release when the farm is not configured.
+#   archive    the deterministic archive of the TESTED COMMIT (git archive of the sha, not of a tag; a fixed prefix `buildrules-<planned version>/` and time,
+#              the tool's own gzip), the tarballs the beta ran, and SHA256SUMS over those four files. No token beyond reading.
+#   attest     only on a push to main: a keyless cosign signature of the five files and build provenance for all five.
+#   verify     read-only: the sums, the checkout being the commit, every attestation and signature (this workflow, this commit, main), a second build of the
+#              archive AND of the three binaries giving the same bytes, `buildrules --version` of the shipped linux-x86_64 binary printing the release version,
+#              the archive's file list equal to the commit's tracked files, and the scrub on its contents.
+#   tag        the job that creates the tag, with the release bot's token (the v* tag ruleset allows only that App; GITHUB_TOKEN here only reads): the
+#              annotated tag at that sha, made only after everything was built, tested, attested and verified, so a failure before it leaves no tag behind. A tag
+#              that exists at the sha is kept; one at another commit fails the job.
+#   site       the page of the release (the tag, the commit to pin in .buckconfig, the archive url and its sha256), as an artifact. Nothing deploys it.
+#   publish    creates the GitHub release from the verified files, once the tag exists and peels to the verified sha. A re-run creates no second
+#              release and replaces no asset: a file the release holds must be the same bytes or the job fails, and a missing file is added.
+#   bump       after publish: opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge,
+#              using the release bot's token for that repository alone (`contents: read` for its own token). Nothing waits for it.
 #
-# `contents: write` is held by publish only (tag and bump write with the release bot's token, not their own), each of tag and publish under the exact `if:` below; `id-token: write` by archive (the attestation), by gamma (the
-# farm network) and by the call of beta (its farm leg), and `attestations: write` by archive only.
-# No job that writes runs buck2. ci/release_check.zig (`//ci:workflow`) holds this file to all of that, to the order
-# gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish (no job before the tag waits for it), to actions pinned by commit, and to local
-# mode on every buck2 command.
+# It runs on a push to main only. A pull request runs ci.yml alone (build, unit tests, the lints of this file and of the other workflows): the beta, the
+# gamma, the signing and the verification of the release happen here, after the merge, and nowhere before it.
+#
+# `contents: write` is held by publish only (tag and bump write with the release bot's token, not their own), each of tag and publish under the exact `if:` below;
+# `id-token: write` by attest (the signature and the attestation), by gamma (the farm network) and by the call of beta (its farm leg), and `attestations: write`
+# by attest only. No job that writes runs buck2. ci/release_check.zig (`//ci:workflow`) holds this file to all of that, to the order
+# gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish (no job before the tag waits for it), to actions pinned by commit,
+# and to local mode on every buck2 command.
 name: release
 
 on:
@@ -35,69 +42,16 @@ on:
 
 permissions: {}
 
+# A push to main is never cancelled (the group is its own commit).
+concurrency:
+  group: release-${{ github.sha }}
+  cancel-in-progress: false
+
 jobs:
   gate:
     permissions:
       contents: read
     uses: ./.github/workflows/ci.yml
-
-  # Hello-world repositories per language, as a user starts them (beta.yml). Its farm leg joins the farm's network, so the call may grant `id-token`.
-  beta:
-    needs: [gate]
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/beta.yml
-
-  # Our own repositories, built with the candidate on the farm, in the order GAMMA_REPOS names them. With no farm configured this job fails (the
-  # first step names every repository variable that is empty), and so no release is made: a candidate that was not built on the farm is not released.
-  gamma:
-    needs: [beta, tool]
-    runs-on: ubuntu-latest
-    timeout-minutes: 240
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      CONNECT_REF: ${{ vars.FARM_CONNECT_REF }}
-      CONNECT_REPO: ${{ vars.FARM_CONNECT_REPO }}
-      HAS_ADDRESS: ${{ vars.FARM_ADDRESS != '' }}
-      HAS_INSTANCE: ${{ vars.FARM_INSTANCE != '' }}
-      HAS_PROPERTIES: ${{ vars.FARM_LINUX_X86_64_PROPERTIES != '' }}
-      HAS_TS_CLIENT_ID: ${{ vars.TS_CLIENT_ID != '' }}
-      HAS_TS_AUDIENCE: ${{ vars.TS_AUDIENCE != '' }}
-      GAMMA_REPOS: ${{ vars.GAMMA_REPOS }}
-      GAMMA_TARGETS: ${{ vars.GAMMA_TARGETS || '//...' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: stage-tool
-          path: tool
-      - run: chmod +x tool/stage tool/buck2
-      - name: every repository variable gamma needs is set
-        run: tool/stage gamma-vars --farm-address "$HAS_ADDRESS" --farm-instance "$HAS_INSTANCE" --farm-properties "$HAS_PROPERTIES" --ts-client-id "$HAS_TS_CLIENT_ID" --ts-audience "$HAS_TS_AUDIENCE" --connect-repo "$CONNECT_REPO" --connect-ref "$CONNECT_REF" --repos "$GAMMA_REPOS"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ vars.FARM_CONNECT_REPO }}
-          ref: ${{ vars.FARM_CONNECT_REF }}
-          path: farm-action
-          persist-credentials: false
-      - name: the action that joins the farm is at the commit the variable names
-        run: tool/stage action-ref --dir farm-action --ref "$CONNECT_REF"
-      - name: connect to the farm
-        uses: ./farm-action/.github/actions/farm-connect
-        with:
-          ts-client-id: ${{ vars.TS_CLIENT_ID }}
-          ts-audience: ${{ vars.TS_AUDIENCE }}
-          farm-address: ${{ vars.FARM_ADDRESS }}
-          farm-instance: ${{ vars.FARM_INSTANCE }}
-          farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
-          tls: ${{ vars.FARM_TLS || 'false' }}
-      - name: Build our repositories with the candidate on the farm
-        run: tool/stage gamma --work "$RUNNER_TEMP/gamma" --candidate "$GITHUB_SHA" --repos "$GAMMA_REPOS" --targets "$GAMMA_TARGETS" --buck2 "$GITHUB_WORKSPACE/tool/buck2" --farm-config "$HOME/.buckconfig.d/farm.buckconfig"
 
   tool:
     runs-on: ubuntu-latest
@@ -107,6 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/release_check.zig compares both.
@@ -144,11 +99,14 @@ jobs:
           if-no-files-found: error
 
   plan:
-    needs: [gamma, tool]
+    needs: [gate, tool]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
+    env:
+      CANDIDATE: ${{ github.sha }}
+      FREEZE: ${{ vars.RELEASE_FREEZE }}
     outputs:
       released: ${{ steps.version.outputs.released }}
       tag: ${{ steps.version.outputs.tag }}
@@ -157,6 +115,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -166,47 +125,12 @@ jobs:
       - run: chmod +x tool/release
       - name: The version of this commit, if it is released
         id: version
-        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$GITHUB_SHA" --output "$GITHUB_OUTPUT"
+        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$CANDIDATE" --freeze "$FREEZE" --dry false --output "$GITHUB_OUTPUT"
 
-  archive:
-    needs: [plan, tool]
-    if: ${{ needs.plan.outputs.released == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    env:
-      TAG: ${{ needs.plan.outputs.tag }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-tool
-          path: tool
-      - run: chmod +x tool/release
-      - name: The deterministic source archive of the tested commit, and its SHA256SUMS
-        run: tool/release archive --root "$GITHUB_WORKSPACE" --tag "$TAG" --sha "$GITHUB_SHA" --out dist
-      - name: Attest the archive and SHA256SUMS
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: |
-            dist/buildrules-*.tar.gz
-            dist/SHA256SUMS
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-assets
-          path: dist
-          retention-days: 7
-          if-no-files-found: error
-
-  # The command line, built from the tested commit with the planned version stamped in (-c buildrules.release_version, read by cli/BUCK), for `verify` to run.
-  # It is not a release asset (there are no binaries); it is built so that the stamp is checked on the very commit that is released. The buck2 is the
-  # one `tool` pinned and handed on; it is placed at ./buck2.
-  cli:
+  # The command line for the three release targets, built from the tested commit with the planned version stamped in (-c buildrules.release_version, read by
+  # cli/BUCK), in one directory (//cli:release_binaries) and then packaged as the three tarballs the release ships. The linux-x86_64 binary is handed to the beta
+  # as the file it will run; the tarballs are handed to the archive. It runs the buck2 that `tool` handed on, as the literal `./buck2`.
+  build-cli:
     needs: [plan, tool]
     if: ${{ needs.plan.outputs.released == 'true' }}
     runs-on: ubuntu-latest
@@ -218,35 +142,116 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: stage-tool
           path: .
-      - run: chmod +x buck2
-      - name: Build the command line with the release version stamped in
-        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out buildrules //cli:buildrules
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tool
+          path: tool
+      - run: chmod +x buck2 tool/release
+      - name: Build the command line for the three targets with the release version stamped in
+        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out cli-bins //cli:release_binaries
+      - name: Package the three tarballs
+        run: tool/release package-all --version "$NUMBER" --bins cli-bins --license LICENSE --out cli-dist --native linux-x86_64
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-cli
-          path: buildrules
+          name: release-cli-tarballs
+          path: cli-dist
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-cli-bin
+          path: cli-bins/linux-x86_64/buildrules
           retention-days: 7
           if-no-files-found: error
 
-  verify:
-    needs: [plan, archive, cli, tool]
+  # Hello-world repositories per language, as a user starts them (beta.yml), with the linux-x86_64 command line that build-cli built. Its farm leg joins the
+  # farm's network, so the call may grant `id-token`.
+  beta:
+    needs: [plan, build-cli]
+    if: ${{ needs.plan.outputs.released == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/beta.yml
+    with:
+      cli-artifact: release-cli-bin
+
+  # Our own repositories, built with the candidate on the farm, in the order GAMMA_REPOS names them. With no farm configured this job fails (the
+  # first step names every repository variable that is empty), and so no release is made: a candidate that was not built on the farm is not released.
+  gamma:
+    needs: [plan, beta, tool]
+    if: ${{ needs.plan.outputs.released == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CANDIDATE: ${{ github.sha }}
+      CONNECT_REF: ${{ vars.FARM_CONNECT_REF }}
+      CONNECT_REPO: ${{ vars.FARM_CONNECT_REPO }}
+      HAS_ADDRESS: ${{ vars.FARM_ADDRESS != '' }}
+      HAS_INSTANCE: ${{ vars.FARM_INSTANCE != '' }}
+      HAS_PROPERTIES: ${{ vars.FARM_LINUX_X86_64_PROPERTIES != '' }}
+      HAS_TS_CLIENT_ID: ${{ vars.TS_CLIENT_ID != '' }}
+      HAS_TS_AUDIENCE: ${{ vars.TS_AUDIENCE != '' }}
+      GAMMA_REPOS: ${{ vars.GAMMA_REPOS }}
+      GAMMA_TARGETS: ${{ vars.GAMMA_TARGETS || '//...' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: stage-tool
+          path: tool
+      - run: chmod +x tool/stage tool/buck2
+      - name: every repository variable gamma needs is set
+        run: tool/stage gamma-vars --farm-address "$HAS_ADDRESS" --farm-instance "$HAS_INSTANCE" --farm-properties "$HAS_PROPERTIES" --ts-client-id "$HAS_TS_CLIENT_ID" --ts-audience "$HAS_TS_AUDIENCE" --connect-repo "$CONNECT_REPO" --connect-ref "$CONNECT_REF" --repos "$GAMMA_REPOS"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.FARM_CONNECT_REPO }}
+          ref: ${{ vars.FARM_CONNECT_REF }}
+          path: farm-action
+          persist-credentials: false
+      - name: the action that joins the farm is at the commit the variable names
+        run: tool/stage action-ref --dir farm-action --ref "$CONNECT_REF"
+      - name: connect to the farm
+        uses: ./farm-action/.github/actions/farm-connect
+        with:
+          ts-client-id: ${{ vars.TS_CLIENT_ID }}
+          ts-audience: ${{ vars.TS_AUDIENCE }}
+          farm-address: ${{ vars.FARM_ADDRESS }}
+          farm-instance: ${{ vars.FARM_INSTANCE }}
+          farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
+          tls: ${{ vars.FARM_TLS || 'false' }}
+      - name: Build our repositories with the candidate on the farm
+        run: tool/stage gamma --work "$RUNNER_TEMP/gamma" --candidate "$CANDIDATE" --repos "$GAMMA_REPOS" --targets "$GAMMA_TARGETS" --buck2 "$GITHUB_WORKSPACE/tool/buck2" --farm-config "$HOME/.buckconfig.d/farm.buckconfig"
+
+  # The source archive of the tested commit and, beside it, the three tarballs build-cli made. The tarball of linux-x86_64 must hold the very file the beta ran
+  # (`record --ran-binary`), and is then the one `tested` lets through; SHA256SUMS lists the three files. The job holds no token beyond reading: the signing is attest.
+  archive:
+    needs: [plan, build-cli, beta, gamma, tool]
     if: ${{ needs.plan.outputs.released == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
-      attestations: read
     env:
+      CANDIDATE: ${{ github.sha }}
       TAG: ${{ needs.plan.outputs.tag }}
-      GH_TOKEN: ${{ github.token }}
+      NUMBER: ${{ needs.plan.outputs.number }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -254,15 +259,104 @@ jobs:
           path: tool
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-assets
+          name: release-cli-tarballs
           path: dist
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-cli
-          path: built-cli
-      - run: chmod +x tool/release built-cli/buildrules
-      - name: The archive, its sums, attestations, file list and scrub, and the command line's version
-        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --dist dist --workflow .github/workflows/release.yml --cli built-cli/buildrules
+          name: release-cli-bin
+          path: ran
+      - run: chmod +x tool/release
+      - name: The deterministic source archive of the tested commit, and its SHA256SUMS
+        run: tool/release archive --root "$GITHUB_WORKSPACE" --tag "$TAG" --sha "$CANDIDATE" --out dist
+      - name: The tarball to attest holds the file the beta ran
+        run: tool/release record --tarball "dist/buildrules-cli-$NUMBER-linux-x86_64.tar.gz" --ran-binary ran/buildrules --out tested
+      - name: Attest only the tarballs a user beta ran
+        run: tool/release tested --dist dist --tested tested --targets linux-x86_64
+      - name: SHA256SUMS over the archive and the three tarballs
+        run: tool/release sums --dist dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-unsigned
+          path: dist
+          retention-days: 7
+          if-no-files-found: error
+
+  # Only on a push to main: the keyless signature of each of the five files and the build provenance of all five.
+  attest:
+    needs: [plan, archive, tool]
+    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tool
+          path: tool
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-unsigned
+          path: dist
+      - run: chmod +x tool/release
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign the five files, keyless
+        run: tool/release sign --dist dist --dry false
+      - name: Attest the archive, the three tarballs and SHA256SUMS
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/buildrules-*.tar.gz
+            dist/SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-dist
+          path: dist
+          retention-days: 7
+          if-no-files-found: error
+
+  # Read-only. It builds the three binaries again, from the commit, on a runner of its own, and requires the same tarballs; it runs the linux-x86_64 binary it
+  # built, which is the file the tarball ships, and requires the release version. It runs the buck2 that `tool` handed on, as the literal `./buck2`.
+  verify:
+    needs: [plan, attest, tool]
+    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      attestations: read
+    env:
+      CANDIDATE: ${{ github.sha }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      NUMBER: ${{ needs.plan.outputs.number }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: stage-tool
+          path: .
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tool
+          path: tool
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+      - run: chmod +x buck2 tool/release
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Build the command line again for the three targets
+        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
+      - name: Package the three tarballs again
+        run: tool/release package-all --version "$NUMBER" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64
+      - name: The archive and the tarballs, their sums, the second build, file list and scrub, the command line's version, the attestations and the signatures
+        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$CANDIDATE" --dist dist --workflow .github/workflows/release.yml --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry false
 
   tag:
     needs: [plan, verify, tool]
@@ -325,7 +419,7 @@ jobs:
           path: tool
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-assets
+          name: release-dist
           path: dist
       - run: chmod +x tool/release
       - name: Create the release, or add the file it lacks
@@ -390,7 +484,7 @@ jobs:
           path: tool
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-assets
+          name: release-dist
           path: dist
       - run: chmod +x tool/release
       - name: The page of the release

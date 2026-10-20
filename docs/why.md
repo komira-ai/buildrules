@@ -29,11 +29,11 @@ Four ideas carry the design:
    TOML or JSON, so a command (`buildrules sync`) bakes the lockfiles into a generated
    table, and a second command (`buildrules check`) refuses a table that has gone stale.
 
-Status: version 0, linux x86_64 only. The public repository's releases are source
-archives, not binaries. Section 9 lists what is not done.
+Status: version 0, linux x86_64 only for the rules. The public repository's releases hold a
+source archive and the command line for three platforms (section 8). Section 9 lists what is not done.
 
-Planned and not built: Arm and macOS (and Windows) hosts, release binaries of the
-command line, a Homebrew formula, an apt repository, an install script, and Python rules.
+Planned and not built: Arm and macOS (and Windows) hosts for the rules, a Homebrew formula, an apt
+repository, an install script, and Python rules.
 
 ## 2. The problem
 
@@ -471,13 +471,15 @@ described in `RELEASING.md`) runs these stages in order, each only if the previo
 | stage | what |
 |---|---|
 | gate | the whole tree (`//ci:all`) and the completeness check, in local mode on a runner |
-| beta | hello-world repositories per language, consuming the candidate commit as a user would, each built twice in two directories |
+| plan | decides whether this commit is released and the version; creates nothing; the one place a repository variable can freeze every release |
+| build-cli | builds the command line for the three release targets from the tested commit with the planned version stamped in, and packages the three tarballs |
+| beta | hello-world repositories per language, consuming the candidate commit as a user would and run with the linux x86_64 command line that build-cli built, each built twice in two directories |
 | gamma | the maintainers' own repositories built on the farm with the candidate; fails the release if no farm is configured |
-| plan | decides whether this commit is released and the version; creates nothing |
-| archive | a deterministic source archive of the tested commit, its `SHA256SUMS`, and GitHub build provenance attestations of both |
-| verify | read-only: the sha256 matches; the checkout is the tested commit; the attestations verify, pinned to this workflow, commit and `refs/heads/main`; rebuilding the archive gives the same bytes; the file list equals the commit's tree; the public-repository scrub passes |
-| tag | the annotated tag, made only after the archive verifies |
-| publish | the GitHub release, from the verified files |
+| archive | a deterministic source archive of the tested commit, the three tarballs (the one the beta ran is checked to hold the very file it ran), and `SHA256SUMS` over the three files |
+| attest | a keyless signature and a GitHub build provenance attestation of each of the five files |
+| verify | read-only: the sums match; the checkout is the tested commit; the attestations and signatures verify, pinned to this workflow, commit and `refs/heads/main`; rebuilding the archive and the three binaries gives the same bytes; the shipped program prints the release version; the file list equals the commit's tree; the public-repository scrub passes |
+| tag | the annotated tag, made only after everything is built, signed and verified |
+| publish | the GitHub release, from the verified files: ten in all |
 | bump | after `publish`: opens a pull request, with auto-merge, in a downstream repository named by a repository variable, moving its `buildrules` submodule to the released commit; nothing waits for it, and a failed bump un-releases nothing |
 
 Two properties are deliberate:
@@ -485,6 +487,13 @@ Two properties are deliberate:
 - **Verify before tag.** Nothing before `tag` waits for it, so a failure in the archive, the
   attestation or the verification leaves no tag behind. The tag is the first thing in the pipeline
   that cannot be taken back, and it is made last but for the release.
+- **Three tiers, each where it is cheapest to be wrong.** A pull request builds and runs the unit
+  tests (every library) and the lints of the workflows, so a
+  broken `release.yml` is red before the merge, and runs nothing else. The beta (a hello-world
+  repository per language, as a user starts it) and the gamma (our own repositories with real
+  consumers, on the farm) are stages of the release, after the merge; the signing, the
+  attestation, the reproduction and the verification happen there and only there, and a red one
+  leaves no tag.
 - **A small blast radius for tokens.** A ruleset lets only one GitHub App, the release bot, create
   or move a `v*` tag. The `tag` job mints the bot's token, scoped to this repository and to contents
   write, and uses it in one step; the `bump` job mints a second token for the downstream repository
@@ -495,12 +504,17 @@ Two properties are deliberate:
 A version is `v<MAJOR>.<MINOR>.<PATCH>`. `MAJOR.MINOR` is the `VERSION` file; `PATCH` is the highest
 existing tag plus one. An old run is never published after a newer one.
 
-What a release holds: `buildrules-<version>.tar.gz`, `SHA256SUMS`, notes, and the attestations.
-The archive is reproducible with one stated dependence: the tar bytes are git's, so the archive is
-made once and verified against a second build with the same git on the same runner. A consumer relies
-on the published file and its sha256, not on remaking it. **There are no binaries**: the command line
-is built from the source archive on your farm or machine (part 2). Other channels are planned
-(section 9).
+What a release holds: `buildrules-<version>.tar.gz`, the command line as
+`buildrules-cli-<version>-<target>.tar.gz` for `linux-x86_64`, `linux-aarch64` and `macos-arm64`,
+`SHA256SUMS` over those four files, a keyless signature and a build provenance
+attestation of each of those five files, and notes. The archive is reproducible with one stated
+dependence: the tar bytes are git's, so the archive is made once and verified against a second build
+with the same git on the same runner. The three tarballs are built twice, on two runners, and must be the
+same bytes. A consumer relies on the published file and its sha256, not on remaking it. The user beta
+runs the linux x86_64 program only; the other two are built from the same source behind the same
+tests and checked for their file header and their version, and are not yet run on their own
+platform. The command line is also built from the source archive on your farm or machine (part 2).
+Other channels are planned (section 9).
 
 ## 9. Trade-offs, limits and what is not done
 
@@ -540,8 +554,9 @@ is built from the source archive on your farm or machine (part 2). Other channel
 
 ### Not done, so you know
 
-- Release binaries for the command line, a Homebrew formula, an apt repository, an install script:
-  none exist for buildrules (all planned). The command line is built from the source archive.
+- A Homebrew formula, an apt repository, an install script: none exist for buildrules (all
+  planned). The release binaries of the command line are unpacked by hand (part 2), and only the
+  linux x86_64 one is run by a user beta.
 - Arm and macOS hosts (planned): their beta legs, which `beta.yml` declares and skips, and execution
   platforms for the Arm instruction-set levels.
 - A published, deployed `buildrules.dev` (the site is built and tested; its hosting stack is a step

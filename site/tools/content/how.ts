@@ -10,7 +10,7 @@ export const how: Page = {
   lead: 'Install, initialize, build. [Configuration](/how/configure/) and [Examples](/how/examples/) are the next two pages; [Why buildrules](/why/) is the design.',
   blocks: [
     info('Everything here is version 0 and runs on linux x86_64 only. It describes the repository at its current `main`. The longer text is `docs/how.md` in the repository.'),
-    planned('Not built yet: Arm and macOS hosts, release binaries of the command line, a Homebrew formula, an apt repository and an install script.'),
+    planned('Not built yet: Arm and macOS hosts for the rules, a Homebrew formula, an apt repository and an install script.'),
     h2('What you need'),
     ul(
       'Linux on x86_64 with glibc 2.34 or newer, and `libgcc_s.so.1` and `libz.so.1` (the Rust compiler loads them; buildrules does not pin them yet).',
@@ -19,8 +19,22 @@ export const how: Page = {
       'Either a remote execution farm that speaks the [Remote Execution API](https://github.com/bazelbuild/remote-apis) (REAPI), or the explicit local mode (see [say where actions run](/how/#say-where-actions-run)). Nothing else runs on your machine: the generator is part of the `buildrules` program, and nothing needs Python or another interpreter.',
     ),
     h2('Get the command line'),
-    planned('There are no release binaries for buildrules, and a Homebrew formula, an apt repository and an install script are planned. A release is a source archive, and you build the command line from it with Buck2.'),
-    p('Pick a release from the [releases page](https://github.com/komira-ai/buildrules/releases) and check it:'),
+    p('A release carries the command line as a static program for three platforms, and a source archive. Pick a release from the [releases page](https://github.com/komira-ai/buildrules/releases). To use a program, unpack the tarball of your platform (`linux-x86_64`, `linux-aarch64`, or `macos-arm64`), check it, and put `buildrules` on your `PATH`:'),
+    code(
+      [
+        'v=0.0.1     # the release you chose',
+        't=linux-x86_64     # your platform',
+        'curl -fsSLO "https://github.com/komira-ai/buildrules/releases/download/v$v/buildrules-cli-$v-$t.tar.gz"',
+        'curl -fsSLO "https://github.com/komira-ai/buildrules/releases/download/v$v/SHA256SUMS"',
+        'sha256sum --check --ignore-missing SHA256SUMS',
+        'tar -xzf "buildrules-cli-$v-$t.tar.gz"',
+        '"buildrules-cli-$v-$t/buildrules" --version',
+      ].join('\n'),
+      'shell',
+    ),
+    p('`--version` prints `buildrules <version>`, the number of the release. Each tarball carries a build provenance attestation and a signature, checked with `gh attestation verify` as for the source archive below. The macOS program (Apple silicon: there is no program for an Intel Mac) is not code-signed or notarised, and only the linux x86_64 program is run by the release\'s user beta. The rules themselves run on a linux x86_64 farm or machine.'),
+    planned('A Homebrew formula, an apt repository and an install script are planned.'),
+    p('Or build the command line from source with Buck2. Check the source archive:'),
     code(
       [
         'v=0.0.1     # the release you chose',
@@ -36,7 +50,7 @@ export const how: Page = {
     p('`OWNER/REPO` are the two path segments of the repository URL above. The attestation is GitHub build provenance, signed with the release workflow\'s identity; it proves the archive was built by that workflow from a commit of `main`. `gh` is only needed for that line.'),
     p('Build the program. With no farm, use local mode:'),
     code('buck2 build -c buildrules_re.mode=local //cli:buildrules --show-output', 'shell'),
-    p('`--show-output` prints the path of the executable. Put it on your `PATH` as `buildrules`. `buildrules --help` lists the commands and `buildrules <command> --help` their flags. Exit codes are the same everywhere: `0` ok, `1` failed or stale (the fix is printed), `2` usage. The program\'s `--version` prints its own version string, which is not the release tag; use the release you downloaded as the version.'),
+    p('`--show-output` prints the path of the executable. Put it on your `PATH` as `buildrules`. `buildrules --help` lists the commands and `buildrules <command> --help` their flags. Exit codes are the same everywhere: `0` ok, `1` failed or stale (the fix is printed), `2` usage. A program built from the source archive prints `<MAJOR.MINOR>-dev` for `--version`: only the released tarballs are stamped with the release number.'),
     h2('Initialize your repository'),
     p('Run `init` once, in the repository root. It adds buildrules as a Buck2 cell pinned to one commit. Get the commit of the release tag:'),
     code('git ls-remote https://github.com/komira-ai/buildrules \'refs/tags/v0.0.1^{}\'', 'shell'),
@@ -186,7 +200,7 @@ export const howConfigure: Page = {
     code('[toolchain]\nchannel = "1.95.0"\ncomponents = ["clippy", "rustfmt"]\nprofile = "minimal"', 'rust-toolchain.toml'),
     p('It is required: `sync` and `check` fail without it. Only `channel` is read, and it must be an exact release such as `1.95.0`. `stable`, `1.95`, a beta channel and a dated nightly are refused. A `path` key is refused, because a toolchain on one machine is not a pin. Plain `cargo` (through rustup) reads the same file, so Cargo and Buck2 use the same compiler. buildrules pins `1.95.0` (the default) and `1.85.0` (the oldest it supports). Another release needs its hashes in `buildrules-pins.toml`.'),
     h2('Your own pins'),
-    p('`buildrules-pins.toml` is optional, at the repository root, and hand-written. An unknown Rust version is refused unless this file supplies the hashes of all four components:'),
+    p('`buildrules-pins.toml` is optional, at the repository root, and hand-written. An unknown Rust version is refused unless this file supplies the hashes of all three components:'),
     code(
       [
         '[rust."1.86.0".rustc]',

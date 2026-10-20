@@ -162,7 +162,7 @@ describe('C and C++', () => {
       for (const s of ['x86_64-linux-gnu.2.34', '-g0', '-Wl,--strip-debug']) expect({ who, s, has: t.includes(s) }).toEqual({ who, s, has: true });
     }
   });
-  test('the four gates exist and the page names exactly those four', () => {
+  test('the three gates exist and the page names exactly those four', () => {
     const gates = ['hermetic_check', 'glibc_floor_check', 'prefixed_archive_check', 'c_check'];
     for (const g of gates) {
       expect({ g, defined: new RegExp(`^${g} = `, 'm').test(defs) }).toEqual({ g, defined: true });
@@ -281,7 +281,7 @@ describe('init and the generated files', () => {
       ['init', 'cargo_cmd', 'sync', 'check', 'npm_cmd', 'mojo_cmd', 'main'].flatMap((n) => [...usage(repoFile(`cli/src/${n}.zig`)).matchAll(/--[a-z][a-z0-9-]*/g)].map((m) => m[0])),
     );
     // other programs' flags the pages mention: buck2, curl, gh, mopm, rustc, the linker
-    const others = ['--show-output', '--target-platforms', '--repo', '--unit-graph', '--locked', '--test', '--strip-debug', '--verify-tag', '--help', '--version'];
+    const others = ['--ignore-missing', '--show-output', '--target-platforms', '--repo', '--unit-graph', '--locked', '--test', '--strip-debug', '--verify-tag', '--help', '--version'];
     for (const t of [howText, whyText]) {
       for (const m of t.matchAll(/(?<![A-Za-z0-9-])--[a-z][a-z0-9-]*/g)) {
         expect({ flag: m[0], known: real.has(m[0]) || others.includes(m[0]) }).toEqual({ flag: m[0], known: true });
@@ -294,17 +294,17 @@ describe('init and the generated files', () => {
 describe('the release pipeline', () => {
   const release = repoFile('.github/workflows/release.yml');
   const releasing = repoFile('RELEASING.md');
-  const stages = ['gate', 'beta', 'gamma', 'plan', 'archive', 'verify', 'tag', 'publish'];
+  const stages = ['gate', 'plan', 'build-cli', 'beta', 'gamma', 'archive', 'attest', 'verify', 'tag', 'publish'];
   const jobBlock = (name: string): string => {
     const start = release.search(new RegExp(`^  ${name}:$`, 'm'));
     expect(start).toBeGreaterThanOrEqual(0);
     const rest = release.slice(start + 1);
-    const next = rest.search(/^ {2}[a-z_]+:$/m);
+    const next = rest.search(/^ {2}[a-z_-]+:$/m);
     return next < 0 ? rest : rest.slice(0, next);
   };
   test('the stages the Why page lists are the jobs of the workflow, in the order RELEASING.md gives', () => {
     for (const s of stages) expect(jobBlock(s)).toContain(`${s}:`);
-    expect(releasing).toContain('The order is `gate`, `beta`, `gamma`, `plan`, `archive`, `verify`, `tag`, `publish`');
+    expect(releasing).toContain('The order is `gate`, `plan`, `build-cli`, `beta`, `gamma`, `archive`, `attest`, `verify`, `tag`, `publish`');
     const table = WHY.blocks.find((b) => b.kind === 'table' && b.head[0] === 'Stage') as Extract<Block, { kind: 'table' }>;
     expect(table.rows.map((r) => r[0])).toEqual([...stages, 'bump']);
   });
@@ -318,15 +318,38 @@ describe('the release pipeline', () => {
       });
     const table = WHY.blocks.find((b) => b.kind === 'table' && b.head[0] === 'Stage') as Extract<Block, { kind: 'table' }>;
     expect(md).toEqual(table.rows.map((r) => [norm(r[0]), norm(r[1])]));
-    expect(md).toHaveLength(9);
+    expect(md).toHaveLength(11);
   });
   test('verify before tag: tag needs verify, nothing before tag needs tag, publish needs both', () => {
     expect(jobBlock('tag')).toMatch(/needs: \[[^\]]*\bverify\b[^\]]*\]/);
     expect(jobBlock('publish')).toMatch(/needs: \[[^\]]*\btag\b[^\]]*\bverify\b[^\]]*\]/);
-    for (const s of ['gate', 'beta', 'gamma', 'plan', 'archive', 'verify']) expect({ s, needsTag: /needs: \[[^\]]*\btag\b/.test(jobBlock(s)) }).toEqual({ s, needsTag: false });
-    expect(jobBlock('verify')).toMatch(/needs: \[[^\]]*\barchive\b/);
-    expect(jobBlock('archive')).toMatch(/needs: \[[^\]]*\bplan\b/);
+    for (const s of ['gate', 'plan', 'build-cli', 'beta', 'gamma', 'archive', 'attest', 'verify']) expect({ s, needsTag: /needs: \[[^\]]*\btag\b/.test(jobBlock(s)) }).toEqual({ s, needsTag: false });
+    expect(jobBlock('verify')).toMatch(/needs: \[[^\]]*\battest\b/);
+    expect(jobBlock('attest')).toMatch(/needs: \[[^\]]*\barchive\b/);
+    expect(jobBlock('archive')).toMatch(/needs: \[[^\]]*\bbuild-cli\b/);
+    expect(jobBlock('build-cli')).toMatch(/needs: \[[^\]]*\bplan\b/);
     expect(whyText).toContain('Verify before tag. Nothing before `tag` waits for it');
+  });
+  test('tiers: a pull request runs ci.yml (build and unit tests) and nothing of the release; the beta, the gamma and the release run after the merge', () => {
+    const ci = repoFile('.github/workflows/ci.yml');
+    const beta = repoFile('.github/workflows/beta.yml');
+    // neither the release nor the beta has a pull-request trigger, so no beta and no dry run of the release happens before a merge
+    expect(release).not.toMatch(/\n {2}pull_request(_target)?:/);
+    expect(beta).not.toMatch(/\n {2}pull_request(_target)?:/);
+    expect(beta).toMatch(/\non:\n {2}workflow_call:/);
+    // ci.yml is the pull-request check, and it calls neither the beta nor the stage tool nor the release tool
+    expect(ci).toMatch(/\non:\n {2}pull_request:\n/);
+    for (const later of ['workflows/beta.yml', 'tools/stage', 'tools/release', 'id-token', 'cosign']) expect({ later, inCi: ci.includes(later) }).toEqual({ later, inCi: false });
+    // the release calls the beta, after the merge, and builds the gamma
+    expect(jobBlock('beta')).toContain('uses: ./.github/workflows/beta.yml');
+    expect(jobBlock('gamma')).toContain('tool/stage gamma ');
+    // the pages say so, and name no dry run
+    expect(releasing).toContain('## The tiers');
+    expect(releasing).not.toMatch(/dry run of a pull request|attest-dry|verify-dry|The dry run/);
+    for (const [name, text] of [['the Why page', whyText], ['docs/why.md', WHY_MD]] as [string, string][]) {
+      expect({ name, tiers: text.includes('Three tiers') }).toEqual({ name, tiers: true });
+      expect({ name, dry: /attest-dry|verify-dry|as a dry run/.test(text) }).toEqual({ name, dry: false });
+    }
   });
   test('bump runs after publish and nothing waits for it', () => {
     expect(jobBlock('bump')).toMatch(/needs: \[[^\]]*\btag\b[^\]]*\bpublish\b/);
@@ -336,12 +359,22 @@ describe('the release pipeline', () => {
     // the page names the downstream repository by role only
     expect(whyText).not.toMatch(/internal/i);
   });
-  test('the release holds a source archive and sums, and no binaries', () => {
-    expect(release).toContain('There are no binaries.');
-    expect(releasing).toContain('There are no binaries');
+  test('the release holds a source archive, the command line for three platforms, sums, signatures and attestations', () => {
+    expect(release).toContain('buildrules-cli-<version>-<target>.tar.gz');
+    expect(releasing).toContain('buildrules-cli-<version>-<target>.tar.gz');
+    expect(releasing).not.toContain('There are no binaries');
+    for (const target of ['linux-x86_64', 'linux-aarch64', 'macos-arm64']) {
+      expect({ target, why: whyText.includes(target) }).toEqual({ target, why: true });
+      expect({ target, how: howText.includes(target) }).toEqual({ target, how: true });
+    }
+    // no program for an Intel Mac: the release names no such target on either page, and the tool lists exactly the three
+    expect(whyText).not.toContain('macos-x86_64');
+    expect(howText).not.toContain('macos-x86_64');
+    expect(repoFile('tools/release/binhdr.zig')).toContain('pub const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" };');
+    expect(whyText).toContain('buildrules-cli-<version>-<target>.tar.gz');
     const cmds = repoFile('tools/release/cmds.zig');
     expect(cmds).toContain('SHA256SUMS');
-    expect(cmds).toContain('buildrules-0.0.1.tar.gz');
+    expect(cmds).toContain('buildrules-{s}.tar.gz');
     expect(whyText).toContain('`buildrules-<version>.tar.gz`');
     expect(howText).toContain('buildrules-$v.tar.gz');
     expect(howText).toContain('gh attestation verify');
@@ -370,7 +403,6 @@ describe('what is planned is marked planned', () => {
   const needles: [string, RegExp][] = [
     ['Arm', /Arm/],
     ['macOS', /macOS/],
-    ['release binaries', /[Rr]elease binaries/],
     ['a Homebrew formula', /Homebrew formula/],
     ['an apt repository', /apt repository/],
     ['an install script', /install script/],
@@ -400,7 +432,8 @@ describe('what is planned is marked planned', () => {
   test('the repository really has none of them: no formula, no apt files, no install script in the release job', () => {
     const release = repoFile('.github/workflows/release.yml');
     expect(release).not.toMatch(/brew\b|apt-get install buildrules|install\.sh/);
-    expect(repoFile('RELEASING.md')).toContain('There are no binaries');
+    // the release carries the command line and says the other channels are not built
+    expect(repoFile('RELEASING.md')).not.toContain('There are no binaries');
     // the platforms of another host, where a tree has them, are pins and a local-mode platform; the check above ('a host that is not linux x86_64
     // gets no ISA platform') holds either way
   });

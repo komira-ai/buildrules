@@ -1,6 +1,6 @@
-//! The four command-line binaries of a release are what their names say, read from the bytes of the files the build made (not from the build's
-//! own arguments): an ELF of the machine for the two Linux targets, static; a Mach-O of the cpu for the two macOS ones. The rules of the header are
-//! tools/release/binhdr.zig (tested there); this file feeds them the four built executables, which the test target gets as data.
+//! The three command-line binaries of a release are what their names say, read from the bytes of the files the build made (not from the build's
+//! own arguments): an ELF of the machine for the two Linux targets, static; a Mach-O of the cpu for the macOS one. The rules of the header are
+//! tools/release/binhdr.zig (tested there); this file feeds them the three built executables, which the test target gets as data.
 const std = @import("std");
 const binhdr = @import("binhdr");
 const t = std.testing;
@@ -25,7 +25,7 @@ test "each built binary has the header of the target it is built for" {
     }
 }
 
-test "the four binaries are four different programs: each is refused as every other target" {
+test "the three binaries are three different programs: each is refused as every other target" {
     // The defect: two targets built from one attribute, so a "macos-arm64" file that is really the x86_64 build passes only because it is checked against itself.
     for (binhdr.targets) |target| {
         const bytes = try binary(target);
@@ -33,6 +33,73 @@ test "the four binaries are four different programs: each is refused as every ot
         for (binhdr.targets) |other| {
             if (std.mem.eql(u8, other, target)) continue;
             try t.expect(binhdr.problem(bytes, other) != null);
+        }
+    }
+}
+
+fn versionFile() ![]u8 {
+    const work = try std.process.getEnvVarOwned(t.allocator, "BUILDRULES_TEST_WORK");
+    defer t.allocator.free(work);
+    const path = try std.fs.path.join(t.allocator, &.{ work, "VERSION" });
+    defer t.allocator.free(path);
+    return std.fs.cwd().readFileAlloc(t.allocator, path, 64);
+}
+
+test "release_binaries holds each target's binary at the path of its target, byte for byte" {
+    // The defect: a directory whose names and contents are crossed (the arm64 program under linux-x86_64), which `release package-all` would then package under the
+    // wrong name; each file is held to the header of the path it is at, and is the very file the target built.
+    for (binhdr.targets) |target| {
+        const work = try std.process.getEnvVarOwned(t.allocator, "BUILDRULES_TEST_WORK");
+        defer t.allocator.free(work);
+        const path = try std.fs.path.join(t.allocator, &.{ work, "release_binaries", target, "buildrules" });
+        defer t.allocator.free(path);
+        const in_dir = try std.fs.cwd().readFileAlloc(t.allocator, path, 1 << 28);
+        defer t.allocator.free(in_dir);
+        const built = try binary(target);
+        defer t.allocator.free(built);
+        if (binhdr.problem(in_dir, target)) |why| {
+            std.debug.print("release_binaries/{s}/buildrules: {s}\n", .{ target, why });
+            return error.WrongHeader;
+        }
+        try t.expectEqualSlices(u8, built, in_dir);
+    }
+}
+
+test "release_binaries holds the release targets and no other: there is no Intel macOS binary" {
+    // The defect: a target put back into cli/BUCK's `_CROSS` (the Intel macOS one, dropped), which would build and be copied here but never be packaged or tested.
+    const work = try std.process.getEnvVarOwned(t.allocator, "BUILDRULES_TEST_WORK");
+    defer t.allocator.free(work);
+    const path = try std.fs.path.join(t.allocator, &.{ work, "release_binaries" });
+    defer t.allocator.free(path);
+    var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
+    defer dir.close();
+    var n: usize = 0;
+    var it = dir.iterate();
+    while (try it.next()) |entry| {
+        var known = false;
+        for (binhdr.targets) |target| known = known or std.mem.eql(u8, entry.name, target);
+        if (!known) {
+            std.debug.print("release_binaries/{s}: not a release target\n", .{entry.name});
+            return error.NotAReleaseTarget;
+        }
+        n += 1;
+    }
+    try t.expectEqual(binhdr.targets.len, n);
+}
+
+test "every built binary holds the version it prints as a string of its own" {
+    // The defect: a version the stamp never reached, or reached only inside a longer string, which `release package --exec none` could not tell from the real thing on
+    // a binary it cannot run. A build that is not a release is stamped `<MAJOR.MINOR>-dev`; the rule is binhdr.holdsVersion, tested on its own in tools/release.
+    const text = try versionFile();
+    defer t.allocator.free(text);
+    const stamp = try std.fmt.allocPrint(t.allocator, "{s}-dev", .{std.mem.trim(u8, text, " \r\n")});
+    defer t.allocator.free(stamp);
+    for (binhdr.targets) |target| {
+        const bytes = try binary(target);
+        defer t.allocator.free(bytes);
+        if (!binhdr.holdsVersion(bytes, stamp)) {
+            std.debug.print("{s}: no string `{s}` of its own (NUL before and after)\n", .{ target, stamp });
+            return error.NoVersionString;
         }
     }
 }

@@ -1,6 +1,7 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # The buildrules command line, in Zig, built by the pinned zig behind its unit tests.
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_module", "zig_test")
+load(":release.bzl", "release_binaries")
 load(":version.bzl", "cli_version")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 
@@ -80,7 +81,7 @@ export_file(
     visibility = ["//site:"],
 )
 
-# The binaries of a release (RELEASING.md): the same program built for the four release targets. Each is a zig_exe of the same source and tests; only `target`
+# The binaries of a release (RELEASING.md): the same program built for the three release targets. Each is a zig_exe of the same source and tests; only `target`
 # differs. They are built on the linux execution platform (zig cross-compiles a program that needs no SDK). An asset is named for the release target
 # (`linux-x86_64`...); the zig triple of each is written out twice on purpose: here, and again as the `expect` of its zig_exe_target_test below, so a
 # change to one alone is red.
@@ -88,7 +89,6 @@ _CROSS = {
     "linux-x86_64": "x86_64-linux-musl",
     "linux-aarch64": "aarch64-linux-musl",
     "macos-arm64": "aarch64-macos",
-    "macos-x86_64": "x86_64-macos",
 }
 
 [
@@ -111,14 +111,20 @@ zig_exe_target_test(name = "linux_aarch64_is_aarch64_linux_musl", exe = ":buildr
 
 zig_exe_target_test(name = "macos_arm64_is_aarch64_macos", exe = ":buildrules_macos_arm64", expect = "aarch64-macos", same_tests_as = ":buildrules", visibility = ["PUBLIC"])
 
-zig_exe_target_test(name = "macos_x86_64_is_x86_64_macos", exe = ":buildrules_macos_x86_64", expect = "x86_64-macos", same_tests_as = ":buildrules", visibility = ["PUBLIC"])
+# The three in one directory, `<release target>/buildrules` for each: what the release workflow builds with one command, packages and ships (cli/release.bzl).
+release_binaries(
+    name = "release_binaries",
+    binaries = {name: ":buildrules_" + name.replace("-", "_") for name in _CROSS},
+    visibility = ["PUBLIC"],
+)
 
-# The bytes of the four: ELF machine or Mach-O cputype, from the files (header_test.zig).
+# The bytes of the three: ELF machine or Mach-O cputype, from the files (header_test.zig), the directory `release_binaries` puts each at the path of its target, and the
+# version the program says, as a string of its own in each file (the check `release package` makes of a binary it cannot run).
 zig_test(
     name = "header_unit",
     src = "header_test.zig",
     deps = ["//tools/release:binhdr"],
-    data = {name: ":buildrules_" + name.replace("-", "_") for name in _CROSS},
+    data = dict({name: ":buildrules_" + name.replace("-", "_") for name in _CROSS}, **{"VERSION": "//:VERSION", "release_binaries": ":release_binaries"}),
     zig = _ZIG,
     visibility = ["PUBLIC"],
 )

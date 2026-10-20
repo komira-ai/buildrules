@@ -38,6 +38,7 @@ jest_test(
     coverage = True,
     visibility = ["//ci:"],
     data = {
+        ".github/workflows/ci.yml": "//:ci.yml",
         ".github/workflows/beta.yml": "//:beta.yml",
         ".github/workflows/release.yml": "//:release.yml",
         "beta/check.zig": "//beta:check.zig",
@@ -83,6 +84,7 @@ jest_test(
         "tools/release/cmds.zig": "//tools/release:cmds.zig",
         "tools/release/version.zig": "//tools/release:version.zig",
         "tools/release/page.zig": "//tools/release:page.zig",
+        "tools/release/binhdr.zig": "//tools/release:binhdr.zig",
         "tools/stage/gamma.zig": "//tools/stage:gamma.zig",
         "beta/mojo/STEPS": "//beta:mojo_steps",
         "rules/cxx/archive.bzl": "//rules/cxx:archive.bzl",
