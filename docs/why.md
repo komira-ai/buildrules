@@ -508,7 +508,7 @@ attestation of each of those five files, and notes. The archive is reproducible 
 dependence: the tar bytes are git's, so the archive is made once and verified against a second build
 with the same git on the same runner. The three tarballs are built twice, on two runners, and must be the
 same bytes. A consumer relies on the published file and its sha256, not on remaking it. The user beta
-runs the linux x86_64 program only; the other three are built from the same source behind the same
+runs the linux x86_64 program only; the other two are built from the same source behind the same
 tests and checked for their file header and their version, and are not yet run on their own
 platform. The command line is also built from the source archive on your farm or machine (part 2).
 Other channels are planned (section 9).

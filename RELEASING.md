@@ -191,7 +191,7 @@ attribute (no default), and `ci/negative` holds a planted copy of a program with
 - `release record --tarball PATH --out DIR [--ran-binary PATH]` writes the sha256 of a tarball a user-beta leg ran (with `--ran-binary`, only if the tarball's `buildrules` is that very file), and
   `release tested --dist DIR --tested DIR [--targets T,T]` refuses unless the tarballs to attest are, byte for byte, the ones recorded for the targets walked, of one version, and nothing else is recorded. The
   targets that a user beta can walk are `linux-x86_64`, `linux-aarch64` and `macos-arm64`; **the release walks `linux-x86_64` only** (`--targets linux-x86_64`):
-  the beta legs for the Arm Linux and macOS platforms are planned (see "The beta stage"), and until they run, the other three tarballs are attested and verified (header, version, reproduction) but
+  the beta legs for the Arm Linux and macOS platforms are planned (see "The beta stage"), and until they run, the other two tarballs are attested and verified (header, version, reproduction) but
   not run by a user beta. The workflow names the targets, so the day a leg is added the list grows with it.
 - `release sums --dist DIR` writes `SHA256SUMS` over the source archive and the three tarballs in name order (four lines) and reads it back; it refuses a missing, stray or other-version tarball.
 - `release sign --dist DIR [--cosign PATH] [--dry true|false]` runs keyless `cosign sign-blob` on those four files and `SHA256SUMS`, and refuses a bundle that is missing, empty or already there. With `--dry true` (the
