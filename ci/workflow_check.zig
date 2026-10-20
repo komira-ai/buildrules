@@ -443,6 +443,18 @@ fn inlineExprs(a: std.mem.Allocator, f: *Findings, text: []const u8) !void {
     }
 }
 
+/// `text` without its comment-only lines.
+fn withoutComments(a: std.mem.Allocator, text: []const u8) ![]u8 {
+    var out = std.ArrayList(u8).init(a);
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, std.mem.trimLeft(u8, line, " "), "#")) continue;
+        try out.appendSlice(line);
+        try out.append('\n');
+    }
+    return out.toOwnedSlice();
+}
+
 /// Everything wrong with `workflow`, given the dotslash file of the pinned buck2 and ci/BUCK.
 pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, ci_buck: []const u8) !Findings {
     var f = Findings.init(a);
@@ -474,6 +486,18 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
     if (!hasLine(workflow, "  workflow_call:")) try add(a, &f, "`on: workflow_call` is missing (release.yml calls this workflow as its gate stage)", .{});
     if (hasLine(workflow, "  push:")) try add(a, &f, "`on: push` is present: a push to main is tested through release.yml, and would run this workflow twice", .{});
     if (std.mem.indexOf(u8, workflow, "runs-on: ubuntu-latest") == null) try add(a, &f, "`runs-on: ubuntu-latest` is missing", .{});
+
+    // The tiers (RELEASING.md): a pull request runs build and unit tests (with coverage, where there is coverage) and nothing else. The beta, the gamma, the
+    // signing, the attestation and the verification are the release's, after the merge (release.yml). So this workflow, which is the pull-request check, is
+    // triggered by a pull request and by the release's call alone, never calls the beta, never builds or runs the stage tool or the release tool, and holds
+    // no signing identity.
+    for ([_][]const u8{ "  workflow_dispatch:", "  schedule:", "  workflow_run:" }) |trigger| {
+        if (hasLine(workflow, trigger)) try add(a, &f, "`{s}` triggers the pull-request checks: only a pull request and the release's call do", .{std.mem.trim(u8, trigger, " :")});
+    }
+    const live = try withoutComments(a, workflow);
+    for ([_][]const u8{ "./.github/workflows/beta.yml", "tools/stage", "tool/stage", "tools/release", "tool/release", "id-token", "cosign", "sigstore", "attest-build-provenance" }) |later| {
+        if (std.mem.indexOf(u8, live, later) != null) try add(a, &f, "the pull-request checks name `{s}`: a pull request runs build and unit tests only; the beta, the gamma and the signing belong to the release (release.yml)", .{later});
+    }
 
     // The cancel group. release.yml calls this workflow for every push to main: a group shared by all of them, with cancelling on, lets a
     // re-run of an old main run cancel the gate of the newest commit. So the group of a non-pull-request event holds the commit, and only
@@ -722,6 +746,26 @@ test "a missing trigger or runner is found" {
     try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", ""), "workflow_call");
     try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  push:\n    branches: [main]\n"), "`on: push` is present");
     try expectFinding(a, r, try mutate(a, r.wf, "runs-on: ubuntu-latest", "runs-on: self-hosted"), "ubuntu-latest");
+}
+
+test "a pull-request check that runs more than build and unit tests is found" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    // the other triggers
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  workflow_dispatch:\n"), "`workflow_dispatch` triggers");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  schedule:\n    - cron: '0 3 * * *'\n"), "`schedule` triggers");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  workflow_run:\n    workflows: [release]\n"), "`workflow_run` triggers");
+    // a later tier among the pull-request checks
+    try expectFinding(a, r, try mutate(a, r.wf, "    steps:\n", "    steps:\n      - uses: ./.github/workflows/beta.yml\n"), "name `./.github/workflows/beta.yml`");
+    try expectFinding(a, r, try mutate(a, r.wf, "      - name: Stop buck2\n", "      - name: Beta\n        run: ./buck2 build -c buildrules_re.mode=local //tools/stage:stage\n      - name: Stop buck2\n"), "name `tools/stage`");
+    try expectFinding(a, r, try mutate(a, r.wf, "      - name: Stop buck2\n", "      - name: Sign\n        run: tool/release sign --dist dist --dry false\n      - name: Stop buck2\n"), "name `tool/release`");
+    try expectFinding(a, r, try mutate(a, r.wf, "    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    permissions:\n      id-token: write\n"), "name `id-token`");
+    // a comment that names a later tier is not a job that runs it
+    const noted = try mutate(a, r.wf, "    steps:\n", "    # the beta (tool/stage) runs in release.yml\n    steps:\n");
+    const f = try check(a, noted, r.ds, r.cb);
+    for (f.items) |m| try t.expect(std.mem.indexOf(u8, m, "pull-request checks name") == null);
 }
 
 test "a build in remote mode, an endpoint, or a dropped target is found (also when only a comment names it)" {

@@ -36,6 +36,7 @@ jest_test(
     name = "test",
     visibility = ["//ci:"],
     data = {
+        ".github/workflows/ci.yml": "//:ci.yml",
         ".github/workflows/beta.yml": "//:beta.yml",
         ".github/workflows/release.yml": "//:release.yml",
         "beta/check.zig": "//beta:check.zig",

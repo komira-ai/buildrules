@@ -2,7 +2,7 @@
 # external Buck2 cell, the way a user does (beta/<lang>/ holds the files and a STEPS file of the commands; tools/stage runs them with the `buildrules`
 # built from the candidate), builds, runs what it built, and builds a second time from nothing to see the outputs are the same bytes.
 #
-# It runs on every pull request from this repository (so a red beta is seen before a merge) and is called by release.yml after the command line is built, with
+# It is the beta stage of the release: release.yml calls it after the command line is built, on a push to main (no pull request runs it), with
 # the linux-x86_64 binary it built (the input `cli-artifact`; the legs run that file instead of building one). Every action runs on the runner (`-c buildrules_re.mode=local`); nothing here is built on this machine's behalf anywhere else.
 #
 #   tools         builds the stage tool and the command line from the candidate (or takes the release's), and says which legs are ready (a leg that waits for something is planned)
@@ -16,11 +16,10 @@
 name: beta
 
 on:
-  pull_request:
   workflow_call:
     inputs:
       # The artifact of the release workflow that holds the command line to walk (one file named `buildrules`: the linux-x86_64 binary build-cli stamped and
-      # packaged). Empty: build it from the commit, as for a pull request.
+      # packaged). Empty: build it from the commit.
       cli-artifact:
         type: string
         default: ""
@@ -29,13 +28,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: beta-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: beta-${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   tools:
-    # A pull request from a branch of this repository, or a call from the release: a fork's pull request has no commit the cell can be fetched at.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -45,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/workflow_check.zig compares both.
@@ -62,7 +59,7 @@ jobs:
       - name: Build the stage tool
         run: ./buck2 build --console simple -c buildrules_re.mode=local --out stage //tools/stage:stage
 
-      # The command line a user would have: built from the candidate (a pull request), or, in the release, the very file that build-cli built with the planned
+      # The command line a user would have: built from the candidate, or, in the release, the very file that build-cli built with the planned
       # version stamped in and that the release ships (the tarball of it holds these bytes: `release record --ran-binary`).
       - name: Build the command line
         if: ${{ inputs.cli-artifact == '' }}
@@ -99,7 +96,6 @@ jobs:
 
   beta:
     needs: [tools]
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: beta ${{ matrix.lang }} (ubuntu x86_64)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -112,11 +108,11 @@ jobs:
     env:
       LANG_DIR: ${{ matrix.lang }}
       ORIGIN: https://github.com/${{ github.repository }}
-      COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      COMMIT: ${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -129,7 +125,7 @@ jobs:
   # The Mojo leg: the published mopm release that rules/mopm/pins.bzl pins builds beta/mojo. beta/mojo/STEPS has no `planned-until` line, so `tools/stage plan` says ready.
   beta_mojo:
     needs: [tools]
-    if: ${{ needs.tools.outputs.mojo == 'ready' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ needs.tools.outputs.mojo == 'ready' }}
     name: beta mojo (ubuntu x86_64)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -137,11 +133,11 @@ jobs:
       contents: read
     env:
       ORIGIN: https://github.com/${{ github.repository }}
-      COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      COMMIT: ${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -176,7 +172,7 @@ jobs:
   # before the action runs. A job from a fork gets neither the variables nor the token, and is skipped like the other jobs.
   beta_farm:
     needs: [tools]
-    if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_CONNECT_REF != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_CONNECT_REF != '' }}
     name: beta ${{ matrix.lang }} (farm)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -190,12 +186,12 @@ jobs:
     env:
       LANG_DIR: ${{ matrix.lang }}
       ORIGIN: https://github.com/${{ github.repository }}
-      COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      COMMIT: ${{ github.sha }}
       CONNECT_REF: ${{ vars.FARM_CONNECT_REF }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

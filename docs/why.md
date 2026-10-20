@@ -487,10 +487,13 @@ Two properties are deliberate:
 - **Verify before tag.** Nothing before `tag` waits for it, so a failure in the archive, the
   attestation or the verification leaves no tag behind. The tag is the first thing in the pipeline
   that cannot be taken back, and it is made last but for the release.
-- **The pipeline is proved before it is merged.** A pull request from the repository runs the same
-  stages as a dry run, with `attest-dry` and `verify-dry` in place of `attest` and `verify`: the
-  checks that need no signature are all made, nothing is signed, and the jobs that sign, tag,
-  publish and bump cannot run for a pull request.
+- **Three tiers, each where it is cheapest to be wrong.** A pull request builds and runs the unit
+  tests (every library) and the lints of the workflows, so a
+  broken `release.yml` is red before the merge, and runs nothing else. The beta (a hello-world
+  repository per language, as a user starts it) and the gamma (our own repositories with real
+  consumers, on the farm) are stages of the release, after the merge; the signing, the
+  attestation, the reproduction and the verification happen there and only there, and a red one
+  leaves no tag.
 - **A small blast radius for tokens.** A ruleset lets only one GitHub App, the release bot, create
   or move a `v*` tag. The `tag` job mints the bot's token, scoped to this repository and to contents
   write, and uses it in one step; the `bump` job mints a second token for the downstream repository

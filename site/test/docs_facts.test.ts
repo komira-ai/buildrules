@@ -323,12 +323,33 @@ describe('the release pipeline', () => {
   test('verify before tag: tag needs verify, nothing before tag needs tag, publish needs both', () => {
     expect(jobBlock('tag')).toMatch(/needs: \[[^\]]*\bverify\b[^\]]*\]/);
     expect(jobBlock('publish')).toMatch(/needs: \[[^\]]*\btag\b[^\]]*\bverify\b[^\]]*\]/);
-    for (const s of ['gate', 'plan', 'build-cli', 'beta', 'gamma', 'archive', 'attest', 'attest-dry', 'verify', 'verify-dry']) expect({ s, needsTag: /needs: \[[^\]]*\btag\b/.test(jobBlock(s)) }).toEqual({ s, needsTag: false });
+    for (const s of ['gate', 'plan', 'build-cli', 'beta', 'gamma', 'archive', 'attest', 'verify']) expect({ s, needsTag: /needs: \[[^\]]*\btag\b/.test(jobBlock(s)) }).toEqual({ s, needsTag: false });
     expect(jobBlock('verify')).toMatch(/needs: \[[^\]]*\battest\b/);
     expect(jobBlock('attest')).toMatch(/needs: \[[^\]]*\barchive\b/);
     expect(jobBlock('archive')).toMatch(/needs: \[[^\]]*\bbuild-cli\b/);
     expect(jobBlock('build-cli')).toMatch(/needs: \[[^\]]*\bplan\b/);
     expect(whyText).toContain('Verify before tag. Nothing before `tag` waits for it');
+  });
+  test('tiers: a pull request runs ci.yml (build and unit tests) and nothing of the release; the beta, the gamma and the release run after the merge', () => {
+    const ci = repoFile('.github/workflows/ci.yml');
+    const beta = repoFile('.github/workflows/beta.yml');
+    // neither the release nor the beta has a pull-request trigger, so no beta and no dry run of the release happens before a merge
+    expect(release).not.toMatch(/\n {2}pull_request(_target)?:/);
+    expect(beta).not.toMatch(/\n {2}pull_request(_target)?:/);
+    expect(beta).toMatch(/\non:\n {2}workflow_call:/);
+    // ci.yml is the pull-request check, and it calls neither the beta nor the stage tool nor the release tool
+    expect(ci).toMatch(/\non:\n {2}pull_request:\n/);
+    for (const later of ['workflows/beta.yml', 'tools/stage', 'tools/release', 'id-token', 'cosign']) expect({ later, inCi: ci.includes(later) }).toEqual({ later, inCi: false });
+    // the release calls the beta, after the merge, and builds the gamma
+    expect(jobBlock('beta')).toContain('uses: ./.github/workflows/beta.yml');
+    expect(jobBlock('gamma')).toContain('tool/stage gamma ');
+    // the pages say so, and name no dry run
+    expect(releasing).toContain('## The tiers');
+    expect(releasing).not.toMatch(/dry run of a pull request|attest-dry|verify-dry|The dry run/);
+    for (const [name, text] of [['the Why page', whyText], ['docs/why.md', WHY_MD]] as [string, string][]) {
+      expect({ name, tiers: text.includes('Three tiers') }).toEqual({ name, tiers: true });
+      expect({ name, dry: /attest-dry|verify-dry|as a dry run/.test(text) }).toEqual({ name, dry: false });
+    }
   });
   test('bump runs after publish and nothing waits for it', () => {
     expect(jobBlock('bump')).toMatch(/needs: \[[^\]]*\btag\b[^\]]*\bpublish\b/);

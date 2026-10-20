@@ -407,7 +407,7 @@ pub fn sign(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign: []c
     return signWith(a, io, dist_dir, cosign, false);
 }
 
-/// `sign`, or with `dry` the dry run of a pull request: every check `sign` makes before it signs (the four release files and a SHA256SUMS that is exactly their
+/// `sign`, or with `dry` the dry run (the release workflow no longer asks for it): every check `sign` makes before it signs (the four release files and a SHA256SUMS that is exactly their
 /// sha256, no stray tarball, no bundle already there) and the list of files it would sign, and then no `cosign` is run and no bundle is written. The count is the
 /// number of files that would be signed.
 pub fn signWith(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign: []const u8, dry: bool) !usize {

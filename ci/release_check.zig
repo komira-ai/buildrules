@@ -3,17 +3,16 @@
 //! shares with ci.yml (actions pinned by commit, local mode on every buck2 command, the pinned buck2 install) are the ones in
 //! workflow_check.zig; what is here is what only the release has:
 //!
-//!  - the triggers: a push to main and a pull request (the dry run), and nothing else (no dispatch, no schedule, no workflow_run); the workflow-level
-//!    concurrency cancels a pull request's run and never a push's; the first two jobs run for a pull request from this repository only;
+//!  - the triggers: a push to main and nothing else (no pull request, no dispatch, no schedule, no workflow_run): a pull request runs ci.yml alone (build and
+//!    unit tests), and the beta, the gamma, the signing, the attestation and the verification are this workflow's, after the merge; the workflow-level
+//!    concurrency is per commit and never cancels;
 //!  - the token: `permissions: {}` at the top, every job states its own, and a write scope only where it belongs: `contents: write` in the job
 //!    `publish` (and nowhere else; `tag` holds `contents: read` and writes with the release bot's token, minted by one step with exact inputs and used by the tag step alone), `id-token: write` and `attestations: write` in `attest` (and `id-token` in `gamma` and in the call of `beta`, for the farm), each of
 //!    `attest`, `verify`, `tag`, `publish` and `bump` under its exact `if:` (a push to main, not a fork, a commit the plan released) so that no pull request signs, attests, tags or publishes, and every `: write` of the file accounted for by a job's permissions block;
 //!  - the order gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish, with no job before the tag waiting for it (a failure
 //!    before the tag leaves no tag behind), a release made only when the plan released, and no status function (`always()`, `failure()`, `cancelled()`) or
 //!    `continue-on-error` that would let a job run or pass after a red one;
-//!  - the dry run of a pull request: `attest-dry` and `verify-dry` (under the exact pull-request `if:`) are the twins of `attest` and `verify` with no signature,
-//!    attestation or token, and `verify-dry` is `verify` step for step (but for the cosign install and the `--dry` flag), so what the pull request proved is what the release does;
-//!  - RELEASE_FREEZE is read in `plan` and nowhere else, and the plan is told whether this is a dry run by the event alone;
+//!  - RELEASE_FREEZE is read in `plan` and nowhere else, and the plan is never a dry run (`--dry false`);
 //!  - the binaries: the stamped build of `//cli:release_binaries` and its three tarballs in `build-cli`, the very file the beta runs handed on as `release-cli-bin`
 //!    and checked against the tarball in `archive`, the second build in `verify` that must give the same tarballs, and `release-dist` as the one set of files
 //!    that `verify`, `publish` and `site` read;
@@ -33,13 +32,9 @@ const add = wc.add;
 
 pub const tag_if = "${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}";
 pub const publish_if = tag_if;
-/// The `if:` of the jobs that run on a pull request as well as on a push: the first two only for a pull request from this repository.
-pub const same_repo_if = "${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}";
-/// The `if:` of the jobs that run only on a pull request: the dry forms of attest and verify.
-pub const dry_if = "${{ needs.plan.outputs.released == 'true' && github.event_name == 'pull_request' }}";
-/// The `if:` of the jobs that run for every commit the plan released, push or pull request.
+/// The `if:` of the jobs that run for every commit the plan released.
 pub const released_if = "${{ needs.plan.outputs.released == 'true' }}";
-/// build-cli, beta, gamma, archive, attest, verify, tag, publish, site and the dry jobs run only for a commit the plan released.
+/// build-cli, beta, gamma, archive, attest, verify, tag, publish and site run only for a commit the plan released.
 const released_clause = "needs.plan.outputs.released == 'true'";
 const ci_call = "./.github/workflows/ci.yml";
 const beta_call = "./.github/workflows/beta.yml";
@@ -49,7 +44,7 @@ const tool_target = "//tools/release:release";
 const stage_target = "//tools/stage:stage";
 
 /// The jobs, and the job each one must wait for (`needs`): gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish
-/// (tool beside gate; attest-dry and verify-dry in place of attest and verify on a pull request; site after tag and verify).
+/// (tool beside gate; site after tag and verify).
 const order = [_][2][]const u8{
     .{ "plan", "gate" },
     .{ "plan", "tool" },
@@ -68,15 +63,9 @@ const order = [_][2][]const u8{
     .{ "attest", "plan" },
     .{ "attest", "archive" },
     .{ "attest", "tool" },
-    .{ "attest-dry", "plan" },
-    .{ "attest-dry", "archive" },
-    .{ "attest-dry", "tool" },
     .{ "verify", "plan" },
     .{ "verify", "attest" },
     .{ "verify", "tool" },
-    .{ "verify-dry", "plan" },
-    .{ "verify-dry", "attest-dry" },
-    .{ "verify-dry", "tool" },
     .{ "tag", "plan" },
     .{ "tag", "verify" },
     .{ "publish", "plan" },
@@ -86,8 +75,8 @@ const order = [_][2][]const u8{
     .{ "site", "verify" },
 };
 /// The jobs that run before the tag exists: none of them may wait for it, or a failure there could not be told from one after the tag.
-const before_tag = [_][]const u8{ "gate", "tool", "plan", "build-cli", "beta", "gamma", "archive", "attest", "attest-dry", "verify", "verify-dry" };
-const all_jobs = [_][]const u8{ "gate", "tool", "plan", "build-cli", "beta", "gamma", "archive", "attest", "attest-dry", "verify", "verify-dry", "tag", "site", "publish", "bump" };
+const before_tag = [_][]const u8{ "gate", "tool", "plan", "build-cli", "beta", "gamma", "archive", "attest", "verify" };
+const all_jobs = [_][]const u8{ "gate", "tool", "plan", "build-cli", "beta", "gamma", "archive", "attest", "verify", "tag", "site", "publish", "bump" };
 /// What `bump` waits for: the plan (the tag it opens the pull request for), the tag and the publish (the guard of the internal repository reads the
 /// tag, and the release exists before anything points at it), and the tool. Nothing waits for `bump`.
 const bump_needs = [_][]const u8{ "plan", "tag", "publish", "tool" };
@@ -103,11 +92,8 @@ const tool_runs = [_][2][]const u8{
     .{ "archive", "tool/release tested " },
     .{ "archive", "tool/release sums " },
     .{ "attest", "tool/release sign " },
-    .{ "attest-dry", "tool/release sign " },
     .{ "verify", "tool/release package-all " },
     .{ "verify", "tool/release verify " },
-    .{ "verify-dry", "tool/release package-all " },
-    .{ "verify-dry", "tool/release verify " },
     .{ "tag", "tool/release tag " },
     .{ "site", "tool/release site " },
     .{ "publish", "tool/release publish " },
@@ -421,33 +407,12 @@ fn sigstoreNames(a: std.mem.Allocator, f: *Findings, text: []const u8) !void {
     }
 }
 
-/// The steps of a job as written (indentation kept), from its `    steps:` line on; empty for a job that is a call.
-fn stepsOf(jobtext: []const u8) []const u8 {
-    const i = std.mem.indexOf(u8, jobtext, "\n    steps:\n") orelse return "";
-    return jobtext[i..];
-}
-
-/// `s` without its lines that contain `needle`.
-fn withoutLinesWith(a: std.mem.Allocator, s: []const u8, needle: []const u8) ![]u8 {
-    var out = std.ArrayList(u8).init(a);
-    var it = std.mem.splitScalar(u8, s, '\n');
-    var first = true;
-    while (it.next()) |line| {
-        if (std.mem.indexOf(u8, line, needle) != null) continue;
-        if (!first) try out.append('\n');
-        first = false;
-        try out.appendSlice(line);
-    }
-    return out.toOwnedSlice();
-}
-
-/// The candidate commit: the head of a pull request, or the pushed commit. A job that runs on a pull request names the commit this way, and a job that runs
-/// only on a push names `$GITHUB_SHA`.
-const candidate_expr = "${{ github.event.pull_request.head.sha || github.sha }}";
+/// The candidate commit: the pushed commit (no pull request runs this workflow). The jobs that test it name it this way, and the jobs that write name `$GITHUB_SHA`.
+const candidate_expr = "${{ github.sha }}";
 const candidate_env = "      CANDIDATE: " ++ candidate_expr ++ "\n";
 const candidate_ref = "          ref: " ++ candidate_expr ++ "\n";
-/// Jobs that run on a pull request and check the commit out and name it.
-const candidate_jobs = [_][]const u8{ "plan", "archive", "verify", "verify-dry" };
+/// Jobs that check the candidate out and name it.
+const candidate_jobs = [_][]const u8{ "plan", "archive", "verify" };
 
 /// Whether `text` holds `needle` at the end of a line: a command is held to its exact arguments, and one with more after them is another command.
 fn hasLineEnd(text: []const u8, needle: []const u8) bool {
@@ -481,20 +446,19 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     if (std.mem.count(u8, text, "actions/checkout@") != std.mem.count(u8, text, "persist-credentials: false"))
         try add(a, &f, "a checkout keeps the token in the checkout (`persist-credentials: false` is missing)", .{});
 
-    // Triggers: a push to main, and a pull request (the dry run). Nothing else; a pull request is cancelled by its next push and a push never is.
+    // Triggers: a push to main and nothing else. A pull request runs ci.yml alone (build and unit tests); the stages of the release run after the merge.
+    // The concurrency is per commit and nothing cancels a run.
     const on = try triggers(a, text);
     var has_push = false;
-    var has_pr = false;
     for (on) |k| {
-        if (std.mem.eql(u8, k, "push")) has_push = true else if (std.mem.eql(u8, k, "pull_request")) has_pr = true else try add(a, &f, "the workflow is triggered by `{s}`: only a push to main and a pull request are allowed", .{k});
+        if (std.mem.eql(u8, k, "push")) has_push = true else try add(a, &f, "the workflow is triggered by `{s}`: only a push to main is allowed (a pull request runs build and unit tests in ci.yml; the beta, the gamma and the release run after the merge)", .{k});
     }
     if (!has_push or !wc.hasLine(text, "    branches: [main]")) try add(a, &f, "the workflow is not triggered by a push to main (`on: push: branches: [main]`)", .{});
-    if (!has_pr or !wc.hasLine(text, "  pull_request:")) try add(a, &f, "the workflow is not triggered by a pull request (the dry run)", .{});
     for ([_][]const u8{ "pull_request_target", "workflow_run", "workflow_dispatch", "schedule:" }) |bad| {
         if (std.mem.indexOf(u8, text, bad) != null) try add(a, &f, "`{s}` appears in the workflow", .{bad});
     }
-    if (!wc.hasLine(text, "  group: release-${{ github.event.pull_request.number || github.sha }}") or !wc.hasLine(text, "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}"))
-        try add(a, &f, "the workflow's concurrency is not `group: release-${{{{ github.event.pull_request.number || github.sha }}}}` with `cancel-in-progress: ${{{{ github.event_name == 'pull_request' }}}}`: only a pull request may cancel a run, never a push", .{});
+    if (!wc.hasLine(text, "  group: release-${{ github.sha }}") or !wc.hasLine(text, "  cancel-in-progress: false"))
+        try add(a, &f, "the workflow's concurrency is not `group: release-${{{{ github.sha }}}}` with `cancel-in-progress: false`: a run of a release is never cancelled", .{});
     // The one secret: the release bot's private key, read once, by the step of `tag` that mints the token. Any other `secrets.` is refused.
     if (std.mem.count(u8, text, "secrets.") != std.mem.count(u8, text, "secrets.RELEASE_BOT_PRIVATE_KEY }}")) try add(a, &f, "the workflow reads a secret", .{});
     if (std.mem.indexOf(u8, text, "--clobber") != null or std.mem.indexOf(u8, text, "release delete") != null)
@@ -536,7 +500,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     // `permission-contents: write` and `permission-pull-requests: write` are inputs of the App-token action, not grants of a job's token: they are counted by their own rules below.
     if (std.mem.count(u8, text, ": write") - std.mem.count(u8, text, "permission-contents: write") - std.mem.count(u8, text, "permission-pull-requests: write") != writes) try add(a, &f, "a `: write` is granted outside a job's `permissions:` block", .{});
     // Jobs that only read hold `contents: read` alone (verify also reads attestations).
-    for ([_][]const u8{ "archive", "attest-dry", "verify-dry", "build-cli", "plan" }) |name| {
+    for ([_][]const u8{ "archive", "build-cli", "plan" }) |name| {
         const j = jobNamed(jobs, name) orelse continue;
         if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read"))
             try add(a, &f, "the job `{s}` is not `contents: read` alone", .{name});
@@ -613,14 +577,10 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, tag_if)) try add(a, &f, "the job `{s}` is not under its exact `if:` ({s}): it must not run for a pull request", .{ name, tag_if });
         }
     }
-    for ([_][]const u8{ "attest-dry", "verify-dry" }) |name| {
-        if (jobNamed(jobs, name)) |j| {
-            if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, dry_if)) try add(a, &f, "the job `{s}` is not under its exact `if:` ({s}): it must run only for a pull request", .{ name, dry_if });
-        }
-    }
+    // gate and tool have no `if:`: a skipped job makes the plan, which waits for both, skip too, and a release would then not happen with every check green.
     for ([_][]const u8{ "gate", "tool" }) |name| {
         if (jobNamed(jobs, name)) |j| {
-            if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, same_repo_if)) try add(a, &f, "the job `{s}` can run for a pull request from a fork (its `if:` is not `{s}`)", .{ name, same_repo_if });
+            if (j.if_expr != null) try add(a, &f, "the job `{s}` has an `if:` ({s}): a skipped gate or tool skips the plan and every stage after it, silently", .{ name, j.if_expr.? });
         }
     }
     // attest: the signature and the attestation, the only job with `id-token` and `attestations` write besides the farm's; no buck2, and no action but the few it needs.
@@ -658,25 +618,9 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     if (jobNamed(jobs, "verify")) |j| {
         if (std.mem.count(u8, try j.text(a), cosign_action ++ "@") != 1) try add(a, &f, "the job `verify` does not install cosign, which checks the signatures", .{});
     }
-    // attest-dry: the same checks and nothing signed; no token beyond reading, no cosign, no attestation.
-    if (jobNamed(jobs, "attest-dry")) |j| {
-        const jt = try j.text(a);
-        if (std.mem.indexOf(u8, jt, "tool/release sign --dist dist --dry true") == null) try add(a, &f, "the job `attest-dry` does not run the checks of the signing (`tool/release sign --dist dist --dry true`)", .{});
-        if (std.mem.indexOf(u8, jt, "--dry false") != null or std.mem.indexOf(u8, jt, "sigstore") != null or std.mem.indexOf(u8, jt, "attest-build-provenance") != null or std.mem.indexOf(u8, jt, "id-token") != null)
-            try add(a, &f, "the job `attest-dry` signs, attests or holds a signing token", .{});
-        if (std.mem.indexOf(u8, jt, "name: release-unsigned") == null or std.mem.indexOf(u8, jt, "name: release-dist") == null)
-            try add(a, &f, "the job `attest-dry` does not download `release-unsigned` and upload `release-dist`", .{});
-    }
-    // verify and verify-dry are the same steps, but for the install of cosign and the --dry flag.
-    if (jobNamed(jobs, "verify") != null and jobNamed(jobs, "verify-dry") != null) {
-        const real_steps = stepsOf(jobBlock(text, "verify"));
-        const dry_steps = stepsOf(jobBlock(text, "verify-dry"));
-        const bare = try withoutLinesWith(a, real_steps, cosign_action);
-        const as_dry = try std.mem.replaceOwned(u8, a, bare, "--dry false", "--dry true");
-        if (!std.mem.eql(u8, as_dry, dry_steps)) try add(a, &f, "the steps of `verify-dry` are not the steps of `verify` but for the install of cosign and `--dry true`: what the pull request proved is not what the release does", .{});
-    }
-    if (std.mem.count(u8, text, "--dry false") != 2 or std.mem.count(u8, text, "--dry true") != 2)
-        try add(a, &f, "the `--dry` flags are not exactly: false in `attest` and `verify`, true in `attest-dry` and `verify-dry`", .{});
+    // No dry form of anything remains: the plan, the signing and the verification are each told `--dry false`, and nothing is told `--dry true`.
+    if (std.mem.count(u8, text, "--dry false") != 3 or std.mem.count(u8, text, "--dry true") != 0)
+        try add(a, &f, "the `--dry` flags are not exactly: false in `plan`, `attest` and `verify`, and none true (a pull request does not run this workflow)", .{});
 
     // The order: gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish, and a release only for a commit the plan released.
     for (order) |pair| {
@@ -684,7 +628,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             if (!hasNeed(j, pair[1])) try add(a, &f, "the job `{s}` does not wait for `{s}` (order: gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish)", .{ pair[0], pair[1] });
         }
     }
-    for ([_][]const u8{ "build-cli", "archive", "attest-dry", "verify-dry", "site" }) |name| {
+    for ([_][]const u8{ "build-cli", "archive", "site" }) |name| {
         if (jobNamed(jobs, name)) |j| {
             if (j.if_expr == null or std.mem.indexOf(u8, j.if_expr.?, released_clause) == null) try add(a, &f, "the job `{s}` runs even when the plan released nothing (its `if:` lacks `{s}`)", .{ name, released_clause });
         }
@@ -704,24 +648,24 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             if (hasNeed(j, "tag") or hasNeed(j, "publish")) try add(a, &f, "the job `{s}` waits for `tag` or `publish`: the tag is made after the archive is verified, not before", .{name});
         }
     }
-    // The plan only reads: it decides, and creates nothing; it is the one place RELEASE_FREEZE is read, and it is told it is a dry run by the event alone.
+    // The plan only reads: it decides, and creates nothing; it is the one place RELEASE_FREEZE is read, and it is never a dry run.
     if (jobNamed(jobs, "plan")) |j| {
         if (j.if_expr != null) try add(a, &f, "the job `plan` has an `if:`", .{});
         const jt = try j.text(a);
         if (std.mem.indexOf(u8, jt, "FREEZE: ${{ vars.RELEASE_FREEZE }}") == null or std.mem.indexOf(u8, jt, " --freeze \"$FREEZE\"") == null)
             try add(a, &f, "the job `plan` does not pass RELEASE_FREEZE to the plan (`FREEZE: ${{{{ vars.RELEASE_FREEZE }}}}` and `--freeze \"$FREEZE\"`)", .{});
-        if (std.mem.indexOf(u8, jt, "DRY: ${{ github.event_name == 'pull_request' }}") == null or std.mem.indexOf(u8, jt, " --dry \"$DRY\"") == null)
-            try add(a, &f, "the job `plan` is not told it is a dry run by the event alone (`DRY: ${{{{ github.event_name == 'pull_request' }}}}` and `--dry \"$DRY\"`)", .{});
+        if (std.mem.indexOf(u8, jt, " --dry false --output") == null or std.mem.indexOf(u8, jt, "DRY") != null)
+            try add(a, &f, "the job `plan` is not told it is a real run (`--dry false`, and no `DRY` variable: a pull request does not run this workflow)", .{});
         if (std.mem.indexOf(u8, jt, "number: ${{ steps.version.outputs.number }}") == null) try add(a, &f, "the job `plan` does not output the version number (`number: ${{{{ steps.version.outputs.number }}}}`), which `build-cli` stamps", .{});
     }
     if (std.mem.count(u8, text, "RELEASE_FREEZE") != 1) try add(a, &f, "RELEASE_FREEZE is read other than once, in `plan`: a freeze is decided in one place", .{});
-    if (std.mem.count(u8, text, "github.event_name == 'pull_request'") != 4) try add(a, &f, "the event name `pull_request` is tested other than in the dry `if:` of `attest-dry` and `verify-dry` and in `DRY` of `plan` (and the workflow-level cancel)", .{});
-    // The commit: a job that runs on a pull request checks out and names the head of the pull request (CANDIDATE); a job that only runs on a push names $GITHUB_SHA.
+    if (std.mem.indexOf(u8, text, "github.event.pull_request") != null or std.mem.indexOf(u8, text, "'pull_request'") != null)
+        try add(a, &f, "the workflow names a pull request (`github.event.pull_request`, `'pull_request'`): only a push to main runs it, and the candidate is `github.sha`", .{});
+    // The commit: the jobs that test it check out and name it (CANDIDATE); the jobs that write name $GITHUB_SHA.
     for (candidate_jobs) |name| {
         const j = jobNamed(jobs, name) orelse continue;
         const jb = jobBlock(text, name);
         if (std.mem.indexOf(u8, jb, candidate_env) == null) try add(a, &f, "the job `{s}` does not name the commit as `CANDIDATE: {s}`", .{ name, candidate_expr });
-        if (std.mem.indexOf(u8, jb, "$GITHUB_SHA") != null) try add(a, &f, "the job `{s}` runs for a pull request and names `$GITHUB_SHA`, the merge commit and not the head that is tested", .{name});
         if (std.mem.indexOf(u8, jb, "actions/checkout@") != null and std.mem.count(u8, jb, "actions/checkout@") != std.mem.count(u8, jb, candidate_ref))
             try add(a, &f, "the checkout of the job `{s}` is not of `ref: {s}`", .{ name, candidate_expr });
         _ = j;
@@ -735,21 +679,21 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     }
     if (jobNamed(jobs, "gamma")) |_| {
         const jb = jobBlock(text, "gamma");
-        if (std.mem.indexOf(u8, jb, candidate_env) == null or std.mem.indexOf(u8, jb, "--candidate \"$CANDIDATE\"") == null) try add(a, &f, "the job `gamma` does not build the head of the pull request as the candidate (`--candidate \"$CANDIDATE\"`)", .{});
+        if (std.mem.indexOf(u8, jb, candidate_env) == null or std.mem.indexOf(u8, jb, "--candidate \"$CANDIDATE\"") == null) try add(a, &f, "the job `gamma` does not build the pushed commit as the candidate (`--candidate \"$CANDIDATE\"`)", .{});
     }
     for ([_][]const u8{ "tag", "publish", "bump", "site" }) |name| {
         if (jobNamed(jobs, name) == null) continue;
         const jb = jobBlock(text, name);
-        if (std.mem.indexOf(u8, jb, "CANDIDATE") != null or std.mem.indexOf(u8, jb, "--sha \"$GITHUB_SHA\"") == null) try add(a, &f, "the job `{s}` runs only for a push and must name `--sha \"$GITHUB_SHA\"`, not a pull request's head", .{name});
+        if (std.mem.indexOf(u8, jb, "CANDIDATE") != null or std.mem.indexOf(u8, jb, "--sha \"$GITHUB_SHA\"") == null) try add(a, &f, "the job `{s}` must name `--sha \"$GITHUB_SHA\"` and not the candidate variable", .{name});
     }
     // The archive and the verifies are of the commit, and no step of the jobs before the tag names the tag by a ref.
-    for ([_][]const u8{ "archive", "verify", "verify-dry", "build-cli" }) |name| {
+    for ([_][]const u8{ "archive", "verify", "build-cli" }) |name| {
         if (jobNamed(jobs, name)) |j| {
             const jt = try j.text(a);
             if (std.mem.indexOf(u8, jt, "refs/tags/") != null) try add(a, &f, "the job `{s}` reads a tag by ref (`refs/tags/`): the tag does not exist yet, the archive is of the commit", .{name});
         }
     }
-    for ([_][]const u8{ "archive", "verify", "verify-dry" }) |name| {
+    for ([_][]const u8{ "archive", "verify" }) |name| {
         if (jobNamed(jobs, name)) |j| {
             const jt = try j.text(a);
             if (std.mem.indexOf(u8, jt, "--sha \"$CANDIDATE\"") == null) try add(a, &f, "the job `{s}` does not pass `--sha \"$CANDIDATE\"` (the archive is of the tested commit)", .{name});
@@ -826,7 +770,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         }
     }
     // the second build, in both verifies: the same command as build-cli's but into rebuilt-bins, the tarballs again, and the shipped program run.
-    for ([_][]const u8{ "verify", "verify-dry" }) |name| {
+    for ([_][]const u8{ "verify" }) |name| {
         const j = jobNamed(jobs, name) orelse continue;
         const jt = try j.text(a);
         if (!hasNeed(j, "tool")) try add(a, &f, "the job `{s}` does not wait for `tool`, which hands on the buck2 it runs", .{name});
@@ -936,23 +880,20 @@ const fixture_wf =
     \\on:
     \\  push:
     \\    branches: [main]
-    \\  pull_request:
     \\
     \\permissions: {}
     \\
     \\concurrency:
-    \\  group: release-${{ github.event.pull_request.number || github.sha }}
-    \\  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    \\  group: release-${{ github.sha }}
+    \\  cancel-in-progress: false
     \\
     \\jobs:
     \\  gate:
-    \\    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     \\    permissions:
     \\      contents: read
     \\    uses: ./.github/workflows/ci.yml
     \\
     \\  tool:
-    \\    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 120
     \\    permissions:
@@ -960,7 +901,7 @@ const fixture_wf =
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
-    \\          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\          ref: ${{ github.sha }}
     \\          persist-credentials: false
     \\
     \\      - name: Install buck2
@@ -1002,9 +943,8 @@ const fixture_wf =
     \\    permissions:
     \\      contents: read
     \\    env:
-    \\      CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\      CANDIDATE: ${{ github.sha }}
     \\      FREEZE: ${{ vars.RELEASE_FREEZE }}
-    \\      DRY: ${{ github.event_name == 'pull_request' }}
     \\    outputs:
     \\      released: ${{ steps.version.outputs.released }}
     \\      tag: ${{ steps.version.outputs.tag }}
@@ -1013,7 +953,7 @@ const fixture_wf =
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
-    \\          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\          ref: ${{ github.sha }}
     \\          fetch-depth: 0
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -1023,7 +963,7 @@ const fixture_wf =
     \\      - run: chmod +x tool/release
     \\      - name: The version of this commit, if it is released
     \\        id: version
-    \\        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$CANDIDATE" --freeze "$FREEZE" --dry "$DRY" --output "$GITHUB_OUTPUT"
+    \\        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$CANDIDATE" --freeze "$FREEZE" --dry false --output "$GITHUB_OUTPUT"
     \\
     \\  build-cli:
     \\    needs: [plan, tool]
@@ -1037,7 +977,7 @@ const fixture_wf =
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
-    \\          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\          ref: ${{ github.sha }}
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
@@ -1084,7 +1024,7 @@ const fixture_wf =
     \\      contents: read
     \\      id-token: write
     \\    env:
-    \\      CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\      CANDIDATE: ${{ github.sha }}
     \\      CONNECT_REF: ${{ vars.FARM_CONNECT_REF }}
     \\      CONNECT_REPO: ${{ vars.FARM_CONNECT_REPO }}
     \\      HAS_ADDRESS: ${{ vars.FARM_ADDRESS != '' }}
@@ -1097,7 +1037,7 @@ const fixture_wf =
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
-    \\          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\          ref: ${{ github.sha }}
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
@@ -1134,13 +1074,13 @@ const fixture_wf =
     \\    permissions:
     \\      contents: read
     \\    env:
-    \\      CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\      CANDIDATE: ${{ github.sha }}
     \\      TAG: ${{ needs.plan.outputs.tag }}
     \\      NUMBER: ${{ needs.plan.outputs.number }}
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
-    \\          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\          ref: ${{ github.sha }}
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
@@ -1205,32 +1145,6 @@ const fixture_wf =
     \\          retention-days: 7
     \\          if-no-files-found: error
     \\
-    \\  attest-dry:
-    \\    needs: [plan, archive, tool]
-    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'pull_request' }}
-    \\    runs-on: ubuntu-latest
-    \\    timeout-minutes: 15
-    \\    permissions:
-    \\      contents: read
-    \\    steps:
-    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-    \\        with:
-    \\          name: release-tool
-    \\          path: tool
-    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-    \\        with:
-    \\          name: release-unsigned
-    \\          path: dist
-    \\      - run: chmod +x tool/release
-    \\      - name: The checks of the signing, and nothing signed
-    \\        run: tool/release sign --dist dist --dry true
-    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-    \\        with:
-    \\          name: release-dist
-    \\          path: dist
-    \\          retention-days: 7
-    \\          if-no-files-found: error
-    \\
     \\  verify:
     \\    needs: [plan, attest, tool]
     \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
@@ -1240,14 +1154,14 @@ const fixture_wf =
     \\      contents: read
     \\      attestations: read
     \\    env:
-    \\      CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\      CANDIDATE: ${{ github.sha }}
     \\      TAG: ${{ needs.plan.outputs.tag }}
     \\      NUMBER: ${{ needs.plan.outputs.number }}
     \\      GH_TOKEN: ${{ github.token }}
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
-    \\          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\          ref: ${{ github.sha }}
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
@@ -1267,44 +1181,8 @@ const fixture_wf =
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
     \\      - name: Package the three tarballs again
     \\        run: tool/release package-all --version "$NUMBER" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64
-    \\      - name: The archive and the tarballs, their sums, the second build, file list and scrub, the command line's version, and (not in the dry run) the attestations and signatures
+    \\      - name: The archive and the tarballs, their sums, the second build, file list and scrub, the command line's version, the attestations and the signatures
     \\        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$CANDIDATE" --dist dist --workflow .github/workflows/release.yml --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry false
-    \\
-    \\  verify-dry:
-    \\    needs: [plan, attest-dry, tool]
-    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'pull_request' }}
-    \\    runs-on: ubuntu-latest
-    \\    timeout-minutes: 60
-    \\    permissions:
-    \\      contents: read
-    \\    env:
-    \\      CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
-    \\      TAG: ${{ needs.plan.outputs.tag }}
-    \\      NUMBER: ${{ needs.plan.outputs.number }}
-    \\    steps:
-    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-    \\        with:
-    \\          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-    \\          persist-credentials: false
-    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-    \\        with:
-    \\          name: stage-tool
-    \\          path: .
-    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-    \\        with:
-    \\          name: release-tool
-    \\          path: tool
-    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-    \\        with:
-    \\          name: release-dist
-    \\          path: dist
-    \\      - run: chmod +x buck2 tool/release
-    \\      - name: Build the command line again for the three targets
-    \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
-    \\      - name: Package the three tarballs again
-    \\        run: tool/release package-all --version "$NUMBER" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64
-    \\      - name: The archive and the tarballs, their sums, the second build, file list and scrub, the command line's version, and (not in the dry run) the attestations and signatures
-    \\        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$CANDIDATE" --dist dist --workflow .github/workflows/release.yml --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry true
     \\
     \\  tag:
     \\    needs: [plan, verify, tool]
@@ -1506,7 +1384,7 @@ test "the jobs are parsed as the rules read them" {
     const a = ar.allocator();
     const r = try fx(a);
     const jobs = try parseJobs(a, try body(a, r.wf));
-    try t.expectEqual(@as(usize, 15), jobs.len);
+    try t.expectEqual(@as(usize, 13), jobs.len);
     const bp = jobNamed(jobs, "bump").?;
     try t.expect(hasNeed(bp, "plan") and hasNeed(bp, "tag") and hasNeed(bp, "publish") and hasNeed(bp, "tool"));
     try t.expectEqualStrings(tag_if, bp.if_expr.?);
@@ -1523,12 +1401,9 @@ test "the jobs are parsed as the rules read them" {
     try t.expectEqualStrings("write", permLevel(at_job, "attestations").?);
     try t.expectEqualStrings("read", permLevel(at_job, "contents").?);
     try t.expectEqualStrings(tag_if, at_job.if_expr.?);
-    const dry = jobNamed(jobs, "attest-dry").?;
-    try t.expectEqualStrings(dry_if, dry.if_expr.?);
-    try t.expectEqual(@as(usize, 1), dry.perms.items.len);
-    try t.expect(hasNeed(jobNamed(jobs, "verify-dry").?, "attest-dry"));
+    try t.expect(jobNamed(jobs, "gate").?.if_expr == null);
+    try t.expect(jobNamed(jobs, "tool").?.if_expr == null);
     try t.expectEqualStrings(ci_call, jobNamed(jobs, "gate").?.uses.?);
-    try t.expectEqualStrings(same_repo_if, jobNamed(jobs, "gate").?.if_expr.?);
     try t.expectEqualStrings(publish_if, jobNamed(jobs, "publish").?.if_expr.?);
 }
 
@@ -1556,7 +1431,7 @@ test "rule: a checkout keeps no credentials" {
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "          persist-credentials: false\n", "          persist-credentials: true\n"), "persist-credentials");
 }
 
-test "rule: only a push to main and a pull request trigger it" {
+test "rule: only a push to main triggers it, and no pull request does" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -1566,13 +1441,14 @@ test "rule: only a push to main and a pull request trigger it" {
     try expectFinding(a, r, try mutate(a, r.wf, "on:\n  push:", "on:\n  schedule:\n  push:"), "triggered by `schedule`");
     try expectFinding(a, r, try mutate(a, r.wf, "on:\n  push:", "on:\n  release:\n  push:"), "triggered by `release`");
     try expectFinding(a, r, try mutate(a, r.wf, "on:\n  push:", "on:\n  pull_request_target:\n  push:"), "`pull_request_target` appears");
-    try expectFinding(a, r, try mutate(a, r.wf, "  pull_request:\n\npermissions", "  workflow_run:\n    workflows: [ci]\n\npermissions"), "`workflow_run` appears");
+    try expectFinding(a, r, try mutate(a, r.wf, "    branches: [main]\n\npermissions", "    branches: [main]\n  workflow_run:\n    workflows: [ci]\n\npermissions"), "`workflow_run` appears");
+    // the tiers: a pull request runs build and unit tests (ci.yml) and never this workflow; no release-pipeline dry run
+    try expectFinding(a, r, try mutate(a, r.wf, "    branches: [main]\n\npermissions", "    branches: [main]\n  pull_request:\n\npermissions"), "triggered by `pull_request`");
+    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  push:", "on:\n  pull_request:\n  push:"), "triggered by `pull_request`");
     // the push is to main alone
     try expectFinding(a, r, try mutate(a, r.wf, "branches: [main]", "branches: [main, dev]"), "not triggered by a push to main");
     try expectFinding(a, r, try mutate(a, r.wf, "branches: [main]", "branches: [dev]"), "not triggered by a push to main");
     try expectFinding(a, r, try mutate(a, r.wf, "  push:\n    branches: [main]\n", ""), "not triggered by a push to main");
-    // the dry run needs the pull request trigger
-    try expectFinding(a, r, try mutate(a, r.wf, "  pull_request:\n\npermissions", "\npermissions"), "not triggered by a pull request");
 }
 
 test "rule: write scopes only where they belong" {
@@ -1583,17 +1459,13 @@ test "rule: write scopes only where they belong" {
     // contents: write only in publish
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      contents: read\n", "      contents: write\n"), "job `archive` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      contents: read\n", "      contents: write\n"), "job `verify` holds `contents: write`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify-dry", "      contents: read\n", "      contents: write\n"), "job `verify-dry` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "      contents: read\n", "      contents: write\n"), "job `attest` holds `contents: write`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "attest-dry", "      contents: read\n", "      contents: write\n"), "job `attest-dry` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "      contents: read\n", "      contents: write\n"), "job `build-cli` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tool", "      contents: read\n", "      contents: write\n"), "job `tool` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "gate", "      contents: read\n", "      contents: write\n"), "job `gate` holds `contents: write`");
     // id-token and attestations write only in attest (and id-token in gamma and the call of beta)
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `tag` holds `id-token: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `archive` holds `id-token: write`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "attest-dry", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `attest-dry` holds `id-token: write`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify-dry", "      contents: read\n", "      contents: read\n      attestations: write\n"), "job `verify-dry` holds `attestations: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      contents: write\n", "      contents: write\n      attestations: write\n"), "job `publish` holds `attestations: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      attestations: read\n", "      attestations: write\n"), "job `verify` holds `attestations: write`");
     // any other scope
@@ -1611,7 +1483,6 @@ test "rule: write scopes only where they belong" {
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      attestations: read\n", ""), "`verify` is not `contents: read` and `attestations: read` alone");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      attestations: read\n", "      attestations: read\n      packages: read\n"), "`verify` is not `contents: read` and `attestations: read` alone");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      contents: read\n", "      contents: read\n      packages: read\n"), "`archive` is not `contents: read` alone");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify-dry", "      contents: read\n", "      contents: read\n      attestations: read\n"), "`verify-dry` is not `contents: read` alone");
     // the jobs that need their scope have it
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      contents: read\n", "      contents: write\n"), "job `tag` holds `contents: write`, which only publish may");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      contents: write\n", "      contents: read\n"), "`publish` does not hold `contents: write`");
@@ -1803,9 +1674,7 @@ test "rule: the order gate -> plan -> build-cli -> beta -> gamma -> archive -> a
         try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "needs: [plan, build-cli, beta, gamma, tool]", list.items), want);
     }
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "needs: [plan, archive, tool]", "needs: [plan, tool]"), "`attest` does not wait for `archive`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "attest-dry", "needs: [plan, archive, tool]", "needs: [plan, tool]"), "`attest-dry` does not wait for `archive`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [plan, attest, tool]", "needs: [plan, tool]"), "`verify` does not wait for `attest`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify-dry", "needs: [plan, attest-dry, tool]", "needs: [plan, tool]"), "`verify-dry` does not wait for `attest-dry`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "needs: [plan, verify, tool]", "needs: [plan, tool]"), "`tag` does not wait for `verify`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "needs: [plan, verify, tool]", "needs: [verify, tool]"), "`tag` does not wait for `plan`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs: [plan, tag, verify, tool]", "needs: [plan, verify, tool]"), "`publish` does not wait for `tag`");
@@ -1814,7 +1683,7 @@ test "rule: the order gate -> plan -> build-cli -> beta -> gamma -> archive -> a
     try expectFinding(a, r, try mutateIn(a, r.wf, "site", "needs: [plan, tag, verify, tool]", "needs: [plan, verify, tool]"), "`site` does not wait for `tag`");
     // nothing before the tag waits for it: a failure there must leave no tag
     const waits = "waits for `tag` or `publish`";
-    for ([_][]const u8{ "plan", "build-cli", "beta", "gamma", "archive", "attest", "attest-dry", "verify", "verify-dry" }) |name| {
+    for ([_][]const u8{ "plan", "build-cli", "beta", "gamma", "archive", "attest", "verify" }) |name| {
         const header = try std.fmt.allocPrint(a, "\n  {s}:\n    needs: [", .{name});
         const at = std.mem.indexOf(u8, r.wf, header) orelse return error.MutantDidNotApply;
         const inner = at + header.len;
@@ -1826,19 +1695,19 @@ test "rule: the order gate -> plan -> build-cli -> beta -> gamma -> archive -> a
     try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "    timeout-minutes: 15\n", "    timeout-minutes: 15\n    if: ${{ vars.X == '' }}\n"), "`plan` has an `if:`");
     // the archive and the verifies are of the commit: no ref of a tag (it does not exist yet), and the sha is passed
     const checkout = "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n";
-    for ([_][]const u8{ "archive", "verify", "verify-dry", "build-cli" }) |name| {
+    for ([_][]const u8{ "archive", "verify", "build-cli" }) |name| {
         try expectFinding(a, r, try mutateIn(a, r.wf, name, checkout, checkout ++ "          ref: refs/tags/${{ needs.plan.outputs.tag }}\n"), "reads a tag by ref");
     }
-    for ([_][]const u8{ "archive", "verify", "verify-dry" }) |name| {
+    for ([_][]const u8{ "archive", "verify" }) |name| {
         const want = try std.fmt.allocPrint(a, "`{s}` does not pass `--sha", .{name});
         try expectFinding(a, r, try mutateIn(a, r.wf, name, "--sha \"$CANDIDATE\" ", ""), want);
     }
-    // gate is a call of ci.yml, with read access only, and for this repository's pull requests only
+    // gate is a call of ci.yml, with read access only
     try expectFinding(a, r, try mutate(a, r.wf, "    uses: ./.github/workflows/ci.yml\n", "    runs-on: ubuntu-latest\n"), "`gate` does not call");
     try expectFinding(a, r, try mutateIn(a, r.wf, "gate", "      contents: read\n", "      contents: read\n      packages: read\n"), "`gate` is not `contents: read` alone");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "gate", "    if: " ++ same_repo_if ++ "\n", ""), "`gate` can run for a pull request from a fork");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "tool", "    if: " ++ same_repo_if ++ "\n", ""), "`tool` can run for a pull request from a fork");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "gate", "github.event_name == 'push' ||", "github.event_name == 'pull_request' ||"), "`gate` can run for a pull request from a fork");
+    // gate and tool are never skipped (a skipped need skips the plan, and a release would silently not happen)
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gate", "    permissions:\n", "    if: ${{ github.event_name == 'push' }}\n    permissions:\n"), "`gate` has an `if:`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tool", "    runs-on: ubuntu-latest\n", "    if: ${{ vars.SKIP != 'true' }}\n    runs-on: ubuntu-latest\n"), "`tool` has an `if:`");
     // ci.yml must be callable
     try expectFinding(a, .{ .wf = r.wf, .ds = r.ds, .ci = "on:\n  pull_request:\n" }, r.wf, "no `workflow_call:` trigger");
     // a missing job
@@ -1904,8 +1773,8 @@ test "rule: gamma holds the farm's token and no more, runs for a released commit
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "      - run: chmod +x tool/stage tool/buck2\n", "      - run: ./buck2 build -c buildrules_re.mode=local //x:y\n"), "holds the farm's token and runs buck2 itself");
     // a checkout of the action that keeps credentials
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "          path: farm-action\n          persist-credentials: false\n", "          path: farm-action\n"), "persist-credentials");
-    // it builds the head of a pull request, not the merge commit
-    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "--candidate \"$CANDIDATE\"", "--candidate \"$GITHUB_SHA\""), "does not build the head of the pull request as the candidate");
+    // it builds the pushed commit as the candidate
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "--candidate \"$CANDIDATE\"", "--candidate \"$GITHUB_SHA\""), "does not build the pushed commit as the candidate");
     // the stage tool is built by the workflow
     try expectFinding(a, r, try mutate(a, r.wf, "--out stage //tools/stage:stage", "--out stage //tools/other:stage"), "does not build //tools/stage:stage");
 }
@@ -1931,10 +1800,6 @@ test "rule: a release is made only for a commit the plan released, and no job ru
         const want = try std.fmt.allocPrint(a, "`{s}` runs even when the plan released nothing", .{name});
         try expectFinding(a, r, try mutateIn(a, r.wf, name, "needs.plan.outputs.released == 'true'", "true"), want);
     }
-    for ([_][]const u8{ "attest-dry", "verify-dry" }) |name| {
-        const want = try std.fmt.allocPrint(a, "`{s}` runs even when the plan released nothing", .{name});
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, "needs.plan.outputs.released == 'true' && ", ""), want);
-    }
     for ([_][]const u8{ "attest", "verify", "tag", "publish", "bump" }) |name| {
         const want = try std.fmt.allocPrint(a, "`{s}` is not under its exact `if:`", .{name});
         try expectFinding(a, r, try mutateIn(a, r.wf, name, "needs.plan.outputs.released == 'true' && ", ""), want);
@@ -1946,7 +1811,7 @@ test "rule: a release is made only for a commit the plan released, and no job ru
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ cancelled() || needs.plan.outputs.released == 'true' }}"), "`cancelled()`");
 }
 
-test "rule: a pull request signs, attests, tags, publishes and bumps nothing; its dry jobs run for a pull request alone" {
+test "rule: no job that writes or signs runs for anything but a push to main, and no dry form remains" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -1959,36 +1824,22 @@ test "rule: a pull request signs, attests, tags, publishes and bumps nothing; it
         try expectFinding(a, r, try mutateIn(a, r.wf, name, " && github.ref == 'refs/heads/main'", ""), want);
         try expectFinding(a, r, try mutateIn(a, r.wf, name, " && !github.event.repository.fork", ""), want);
     }
-    // the dry jobs run for a pull request alone: not for a push (where they would stand for the real ones), not for both
-    for ([_][]const u8{ "attest-dry", "verify-dry" }) |name| {
-        const want = try std.fmt.allocPrint(a, "the job `{s}` is not under its exact `if:`", .{name});
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, "github.event_name == 'pull_request'", "github.event_name == 'push'"), want);
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, " && github.event_name == 'pull_request'", ""), want);
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, "github.event_name == 'pull_request' }}", "github.event_name == 'pull_request' || true }}"), want);
-    }
     // the event is tested nowhere else: a job that behaves differently on a pull request would be a stage the release does not have
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "    if: " ++ released_if ++ "\n", "    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'pull_request' }}\n"), "the event name `pull_request` is tested other than");
-    // attest-dry signs nothing and holds no token to
-    try expectFinding(a, r, try mutateIn(a, r.wf, "attest-dry", "--dry true", "--dry false"), "`attest-dry` does not run the checks of the signing");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "attest-dry", "      - run: chmod +x tool/release\n", "      - run: chmod +x tool/release\n      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n"), "`attest-dry` signs, attests or holds a signing token");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "attest-dry", "      - run: chmod +x tool/release\n", "      - run: chmod +x tool/release\n      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2\n        with:\n          subject-path: dist/SHA256SUMS\n"), "`attest-dry` signs, attests or holds a signing token");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "attest-dry", "name: release-unsigned", "name: release-dist"), "`attest-dry` does not download `release-unsigned`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "    if: " ++ released_if ++ "\n", "    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'pull_request' }}\n"), "the workflow names a pull request");
+    // the dry forms are gone: nothing is told `--dry true`, and the plan is a real run
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "--dry false", "--dry true"), "the `--dry` flags are not exactly");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "--dry false", "--dry \"$DRY\""), "the `--dry` flags are not exactly");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "    env:\n", "    env:\n      DRY: ${{ vars.DRY_RUN }}\n"), "not told it is a real run");
     // attest signs for real, and never dry
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "tool/release sign --dist dist --dry false", "tool/release sign --dist dist --dry true"), "`attest` does not sign");
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "tool/release sign --dist dist --dry false", "tool/release sign --dist dist"), "`attest` does not sign");
-    // verify-dry is verify step for step, but for the install of cosign and --dry
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify-dry", "--dry true", "--dry false"), "the `--dry` flags are not exactly");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "--dry false", "--dry true"), "the `--dry` flags are not exactly");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify-dry", "--rebuilt rebuilt-dist --dry true", "--rebuilt rebuilt-dist --dry true --cosign cosign"), "the steps of `verify-dry` are not the steps of `verify`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify-dry", "      - run: chmod +x buck2 tool/release\n", "      - run: chmod +x buck2 tool/release\n      - run: echo only the dry run does this\n"), "the steps of `verify-dry` are not the steps of `verify`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - name: Package the three tarballs again\n", "      - name: Package the three tarballs once more\n"), "the steps of `verify-dry` are not the steps of `verify`");
     // verify installs cosign to check the signatures; the dry twin has none to check
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "does not install cosign");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "used other than twice");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify-dry", "      - run: chmod +x buck2 tool/release\n", "      - run: chmod +x buck2 tool/release\n      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n"), "used other than twice");
 }
 
-test "rule: RELEASE_FREEZE is read in the plan and nowhere else, and the plan knows a dry run by the event alone" {
+test "rule: RELEASE_FREEZE is read in the plan and nowhere else, and the plan is never a dry run" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -2002,49 +1853,51 @@ test "rule: RELEASE_FREEZE is read in the plan and nowhere else, and the plan kn
     // read but not passed, or passed a constant
     try expectFinding(a, r, try mutateIn(a, r.wf, "plan", " --freeze \"$FREEZE\"", ""), "does not pass RELEASE_FREEZE to the plan");
     try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "FREEZE: ${{ vars.RELEASE_FREEZE }}", "FREEZE: false"), "does not pass RELEASE_FREEZE to the plan");
-    // the dry flag comes from the event: not a constant, not a variable
-    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "DRY: ${{ github.event_name == 'pull_request' }}", "DRY: true"), "not told it is a dry run by the event alone");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "DRY: ${{ github.event_name == 'pull_request' }}", "DRY: ${{ vars.DRY_RUN == 'true' }}"), "not told it is a dry run by the event alone");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", " --dry \"$DRY\"", ""), "not told it is a dry run by the event alone");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "DRY: ${{ github.event_name == 'pull_request' }}", "DRY: ${{ github.event_name != 'push' }}"), "not told it is a dry run by the event alone");
+    // the plan is a real run: the flag is the constant `false`, not a variable and not the event
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", " --dry false", " --dry true"), "not told it is a real run");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", " --dry false", ""), "not told it is a real run");
 }
 
-test "rule: the workflow's concurrency cancels a pull request and never a push" {
+test "rule: the workflow's concurrency is per commit and never cancels" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try fx(a);
     const need = "the workflow's concurrency is not";
     // a push to main that cancels the one before it would stop a release between its stages
-    try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: true"), need);
-    try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: ${{ github.event_name == 'push' }}"), need);
-    try expectFinding(a, r, try mutate(a, r.wf, "group: release-${{ github.event.pull_request.number || github.sha }}", "group: release"), need);
-    try expectFinding(a, r, try mutate(a, r.wf, "group: release-${{ github.event.pull_request.number || github.sha }}", "group: release-${{ github.ref }}"), need);
-    try expectFinding(a, r, try mutate(a, r.wf, "\nconcurrency:\n  group: release-${{ github.event.pull_request.number || github.sha }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n", "\n"), need);
+    try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: false", "cancel-in-progress: true"), need);
+    try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: false", "cancel-in-progress: ${{ github.event_name == 'push' }}"), need);
+    try expectFinding(a, r, try mutate(a, r.wf, "group: release-${{ github.sha }}", "group: release"), need);
+    try expectFinding(a, r, try mutate(a, r.wf, "group: release-${{ github.sha }}", "group: release-${{ github.ref }}"), need);
+    try expectFinding(a, r, try mutate(a, r.wf, "\nconcurrency:\n  group: release-${{ github.sha }}\n  cancel-in-progress: false\n", "\n"), need);
 }
 
-test "rule: a job that runs on a pull request names its head, and one that runs only on a push names GITHUB_SHA" {
+test "rule: the jobs that test the commit name the pushed commit, and the jobs that write name GITHUB_SHA" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try fx(a);
-    // the merge commit of a pull request is not the commit that was tested
-    for ([_][]const u8{ "plan", "archive", "verify", "verify-dry" }) |name| {
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, "      CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}\n", "      CANDIDATE: ${{ github.sha }}\n"), "does not name the commit as `CANDIDATE:");
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, "--sha \"$CANDIDATE\"", "--sha \"$GITHUB_SHA\""), "names `$GITHUB_SHA`");
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, "          ref: ${{ github.event.pull_request.head.sha || github.sha }}\n", ""), "is not of `ref:");
+    for ([_][]const u8{ "plan", "archive", "verify" }) |name| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "      CANDIDATE: ${{ github.sha }}\n", "      CANDIDATE: ${{ github.ref }}\n"), "does not name the commit as `CANDIDATE:");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "          ref: ${{ github.sha }}\n", ""), "is not of `ref:");
+    }
+    for ([_][]const u8{ "archive", "verify" }) |name| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "--sha \"$CANDIDATE\"", "--sha \"$GITHUB_SHA\""), "does not pass `--sha");
     }
     for ([_][]const u8{ "tool", "build-cli", "gamma" }) |name| {
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, "          ref: ${{ github.event.pull_request.head.sha || github.sha }}\n", ""), "is not of `ref:");
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, "          ref: ${{ github.event.pull_request.head.sha || github.sha }}\n", "          ref: ${{ github.sha }}\n"), "is not of `ref:");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "          ref: ${{ github.sha }}\n", ""), "is not of `ref:");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "          ref: ${{ github.sha }}\n", "          ref: ${{ github.ref }}\n"), "is not of `ref:");
     }
-    // a job of the push alone names the pushed commit, and no pull request's head
+    // a pull request's head is named nowhere: no pull request runs this workflow
+    for ([_][]const u8{ "plan", "archive", "verify", "tool", "build-cli", "gamma" }) |name| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "          ref: ${{ github.sha }}\n", "          ref: ${{ github.event.pull_request.head.sha || github.sha }}\n"), "the workflow names a pull request");
+    }
+    // a job of the push alone names the pushed commit
     for ([_][]const u8{ "tag", "publish", "bump", "site" }) |name| {
         try expectFinding(a, r, try mutateIn(a, r.wf, name, "--sha \"$GITHUB_SHA\"", "--sha \"$TAG\""), "must name `--sha \"$GITHUB_SHA\"`");
-        try expectFinding(a, r, try mutateIn(a, r.wf, name, "    env:\n", "    env:\n      CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}\n"), "must name `--sha \"$GITHUB_SHA\"`");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "    env:\n", "    env:\n      CANDIDATE: ${{ github.sha }}\n"), "must name `--sha \"$GITHUB_SHA\"`");
     }
 }
-
 
 test "rule: the tag job is in the release concurrency group and none is cancelled" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
@@ -2121,8 +1974,7 @@ test "rule: the binaries are built stamped, packaged, run by the beta, checked a
         const before = try mutateIn(a, moved, "archive", "      - name: The tarball to attest holds the file the beta ran\n", sums ++ "      - name: The tarball to attest holds the file the beta ran\n");
         try expectFinding(a, r, before, "has no `tool/release sums ` after the step before it");
     }
-    // verify and verify-dry: the second build, with the same stamp, compared, and the shipped program run
-    for ([_][]const u8{ "verify", "verify-dry" }) |name| {
+    for ([_][]const u8{ "verify" }) |name| {
         try expectFinding(a, r, try mutateIn(a, r.wf, name, " -c \"buildrules.release_version=$NUMBER\"", ""), "does not build the three binaries again with the planned version stamped in");
         try expectFinding(a, r, try mutateIn(a, r.wf, name, "--out rebuilt-bins //cli:release_binaries", "--out rebuilt-bins //cli:buildrules"), "does not build the three binaries again");
         try expectFinding(a, r, try mutateIn(a, r.wf, name, "--bins rebuilt-bins ", "--bins cli-bins "), "does not package the second build's three tarballs");
@@ -2167,7 +2019,6 @@ test "rule: each step runs its command of the tool, and run lines are single inv
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "tool/release publish ", "echo publish "), "`publish` does not run `tool/release publish");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "tool/release archive ", "echo archive "), "`archive` does not run");
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "tool/release sign ", "echo sign "), "`attest` does not run");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "attest-dry", "tool/release sign ", "echo sign "), "`attest-dry` does not run");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "tool/release tag ", "echo tag "), "`tag` does not run");
     try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "tool/release plan ", "echo plan "), "`plan` does not run");
     // one invocation per run line: no chain, no pipe, no block

@@ -90,7 +90,7 @@ pub const PlanOpts = struct {
     version_file: []const u8,
     /// The repository variable RELEASE_FREEZE, as the workflow gives it: empty or `false` (released as usual) or `true` (nothing is released). Read here and nowhere else.
     freeze: []const u8 = "",
-    /// The dry run of a pull request: the version the commit would be released as, whatever the commit changed, with nothing created.
+    /// The dry run (the release workflow no longer asks for it: no pull request runs the pipeline): the version the commit would be released as, whatever the commit changed, with nothing created.
     dry: bool = false,
 };
 
@@ -140,7 +140,7 @@ pub fn plan(a: std.mem.Allocator, io: Io, o: PlanOpts) !Plan {
     var all = std.ArrayList(version.Version).empty;
     for (tags) |tg| try all.append(a, tg.v);
 
-    // The dry run of a pull request walks every stage that creates nothing, so it takes the next number whatever the commit changed and whatever the freeze says
+    // The dry run (the release workflow no longer asks for it: no pull request runs the pipeline) walks every stage that creates nothing, so it takes the next number whatever the commit changed and whatever the freeze says
     // (a freeze stops a release; this makes none).
     if (o.dry) {
         const next_dry = try version.next(all.items, mm);
@@ -328,7 +328,7 @@ pub const VerifyOpts = struct {
     tarballs: []const Blob = &.{},
     /// The same three tarballs, made again from a fresh build of the commit: byte for byte the same, or the build is not reproducible.
     rebuilt: []const Blob = &.{},
-    /// The dry run of a pull request: nothing is signed or attested there, so the signatures and attestations are not checked. Everything else is.
+    /// The dry run (the release workflow no longer asks for it: no pull request runs the pipeline): nothing is signed or attested there, so the signatures and attestations are not checked. Everything else is.
     dry: bool = false,
     cosign: []const u8 = "cosign",
 };
@@ -366,8 +366,8 @@ pub fn verify(a: std.mem.Allocator, io: Io, o: VerifyOpts) !assets.Findings {
     const head = try io.run(a, &.{ "git", "-C", o.root, "rev-parse", "--verify", "HEAD^{commit}" });
     if (head.code != 0 or !std.mem.eql(u8, trimNl(head.stdout), o.sha)) try assets.add(a, &f, "the checkout is not commit {s}", .{o.sha});
 
-    // 3. every file carries an attestation of this workflow, for this commit, on main, and a keyless signature of the same identity. The dry run of a pull
-    // request signs nothing and has none to check.
+    // 3. every file carries an attestation of this workflow, for this commit, on main, and a keyless signature of the same identity. A dry run
+    // signs nothing and has none to check.
     var signed = std.ArrayList([]const u8).empty;
     try signed.append(a, o.archive_name);
     try signed.appendSlice(a, want_tarballs.items);

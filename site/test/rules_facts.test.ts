@@ -596,8 +596,9 @@ describe('the Releases section against RELEASING.md, the release tool and the re
   });
 
   test('every push to main, no human action, with the command line: the workflow, RELEASING.md and the page agree', () => {
-    // a push to main releases; a pull request runs the dry run (every stage but the tag, the publication and the bump); nothing else triggers it
-    expect(workflow).toMatch(/\non:\n {2}push:\n {4}branches: \[main\]\n {2}pull_request:\n\npermissions: \{\}\n/);
+    // a push to main releases; a pull request does not run this workflow at all (it runs ci.yml: build and unit tests); nothing else triggers it
+    expect(workflow).toMatch(/\non:\n {2}push:\n {4}branches: \[main\]\n\npermissions: \{\}\n/);
+    expect(workflow).not.toMatch(/\n {2}pull_request:/);
     expect(workflow).not.toMatch(/\n {2}(workflow_dispatch|schedule|workflow_run|pull_request_target):/);
     expect(squash(releasing)).toContain('released with no human action');
     expect(rulesText).toContain('Every push to `main` is built and tested');

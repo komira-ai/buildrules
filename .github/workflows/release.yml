@@ -6,7 +6,7 @@
 #   gate       the PR gate, the whole CI (ci.yml, called as a workflow): //ci:all and the completeness check, in local mode on the runner.
 #   tool       builds the release tool (tools/release, Zig) and the stage tool (tools/stage) before any job holds a token, and hands the binaries on.
 #   plan       read-only: decides whether this commit is released (docs and CI alone are not; a RELEASE_FREEZE of `true` stops every release, and only this
-#              job reads it) and which version (the highest patch of VERSION's MAJOR.MINOR plus one). It creates nothing. On a pull request it plans the dry run.
+#              job reads it) and which version (the highest patch of VERSION's MAJOR.MINOR plus one). It creates nothing.
 #   build-cli  builds the command line for the three release targets from the tested commit with the planned version stamped in, and packages the three tarballs.
 #   beta       hello-world repositories per language that consume the candidate commit as a user would, with the linux-x86_64 command line that build-cli
 #              built (beta.yml, called as a workflow), built twice, the second time in a copy at another path, to prove the outputs are the same bytes.
@@ -14,11 +14,9 @@
 #   archive    the deterministic archive of the TESTED COMMIT (git archive of the sha, not of a tag; a fixed prefix `buildrules-<planned version>/` and time,
 #              the tool's own gzip), the tarballs the beta ran, and SHA256SUMS over those four files. No token beyond reading.
 #   attest     only on a push to main: a keyless cosign signature of the five files and build provenance for all five.
-#   attest-dry only on a pull request: every check attest makes before it signs, and no signing.
 #   verify     read-only: the sums, the checkout being the commit, every attestation and signature (this workflow, this commit, main), a second build of the
 #              archive AND of the three binaries giving the same bytes, `buildrules --version` of the shipped linux-x86_64 binary printing the release version,
-#              the archive's file list equal to the commit's tracked files, and the scrub on its contents. verify-dry is its twin on a pull request, which has
-#              no attestation or signature to check.
+#              the archive's file list equal to the commit's tracked files, and the scrub on its contents.
 #   tag        the job that creates the tag, with the release bot's token (the v* tag ruleset allows only that App; GITHUB_TOKEN here only reads): the
 #              annotated tag at that sha, made only after everything was built, tested, attested and verified, so a failure before it leaves no tag behind. A tag
 #              that exists at the sha is kept; one at another commit fails the job.
@@ -28,8 +26,8 @@
 #   bump       after publish: opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge,
 #              using the release bot's token for that repository alone (`contents: read` for its own token). Nothing waits for it.
 #
-# A pull request from this repository walks every stage but tag, publish and bump (attest and verify in their dry forms), so the pipeline is proved before it
-# is merged; from a fork it runs nothing, as the fork has neither the farm nor the commit the cell is fetched at.
+# It runs on a push to main only. A pull request runs ci.yml alone (build, unit tests, the lints of this file and of the other workflows): the beta, the
+# gamma, the signing and the verification of the release happen here, after the merge, and nowhere before it.
 #
 # `contents: write` is held by publish only (tag and bump write with the release bot's token, not their own), each of tag and publish under the exact `if:` below;
 # `id-token: write` by attest (the signature and the attestation), by gamma (the farm network) and by the call of beta (its farm leg), and `attestations: write`
@@ -41,24 +39,21 @@ name: release
 on:
   push:
     branches: [main]
-  pull_request:
 
 permissions: {}
 
-# A pull request is cancelled by its next push; a push to main is never cancelled (the group is its own commit).
+# A push to main is never cancelled (the group is its own commit).
 concurrency:
-  group: release-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: release-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   gate:
-    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     permissions:
       contents: read
     uses: ./.github/workflows/ci.yml
 
   tool:
-    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -66,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/release_check.zig compares both.
@@ -110,9 +105,8 @@ jobs:
     permissions:
       contents: read
     env:
-      CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
+      CANDIDATE: ${{ github.sha }}
       FREEZE: ${{ vars.RELEASE_FREEZE }}
-      DRY: ${{ github.event_name == 'pull_request' }}
     outputs:
       released: ${{ steps.version.outputs.released }}
       tag: ${{ steps.version.outputs.tag }}
@@ -121,7 +115,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -131,7 +125,7 @@ jobs:
       - run: chmod +x tool/release
       - name: The version of this commit, if it is released
         id: version
-        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$CANDIDATE" --freeze "$FREEZE" --dry "$DRY" --output "$GITHUB_OUTPUT"
+        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$CANDIDATE" --freeze "$FREEZE" --dry false --output "$GITHUB_OUTPUT"
 
   # The command line for the three release targets, built from the tested commit with the planned version stamped in (-c buildrules.release_version, read by
   # cli/BUCK), in one directory (//cli:release_binaries) and then packaged as the three tarballs the release ships. The linux-x86_64 binary is handed to the beta
@@ -148,7 +142,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -199,7 +193,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
+      CANDIDATE: ${{ github.sha }}
       CONNECT_REF: ${{ vars.FARM_CONNECT_REF }}
       CONNECT_REPO: ${{ vars.FARM_CONNECT_REPO }}
       HAS_ADDRESS: ${{ vars.FARM_ADDRESS != '' }}
@@ -212,7 +206,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -251,13 +245,13 @@ jobs:
     permissions:
       contents: read
     env:
-      CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
+      CANDIDATE: ${{ github.sha }}
       TAG: ${{ needs.plan.outputs.tag }}
       NUMBER: ${{ needs.plan.outputs.number }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -323,33 +317,6 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  # Only on a pull request: the checks that sign makes before it signs, and no signing, no attestation and no token beyond reading.
-  attest-dry:
-    needs: [plan, archive, tool]
-    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-tool
-          path: tool
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-unsigned
-          path: dist
-      - run: chmod +x tool/release
-      - name: The checks of the signing, and nothing signed
-        run: tool/release sign --dist dist --dry true
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-dist
-          path: dist
-          retention-days: 7
-          if-no-files-found: error
-
   # Read-only. It builds the three binaries again, from the commit, on a runner of its own, and requires the same tarballs; it runs the linux-x86_64 binary it
   # built, which is the file the tarball ships, and requires the release version. It runs the buck2 that `tool` handed on, as the literal `./buck2`.
   verify:
@@ -361,14 +328,14 @@ jobs:
       contents: read
       attestations: read
     env:
-      CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
+      CANDIDATE: ${{ github.sha }}
       TAG: ${{ needs.plan.outputs.tag }}
       NUMBER: ${{ needs.plan.outputs.number }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -388,45 +355,8 @@ jobs:
         run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
       - name: Package the three tarballs again
         run: tool/release package-all --version "$NUMBER" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64
-      - name: The archive and the tarballs, their sums, the second build, file list and scrub, the command line's version, and (not in the dry run) the attestations and signatures
+      - name: The archive and the tarballs, their sums, the second build, file list and scrub, the command line's version, the attestations and the signatures
         run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$CANDIDATE" --dist dist --workflow .github/workflows/release.yml --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry false
-
-  # The twin of verify on a pull request: everything but the attestations and signatures, which attest-dry did not make.
-  verify-dry:
-    needs: [plan, attest-dry, tool]
-    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
-    env:
-      CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
-      TAG: ${{ needs.plan.outputs.tag }}
-      NUMBER: ${{ needs.plan.outputs.number }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: stage-tool
-          path: .
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-tool
-          path: tool
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-dist
-          path: dist
-      - run: chmod +x buck2 tool/release
-      - name: Build the command line again for the three targets
-        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
-      - name: Package the three tarballs again
-        run: tool/release package-all --version "$NUMBER" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64
-      - name: The archive and the tarballs, their sums, the second build, file list and scrub, the command line's version, and (not in the dry run) the attestations and signatures
-        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$CANDIDATE" --dist dist --workflow .github/workflows/release.yml --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry true
 
   tag:
     needs: [plan, verify, tool]
