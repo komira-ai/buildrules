@@ -1,8 +1,10 @@
 # Releasing buildrules
 
 A release is automatic. Every push to `main` is tested in stages, and a green one that changes more than documentation or CI is released with
-no human action: a tag, and a GitHub release carrying a source archive, its `SHA256SUMS` and the notes. A consumer pins the tag and the archive's
-sha256 (or the tag's commit). There are no binaries: buildrules is rules, and the command line is built from this source on your farm.
+no human action: a tag, and a GitHub release carrying a source archive, the command line for four platforms (`buildrules-cli-<version>-<target>.tar.gz` for
+`linux-x86_64`, `linux-aarch64`, `macos-arm64` and `macos-x86_64`), `SHA256SUMS` over those five files, a keyless signature and a build provenance attestation of
+each of those six files, and the notes. A consumer of the rules pins the tag and the archive's sha256 (or the tag's commit); a user of the command line unpacks
+the tarball of the platform. A pull request runs the same pipeline as a dry run, up to everything but the tag, the publication and the bump (see "The dry run").
 
 `.github/workflows/release.yml` is the pipeline. `tools/release` and `tools/stage` (Zig, tested as build actions) do each step; the workflow's `run:` lines are
 one invocation each. `ci/release_check.zig` and `ci/stages_check.zig` (part of `//ci:workflow`) hold `release.yml` and `beta.yml` to what is written here.
@@ -11,36 +13,59 @@ one invocation each. `ci/release_check.zig` and `ci/stages_check.zig` (part of `
 
 | job | what it does | token |
 |---|---|---|
-| `gate` | the PR gate: calls `ci.yml`, the whole tree (`//ci:all`) and the completeness check, in local mode on the runner | read |
-| `beta` | calls `beta.yml`: hello-world repositories per language consume the candidate commit as a user would and are built twice, the second time in another directory (see "The beta stage") | read, `id-token` for its farm leg |
-| `gamma` | builds our own repositories with the candidate on the farm; fails the release when the farm is not configured (see "The gamma stage") | read, `id-token` write |
+| `gate` | the PR gate: calls `ci.yml`, the whole tree (`//ci:all`) and the completeness check, in local mode on the runner; a pull request from a fork does not run it | read |
 | `tool` | builds `tools/release` and `tools/stage` with buck2 and hands the binaries to the later jobs, before any job that writes holds a token | read |
-| `plan` | read-only; decides whether this commit is released and which version; creates nothing | read |
-| `cli` | builds `//cli:buildrules` from the tested commit with the planned version stamped in (`-c buildrules.release_version=<version>`), in local mode; hands the program to `verify`. It is not a release asset: there are no binaries | read |
-| `archive` | `git archive` of the tested commit (its sha, not a tag) under `buildrules-<planned version>/`, compressed by the tool's own gzip, `SHA256SUMS`, and a build provenance attestation of both files | `id-token`, `attestations` write |
-| `verify` | read-only; checks everything below before a file is published, and runs the command line that `cli` built (`buildrules --version` must print the release) | read |
-| `tag` | the annotated tag at that sha, made only after the archive is verified, with the release bot's token (see "The tag ruleset"). A tag that exists at the sha is kept; one at another commit fails the job | read; the write is the bot's token, minted in this job and used by the tag step alone |
+| `plan` | read-only; decides whether this commit is released and which version; creates nothing. It is the one job that reads `RELEASE_FREEZE` (see "The freeze"), and on a pull request it plans the dry run | read |
+| `build-cli` | builds `//cli:release_binaries` (the command line for the four release targets in one directory) from the tested commit with the planned version stamped in (`-c buildrules.release_version=<version>`), in local mode, and packages the four tarballs (`release package-all`). The linux-x86_64 binary is also uploaded as the file the beta will run | read |
+| `beta` | calls `beta.yml` with that linux-x86_64 binary: hello-world repositories per language consume the candidate commit as a user would and are built twice, the second time in another directory (see "The beta stage") | read, `id-token` for its farm leg |
+| `gamma` | builds our own repositories with the candidate on the farm; fails the release when the farm is not configured (see "The gamma stage") | read, `id-token` write |
+| `archive` | `git archive` of the tested commit (its sha, not a tag) under `buildrules-<planned version>/`, compressed by the tool's own gzip; checks that the linux-x86_64 tarball holds the very file the beta ran and lets through only the tarballs a user beta ran (`release record`, `release tested`); `SHA256SUMS` over the archive and the four tarballs | read |
+| `attest` | only on a push to `main`: a keyless cosign signature (`<file>.sigstore.json`) of the six files and a build provenance attestation of all six | `id-token`, `attestations` write |
+| `attest-dry` | only on a pull request: every check `attest` makes before it signs, and no signing, no attestation and no token beyond reading | read |
+| `verify` | read-only, only on a push to `main`; checks everything below before a file is published, and builds the four binaries again to compare | read, `attestations` read |
+| `verify-dry` | only on a pull request: `verify` step for step but for the attestations and signatures, which a pull request has none of | read |
+| `tag` | the annotated tag at that sha, made only after everything is built, tested, signed and verified, with the release bot's token (see "The tag ruleset"). A tag that exists at the sha is kept; one at another commit fails the job | read; the write is the bot's token, minted in this job and used by the tag step alone |
 | `site` | read-only; the page of the release (the pin snippet) as an artifact; nothing deploys it | read |
-| `publish` | needs `tag` and `verify`; checks the tag peels to the verified sha, then creates the GitHub release from the verified files | `contents: write` |
+| `publish` | needs `tag` and `verify`; checks the tag peels to the verified sha, then creates the GitHub release from the verified files: the archive, the four tarballs, `SHA256SUMS` and the six signature bundles | `contents: write` |
 | `bump` | needs `plan`, `tag`, `publish` and `tool`; opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge (see "The submodule bump"). Nothing waits for it | read; the write is the bot's token for the internal repository, minted in this job and used by the bump step alone |
 
-The order is `gate`, `beta`, `gamma`, `plan`, `archive`, `verify`, `tag`, `publish` (`cli` beside `archive`, before `verify`; `site` after `tag` and `verify`); a job runs only if the one before
-it succeeded. **Nothing before `tag` waits for it, so a failure in the archive, its attestation or its verification leaves no tag behind**: the tag is the
-first thing in the pipeline that cannot be taken back, and it is made last but for the release (`ci/release_check.zig` refuses a `needs: tag` in any job before it).
-A `GITHUB_TOKEN` write scope
-exists only in `publish` (`contents`), in `archive` (`id-token`, `attestations`), and `id-token` also in `gamma` and in the call of `beta`
-(the farm's network trusts the job's OIDC token; neither has `contents: write`); `tag` and `publish` are each under an exact `if:`
-(a push to `main`, not a fork, and a commit the plan released). The jobs that write run no buck2 and use only the checkout
-and artifact-download actions; `gamma` runs no buck2 itself, the stage tool does. Every action is pinned by commit, but one: the farm-connect
-action is checked out of the repository and commit that two repository variables name, the checkout is verified to be that commit before the action
+The order is `gate`, `plan`, `build-cli`, `beta`, `gamma`, `archive`, `attest`, `verify`, `tag`, `publish` (`tool` beside `gate`; `site` after `tag` and `verify`);
+a job runs only if the one before it succeeded. **Nothing before `tag` waits for it, so a failure in the build, the beta, the gamma, the archive, the signing or the
+verification leaves no tag behind**: the tag is the first thing in the pipeline that cannot be taken back, and it is made last but for the release
+(`ci/release_check.zig` refuses a `needs: tag` in any job before it). The plan comes before the build because it only reads: the version it decides is what the
+binaries are stamped with, so the bytes the beta runs are the bytes that are released. Once the plan has said a commit is not released (documentation and CI alone, or
+a freeze), the build, the beta and the gamma do not run for it.
+A `GITHUB_TOKEN` write scope exists only in `publish` (`contents`), in `attest` (`id-token`, `attestations`), and `id-token` also in `gamma` and in the call of `beta`
+(the farm's network trusts the job's OIDC token; neither has `contents: write`); `tag`, `attest`, `verify`, `publish` and `bump` are each under the exact `if:` of
+a push to `main`, not a fork, and a commit the plan released, so no pull request signs, attests, tags or publishes anything. The jobs that write run no buck2 and use only the checkout and
+artifact actions (`attest` also the cosign installer and the attestation action); `gamma` runs no buck2 itself, the stage tool does. Every action is pinned by commit, but one: the
+farm-connect action is checked out of the repository and commit that two repository variables name, the checkout is verified to be that commit before the action
 runs, and it is then used from the checkout. Two runs never tag at once (concurrency group `release`, nothing cancelled); two pushes that planned the
-same number race for the tag, and the loser fails at `tag` (the tag names the other commit) with nothing created. No job of the workflow carries
-`continue-on-error` (or only `false`), and no `run:` line expands a repository variable or event field inline: the values go through `env:`
-(`ci/release_check.zig` and `ci/stages_check.zig` refuse both).
+same number race for the tag, and the loser fails at `tag` (the tag names the other commit) with nothing created. The workflow's own concurrency cancels the run of a
+pull request when it is pushed again and never the run of a push to `main`. No job of the workflow carries `continue-on-error` (or only `false`), and no `run:` line
+expands a repository variable or event field inline: the values go through `env:` (`ci/release_check.zig` and `ci/stages_check.zig` refuse both).
+
+## The dry run
+
+A pull request from a branch of this repository runs `release.yml` too (a pull request from a fork runs nothing: it has neither the farm nor a commit the cell can be
+fetched at). It walks every stage but `tag`, `publish` and `bump`: the plan names the version the pull request would be released as (whatever the pull request changes, and
+whatever `RELEASE_FREEZE` says), `build-cli` builds and packages the four binaries, the beta and the gamma run, `archive` makes the archive and the sums, `attest-dry` makes the
+checks of the signing without signing, and `verify-dry` builds the four binaries again and compares, runs the shipped program and checks the archive and the scrub. What it cannot do is check an
+attestation or a signature, since nothing was signed: the real `verify` does, and `ci/release_check.zig` holds `verify-dry` to be `verify` step for step (but for the installation of cosign and the flag
+`--dry`), so what the pull request proved is what the release does. The jobs that sign, attest, tag, publish and bump are under an `if:` that a pull request cannot satisfy, and
+`attest-dry` and `verify-dry` under one that only a pull request can. The pull request builds the head of the branch, not the merge commit.
+
+## The freeze
+
+The repository variable `RELEASE_FREEZE` set to `true` stops every release: the plan says the commit is not released, so no later stage runs and nothing is built, tagged or published (a
+re-run of an old run is frozen too: unfreeze to finish it). Empty, unset and `false` mean not frozen; any other value fails the plan, since a misspelt freeze must stop the pipeline and not release.
+Only the plan job reads the variable (`ci/release_check.zig` refuses it anywhere else), and a dry run is not stopped by it.
 
 ## The beta stage
 
-`beta.yml` runs for every pull request from this repository and as the second stage of the release. A hello-world repository per language is made
+`beta.yml` runs for every pull request from this repository (building the command line from the commit) and, called by the release (and by the dry run of a pull request), with the linux-x86_64
+command line that `build-cli` built: the workflow input `cli-artifact` names the artifact that holds that one file, the `tools` job downloads it instead of building the program, and every
+leg below runs it. It is the file the release ships: `archive` later requires the linux-x86_64 tarball to hold exactly those bytes (`release record --ran-binary`), so what a user beta ran is what is attested. A hello-world repository per language is made
 the way a user makes one: `beta/<lang>/` holds the files the user writes, and `beta/<lang>/STEPS` the commands the user types (`buildrules init . --git
 <repository> --commit <candidate>`, `buildrules cargo new`, `npm sync`, `mojo sync` and so on). `tools/stage` copies the directory to a new place
 outside the checkout, runs the steps with the `buildrules` built from the candidate, builds the targets, runs what it built and checks what it prints,
@@ -100,6 +125,7 @@ mopm repository has one and the other repository planned for this stage does not
 | `GAMMA_REPOS` | the repositories to build, as `owner/name owner/name`, in order |
 | `GAMMA_TARGETS` | optional; the targets to build in each (`//...`) |
 | `FARM_TLS` | optional; `true` when the farm speaks TLS (default `false`) |
+| `RELEASE_FREEZE` | optional; `true` stops every release (read by the plan alone; see "The freeze"). Empty and `false` mean not frozen |
 | `RELEASE_BOT_APP_ID` | the App id of the release bot whose token the `tag` job makes the tag with (with the secret `RELEASE_BOT_PRIVATE_KEY`; see "The tag ruleset"); not the farm's, and read by `tag` and `bump` |
 | `BUMP_REPOSITORY` | the name, without its owner, of the internal repository whose `buildrules` submodule the `bump` job moves to each release (see "The submodule bump"); read by `bump` alone |
 
@@ -128,11 +154,13 @@ and says so) rather than released.
 
 `buildrules --version` prints `buildrules <version>`, and the version is stamped when the program is built (`cli/version.bzl`, the module `buildrules_version`):
 
-- a release build passes the planned version, `-c buildrules.release_version=<MAJOR.MINOR.PATCH>` (the `cli` job does; nothing else sets it), and the program prints that number;
+- a release build passes the planned version, `-c buildrules.release_version=<MAJOR.MINOR.PATCH>` (`build-cli` and, for the second build, `verify` do; nothing else sets it), and the program prints that number;
 - any other build (a checkout, your own farm) prints `<MAJOR.MINOR>-dev` of the `VERSION` file, so a program that was not released never claims a release number.
 
-`cli/src/version_test.zig` holds the stamp to that shape against the `VERSION` file, as a test welded to the program. The release holds the other end: `verify` runs the program
-the `cli` job built and fails the release unless it prints the release's own number. The program is not a release asset yet; the stamp is checked so that it is right when it becomes one.
+`cli/src/version_test.zig` holds the stamp to that shape against the `VERSION` file, as a test welded to the program. The release holds the other end: `verify` builds the four binaries again, runs
+the linux-x86_64 one (which must be the file inside the linux-x86_64 tarball, and the tarballs must be the same bytes as the ones that ship) and fails the release unless it prints the release's own number.
+`//cli:header_unit` also requires every built binary to hold its version (`<MAJOR.MINOR>-dev` outside a release) as a string of its own, with a NUL before and after it, which is the check `release package`
+makes of a binary it cannot run.
 
 ### The command-line binaries
 
@@ -151,17 +179,24 @@ rule was given; `//cli:header_unit` reads the four built files and requires an E
 right cpu (macOS), and that no binary passes as another target's (`tools/release/binhdr.zig`).
 A third (`same_tests_as` of the same rule) requires each cross executable to wait for exactly the unit tests of `//cli:buildrules`, and not for none, so a cross binary cannot be built with fewer tests than the program that is tested.
 
-`tools/release` packages them (`binaries.zig`; the five commands below take their inputs by flag and upload nothing). The release workflow does not call them yet: until it does, a
-release holds the source archive alone, and `verify` still expects `SHA256SUMS` to be one line.
+`//cli:release_binaries` copies the four into one directory, `<release target>/buildrules` for each (`cli/release.bzl`), so that `build-cli` and the second build of `verify` are one command each
+(`buck2 build --out DIR //cli:release_binaries`); `//cli:header_unit` holds each file of the directory to the header of its path. `zig_exe_target_test` takes `same_tests_as` as a required
+attribute (no default), and `ci/negative` holds a planted copy of a program with other tests that the rule must refuse. `tools/release` packages them (`binaries.zig`); the release workflow calls it as follows.
 
 - `release package --version V --target T --binary PATH --license PATH --out DIR --exec native|none` writes `buildrules-cli-V-T.tar.gz` holding `buildrules-cli-V-T/buildrules` (0755)
   and `LICENSE`, every entry with time 0 and the tool's own gzip, so the same inputs make the same bytes. The name keeps the tarball apart from the source archive
   `buildrules-V.tar.gz`. It refuses a binary whose header is another target's, and one that does not say `buildrules V`: with `--exec native` it runs `--version`; with `--exec none`
-  (a binary this machine cannot run) it looks in the file for the version as a string of its own (the version, a NUL right after it, and before it no digit or `.`: `0.0.7` is not found in `0.0.70` or `10.0.7`), a weaker check that a run on the target's own platform must back. (The program prints `buildrules ` and its version as two strings, so `buildrules <V>` is not contiguous in the file.)
-- `release record --tarball PATH --out DIR` writes the sha256 of a tarball a user-beta leg ran, and `release tested --dist DIR --tested DIR` refuses unless the tarballs to attest are, byte
-  for byte, the ones recorded for `linux-x86_64`, `linux-aarch64` and `macos-arm64` (the Intel macOS binary has no runner), of one version, and nothing else is recorded.
+  (a binary this machine cannot run) it looks in the file for the version as a string of its own (the version with a NUL right after it and a NUL, or the start of the file, right before it: `0.0.7` is not found in `0.0.70`, `10.0.7`, `x0.0.7` or `0.0.7-dev`), a weaker check that a run on the target's own platform must back. (The program prints `buildrules ` and its version as two strings, so `buildrules <V>` is not contiguous in the file.)
+- `release package-all --version V --bins DIR --license PATH --out DIR [--native T,T]` is `package` for the four targets from `DIR/<target>/buildrules`; it runs only the binaries named by `--native`
+  (`linux-x86_64`, which the runner can run) and checks the others by header and version text.
+- `release record --tarball PATH --out DIR [--ran-binary PATH]` writes the sha256 of a tarball a user-beta leg ran (with `--ran-binary`, only if the tarball's `buildrules` is that very file), and
+  `release tested --dist DIR --tested DIR [--targets T,T]` refuses unless the tarballs to attest are, byte for byte, the ones recorded for the targets walked, of one version, and nothing else is recorded. The
+  targets that a user beta can walk are `linux-x86_64`, `linux-aarch64` and `macos-arm64` (the Intel macOS binary has no runner); **the release walks `linux-x86_64` only** (`--targets linux-x86_64`):
+  the beta legs for the Arm Linux and macOS platforms are planned (see "The beta stage"), and until they run, the other three tarballs are attested and verified (header, version, reproduction) but
+  not run by a user beta. The workflow names the targets, so the day a leg is added the list grows with it.
 - `release sums --dist DIR` writes `SHA256SUMS` over the source archive and the four tarballs in name order (five lines) and reads it back; it refuses a missing, stray or other-version tarball.
-- `release sign --dist DIR [--cosign PATH]` runs keyless `cosign sign-blob` on those five files and `SHA256SUMS`, and refuses a bundle that is missing, empty or already there.
+- `release sign --dist DIR [--cosign PATH] [--dry true|false]` runs keyless `cosign sign-blob` on those five files and `SHA256SUMS`, and refuses a bundle that is missing, empty or already there. With `--dry true` (the
+  pull request's `attest-dry`) it makes every check and the list of files it would sign, and runs no `cosign`.
 
 ## What is released
 
@@ -179,9 +214,13 @@ finishing late) is skipped, never released out of order. A re-run of a released 
 ## What a release holds
 
 - `buildrules-<version>.tar.gz`: the tracked files of the tested commit under `buildrules-<version>/`, e.g. `buildrules-0.0.1/`.
-- `SHA256SUMS`: one line, the archive's sha256 (`sha256sum --check` reads it).
-- The notes: how to pin it, and the commit subjects (no merge commits) since the previous tag.
-- A build provenance attestation (GitHub's, signed with the workflow's identity) of the archive and of `SHA256SUMS`.
+- `buildrules-cli-<version>-<target>.tar.gz` for `linux-x86_64`, `linux-aarch64` (static musl executables), `macos-arm64` and `macos-x86_64`: a directory of that name holding `buildrules` (0755) and `LICENSE`,
+  every entry with time 0 and the tool's own gzip. `buildrules --version` prints `buildrules <version>`. The macOS programs are not code-signed or notarised.
+- `SHA256SUMS`: five lines, the sha256 of the archive and of the four tarballs in name order (`sha256sum --check` reads it).
+- `<file>.sigstore.json` for each of those six files: a keyless cosign signature (Sigstore) made by the `attest` job, whose identity is this workflow on `refs/heads/main`.
+- The notes: how to pin it, the tarballs with their sha256, how to verify, and the commit subjects (no merge commits) since the previous tag.
+- A build provenance attestation (GitHub's, signed with the workflow's identity) of each of the six files.
+Twelve files in all; `publish` refuses a release that would hold any other.
 
 The archive is reproducible, with one stated dependence. `git archive` writes the tar with a fixed prefix, a fixed modification time, the modes of
 umask 022, and `core.autocrlf=false` and `core.eol=lf` (so no setting of the runner converts a line ending); the tool compresses it with its own gzip (a
@@ -192,15 +231,21 @@ consumer relies on the published file and its sha256, not on making the file aga
 
 `verify` checks, and `publish` refuses to go on without:
 
-1. the archive's sha256 is the one in `SHA256SUMS`;
+1. `SHA256SUMS` is exactly the sha256 of the archive and of the four tarballs, one line each in name order, and nothing else (`verify` and `publish` read all five lines; the one-line reader of the
+   earlier releases is gone), and the four tarballs are the four of this version, once each;
 2. the checkout is the commit that was tested (no tag exists yet; `publish` later requires the annotated tag to peel to that sha);
-3. the attestations of both files verify (`gh attestation verify`), pinned to this workflow, the commit, and `refs/heads/main`;
+3. the attestations of all six files verify (`gh attestation verify`), pinned to this workflow, the commit, and `refs/heads/main`, and so do the six keyless signatures (`cosign verify-blob`, pinned to the
+   identity of this workflow on `refs/heads/main`, the issuer, the commit, the push trigger and this repository) (`verify` only, not in the dry run: a pull request has neither);
 4. building the archive again from the commit gives the same bytes;
-5. the archive's file list equals `git ls-tree -r` of the commit (a missing, extra or repeated file is a failure);
-6. the scrub (`tools/scrub`: dates, names, addresses and the like that a public repository must not hold) passes on the archive's contents.
-7. (`verify` only) the command line built by `cli` for this release prints the release version: `buildrules --version` is `buildrules <MAJOR.MINOR.PATCH>`, the planned number (see "The version of the command line").
+5. building the four binaries again from the commit, on another runner with the same stamp, packaging them, gives the same four tarballs byte for byte;
+6. the program built in that second build prints the release version (`buildrules --version` is `buildrules <MAJOR.MINOR.PATCH>`, the planned number: see "The version of the command line") and is the very file the
+   linux-x86_64 tarball holds, so the version checked is the version of the file that ships;
+7. the archive's file list equals `git ls-tree -r` of the commit (a missing, extra or repeated file is a failure);
+8. the scrub (`tools/scrub`: dates, names, addresses and the like that a public repository must not hold) passes on the archive's contents.
 
-A re-run creates no second release and replaces no asset. If the release exists, each of the two files it already holds must have the sha256
+`publish` repeats the check of `SHA256SUMS` and requires all six signature bundles to be there and not empty.
+
+A re-run creates no second release and replaces no asset. If the release exists, each of the twelve files it already holds must have the sha256
 of ours or the job fails and changes nothing; a file it lacks is added. A release is never edited by the pipeline.
 
 ## Pinning a release
@@ -234,6 +279,22 @@ gh attestation verify buildrules-0.0.1.tar.gz --repo OWNER/REPO
 
 **The tag and the hash, written down.** Keep `v0.0.1` and the sha256 from the release notes in your own pin file; the commit above is the
 same fact in git's terms.
+
+## Installing the command line
+
+Pick the tarball of your platform from the release (`linux-x86_64`, `linux-aarch64`, `macos-arm64`, `macos-x86_64`), check it, unpack it and put `buildrules` on your `PATH`:
+
+```
+curl -fsSLO https://github.com/komira-ai/buildrules/releases/download/v0.0.1/buildrules-cli-0.0.1-linux-x86_64.tar.gz
+curl -fsSLO https://github.com/komira-ai/buildrules/releases/download/v0.0.1/SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf buildrules-cli-0.0.1-linux-x86_64.tar.gz
+buildrules-cli-0.0.1-linux-x86_64/buildrules --version
+gh attestation verify buildrules-cli-0.0.1-linux-x86_64.tar.gz --repo OWNER/REPO
+```
+
+(`v0.0.1` and `0.0.1` stand for the release you take.) `--version` prints `buildrules <version>`, the number of the release. The program is static, so it needs nothing else on the machine. The macOS programs
+are not code-signed or notarised, and the release is not a promise that they run: the user beta walks the linux-x86_64 program only (see "The command-line binaries").
 
 ## The tag ruleset
 
@@ -311,7 +372,7 @@ upstream host that drops a request from blocking a release, and none of them can
 
 ## When something fails
 
-A red `gate`, `beta`, `gamma`, `archive` or `verify` releases nothing and **leaves no tag**, and the next green push releases everything since the last
+A red `gate`, `build-cli`, `beta`, `gamma`, `archive`, `attest` or `verify` releases nothing and **leaves no tag**, and the next green push releases everything since the last
 tag. If `tag` or a job after it fails, re-run the failed jobs of that run: `tag` keeps a tag that already names the commit (and fails, creating nothing,
 when the number names another commit), and `archive`, `verify`, `site` and `publish` are safe to repeat, `publish` adding only what is missing. A `VERSION`
 behind the tags fails `plan` until `VERSION` is fixed.

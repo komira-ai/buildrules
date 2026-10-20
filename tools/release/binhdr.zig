@@ -60,6 +60,22 @@ pub fn problem(bytes: []const u8, target: []const u8) ?[]const u8 {
     return "neither an ELF nor a 64-bit little-endian Mach-O file";
 }
 
+/// Whether `bin` holds the version `v` as a string of its own, exactly: the text with a NUL right after it (the terminator of the string literal that
+/// `--version` prints after `buildrules `) and a NUL right before it, or the start of the file. A longer string that merely ends or begins with it
+/// (`0.0.7` in `10.0.7`, `0.0.70`, `x0.0.7`, `0.0.7-dev`) is not the version. The program prints `buildrules ` and its version as two strings, so
+/// `buildrules <V>` is not contiguous in the file.
+pub fn holdsVersion(bin: []const u8, v: []const u8) bool {
+    if (v.len == 0) return false;
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, bin, from, v)) |at| : (from = at + 1) {
+        const end = at + v.len;
+        if (end >= bin.len or bin[end] != 0) continue;
+        if (at != 0 and bin[at - 1] != 0) continue;
+        return true;
+    }
+    return false;
+}
+
 // ---- tests ----------------------------------------------------------------------------------------------------------------------------
 
 const t = std.testing;
@@ -140,4 +156,21 @@ test "a program header table past the end of the file is refused, not read" {
     var b = elf(62, 1);
     std.mem.writeInt(u64, b[32..40], 1 << 40, .little);
     try t.expect(problem(&b, "linux-x86_64") != null);
+}
+
+test "holdsVersion: the version is a string of its own, not part of a longer one" {
+    // The defect: a substring test, so a binary stamped 10.0.7 or 0.0.70 or x0.0.7 passes as 0.0.7.
+    try t.expect(holdsVersion("\x00buildrules \x000.0.7\x00rest", "0.0.7"));
+    try t.expect(holdsVersion("0.0.7\x00", "0.0.7")); // at the start of the file
+    try t.expect(!holdsVersion("\x0010.0.7\x00", "0.0.7")); // a longer version before it
+    try t.expect(!holdsVersion("\x000.0.70\x00", "0.0.7")); // a longer version after it
+    try t.expect(!holdsVersion("\x00x0.0.7\x00", "0.0.7")); // text before it
+    try t.expect(!holdsVersion("\x00v0.0.7\x00", "0.0.7"));
+    try t.expect(!holdsVersion("\x000.0.7-dev\x00", "0.0.7"));
+    try t.expect(!holdsVersion("\x000.0.7", "0.0.7")); // no terminator: the end of the file is not the end of a string
+    try t.expect(!holdsVersion("\x00 0.0.7\x00", "0.0.7")); // a space before it
+    try t.expect(!holdsVersion("", "0.0.7"));
+    try t.expect(!holdsVersion("anything", ""));
+    // found at the second place when the first is part of a longer string
+    try t.expect(holdsVersion("\x0010.0.7\x00\x000.0.7\x00", "0.0.7"));
 }

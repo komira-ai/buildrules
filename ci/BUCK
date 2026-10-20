@@ -179,6 +179,7 @@ group(name = "all", deps = [
     "//cli:macos_arm64_is_aarch64_macos",
     "//cli:macos_x86_64_is_x86_64_macos",
     "//cli:header_unit",
+    "//cli:release_binaries",
     "//site:test",
     "//site:dist",
     "//site:preview",

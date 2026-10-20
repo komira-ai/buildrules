@@ -78,7 +78,7 @@ export const concepts: Page = {
       'Linux x86_64 only, for clients as well as the farm.',
       'Rust: crates.io only (git and alternate registries are refused), the Cargo workspace root is the repository root, and a root `[package]` is refused.',
       'Every workspace package must be listed in `members`; a `members` glob other than `dir/*` is refused.',
-      'Python rules are planned and do not exist yet. macOS, Windows and Arm are planned too. Mojo builds with the one Mojo version that mopm pins. A release is a tagged source archive, not a binary: see [Releases](/rules/#releases).',
+      'Python rules are planned and do not exist yet. macOS, Windows and Arm are planned too. Mojo builds with the one Mojo version that mopm pins. A release is a tagged source archive and the command line for four platforms: see [Releases](/rules/#releases).',
     ),
     code('buildrules check   # exit 0: in sync; 1: stale or refused, with the fix printed; 2: usage', 'shell'),
   ],

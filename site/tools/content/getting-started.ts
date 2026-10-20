@@ -15,7 +15,7 @@ export const gettingStarted: Page = {
       'Git. Nothing else runs on your machine: the generator is part of the `buildrules` program, and it needs no interpreter.',
     ),
     h2('1. Get the command line'),
-    p('There are no release binaries: a release is a source archive (see [Releases](/rules/#releases)). The command line is a Zig program in the buildrules repository; build it with Buck2 on your farm, from a checkout (or an unpacked release archive) that has its own `.buckconfig.local` (step 3 below describes that file).'),
+    p('A release carries the command line as a tarball for linux x86_64, linux aarch64, macOS arm64 and macOS x86_64 (see [Releases](/rules/#releases)): unpack the one for your platform and put `buildrules` on your `PATH`. To build it yourself instead, it is a Zig program in the buildrules repository; build it with Buck2 on your farm, from a checkout (or an unpacked release archive) that has its own `.buckconfig.local` (step 3 below describes that file).'),
     code('git clone https://github.com/komira-ai/buildrules.git\ncd buildrules\nbuck2 build //cli:buildrules --show-output', 'shell'),
     p('`--show-output` prints the path of the executable. Put it on your `PATH` as `buildrules`.'),
     h2('2. Initialize your repository'),

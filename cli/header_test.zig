@@ -36,3 +36,48 @@ test "the four binaries are four different programs: each is refused as every ot
         }
     }
 }
+
+fn versionFile() ![]u8 {
+    const work = try std.process.getEnvVarOwned(t.allocator, "BUILDRULES_TEST_WORK");
+    defer t.allocator.free(work);
+    const path = try std.fs.path.join(t.allocator, &.{ work, "VERSION" });
+    defer t.allocator.free(path);
+    return std.fs.cwd().readFileAlloc(t.allocator, path, 64);
+}
+
+test "release_binaries holds each target's binary at the path of its target, byte for byte" {
+    // The defect: a directory whose names and contents are crossed (the arm64 program under macos-x86_64), which `release package-all` would then package under the
+    // wrong name; each file is held to the header of the path it is at, and is the very file the target built.
+    for (binhdr.targets) |target| {
+        const work = try std.process.getEnvVarOwned(t.allocator, "BUILDRULES_TEST_WORK");
+        defer t.allocator.free(work);
+        const path = try std.fs.path.join(t.allocator, &.{ work, "release_binaries", target, "buildrules" });
+        defer t.allocator.free(path);
+        const in_dir = try std.fs.cwd().readFileAlloc(t.allocator, path, 1 << 28);
+        defer t.allocator.free(in_dir);
+        const built = try binary(target);
+        defer t.allocator.free(built);
+        if (binhdr.problem(in_dir, target)) |why| {
+            std.debug.print("release_binaries/{s}/buildrules: {s}\n", .{ target, why });
+            return error.WrongHeader;
+        }
+        try t.expectEqualSlices(u8, built, in_dir);
+    }
+}
+
+test "every built binary holds the version it prints as a string of its own" {
+    // The defect: a version the stamp never reached, or reached only inside a longer string, which `release package --exec none` could not tell from the real thing on
+    // a binary it cannot run. A build that is not a release is stamped `<MAJOR.MINOR>-dev`; the rule is binhdr.holdsVersion, tested on its own in tools/release.
+    const text = try versionFile();
+    defer t.allocator.free(text);
+    const stamp = try std.fmt.allocPrint(t.allocator, "{s}-dev", .{std.mem.trim(u8, text, " \r\n")});
+    defer t.allocator.free(stamp);
+    for (binhdr.targets) |target| {
+        const bytes = try binary(target);
+        defer t.allocator.free(bytes);
+        if (!binhdr.holdsVersion(bytes, stamp)) {
+            std.debug.print("{s}: no string `{s}` of its own (NUL before and after)\n", .{ target, stamp });
+            return error.NoVersionString;
+        }
+    }
+}

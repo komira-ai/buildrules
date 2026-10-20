@@ -433,22 +433,23 @@ def _zig_exe_target_test_impl(ctx):
     got = ctx.attrs.exe[ZigExeInfo].target
     if got != ctx.attrs.expect:
         fail("{}: {} is built for {}, not {}".format(ctx.label.raw_target(), ctx.attrs.exe.label.raw_target(), repr(got), repr(ctx.attrs.expect)))
-    if ctx.attrs.same_tests_as:
-        want_tests = ctx.attrs.same_tests_as[ZigExeInfo].unit_tests
-        got_tests = ctx.attrs.exe[ZigExeInfo].unit_tests
-        if not want_tests or got_tests != want_tests:
-            fail("{}: {} waits for the unit tests {}, not those of {} ({}; an empty list is refused too)".format(ctx.label.raw_target(), ctx.attrs.exe.label.raw_target(), got_tests, ctx.attrs.same_tests_as.label.raw_target(), want_tests))
+    want_tests = ctx.attrs.same_tests_as[ZigExeInfo].unit_tests
+    got_tests = ctx.attrs.exe[ZigExeInfo].unit_tests
+    if not want_tests or got_tests != want_tests:
+        fail("{}: {} waits for the unit tests {}, not those of {} ({}; an empty list is refused too)".format(ctx.label.raw_target(), ctx.attrs.exe.label.raw_target(), got_tests, ctx.attrs.same_tests_as.label.raw_target(), want_tests))
     return [DefaultInfo(default_output = ctx.actions.write(ctx.label.name + ".passed", "{} is built for {}\n".format(ctx.attrs.exe.label.raw_target(), got)))]
 
 # An analysis test: green only if `exe` (a `zig_exe`) is built for the zig target triple `expect`. It builds nothing but a marker, so it is
 # cheap; the executable's own bytes are checked by a `zig_test` that reads its file header (cli/header_test.zig).
-# With `same_tests_as` it is also green only if `exe` waits for exactly the `unit_tests` of that executable (and that it has some).
+# `same_tests_as` is required: it is also green only if `exe` waits for exactly the `unit_tests` of that executable (and that it has some), so a cross-built
+# copy of a program cannot ship with fewer tests than the program that is tested. A test that does not say which program it copies does not load.
 zig_exe_target_test = rule(
     impl = _zig_exe_target_test_impl,
     attrs = {
         "exe": attrs.dep(providers = [ZigExeInfo]),
         "expect": attrs.string(),
         # An executable whose `unit_tests` must be exactly those of this one (the same program for another target: the same tests gate it), and not none.
-        "same_tests_as": attrs.option(attrs.dep(providers = [ZigExeInfo]), default = None),
+        # Required: with no default, a test that leaves it out is a load error and not a test that checks less.
+        "same_tests_as": attrs.dep(providers = [ZigExeInfo]),
     },
 )

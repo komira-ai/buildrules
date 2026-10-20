@@ -26,14 +26,20 @@ fn isHex(s: []const u8, n: usize) bool {
     return true;
 }
 
-/// The digest of the one line of a SHA256SUMS file (the format `assets.checkSums` accepts) for `name`.
+/// The digest of the line for `name` in a SHA256SUMS file (the format `assets.checkSumsFiles` accepts: a line per release file, here the source archive and
+/// the four command-line tarballs). Every line must be well formed, `name` must appear once, and a file with no line for it is `WrongName`.
 pub fn digestOf(sums: []const u8, name: []const u8) Error![]const u8 {
     if (!std.mem.endsWith(u8, sums, "\n")) return error.BadSums;
-    const line = sums[0 .. sums.len - 1];
-    if (std.mem.indexOfScalar(u8, line, '\n') != null or line.len < 67) return error.BadSums;
-    if (!isHex(line[0..64], 64) or !std.mem.eql(u8, line[64..66], "  ")) return error.BadSums;
-    if (!std.mem.eql(u8, line[66..], name)) return error.WrongName;
-    return line[0..64];
+    var found: ?[]const u8 = null;
+    var lines = std.mem.splitScalar(u8, sums[0 .. sums.len - 1], '\n');
+    while (lines.next()) |line| {
+        if (line.len < 67) return error.BadSums;
+        if (!isHex(line[0..64], 64) or !std.mem.eql(u8, line[64..66], "  ")) return error.BadSums;
+        if (!std.mem.eql(u8, line[66..], name)) continue;
+        if (found != null) return error.BadSums;
+        found = line[0..64];
+    }
+    return found orelse error.WrongName;
 }
 
 fn escape(a: std.mem.Allocator, out: *std.ArrayList(u8), s: []const u8) !void {
@@ -164,4 +170,26 @@ test "the digest is read from a SHA256SUMS of exactly one line for the archive" 
     const sums = try assets.formatSums(a, "buildrules-0.0.2.tar.gz", "bytes");
     try assets.checkSums(sums, "buildrules-0.0.2.tar.gz", "bytes");
     try t.expectEqualSlices(u8, &assets.sha256Hex("bytes"), try digestOf(sums, "buildrules-0.0.2.tar.gz"));
+}
+
+test "digestOf reads the line of a five-line SHA256SUMS: the archive's digest, and no other file's" {
+    // The defect: the one-line reader, which refuses the SHA256SUMS of a release that holds the command-line tarballs (the page job would fail every release),
+    // or one that takes the first line whatever the name (the page would show a tarball's digest as the archive's).
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]assets.Named{
+        .{ .name = "buildrules-0.0.2.tar.gz", .bytes = "source" },
+        .{ .name = "buildrules-cli-0.0.2-linux-aarch64.tar.gz", .bytes = "a" },
+        .{ .name = "buildrules-cli-0.0.2-linux-x86_64.tar.gz", .bytes = "b" },
+        .{ .name = "buildrules-cli-0.0.2-macos-arm64.tar.gz", .bytes = "c" },
+        .{ .name = "buildrules-cli-0.0.2-macos-x86_64.tar.gz", .bytes = "d" },
+    };
+    const sums = try assets.formatSumsFiles(a, &files);
+    try t.expectEqualSlices(u8, &assets.sha256Hex("source"), try digestOf(sums, "buildrules-0.0.2.tar.gz"));
+    try t.expectEqualSlices(u8, &assets.sha256Hex("c"), try digestOf(sums, "buildrules-cli-0.0.2-macos-arm64.tar.gz"));
+    try t.expectError(error.WrongName, digestOf(sums, "buildrules-0.0.3.tar.gz"));
+    // a malformed line anywhere is a bad file, even when the line asked for is fine
+    const broken = try std.mem.concat(a, u8, &.{ sums, "not a sums line\n" });
+    try t.expectError(error.BadSums, digestOf(broken, "buildrules-0.0.2.tar.gz"));
 }

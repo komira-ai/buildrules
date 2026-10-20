@@ -46,6 +46,53 @@ pub fn checkSums(sums: []const u8, name: []const u8, bytes: []const u8) SumsErro
     if (!std.mem.eql(u8, digest, &want)) return error.WrongDigest;
 }
 
+pub const Named = struct { name: []const u8, bytes: []const u8 };
+
+pub const SumsFilesError = SumsError || error{ MissingLine, TwoLines, NotSorted };
+
+fn nameLess(_: void, x: Named, y: Named) bool {
+    return std.mem.lessThan(u8, x.name, y.name);
+}
+
+/// The text of SHA256SUMS for `files`: one `<64 hex>  <name>\n` line per file, in name order (byte order, as `sha256sum` lists a sorted glob).
+pub fn formatSumsFiles(a: std.mem.Allocator, files: []const Named) ![]u8 {
+    const sorted = try a.dupe(Named, files);
+    std.mem.sort(Named, sorted, {}, nameLess);
+    var out = std.ArrayList(u8).empty;
+    for (sorted) |f| try out.print(a, "{s}  {s}\n", .{ sha256Hex(f.bytes), f.name });
+    return out.toOwnedSlice(a);
+}
+
+/// `sums` is exactly the SHA256SUMS of `files`: one line for each, in name order, nothing else. A missing line, a second line for a file, a line for a file that
+/// is not one of them, a wrong digest, a line out of order, a missing newline, an uppercase digest, one space between digest and name or any other shape is
+/// refused (the one-line `checkSums` is this for one file).
+pub fn checkSumsFiles(sums: []const u8, files: []const Named) SumsFilesError!void {
+    if (sums.len == 0 or !std.mem.endsWith(u8, sums, "\n")) return error.BadSums;
+    var seen: usize = 0;
+    var previous: ?[]const u8 = null;
+    var lines = std.mem.splitScalar(u8, sums[0 .. sums.len - 1], '\n');
+    while (lines.next()) |line| {
+        if (line.len < 64 + 2 + 1) return error.BadSums;
+        const digest = line[0..64];
+        if (!isLowerHex(digest) or !std.mem.eql(u8, line[64..66], "  ")) return error.BadSums;
+        const name = line[66..];
+        var found: ?Named = null;
+        for (files) |f| {
+            if (std.mem.eql(u8, f.name, name)) found = f;
+        }
+        const f = found orelse return error.WrongName;
+        if (previous) |p| {
+            if (std.mem.eql(u8, p, name)) return error.TwoLines;
+            if (!std.mem.lessThan(u8, p, name)) return error.NotSorted;
+        }
+        previous = name;
+        const want = sha256Hex(f.bytes);
+        if (!std.mem.eql(u8, digest, &want)) return error.WrongDigest;
+        seen += 1;
+    }
+    if (seen != files.len) return error.MissingLine;
+}
+
 // ---- the archive's files against the tag's ----------------------------------------------------------------------------------------------
 
 fn lessThan(_: void, x: []const u8, y: []const u8) bool {
@@ -181,7 +228,11 @@ pub const NotesArgs = struct {
     subjects: []const []const u8,
     archive: []const u8,
     archive_sha256: []const u8,
+    /// The command-line tarballs of the release, with their sha256, in the order to show.
+    binaries: []const Binary = &.{},
 };
+
+pub const Binary = struct { name: []const u8, sha256: []const u8 };
 
 /// A subject as one line of text: control characters become spaces and the ends are trimmed. Empty after that: null.
 fn cleanSubject(a: std.mem.Allocator, s: []const u8) !?[]u8 {
@@ -201,7 +252,13 @@ pub fn notes(a: std.mem.Allocator, n: NotesArgs) ![]u8 {
     try out.print(a, "Pin the tag `{s}` and the sha256 of the archive:\n\n", .{n.tag});
     try out.print(a, "- archive: https://github.com/{s}/releases/download/{s}/{s}\n", .{ n.repo, n.tag, n.archive });
     try out.print(a, "- sha256: `{s}`\n", .{n.archive_sha256});
-    try out.print(a, "- the archive and SHA256SUMS carry build provenance attestations: `gh attestation verify {s} --repo {s}`\n\n", .{ n.archive, n.repo });
+    if (n.binaries.len != 0) {
+        try out.print(a, "- the command line, one static tarball per platform (`buildrules` and `LICENSE` in a directory of the tarball's name):\n", .{});
+        for (n.binaries) |b| try out.print(a, "  - https://github.com/{s}/releases/download/{s}/{s} sha256 `{s}`\n", .{ n.repo, n.tag, b.name, b.sha256 });
+    }
+    try out.print(a, "- SHA256SUMS lists every file above; each file and SHA256SUMS carries a build provenance attestation (`gh attestation verify {s} --repo {s}`)", .{ n.archive, n.repo });
+    if (n.binaries.len != 0) try out.print(a, " and a keyless signature `<file>.sigstore.json` (`cosign verify-blob --bundle {s}.sigstore.json --certificate-identity https://github.com/{s}/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com {s}`)", .{ n.archive, n.repo, n.archive });
+    try out.print(a, "\n\n", .{});
     if (n.previous) |p| {
         try out.print(a, "Changes since {s}:\n\n", .{p});
     } else {
@@ -381,4 +438,67 @@ test "the first release and an empty range say so; a long range is cut" {
     try t.expect(std.mem.indexOf(u8, long, "- commit 99\n") != null);
     try t.expect(std.mem.indexOf(u8, long, "- commit 100\n") == null);
     try t.expect(std.mem.indexOf(u8, long, "- and 30 earlier commits\n") != null);
+}
+
+test "checkSumsFiles: exactly one correct line per file, in name order, and nothing else" {
+    // The defect: a reader of one line (the old checkSums) used on a SHA256SUMS of five, which refuses a good release, or a reader of many that
+    // takes a file without a line, a line for a stranger, a wrong digest or a repeated line.
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]Named{
+        .{ .name = "buildrules-cli-0.0.7-macos-arm64.tar.gz", .bytes = "mac" },
+        .{ .name = "buildrules-0.0.7.tar.gz", .bytes = "source" },
+        .{ .name = "buildrules-cli-0.0.7-linux-x86_64.tar.gz", .bytes = "linux" },
+    };
+    const good = try formatSumsFiles(a, &files);
+    // name order, whatever the order of the files given
+    try t.expect(std.mem.startsWith(u8, good[66..], "buildrules-0.0.7.tar.gz\n"));
+    try checkSumsFiles(good, &files);
+    // the one-line reader and this one agree on one file
+    try checkSumsFiles(try formatSums(a, "x", "bytes"), &.{.{ .name = "x", .bytes = "bytes" }});
+    // a line is missing, repeated, foreign or wrong
+    var lines = std.mem.splitScalar(u8, good[0 .. good.len - 1], '\n');
+    const l0 = lines.next().?;
+    const l1 = lines.next().?;
+    const l2 = lines.next().?;
+    try t.expectError(error.MissingLine, checkSumsFiles(try std.fmt.allocPrint(a, "{s}\n{s}\n", .{ l0, l1 }), &files));
+    try t.expectError(error.TwoLines, checkSumsFiles(try std.fmt.allocPrint(a, "{s}\n{s}\n{s}\n{s}\n", .{ l0, l1, l1, l2 }), &files));
+    try t.expectError(error.NotSorted, checkSumsFiles(try std.fmt.allocPrint(a, "{s}\n{s}\n{s}\n", .{ l1, l0, l2 }), &files));
+    try t.expectError(error.WrongName, checkSumsFiles(try std.fmt.allocPrint(a, "{s}\n{s}\n{s}\n{s}\n", .{ l0, l1, l2, "e" ** 64 ++ "  zzz.tar.gz" }), &files));
+    try t.expectError(error.WrongDigest, checkSumsFiles(try std.fmt.allocPrint(a, "{s}\n{s}{s}\n{s}\n", .{ l0, "0" ** 64, l1[64..], l2 }), &files));
+    // the shape: no newline at the end, an uppercase digest, one space, an empty file
+    try t.expectError(error.BadSums, checkSumsFiles(good[0 .. good.len - 1], &files));
+    try t.expectError(error.BadSums, checkSumsFiles("", &files));
+    var upper = try a.dupe(u8, good);
+    upper[0] = 'F';
+    try t.expectError(error.BadSums, checkSumsFiles(upper, &files));
+    try t.expectError(error.BadSums, checkSumsFiles(try std.fmt.allocPrint(a, "{s}\n{s} {s}\n{s}\n", .{ l0, l1[0..64], l1[66..], l2 }), &files));
+    // a file whose bytes changed after the sums were written
+    var changed = files;
+    changed[0].bytes = "mac, rebuilt";
+    try t.expectError(error.WrongDigest, checkSumsFiles(good, &changed));
+}
+
+test "the notes list the command-line tarballs and how to verify them" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const text = try notes(a, .{
+        .number = "0.0.2",
+        .tag = "v0.0.2",
+        .repo = "owner/name",
+        .sha = "0123456789abcdef0123456789abcdef01234567",
+        .previous = "v0.0.1",
+        .subjects = &.{"x"},
+        .archive = "buildrules-0.0.2.tar.gz",
+        .archive_sha256 = "ab" ** 32,
+        .binaries = &.{ .{ .name = "buildrules-cli-0.0.2-linux-x86_64.tar.gz", .sha256 = "cd" ** 32 }, .{ .name = "buildrules-cli-0.0.2-macos-arm64.tar.gz", .sha256 = "ef" ** 32 } },
+    });
+    try t.expect(std.mem.indexOf(u8, text, "  - https://github.com/owner/name/releases/download/v0.0.2/buildrules-cli-0.0.2-linux-x86_64.tar.gz sha256 `" ++ "cd" ** 32 ++ "`\n") != null);
+    try t.expect(std.mem.indexOf(u8, text, "buildrules-cli-0.0.2-macos-arm64.tar.gz sha256 `" ++ "ef" ** 32 ++ "`") != null);
+    try t.expect(std.mem.indexOf(u8, text, "cosign verify-blob --bundle buildrules-0.0.2.tar.gz.sigstore.json --certificate-identity https://github.com/owner/name/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com buildrules-0.0.2.tar.gz") != null);
+    // without binaries (the earlier releases' shape) the section is not written
+    const plain = try notes(a, .{ .number = "0.0.1", .tag = "v0.0.1", .repo = "o/n", .sha = "s", .previous = null, .subjects = &.{}, .archive = "a", .archive_sha256 = "h" });
+    try t.expect(std.mem.indexOf(u8, plain, "the command line") == null);
 }

@@ -141,6 +141,19 @@ pub fn checkBeta(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, dir
         if (!contains(jt, "if: ${{ vars.FARM_ADDRESS == '' || vars.FARM_CONNECT_REF == '' }}") or !contains(jt, "::notice")) try add(a, &f, "the job `tools` does not say, with a notice, that the farm leg is not run when FARM_ADDRESS or FARM_CONNECT_REF is not set", .{});
     }
 
+    // The command line the legs run: built from the candidate unless the release names the artifact that holds the one it built (stamped, packaged, and the
+    // file its tarball ships); then that file is downloaded and never built again here, or the legs would test bytes the release does not ship.
+    if (!contains(text, "      cli-artifact:\n        type: string\n        default: \"\"\n")) try add(a, &f, "`on: workflow_call` has no string input `cli-artifact` that defaults to empty", .{});
+    if (rc.jobNamed(jobs, "tools")) |j| {
+        const jt = try j.text(a);
+        if (!contains(jt, "- name: Build the command line\nif: ${{ inputs.cli-artifact == '' }}\nrun: ./buck2 build "))
+            try add(a, &f, "the job `tools` builds the command line even when the release names the one it built (the step `Build the command line` lacks `if: ${{{{ inputs.cli-artifact == '' }}}}`)", .{});
+        if (!contains(jt, "- name: The command line the release built\nif: ${{ inputs.cli-artifact != '' }}\nuses: actions/download-artifact@") or !contains(jt, "\nwith:\nname: ${{ inputs.cli-artifact }}\npath: .\n"))
+            try add(a, &f, "the job `tools` does not download the artifact `inputs.cli-artifact` into `.` when the release names it", .{});
+        if (!contains(jt, "- name: It is executable\nif: ${{ inputs.cli-artifact != '' }}\nrun: chmod +x buildrules\n"))
+            try add(a, &f, "the job `tools` does not make the downloaded command line executable", .{});
+    }
+
     // The ubuntu legs: one job per language of beta/ but Mojo, in local mode.
     var want = std.ArrayList([]const u8).init(a);
     var has_mojo = false;
@@ -250,6 +263,10 @@ const fixture_wf =
     \\on:
     \\  pull_request:
     \\  workflow_call:
+    \\    inputs:
+    \\      cli-artifact:
+    \\        type: string
+    \\        default: ""
     \\
     \\permissions:
     \\  contents: read
@@ -287,7 +304,19 @@ const fixture_wf =
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local --out stage //tools/stage:stage
     \\
     \\      - name: Build the command line
+    \\        if: ${{ inputs.cli-artifact == '' }}
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local --out buildrules //cli:buildrules
+    \\
+    \\      - name: The command line the release built
+    \\        if: ${{ inputs.cli-artifact != '' }}
+    \\        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: ${{ inputs.cli-artifact }}
+    \\          path: .
+    \\
+    \\      - name: It is executable
+    \\        if: ${{ inputs.cli-artifact != '' }}
+    \\        run: chmod +x buildrules
     \\
     \\      - name: Which legs are ready, and which are planned
     \\        id: plan
@@ -653,4 +682,25 @@ test "rule: continue-on-error lets no red leg pass (G: the beta job), and nothin
     // the farm job
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "    timeout-minutes: 120\n", "    timeout-minutes: 120\n    continue-on-error: ${{ true }}\n"), rule);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "        run: ./stage plan --root \"$GITHUB_WORKSPACE\" --output \"$GITHUB_OUTPUT\"\n", "        run: ./stage plan --root \"${{ github.event.pull_request.title }}\"\n"), "expands `github.event.` inline");
+}
+
+test "rule: the legs run the command line the release built when it names one, and build it only when it does not" {
+    // The defects: the legs rebuild the command line even in the release (they test bytes that are not the ones the release ships), the named artifact is
+    // never downloaded, the downloaded file is not executable, or the input that carries the name is gone.
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = fx();
+    // always built: the guard of the build step is gone, or says the opposite
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "        if: ${{ inputs.cli-artifact == '' }}\n", ""), "builds the command line even when the release names the one it built");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "inputs.cli-artifact == ''", "inputs.cli-artifact != ''"), "builds the command line even when the release names the one it built");
+    // never downloaded: the guard says the opposite, the step is gone, another artifact, another path
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "        if: ${{ inputs.cli-artifact != '' }}\n        uses: actions/download-artifact", "        if: ${{ inputs.cli-artifact == '' }}\n        uses: actions/download-artifact"), "does not download the artifact `inputs.cli-artifact`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "          name: ${{ inputs.cli-artifact }}\n", "          name: release-cli-tarballs\n"), "does not download the artifact `inputs.cli-artifact`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "          name: ${{ inputs.cli-artifact }}\n          path: .\n", "          name: ${{ inputs.cli-artifact }}\n          path: cli\n"), "does not download the artifact `inputs.cli-artifact`");
+    // not executable
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "        run: chmod +x buildrules\n", "        run: echo not executable\n"), "does not make the downloaded command line executable");
+    // the input is gone, or no longer an empty string by default
+    try expectFinding(a, r, try mutate(a, r.wf, "    inputs:\n      cli-artifact:\n        type: string\n        default: \"\"\n", ""), "no string input `cli-artifact`");
+    try expectFinding(a, r, try mutate(a, r.wf, "        default: \"\"\n", "        default: release-cli-bin\n"), "no string input `cli-artifact`");
 }

@@ -1,19 +1,20 @@
 //! `release`: the steps of the automatic release (RELEASING.md). The logic is in cmds.zig, version.zig, assets.zig, gz.zig and tar.zig, each
 //! tested; this file reads the command line and runs the real `git` and `gh`.
 //!
-//!   release plan    --root DIR --sha SHA [--output FILE]
+//!   release plan    --root DIR --sha SHA [--output FILE] [--freeze true|false|] [--dry true|false]
 //!   release tag     --root DIR --repo OWNER/NAME --tag TAG --sha SHA
 //!   release archive --root DIR --tag TAG --sha SHA --out DIR
-//!   release verify  --root DIR --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --workflow PATH --cli PATH
+//!   release verify  --root DIR --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --workflow PATH --cli PATH --rebuilt DIR --dry true|false
 //!   release publish --root DIR --repo OWNER/NAME --tag TAG --sha SHA --previous TAG --dist DIR
 //!   release site    --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --out DIR
 //!   release bump-check    --internal-repo OWNER/NAME
 //!   release bump-internal --repo OWNER/NAME --tag TAG --sha SHA --internal-repo OWNER/NAME --submodule PATH --workdir EMPTYDIR   (GH_TOKEN: the release bot's)
 //!   release package --version V --target T --binary PATH --license PATH --out DIR --exec native|none   (binaries.zig: buildrules-cli-V-T.tar.gz)
-//!   release record  --tarball PATH --out DIR      the sha256 of a tarball a user-beta leg ran
-//!   release tested  --dist DIR --tested DIR       the tarballs to attest are the ones the user beta ran
+//!   release package-all --version V --bins DIR --license PATH --out DIR [--native T,T]   the four, from DIR/<target>/buildrules
+//!   release record  --tarball PATH --out DIR [--ran-binary PATH]   the sha256 of a tarball a user-beta leg ran (and the file it ran is the tarball's)
+//!   release tested  --dist DIR --tested DIR [--targets T,T]   the tarballs to attest are the ones the user beta ran
 //!   release sums    --dist DIR                      SHA256SUMS over the source archive and the four tarballs
-//!   release sign    --dist DIR [--cosign PATH]      a keyless cosign bundle per file
+//!   release sign    --dist DIR [--cosign PATH] [--dry true|false]   a keyless cosign bundle per file (dry: the checks, no signing)
 //!
 //! Exit 0 when the step succeeded (`plan` also when it decided there is nothing to release), 1 when a check failed, 2 on a bad command line.
 const std = @import("std");
@@ -102,13 +103,53 @@ fn appendFile(path: []const u8, bytes: []const u8) !void {
     try f.writeAll(bytes);
 }
 
+/// `true` or `false`, exactly; a missing flag is `default` (null: the flag is required). Anything else is a usage error, not a guess: a dry run is never taken for
+/// a real one, or the other way round, by a typo.
+fn boolFlag(g: Args, name: []const u8, default: ?bool) !bool {
+    const v = g.get(name) orelse return default orelse {
+        std.debug.print("release: --{s} is required (true or false)\n", .{name});
+        return error.Usage;
+    };
+    if (std.mem.eql(u8, v, "true")) return true;
+    if (std.mem.eql(u8, v, "false")) return false;
+    std.debug.print("release: --{s} is `true` or `false`, not `{s}`\n", .{ name, v });
+    return error.Usage;
+}
+
+fn lessName(_: void, x: cmds.Blob, y: cmds.Blob) bool {
+    return std.mem.lessThan(u8, x.name, y.name);
+}
+
+/// The files of `dir` whose names start with `prefix` and end with `suffix`, with their bytes, by name.
+fn readMatching(a: std.mem.Allocator, dir: []const u8, prefix: []const u8, suffix: []const u8) ![]cmds.Blob {
+    var d = try std.fs.cwd().openDir(dir, .{ .iterate = true });
+    defer d.close();
+    var out = std.ArrayList(cmds.Blob).empty;
+    var it = d.iterate();
+    while (try it.next()) |e| {
+        if (e.kind != .file or !std.mem.startsWith(u8, e.name, prefix) or !std.mem.endsWith(u8, e.name, suffix)) continue;
+        const name = try a.dupe(u8, e.name);
+        try out.append(a, .{ .name = name, .bytes = try d.readFileAlloc(a, name, 1 << 30) });
+    }
+    std.mem.sort(cmds.Blob, out.items, {}, lessName);
+    return out.toOwnedSlice(a);
+}
+
+/// A comma-separated list of targets.
+fn targetList(a: std.mem.Allocator, text: []const u8) ![]const []const u8 {
+    var out = std.ArrayList([]const u8).empty;
+    var it = std.mem.splitScalar(u8, text, ',');
+    while (it.next()) |w| try out.append(a, w);
+    return out.toOwnedSlice(a);
+}
+
 pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const argv = try std.process.argsAlloc(a);
     if (argv.len < 2) {
-        std.debug.print("usage: release plan|tag|archive|verify|publish|site|bump-check|bump-internal|package|record|tested|sums|sign --flag value ...\n", .{});
+        std.debug.print("usage: release plan|tag|archive|verify|publish|site|bump-check|bump-internal|package|package-all|record|tested|sums|sign --flag value ...\n", .{});
         return 2;
     }
     var unused: u8 = 0;
@@ -126,11 +167,12 @@ pub fn main() !u8 {
 
 fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const u8) !u8 {
     if (std.mem.eql(u8, cmd, "plan")) {
-        const g = try parseArgs(a, rest, &.{ "root", "sha", "output" });
+        const g = try parseArgs(a, rest, &.{ "root", "sha", "output", "freeze", "dry" });
+        const dry = try boolFlag(g, "dry", false);
         const root = try g.need("root");
         const version_path = try join(a, root, "VERSION");
         const version_file = try std.fs.cwd().readFileAlloc(a, version_path, 1024);
-        const r = try cmds.plan(a, io, .{ .root = root, .sha = try g.need("sha"), .version_file = version_file });
+        const r = try cmds.plan(a, io, .{ .root = root, .sha = try g.need("sha"), .version_file = version_file, .freeze = g.get("freeze") orelse "", .dry = dry });
         const out = try cmds.planOutputs(a, r);
         say("{s}", .{out});
         if (g.get("output")) |p| try appendFile(p, out);
@@ -154,7 +196,8 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         return 0;
     }
     if (std.mem.eql(u8, cmd, "verify")) {
-        const g = try parseArgs(a, rest, &.{ "root", "repo", "tag", "sha", "dist", "workflow", "cli" });
+        const g = try parseArgs(a, rest, &.{ "root", "repo", "tag", "sha", "dist", "workflow", "cli", "rebuilt", "dry", "cosign" });
+        const dry = try boolFlag(g, "dry", null);
         const tag = try g.need("tag");
         const v = version.parseTag(tag) orelse {
             std.debug.print("release: `{s}` is not a release tag\n", .{tag});
@@ -164,6 +207,7 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         const name = try std.fmt.allocPrint(a, "buildrules-{s}.tar.gz", .{try version.numberText(a, v)});
         const archive = try std.fs.cwd().readFileAlloc(a, try join(a, dist, name), 1 << 30);
         const sums = try std.fs.cwd().readFileAlloc(a, try join(a, dist, cmds.sums_name), 1 << 20);
+        const cli_path = try g.need("cli");
         const f = try cmds.verify(a, io, .{
             .root = try g.need("root"),
             .repo = try g.need("repo"),
@@ -174,11 +218,16 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
             .archive = archive,
             .sums = sums,
             .workflow = try g.need("workflow"),
-            .cli = try g.need("cli"),
+            .cli = cli_path,
+            .cli_bytes = try std.fs.cwd().readFileAlloc(a, cli_path, 1 << 30),
+            .tarballs = try readMatching(a, dist, "buildrules-cli-", ".tar.gz"),
+            .rebuilt = try readMatching(a, try g.need("rebuilt"), "buildrules-cli-", ".tar.gz"),
+            .dry = dry,
+            .cosign = g.get("cosign") orelse "cosign",
         });
         for (f.items) |m| std.debug.print("release verify: {s}\n", .{m});
         if (f.items.len != 0) return 1;
-        say("release verify: {s} is the archive of {s}; checked: sums, checkout, attestations, reproduction, the built program's version, file list, scrub\n", .{ name, g.get("sha").? });
+        say("release verify: {s} is the archive of {s}; checked: sums, checkout, {s}, reproduction of the archive and the four command-line tarballs, the built program's version, file list, scrub\n", .{ name, g.get("sha").?, if (dry) "no attestations or signatures (dry run)" else "attestations and signatures" });
         return 0;
     }
     if (std.mem.eql(u8, cmd, "publish")) {
@@ -193,6 +242,8 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         const archive = try std.fs.cwd().readFileAlloc(a, try join(a, dist, name), 1 << 30);
         const sums = try std.fs.cwd().readFileAlloc(a, try join(a, dist, cmds.sums_name), 1 << 20);
         const r = try cmds.publish(a, io, .{
+            .tarballs = try readMatching(a, dist, "buildrules-cli-", ".tar.gz"),
+            .bundles = try readMatching(a, dist, "", ".sigstore.json"),
             .root = try g.need("root"),
             .repo = try g.need("repo"),
             .tag = tag,
@@ -273,15 +324,28 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         say("release package: {s} {s}\n", .{ p.name, p.sha256 });
         return 0;
     }
+    if (std.mem.eql(u8, cmd, "package-all")) {
+        const g = try parseArgs(a, rest, &.{ "version", "bins", "license", "out", "native" });
+        const done = binaries.packageAll(a, io, .{
+            .version = try g.need("version"),
+            .bins = try g.need("bins"),
+            .license = try g.need("license"),
+            .out = try g.need("out"),
+            .native = try targetList(a, g.get("native") orelse "linux-x86_64"),
+        }) catch |e| return failed("package-all", e);
+        for (done) |p| say("release package-all: {s} {s}\n", .{ p.name, p.sha256 });
+        return 0;
+    }
     if (std.mem.eql(u8, cmd, "record")) {
-        const g = try parseArgs(a, rest, &.{ "tarball", "out" });
-        const name = binaries.record(a, try g.need("tarball"), try g.need("out")) catch |e| return failed("record", e);
+        const g = try parseArgs(a, rest, &.{ "tarball", "out", "ran-binary" });
+        const name = binaries.record(a, try g.need("tarball"), try g.need("out"), g.get("ran-binary")) catch |e| return failed("record", e);
         say("release record: {s}\n", .{name});
         return 0;
     }
     if (std.mem.eql(u8, cmd, "tested")) {
-        const g = try parseArgs(a, rest, &.{ "dist", "tested" });
-        binaries.tested(a, try g.need("dist"), try g.need("tested")) catch |e| return failed("tested", e);
+        const g = try parseArgs(a, rest, &.{ "dist", "tested", "targets" });
+        const walked: []const []const u8 = if (g.get("targets")) |text| try targetList(a, text) else &binaries.tested_targets;
+        binaries.testedFor(a, try g.need("dist"), try g.need("tested"), walked) catch |e| return failed("tested", e);
         say("release tested: the tarballs of {s} are the ones the user beta ran\n", .{g.get("dist").?});
         return 0;
     }
@@ -292,9 +356,10 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         return 0;
     }
     if (std.mem.eql(u8, cmd, "sign")) {
-        const g = try parseArgs(a, rest, &.{ "dist", "cosign" });
-        const n = binaries.sign(a, io, try g.need("dist"), g.get("cosign") orelse "cosign") catch |e| return failed("sign", e);
-        say("release sign: {d} bundles\n", .{n});
+        const g = try parseArgs(a, rest, &.{ "dist", "cosign", "dry" });
+        const dry = try boolFlag(g, "dry", false);
+        const n = binaries.signWith(a, io, try g.need("dist"), g.get("cosign") orelse "cosign", dry) catch |e| return failed("sign", e);
+        say("release sign: {d} {s}\n", .{ n, if (dry) "files would be signed (dry run: nothing signed)" else "bundles" });
         return 0;
     }
     std.debug.print("release: unknown command `{s}`\n", .{cmd});
@@ -473,4 +538,50 @@ test "--exec native runs the binary for its version, and --exec none does not ru
     var idle = Says{ .says = "buildrules 0.0.7\n" };
     try t.expectEqual(@as(u8, 1), try run(a, idle.io(), "package", &args));
     try t.expectEqual(@as(usize, 0), idle.calls);
+}
+
+/// `args` and `--dry value`.
+fn withDry(a: std.mem.Allocator, args: []const []const u8, value: []const u8) ![]const []const u8 {
+    return std.mem.concat(a, []const u8, &.{ args, &.{ "--dry", value } });
+}
+
+test "--dry is exact: true or false (verify requires it), and anything else is a usage error before any file is read" {
+    // The defect: a dry run taken for a real one by a typo, or the other way round (a real verify that skips the attestations).
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var unused_ctx: u8 = 0;
+    const io = cmds.Io{ .ctx = &unused_ctx, .run_fn = realRun, .write_fn = realWrite };
+    const base = [_][]const u8{ "--root", "/nowhere", "--repo", "o/n", "--tag", "v0.0.7", "--sha", "e" ** 40, "--dist", "/nowhere/dist", "--workflow", ".github/workflows/release.yml", "--cli", "/nowhere/cli", "--rebuilt", "/nowhere/rebuilt" };
+    // missing: required
+    try t.expectError(error.Usage, run(a, io, "verify", &base));
+    for ([_][]const u8{ "yes", "True", "1", "", "TRUE", "false " }) |bad| {
+        try t.expectError(error.Usage, run(a, io, "verify", try withDry(a, &base, bad)));
+        try t.expectError(error.Usage, run(a, io, "plan", &.{ "--root", "/nowhere", "--sha", "e" ** 40, "--dry", bad }));
+        try t.expectError(error.Usage, run(a, io, "sign", &.{ "--dist", "/nowhere", "--dry", bad }));
+    }
+    // the two exact values pass the flag (and then fail on the files that are not there, which is not a usage error)
+    for ([_][]const u8{ "true", "false" }) |good| {
+        const r = run(a, io, "verify", try withDry(a, &base, good));
+        try t.expect(if (r) |_| false else |e| e != error.Usage);
+    }
+    // sign: dry defaults to false
+    try t.expectEqual(@as(u8, 1), try run(a, io, "sign", &.{ "--dist", "/nowhere", "--cosign", "/nonexistent/cosign" }));
+    try t.expectEqual(@as(u8, 1), try run(a, io, "sign", &.{ "--dist", "/nowhere", "--dry", "true" }));
+}
+
+test "the targets of --targets and --native are comma lists, and tested --targets refuses what is not walked" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const l = try targetList(a, "linux-x86_64,macos-arm64");
+    try t.expectEqual(@as(usize, 2), l.len);
+    try t.expectEqualStrings("macos-arm64", l[1]);
+    var unused_ctx: u8 = 0;
+    const io = cmds.Io{ .ctx = &unused_ctx, .run_fn = realRun, .write_fn = realWrite };
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    try t.expectEqual(@as(u8, 1), try run(a, io, "tested", &.{ "--dist", dir, "--tested", dir, "--targets", "macos-x86_64" }));
+    try t.expectEqual(@as(u8, 1), try run(a, io, "package-all", &.{ "--version", "0.0.7", "--bins", dir, "--license", dir, "--out", dir, "--native", "linux-x86-64" }));
 }
