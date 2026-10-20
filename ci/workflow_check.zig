@@ -8,7 +8,9 @@
 //!  - a CI that stops building the target it promises (//ci:all), stops running the completeness check, runs in remote mode (every
 //!    `./buck2` command that loads the graph, which is every one but `kill` and `--version`, build and bxl and audit and query and test
 //!    alike, must pass `-c buildrules_re.mode=local`, because the execution platforms are analysed by all of them and fail without a mode;
-//!    any other value of that key anywhere is refused), or names a remote-execution endpoint;
+//!    any other value of that key anywhere is refused; and buck2 is run only as the literal `./buck2`: a bare `buck2`, `/path/buck2`,
+//!    `$BUCK2`, or a shell wrapper (`bash -c`, `eval`, `env`, `sudo`, ...) around one is refused, because a command this check cannot
+//!    read as `./buck2 <subcommand> <args>` is a command whose mode it cannot check), or names a remote-execution endpoint;
 //!  - a buck2 install that drifted from the release pinned in tools/buck2 (url or sha256).
 const std = @import("std");
 const t = std.testing;
@@ -113,13 +115,107 @@ const buck2 = "./buck2 ";
 /// local mode (an allow-list of the exempt, so a subcommand this parser has not heard of, or a global flag before it, is not exempt).
 const no_graph = [_][]const u8{ "kill", "--version" };
 
-/// Whether the `./buck2` invocation `inv` (the text after `./buck2 `, up to the next invocation) loads the graph.
-fn loadsGraph(inv: []const u8) bool {
-    const word = std.mem.sliceTo(std.mem.trim(u8, inv, " "), ' ');
-    for (no_graph) |n| {
-        if (std.mem.eql(u8, word, n)) return false;
+/// The text of `cmd` up to the first shell separator (`&&`, `||`, `;`, `|`, `&`, a parenthesis or a backtick): one command.
+fn untilSeparator(cmd: []const u8) []const u8 {
+    for (cmd, 0..) |c, i| {
+        if (isSep(c)) return cmd[0..i];
     }
-    return true;
+    return cmd;
+}
+
+fn isSep(c: u8) bool {
+    return c == ';' or c == '&' or c == '|' or c == '(' or c == ')' or c == '`';
+}
+
+/// Whether the `./buck2` invocation `inv` (the text after `./buck2 `, up to the next invocation) loads the graph. It does not only when the
+/// command is exactly `kill` or `--version`, each alone (redirections aside): `./buck2 kill build //x` is a build.
+fn loadsGraph(inv: []const u8) bool {
+    var words = std.mem.tokenizeAny(u8, untilSeparator(inv), " \t");
+    const first = words.next() orelse return true;
+    var exempt = false;
+    for (no_graph) |n| {
+        if (std.mem.eql(u8, first, n)) exempt = true;
+    }
+    if (!exempt) return true;
+    while (words.next()) |w| {
+        if (std.mem.indexOfScalar(u8, w, '>') == null) return true;
+    }
+    return false;
+}
+
+const shells = [_][]const u8{ "bash", "sh", "zsh", "dash", "eval" };
+const wrappers = [_][]const u8{ "sudo", "exec", "env", "command", "nohup", "time", "xargs", "then", "do", "else", "if", "while", "until", "!", "run:", "-", "export", "declare", "local", "readonly" };
+
+fn inList(list: []const []const u8, w: []const u8) bool {
+    for (list) |x| {
+        if (std.mem.eql(u8, x, w)) return true;
+    }
+    return false;
+}
+
+fn namesBuck2(w: []const u8) bool {
+    return std.ascii.indexOfIgnoreCase(w, "buck2") != null;
+}
+
+/// Every buck2 that is run as anything but the literal `./buck2`, in the commands of `line`: the command word (after env assignments and
+/// wrappers such as `sudo`, `env`, `exec`, `xargs`; and, inside `bash -c '...'`/`sh -c`/`eval`, the commands of the quoted text) that
+/// names buck2 and is not `./buck2` (`buck2`, `/path/buck2`, `$BUCK2`, `"${BUCK2}"`), and an assignment whose value names buck2 (a
+/// variable that is then run as a command). A `buck2` that is an argument (`chmod +x buck2`, `-o buck2`) is not a command.
+fn nonLiteralBuck2(a: std.mem.Allocator, f: *Findings, line: []const u8) error{OutOfMemory}!void {
+    // A YAML key (`key: ...`, `name: ...`, `uses: ...`, `if: ...`) is not a shell command; `run:` is the one whose value is.
+    const lead = std.mem.trimLeft(u8, std.mem.trim(u8, line, " \t"), "- ");
+    const key = lead[0 .. std.mem.indexOfAny(u8, lead, " \t") orelse lead.len];
+    if (std.mem.endsWith(u8, key, ":") and !std.mem.eql(u8, key, "run:")) return;
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i <= line.len) : (i += 1) {
+        if (i < line.len and !isSep(line[i])) continue;
+        try oneCommand(a, f, line[start..i], line);
+        start = i + 1;
+    }
+}
+
+fn oneCommand(a: std.mem.Allocator, f: *Findings, seg: []const u8, line: []const u8) error{OutOfMemory}!void {
+    var rest = std.mem.trim(u8, seg, " \t");
+    var after_wrapper = false;
+    while (rest.len > 0) {
+        const end = std.mem.indexOfAny(u8, rest, " \t") orelse rest.len;
+        const word = std.mem.trim(u8, rest[0..end], "'\"");
+        const next = std.mem.trimLeft(u8, rest[end..], " \t");
+        if (word.len == 0) {
+            rest = next;
+            continue;
+        }
+        if (after_wrapper and word[0] == '-') {
+            rest = next;
+            continue;
+        }
+        const eq = std.mem.indexOfScalar(u8, word, '=');
+        if (eq != null and word[0] != '-' and word[0] != '$' and std.mem.indexOfScalar(u8, word[0..eq.?], '/') == null) {
+            if (namesBuck2(word[eq.? + 1 ..])) try add(a, f, "a variable is set to buck2, which is then run through the variable (run `./buck2` itself): {s}", .{line});
+            rest = next;
+            continue;
+        }
+        if (inList(&wrappers, word)) {
+            after_wrapper = true;
+            rest = next;
+            continue;
+        }
+        if (inList(&shells, word)) {
+            // `bash -c '...'`: the quoted text is a command line of its own.
+            var r = next;
+            while (r.len > 0 and r[0] == '-') r = std.mem.trimLeft(u8, r[std.mem.indexOfAny(u8, r, " \t") orelse r.len ..], " \t");
+            const unq = try a.dupe(u8, r);
+            for (unq) |*c| {
+                if (c.* == '\'' or c.* == '"') c.* = ' ';
+            }
+            try nonLiteralBuck2(a, f, unq);
+            return;
+        }
+        if (namesBuck2(word) and !std.mem.eql(u8, word, "./buck2"))
+            try add(a, f, "buck2 is run as `{s}`, not the literal `./buck2` (its mode cannot be checked): {s}", .{ word, line });
+        return;
+    }
 }
 
 /// Whether `args` occurs in `cmd` as whole space-separated words.
@@ -172,11 +268,12 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
     var mode_on_graph: usize = 0;
     for (try commands(a, workflow)) |cmd| {
         mode_uses += std.mem.count(u8, cmd, mode_key);
+        try nonLiteralBuck2(a, &f, cmd);
         var from: usize = 0;
         while (std.mem.indexOfPos(u8, cmd, from, buck2)) |i| {
             const start = i + buck2.len;
             const end = std.mem.indexOfPos(u8, cmd, start, buck2) orelse cmd.len;
-            const inv = cmd[start..end];
+            const inv = untilSeparator(cmd[start..end]);
             from = start;
             if (!loadsGraph(inv)) continue;
             if (std.mem.startsWith(u8, inv, "build ")) builds += 1;
@@ -443,4 +540,75 @@ test "a //ci: target missing from ci/BUCK is found" {
     const a = ar.allocator();
     const r = try real(a);
     try expectFinding(a, .{ .wf = r.wf, .ds = r.ds, .cb = "name = \"matrix\"\n" }, r.wf, "//ci:all is not declared");
+}
+
+test "buck2 run any way but the literal ./buck2 is found" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try real(a);
+    const not_literal = "not the literal `./buck2`";
+    // each of these ran the graph in remote mode, past the check, before: with the flag and without it
+    const slips = [_][]const u8{
+        "$BUCK2 bxl //x:y",
+        "${BUCK2} bxl //x:y",
+        "\"$BUCK2\" bxl //x:y",
+        "buck2 bxl //x:y",
+        "/usr/local/bin/buck2 bxl //x:y",
+        "~/bin/buck2 bxl //x:y",
+        "bash -c 'buck2 bxl //x:y'",
+        "sh -c \"/opt/buck2 bxl //x:y\"",
+        "eval buck2 bxl //x:y",
+        "sudo buck2 bxl //x:y",
+        "env FOO=1 buck2 bxl //x:y",
+        "exec buck2 bxl //x:y",
+        "echo hi && buck2 bxl //x:y",
+        "echo $(buck2 bxl //x:y)",
+        "FOO=1 buck2 bxl //x:y",
+        "./buck2 build -c buildrules_re.mode=local //x:y && buck2 bxl //x:y",
+        "buck2 bxl -c buildrules_re.mode=local //x:y",
+    };
+    for (slips) |c| {
+        const wf = try std.mem.concat(a, u8, &.{ r.wf, "      - run: ", c, "\n" });
+        try expectFinding(a, r, wf, not_literal);
+    }
+    // a variable that holds buck2 and is run through the variable
+    try expectFinding(a, r, try std.mem.concat(a, u8, &.{ r.wf, "      - run: B=./buck2; $B bxl //x:y\n" }), "variable is set to buck2");
+    try expectFinding(a, r, try std.mem.concat(a, u8, &.{ r.wf, "      - run: export BUCK2=buck2\n" }), "variable is set to buck2");
+    // what stays allowed: buck2 as an argument or in prose, and the literal form in a wrapper with the flag
+    const fine = [_][]const u8{
+        "chmod +x buck2",
+        "echo installing buck2",
+        "echo \"buck2 is ready\"",
+        "zstd --decompress buck2.zst -o buck2",
+        "bash -c './buck2 build -c buildrules_re.mode=local //ci:all'",
+        "env FOO=1 ./buck2 build -c buildrules_re.mode=local //ci:all",
+    };
+    for (fine) |c| {
+        const wf = try std.mem.concat(a, u8, &.{ r.wf, "      - run: ", c, "\n" });
+        const f = try check(a, wf, r.ds, r.cb);
+        for (f.items) |m| std.debug.print("unexpected: {s}\n", .{m});
+        try t.expectEqual(@as(usize, 0), f.items.len);
+    }
+}
+
+test "kill and --version are exempt only alone, not when more words follow" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try real(a);
+    const need = "does not pass `-c buildrules_re.mode=local`";
+    for ([_][]const u8{ "kill build //x:y", "kill bxl //x:y", "--version build //x:y", "kill && ./buck2 build //x:y", "kill; ./buck2 test //x:y" }) |c| {
+        const wf = try std.mem.concat(a, u8, &.{ r.wf, "      - run: ./buck2 ", c, "\n" });
+        try expectFinding(a, r, wf, need);
+    }
+    // alone, with a redirection, or chained to a command that has the flag, they are exempt
+    for ([_][]const u8{ "kill", "kill 2>/dev/null", "--version", "kill && ./buck2 build -c buildrules_re.mode=local //x:y" }) |c| {
+        const wf = try std.mem.concat(a, u8, &.{ r.wf, "      - run: ./buck2 ", c, "\n" });
+        const f = try check(a, wf, r.ds, r.cb);
+        for (f.items) |m| std.debug.print("unexpected: {s}\n", .{m});
+        try t.expectEqual(@as(usize, 0), f.items.len);
+    }
+    // the flag after a separator belongs to the next command, not to the build before it
+    try expectFinding(a, r, try std.mem.concat(a, u8, &.{ r.wf, "      - run: ./buck2 build //x:y && echo -c buildrules_re.mode=local\n" }), need);
 }
