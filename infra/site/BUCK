@@ -39,4 +39,11 @@ jest_test(
 # The lines and branches of lib/ and bin/ that the tests reach (jest --coverage), held to coverage_floor.txt.
 jest_coverage_floor()
 
+# Read by the site workflow check (ci/site_check.zig): the environment and the workflow file the role trusts.
+export_file(
+    name = "config.ts",
+    src = "lib/config.ts",
+    visibility = ["//ci:"],
+)
+
 scrub_files(extra = [".gitignore"])

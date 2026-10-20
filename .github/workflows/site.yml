@@ -1,0 +1,149 @@
+# Publishing buildrules.dev (RELEASING.md "The site", infra/site/README.md). This is the caller: it decides whether a commit is deployed and builds the tree;
+# site-publish.yml, the reusable workflow the AWS role trusts, holds the token and does the upload.
+#
+#   plan     read-only: a release run that finished green for a push to main, whose commit is still the tip of main, and only when the environment `prod` exists.
+#            Anything else is a notice and no deploy, not a red run: before the one-time setup (infra/site/README.md) the whole workflow is a no-op.
+#   build    read-only: the commit's //site:test and //site:dist on the runner (local mode), plus the page of the release the triggering run made (the artifact
+#            `release-site`, when that run released), as the artifact `site-dist`. No cloud token.
+#   publish  the call of site-publish.yml, which alone holds `id-token: write`. `claims_only` (a manual run) prints the claims of the token instead of deploying.
+#
+# The role trusts the workflow file site-publish.yml run from refs/heads/main in the environment prod, so the call is the local path of that file (a run from
+# main keeps the ref) and nothing here names any other form. ci/site_check.zig (`//ci:workflow`) holds both files to all of this.
+name: site
+
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      claims_only:
+        description: Print the claims of the OIDC token (to compare with the role's trust) and deploy nothing
+        type: boolean
+        required: false
+        default: false
+
+permissions: {}
+
+# One deploy at a time, none cancelled: a newer run waits, and the plan job lets only the tip of main deploy.
+concurrency:
+  group: site
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      deploy: ${{ steps.decide.outputs.deploy }}
+      sha: ${{ steps.decide.outputs.sha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EVENT: ${{ github.event_name }}
+      REF: ${{ github.ref }}
+      RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+      DISPATCH_SHA: ${{ github.sha }}
+    steps:
+      - name: Deploy only the tip of main, and only once the environment exists
+        id: decide
+        run: |
+          set -euo pipefail
+          sha="$RUN_SHA"
+          if [ "$EVENT" = workflow_dispatch ]; then
+            sha="$DISPATCH_SHA"
+            if [ "$REF" != refs/heads/main ]; then
+              echo "::notice title=site not published::this run is for $REF; only main deploys"
+              echo "deploy=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$tip" != "$sha" ]; then
+            echo "::notice title=site not published::$sha is not the tip of main ($tip); the run for the tip deploys"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! gh api "repos/$GITHUB_REPOSITORY/environments/prod" --silent; then
+            echo "::notice title=site not published::the environment prod does not exist (or cannot be read), so the one-time setup of infra/site/README.md has not been done; nothing is deployed"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [plan]
+    if: ${{ needs.plan.outputs.deploy == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.claims_only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EVENT: ${{ github.event_name }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+
+      # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/site_check.zig compares both.
+      - name: Install buck2
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
+          echo "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst" | sha256sum --check --strict -
+          zstd --decompress --quiet buck2.zst -o buck2
+          chmod +x buck2
+          ./buck2 --version
+
+      # The site's own tests are a second proof beside the release run's gate: the tree that is deployed is the one they passed on.
+      - name: Build and test the site
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --show-full-output //site:test //site:dist > "$RUNNER_TEMP/site-outputs.txt"
+
+      - name: Collect the tree
+        run: |
+          set -euo pipefail
+          dist=$(awk '$1 ~ /\/\/site:dist$/ { print $2 }' "$RUNNER_TEMP/site-outputs.txt")
+          test -f "$dist/index.html"
+          mkdir -p site-out
+          cp -r --no-preserve=mode "$dist" site-out/tree
+
+      # The page of the release exists only when the triggering run released; a run that did not leaves the pages already uploaded as they are.
+      - name: The page of the release, when the triggering run made one
+        if: ${{ github.event_name == 'workflow_run' }}
+        run: |
+          if gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-site --dir site-out/release; then
+            echo "the release page is in the upload"
+          else
+            echo "::notice title=no release page::run $RUN_ID made no release-site artifact; only the site is uploaded"
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site-dist
+          path: site-out
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Stop buck2
+        if: always()
+        run: ./buck2 kill
+
+  publish:
+    needs: [plan, build]
+    if: ${{ !cancelled() && needs.plan.outputs.deploy == 'true' && (needs.build.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.claims_only)) }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/site-publish.yml
+    with:
+      claims_only: ${{ github.event_name == 'workflow_dispatch' && inputs.claims_only }}

@@ -55,9 +55,10 @@ Change the matching file under `tools/content/`, then run the three targets abov
 `[label](/path/#fragment)`; the fragment is the slug of a heading on the target page. Link text and fragments are checked at
 build time.
 
-## Publish (held)
+## Publish
 
-Publishing is not part of the build and nothing here does it. The hosting stack, `infra/site`, and its held steps
-(`github`, `dns`, `site`, `vars`) are run by a person with their own cloud credentials; each step is a dry run unless
-`--apply` is given, and refuses unless the account matches `--account`. See `infra/site/README.md`. After the stack exists, the
-publish workflow (not yet written; `infra/site/README.md` says what it must do) builds `//site:dist` and uploads the tree to the bucket.
+The build does not publish: nothing in `site/` uploads anything. The workflow `.github/workflows/site.yml` does, after a green `release` run on `main`: it builds `//site:test //site:dist` for the tip of `main`
+on the runner and calls `.github/workflows/site-publish.yml`, which assumes the publish role by OIDC and syncs the tree to the bucket, flushes the CloudFront cache and fetches the site back to compare it.
+`RELEASING.md` ("The site") describes both workflows and `ci/site_check.zig` holds them to it. The hosting stack, `infra/site`, and its held steps (`github`, `dns`, `site`, `vars`) are run once by a person
+with their own cloud credentials; each step is a dry run unless `--apply` is given, and refuses unless the account matches `--account`. See `infra/site/README.md`. **Until that setup is done the workflows deploy
+nothing and fail nothing**: they say so in a notice and end green.

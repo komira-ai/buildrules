@@ -110,7 +110,25 @@ farm-connect action writes, so none is printed in a log by this repository's wor
 
 For every release the `site` job writes `site/releases/<tag>/index.html` from the verified `SHA256SUMS`: the tag, the commit to pin in `.buckconfig`
 (the `[external_cell_buildrules]` lines), the archive's URL and its sha256, and the commands that check them. It is uploaded as the artifact
-`release-site` of the run. Nothing deploys it: the deploy of the site stays a held step.
+`release-site` of the run. The workflow `site` (see "The site") uploads it with the rest of the site.
+
+## The site
+
+The website, buildrules.dev, is published by two workflows, apart from `release.yml` (which keeps its job order and its token scopes, and whose `ci/release_check.zig` is unchanged by them):
+
+- `.github/workflows/site.yml` runs when a `release` run finishes for a push to `main` and is green (and from the Actions tab, for `main`, with the input `claims_only`). Its `plan` job lets a commit
+  through only if it is still the tip of `main` (a superseded run says so in a notice and deploys nothing) and the environment `prod` exists. Its `build` job checks the commit out and builds
+  `//site:test //site:dist` on the runner in local mode, adds the `release-site` artifact of the triggering run when that run released, and uploads both as the artifact `site-dist`. It holds no cloud token.
+- `.github/workflows/site-publish.yml` is the reusable workflow the call makes: one job, in the environment `prod`, with `id-token: write`. It asks GitHub for a token for the audience `sts.amazonaws.com`,
+  exchanges it for the role `buildrules-prod-publish` (one hour; no third-party action), uploads the stylesheet with the hash in its name first and immutable, then the pages (pruned, but not the
+  hashed stylesheets and not `releases/`), then the page of the release (never pruned), flushes the CloudFront cache, and fetches the site back until the edge serves the bytes that were uploaded
+  (the home page, the 404 page, the `Content-Security-Policy` header and the page of the newest release).
+
+The call is `uses: ./.github/workflows/site-publish.yml`, which for a run from `main` is the file `.github/workflows/site-publish.yml@refs/heads/main` that the role trusts. The one-time setup is `infra/site/README.md`
+(steps 0 to 4, run by an administrator of the repository and of the AWS account: the environment, the zone, the stack and three variables of the environment `prod`); step 5 there is a manual run of `site` with `claims_only`, which prints the claims of the token
+(never the token) to compare with the role's `sub`. **Until the setup is done the workflows deploy nothing and fail nothing**: with no environment `prod` the plan job gives a notice, with a variable of it
+empty the publish job gives a notice, and both end green, so a release is never made red by the site. `ci/site_check.zig` (part of `//ci:workflow`) holds both files to this, to the triggers (no pull request, no push), to
+the one place the token is held, to the environment and workflow file that `infra/site/lib/config.ts` makes the role trust, to the masks, to the order of the uploads, and plants a defect for each.
 
 ## The version
 
