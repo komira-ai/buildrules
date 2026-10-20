@@ -128,4 +128,11 @@ export_file(
     visibility = ["//site:"],
 )
 
+# Read by the buildrules.dev site's tests (site/BUCK).
+export_file(
+    name = "contract.zig",
+    src = "src/contract.zig",
+    visibility = ["//site:"],
+)
+
 scrub_files()

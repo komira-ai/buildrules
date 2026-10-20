@@ -12,4 +12,10 @@ export_file(
     visibility = ["//site:"],
 )
 
+export_file(
+    name = "platforms.bzl",
+    src = "platforms.bzl",
+    visibility = ["//site:"],
+)
+
 scrub_files()
