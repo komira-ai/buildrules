@@ -21,6 +21,7 @@ one invocation each. `ci/release_check.zig` and `ci/stages_check.zig` (part of `
 | `tag` | the annotated tag at that sha, made only after the archive is verified, with the release bot's token (see "The tag ruleset"). A tag that exists at the sha is kept; one at another commit fails the job | read; the write is the bot's token, minted in this job and used by the tag step alone |
 | `site` | read-only; the page of the release (the pin snippet) as an artifact; nothing deploys it | read |
 | `publish` | needs `tag` and `verify`; checks the tag peels to the verified sha, then creates the GitHub release from the verified files | `contents: write` |
+| `bump` | needs `plan`, `tag`, `publish` and `tool`; opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge (see "The submodule bump"). Nothing waits for it | read; the write is the bot's token for the internal repository, minted in this job and used by the bump step alone |
 
 The order is `gate`, `beta`, `gamma`, `plan`, `archive`, `verify`, `tag`, `publish` (`site` after `tag` and `verify`); a job runs only if the one before
 it succeeded. **Nothing before `tag` waits for it, so a failure in the archive, its attestation or its verification leaves no tag behind**: the tag is the
@@ -98,7 +99,8 @@ mopm repository has one and the other repository planned for this stage does not
 | `GAMMA_REPOS` | the repositories to build, as `owner/name owner/name`, in order |
 | `GAMMA_TARGETS` | optional; the targets to build in each (`//...`) |
 | `FARM_TLS` | optional; `true` when the farm speaks TLS (default `false`) |
-| `RELEASE_BOT_APP_ID` | the App id of the release bot whose token the `tag` job makes the tag with (with the secret `RELEASE_BOT_PRIVATE_KEY`; see "The tag ruleset"); not the farm's, and read by `tag` alone |
+| `RELEASE_BOT_APP_ID` | the App id of the release bot whose token the `tag` job makes the tag with (with the secret `RELEASE_BOT_PRIVATE_KEY`; see "The tag ruleset"); not the farm's, and read by `tag` and `bump` |
+| `BUMP_REPOSITORY` | the name, without its owner, of the internal repository whose `buildrules` submodule the `bump` job moves to each release (see "The submodule bump"); read by `bump` alone |
 
 No endpoint or property set is written in this repository, and the farm's values are passed to steps as `${{ vars.X != '' }}` or read from the file the
 farm-connect action writes, so none is printed in a log by this repository's workflows. `FARM_ADDRESS` and `FARM_CONNECT_REF` together turn on the beta farm leg (it is skipped, with a notice, when either is empty; gamma fails instead).
@@ -210,6 +212,46 @@ missing the token step fails, `tag` is red, **no tag is made and nothing is publ
 the workflow to all of this: `tag` is the only job that mints the token, with exactly these inputs, the secret is read once and in that job, the token output is
 used by the tag step alone, `tag` holds `contents: read` and no job but `publish` may hold `contents: write`.
 
+## The submodule bump
+
+The repository owner's internal repository holds this repository as the submodule `buildrules`. The last job of a release, `bump`, moves that submodule to
+the released commit: `tool/release bump-internal` (a copy of the tool the sibling tool's release uses, with no dependency on it) opens a pull request in the
+internal repository on the branch `bump/buildrules-v<semver>` that changes **one path, the gitlink `buildrules`**, and turns auto-merge on. The internal
+repository merges it when its required checks pass, among them its bump guard. The guard admits a pull request of the release bot only when exactly one
+path changed and it is a gitlink of a submodule listed in `.gitmodules`; the branch is `bump/<submodule>-v<semver>`; the new commit descends from the old
+one; and this repository's tag `v<semver>` names the new commit. The tool refuses, before it writes anything, whatever the guard would refuse:
+
+1. the tag `v<semver>` of this repository names `--sha` (`gh api repos/<repo>/commits/<tag>`), which is why `bump` waits for `tag` and `publish`;
+2. an open or merged bump pull request for this or a **newer** version means there is nothing to open (an open one for this version without auto-merge gets
+   it); versions are compared as numbers, so `1.10.0` is newer than `1.2.3`;
+3. a branch `bump/buildrules-v<semver>` that an earlier run pushed and stopped at is reused when its gitlink is `--sha` and refused when it is another commit;
+   otherwise a shallow clone of the internal repository (no submodule initialised), the gitlink set with `git update-index --cacheinfo 160000,<sha>,buildrules`,
+   a check that the staged change is exactly one modified gitlink at that path, a check that `--sha` is **ahead of** the old gitlink (GitHub's compare), the
+   commit by the release bot, and a push of the branch that is never forced;
+4. `gh pr create`, then `gh pr merge --auto --merge`, then a check that auto-merge is on;
+5. every older open bump pull request is closed in favour of the new one.
+
+A re-run opens nothing twice. `bump` runs after `publish` and nothing waits for it, so a failed bump is a red run that un-releases nothing: fix the cause and
+re-run the failed job.
+
+The token is the release bot's installation token for the internal repository, minted by a second use of `actions/create-github-app-token` (the same
+pinned commit and the same two names as the tag token) with `repositories: ${{ vars.BUMP_REPOSITORY }}`, `permission-contents: write` and
+`permission-pull-requests: write`. The tool puts it in `GH_TOKEN` for `gh`, and gives `git` an HTTP header through `GIT_CONFIG_*` in its environment; it is
+never an argument of any process, and the tool refuses to run a command whose arguments contain it. The commit is authored and committed by the bot user
+(its login and the noreply address of its user id, both spelled in parts in `tools/release/bump.zig`).
+
+What the repository owner creates **before the next release run** (in addition to the two names of "The tag ruleset"):
+
+| name | kind | what |
+|---|---|---|
+| `BUMP_REPOSITORY` | repository variable | the name (no owner) of the internal repository; the owner is this repository's own |
+
+and the release bot App installed on the internal repository with `contents` and `pull requests` write. A first step of `bump`, `tool/release bump-check`, refuses
+an empty or malformed name **before the token is minted**: a token minted for an empty `repositories` list reaches every repository of the installation.
+`ci/release_check.zig` holds the workflow to all of this: `bump` holds `contents: read`, is under the exact `if:` of `tag` and `publish`, waits for `plan`, `tag`,
+`publish` and `tool`, and nothing waits for it; the key is read twice (`tag` and `bump`), each token is minted with exactly its inputs and used by one step;
+the repository is the owner's own plus the variable; and the arguments of the bump step are the ones the guard depends on.
+
 ## Downloads that fail
 
 Every pin is a download (sha256 and size checked), and the second beta build starts with no `buck-out`, so it downloads all of them again. Three layers keep an
@@ -219,7 +261,8 @@ upstream host that drops a request from blocking a release, and none of them can
   a failed download three times (2, 4 and 8 s). The first release failed with `Timed out while making request ... after 5 seconds` on all three. The repository and every
   repository `buildrules init` writes now set `[http] connect_timeout_ms = 30000` and `read_timeout_ms = 120000`.
 - **Retry in the stage tool.** A beta `buck2 build` that fails with buck2's `materializing HTTP resource` error AND a transport cause (a timeout, a refused or reset
-  connection, a 5xx or 429) is made again, up to 3 times, waiting 20, 40 and 80 s. A compile error, a failed test, a wrong hash, a determinism difference, or a test
+  connection, `Error sending request`, `tcp connect error`, `No route to host`, `Network is unreachable`, a 5xx or 429; matched without regard to case, as buck2 and the
+  HTTP client under it spell them differently) is made again, up to 3 times, waiting 20, 40 and 80 s. A compile error, a failed test, a wrong hash, a determinism difference, or a test
   whose own output says "timed out" is **not** retried: the pair is required. The first retry asks the same host; the second and third pass
   `-c buildrules.url_map=...` (`mirror_map` in `tools/stage/beta.zig`) so the pins come from their mirrors.
 - **Mirrors** (`docs/pins.md`, "Mirrors"): where a pin has a host that serves the identical bytes, the map names it. `pinned_file` applies `buildrules.url_map` to every

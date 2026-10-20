@@ -10,6 +10,10 @@
 //!  - the order gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish, with gate a call of ci.yml that nothing can skip, no job before
 //!    the tag waiting for it (a failure before the tag leaves no tag), a release made only when the plan released, and no status function
 //!    (`always()`, `failure()`, `cancelled()`) or `continue-on-error` that would let a job run or pass after a red one;
+//!  - `bump`, the last step (the pull request that moves the internal repository's submodule to the release): `contents: read` for its own token, the exact
+//!    `if:` of `tag` and `publish`, a wait for the plan, the tag, the publish and the tool, nothing waiting for it, the release bot's token minted for the internal
+//!    repository alone (a second mint, exact inputs, after a step that refuses an unnamed repository) and used by the bump step alone, and the arguments the
+//!    internal repository's bump guard depends on;
 //!  - the jobs that write run no buck2 and only the checkout and download actions: the tool they run was built before any token existed;
 //!  - the attestation action is in `archive` only, every checkout drops its credentials, `run:` lines are single invocations (the
 //!    install of buck2 aside), no asset is ever replaced (`--clobber`), no secret is read but the release bot's private key (once, in `tag`).
@@ -48,7 +52,10 @@ const order = [_][2][]const u8{
 };
 /// The jobs that run before the tag exists: none of them may wait for it, or a failure there could not be told from one after the tag.
 const before_tag = [_][]const u8{ "gate", "beta", "gamma", "plan", "archive", "verify" };
-const all_jobs = [_][]const u8{ "gate", "beta", "gamma", "tool", "plan", "archive", "verify", "tag", "site", "publish" };
+const all_jobs = [_][]const u8{ "gate", "beta", "gamma", "tool", "plan", "archive", "verify", "tag", "site", "publish", "bump" };
+/// What `bump` waits for: the plan (the tag it opens the pull request for), the tag and the publish (the guard of the internal repository reads the
+/// tag, and the release exists before anything points at it), and the tool. Nothing waits for `bump`.
+const bump_needs = [_][]const u8{ "plan", "tag", "publish", "tool" };
 /// What each job runs of the tool.
 const tool_runs = [_][2][]const u8{
     .{ "gamma", "tool/stage gamma-vars " },
@@ -60,6 +67,8 @@ const tool_runs = [_][2][]const u8{
     .{ "verify", "tool/release verify " },
     .{ "site", "tool/release site " },
     .{ "publish", "tool/release publish " },
+    .{ "bump", "tool/release bump-check " },
+    .{ "bump", "tool/release bump-internal " },
 };
 /// The actions a job that writes may use; `tag` also mints the release bot's token.
 const write_job_actions = [_][]const u8{ "actions/checkout", "actions/download-artifact" };
@@ -80,6 +89,36 @@ const bot_step =
     "      - name: The annotated tag of the verified commit\n"; // the next step: no input may follow the last one
 /// The tag step: the bot's token is its GH_TOKEN, here and nowhere else.
 const tag_step_env = "        env:\n          GH_TOKEN: ${{ steps.bot.outputs.token }}\n        run: tool/release tag ";
+
+/// The step of `bump` that checks the internal repository is named, before any token exists: the token is minted for the repository the variable
+/// names, and an empty `repositories` list would reach every repository the App is installed on.
+const bump_check_step = "      - name: The internal repository is named\n        run: tool/release bump-check --internal-repo \"$INTERNAL_REPO\"\n";
+/// The step of `bump` that mints the release bot's token for the internal repository alone: every input exact. The organisation is the repository's
+/// own owner, the repository a variable, the scopes contents and pull requests (a branch to push, a pull request to open and merge on).
+const bump_mint =
+    "      - name: The token of the release bot, for the internal repository alone\n" ++
+    "        id: bump_bot\n" ++
+    "        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n" ++
+    "        with:\n" ++
+    "          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n" ++
+    "          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n" ++
+    "          owner: ${{ github.repository_owner }}\n" ++
+    "          repositories: ${{ vars.BUMP_REPOSITORY }}\n" ++
+    "          permission-contents: write\n" ++
+    "          permission-pull-requests: write\n" ++
+    "      - name: The pull request that moves the submodule to this release, with auto-merge\n"; // the next step: no input may follow the last one
+/// The bump step: the internal bot's token is its GH_TOKEN, here and nowhere else.
+const bump_step_env = "        env:\n          GH_TOKEN: ${{ steps.bump_bot.outputs.token }}\n        run: tool/release bump-internal ";
+/// The arguments of the bump step that the guard of the internal repository depends on: the released repository, its tag and commit, the internal
+/// repository (the owner's own, with the variable's name), and the submodule path.
+const bump_args = [_][]const u8{
+    "--repo \"$GITHUB_REPOSITORY\"",
+    "--tag \"$TAG\"",
+    "--sha \"$GITHUB_SHA\"",
+    "--internal-repo \"$INTERNAL_REPO\"",
+    "--submodule buildrules",
+};
+const bump_internal_env = "      INTERNAL_REPO: ${{ github.repository_owner }}/${{ vars.BUMP_REPOSITORY }}\n";
 
 const Perm = struct { scope: []const u8, level: []const u8 };
 
@@ -308,8 +347,8 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             }
         }
     }
-    // `permission-contents: write` is an input of the App-token action, not a grant of the job's token: it is counted by its own rule below.
-    if (std.mem.count(u8, text, ": write") - std.mem.count(u8, text, "permission-contents: write") != writes) try add(a, &f, "a `: write` is granted outside a job's `permissions:` block", .{});
+    // `permission-contents: write` and `permission-pull-requests: write` are inputs of the App-token action, not grants of a job's token: they are counted by their own rules below.
+    if (std.mem.count(u8, text, ": write") - std.mem.count(u8, text, "permission-contents: write") - std.mem.count(u8, text, "permission-pull-requests: write") != writes) try add(a, &f, "a `: write` is granted outside a job's `permissions:` block", .{});
     if (jobNamed(jobs, "tag")) |j| {
         // The job's own token only reads; the write is the release bot's token, minted by one step with exact inputs and used by one step.
         if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read"))
@@ -324,10 +363,44 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         if (std.mem.indexOf(u8, jt, "github.token") != null or std.mem.indexOf(u8, jt, "secrets.GITHUB_TOKEN") != null) try add(a, &f, "the job `tag` uses GITHUB_TOKEN, which the ruleset refuses for a tag", .{});
         if (std.mem.count(u8, jt, "secrets.") != 1) try add(a, &f, "the job `tag` reads other than the one secret of the release bot's key", .{});
     }
-    // The token is minted in `tag` and nowhere else, once; the key and the token output appear nowhere else.
-    if (std.mem.count(u8, text, app_token_action ++ "@") != 1) try add(a, &f, "`actions/create-github-app-token` is used other than once, in `tag`", .{});
-    if (std.mem.count(u8, text, "secrets.RELEASE_BOT_PRIVATE_KEY") != 1 or std.mem.count(u8, text, "steps.bot.outputs.token") != 1 or std.mem.count(u8, text, "permission-") != 1)
-        try add(a, &f, "the release bot's key, token or permission input appears other than once, in `tag`", .{});
+    // The token is minted in `tag` (for this repository) and in `bump` (for the internal one), once each, and nowhere else; the key, the two token outputs and the
+    // permission inputs (one in `tag`, two in `bump`) appear nowhere else.
+    if (std.mem.count(u8, text, app_token_action ++ "@") != 2) try add(a, &f, "`actions/create-github-app-token` is used other than twice, in `tag` and in `bump`", .{});
+    if (std.mem.count(u8, text, "secrets.RELEASE_BOT_PRIVATE_KEY") != 2 or std.mem.count(u8, text, "steps.bot.outputs.token") != 1 or std.mem.count(u8, text, "steps.bump_bot.outputs.token") != 1 or std.mem.count(u8, text, "permission-") != 3)
+        try add(a, &f, "the release bot's key, token or permission input appears other than in `tag` and `bump`", .{});
+    if (jobNamed(jobs, "bump")) |j| {
+        // The job's own token only reads; the write is the release bot's token for the internal repository, minted by one step with exact inputs and used by one step.
+        if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read"))
+            try add(a, &f, "the job `bump` is not `contents: read` alone: it writes to the internal repository with the release bot's token, not its own", .{});
+        if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, tag_if)) try add(a, &f, "the job `bump` is not under its exact `if:` ({s})", .{tag_if});
+        for (bump_needs) |need| {
+            if (!hasNeed(j, need)) try add(a, &f, "the job `bump` does not wait for `{s}` (it opens the pull request after the tag exists and the release is published)", .{need});
+        }
+        const jb = jobBlock(text, "bump");
+        const checked = std.mem.indexOf(u8, jb, bump_check_step);
+        if (checked == null) try add(a, &f, "the job `bump` does not check, in a step of its own, that the internal repository is named (`tool/release bump-check --internal-repo \"$INTERNAL_REPO\"`)", .{});
+        const mint = std.mem.indexOf(u8, jb, bump_mint);
+        if (mint == null) try add(a, &f, "the job `bump` does not mint the release bot's token with exactly the pinned inputs of `actions/create-github-app-token` (app-id, private-key, owner, repositories from the BUMP_REPOSITORY variable, permission-contents, permission-pull-requests)", .{});
+        const use = std.mem.indexOf(u8, jb, bump_step_env);
+        if (use == null) try add(a, &f, "the step of `bump` that runs `tool/release bump-internal` does not take the bot's token as its GH_TOKEN (`steps.bump_bot.outputs.token`)", .{});
+        if (mint != null and use != null and mint.? > use.?) try add(a, &f, "the job `bump` uses the bot's token before the step that mints it", .{});
+        if (checked != null and mint != null and checked.? > mint.?) try add(a, &f, "the job `bump` mints the bot's token before it checks that the internal repository is named", .{});
+        if (std.mem.count(u8, jb, "steps.bump_bot.outputs.token") != 1) try add(a, &f, "the job `bump` uses the bot's token other than once, in the bump step", .{});
+        if (std.mem.indexOf(u8, jb, "github.token") != null or std.mem.indexOf(u8, jb, "secrets.GITHUB_TOKEN") != null) try add(a, &f, "the job `bump` uses GITHUB_TOKEN, which holds no write to the internal repository", .{});
+        if (std.mem.count(u8, jb, "secrets.") != 1) try add(a, &f, "the job `bump` reads other than the one secret of the release bot's key", .{});
+        if (std.mem.indexOf(u8, jb, bump_internal_env) == null) try add(a, &f, "the job `bump` does not name the internal repository as the owner's own and the BUMP_REPOSITORY variable (`INTERNAL_REPO: ${{{{ github.repository_owner }}}}/${{{{ vars.BUMP_REPOSITORY }}}}`)", .{});
+        if (use) |u| {
+            const end = std.mem.indexOfScalarPos(u8, jb, u + bump_step_env.len, '\n') orelse jb.len;
+            const run_line = jb[u + bump_step_env.len .. end];
+            for (bump_args) |arg| {
+                if (std.mem.indexOf(u8, run_line, arg) == null) try add(a, &f, "the bump step does not pass {s}", .{arg});
+            }
+        }
+    }
+    // Nothing waits for `bump`: a failed bump is red and un-releases nothing.
+    for (jobs) |*j| {
+        if (hasNeed(j, "bump")) try add(a, &f, "the job `{s}` waits for `bump`: nothing may, a failed bump un-releases nothing", .{j.name});
+    }
     if (jobNamed(jobs, "tag")) |j| {
         if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, tag_if)) try add(a, &f, "the job `tag` is not under its exact `if:` ({s})", .{tag_if});
         if (j.group == null or !std.mem.eql(u8, j.group.?, "release") or j.cancel == null or !std.mem.eql(u8, j.cancel.?, "false"))
@@ -436,7 +509,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     }
 
     // The jobs that write run no buck2 and use only the checkout and download actions.
-    for ([_][]const u8{ "tag", "publish" }) |name| {
+    for ([_][]const u8{ "tag", "publish", "bump" }) |name| {
         const j = jobNamed(jobs, name) orelse continue;
         for (j.lines.items) |l| {
             if (usesRepo(l)) |repo| {
@@ -444,7 +517,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
                 for (write_job_actions) |w| {
                     if (std.mem.eql(u8, repo, w)) ok = true;
                 }
-                if (std.mem.eql(u8, name, "tag") and std.mem.eql(u8, repo, app_token_action)) ok = true;
+                if ((std.mem.eql(u8, name, "tag") or std.mem.eql(u8, name, "bump")) and std.mem.eql(u8, repo, app_token_action)) ok = true;
                 if (!ok) try add(a, &f, "the job `{s}` holds a write scope and uses {s}", .{ name, repo });
             }
             if (std.mem.indexOf(u8, l, "buck2") != null and !std.mem.startsWith(u8, l, "#")) try add(a, &f, "the job `{s}` holds a write scope and runs buck2: {s}", .{ name, l });
@@ -766,6 +839,39 @@ const fixture_wf =
     \\          GH_TOKEN: ${{ github.token }}
     \\        run: tool/release publish --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --previous "$PREVIOUS" --dist dist
     \\
+    \\  bump:
+    \\    needs: [plan, tag, publish, tool]
+    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    permissions:
+    \\      contents: read
+    \\    env:
+    \\      TAG: ${{ needs.plan.outputs.tag }}
+    \\      INTERNAL_REPO: ${{ github.repository_owner }}/${{ vars.BUMP_REPOSITORY }}
+    \\    steps:
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: release-tool
+    \\          path: tool
+    \\      - run: chmod +x tool/release
+    \\      - name: The internal repository is named
+    \\        run: tool/release bump-check --internal-repo "$INTERNAL_REPO"
+    \\      - name: The token of the release bot, for the internal repository alone
+    \\        id: bump_bot
+    \\        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+    \\        with:
+    \\          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+    \\          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+    \\          owner: ${{ github.repository_owner }}
+    \\          repositories: ${{ vars.BUMP_REPOSITORY }}
+    \\          permission-contents: write
+    \\          permission-pull-requests: write
+    \\      - name: The pull request that moves the submodule to this release, with auto-merge
+    \\        env:
+    \\          GH_TOKEN: ${{ steps.bump_bot.outputs.token }}
+    \\        run: tool/release bump-internal --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --internal-repo "$INTERNAL_REPO" --submodule buildrules --workdir "$RUNNER_TEMP/bump"
+    \\
     \\  site:
     \\    needs: [plan, tag, verify, tool]
     \\    if: ${{ needs.plan.outputs.released == 'true' }}
@@ -864,7 +970,12 @@ test "the jobs are parsed as the rules read them" {
     const a = ar.allocator();
     const r = try fx(a);
     const jobs = try parseJobs(a, try body(a, r.wf));
-    try t.expectEqual(@as(usize, 10), jobs.len);
+    try t.expectEqual(@as(usize, 11), jobs.len);
+    const bp = jobNamed(jobs, "bump").?;
+    try t.expect(hasNeed(bp, "plan") and hasNeed(bp, "tag") and hasNeed(bp, "publish") and hasNeed(bp, "tool"));
+    try t.expectEqualStrings(tag_if, bp.if_expr.?);
+    try t.expectEqualStrings("read", permLevel(bp, "contents").?);
+    try t.expectEqual(@as(usize, 1), bp.perms.items.len);
     const tg = jobNamed(jobs, "tag").?;
     try t.expect(hasNeed(tg, "plan") and hasNeed(tg, "verify") and hasNeed(tg, "tool"));
     try t.expectEqualStrings(tag_if, tg.if_expr.?);
@@ -965,7 +1076,7 @@ test "rule: the tag is made with the release bot's token, minted by `tag` alone 
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "owner: ${{ github.repository_owner }}\n", "owner: other\n"), mint);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "repositories: buildrules\n", ""), mint);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "repositories: buildrules\n", "repositories: buildrules,mopm\n"), mint);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "permission-contents: write\n", "permission-contents: write\n          permission-actions: write\n"), "release bot's key, token or permission input appears other than once");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "permission-contents: write\n", "permission-contents: write\n          permission-actions: write\n"), "release bot's key, token or permission input appears other than in `tag` and `bump`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "permission-contents: write\n", "permission-contents: write\n          permission-actions: write\n"), mint);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "permission-contents: write\n", "permission-contents: read\n"), mint);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0", "v3.2.0"), mint);
@@ -978,13 +1089,92 @@ test "rule: the tag is made with the release bot's token, minted by `tag` alone 
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      TAG: ${{ needs.plan.outputs.tag }}\n", "      TAG: ${{ needs.plan.outputs.tag }}\n      GH_TOKEN: ${{ github.token }}\n"), "uses GITHUB_TOKEN");
     // the minted token reaches no other step of `tag` and no other job
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      TAG: ${{ needs.plan.outputs.tag }}\n", "      TAG: ${{ needs.plan.outputs.tag }}\n      GH_TOKEN: ${{ steps.bot.outputs.token }}\n"), "other than once");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ steps.bot.outputs.token }}"), "other than once");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ steps.bot.outputs.token }}"), "other than in `tag` and `bump`");
     // nor is the key read, or the token minted, in any other job
-    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}"), "appears other than once");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than once, in `tag`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x tool/release\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than once, in `tag`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}"), "appears other than in `tag` and `bump`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than twice, in `tag` and in `bump`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x tool/release\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than twice, in `tag` and in `bump`");
     // and publish still holds the job token's write, which creates no tag
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      contents: write\n", "      contents: read\n"), "`publish` does not hold `contents: write`");
+}
+
+test "rule: the internal repository's submodule bump runs after publish, with the release bot's token for that repository alone, and nothing waits for it" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const mint = "does not mint the release bot's token";
+    const key_token = "appears other than in `tag` and `bump`";
+    // the job's own token only reads
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      contents: read\n", "      contents: write\n"), "`bump` is not `contents: read` alone");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      contents: read\n", "      contents: write\n"), "job `bump` holds `contents: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      contents: read\n", "      contents: read\n      pull-requests: write\n"), "job `bump` holds `pull-requests: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `bump` holds `id-token: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "    permissions:\n      contents: read\n", ""), "states no `permissions:`");
+    // it runs only for a commit the plan released, on a push to main, not on a fork: the exact if of tag and publish
+    const exact = "the job `bump` is not under its exact `if:`";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", " && github.ref == 'refs/heads/main'", ""), exact);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", " && !github.event.repository.fork", ""), exact);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "needs.plan.outputs.released == 'true' && ", ""), exact);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}\n", ""), exact);
+    // it waits for the plan, the tag, the publish and the tool; and nothing waits for it
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "needs: [plan, tag, publish, tool]", "needs: [plan, tag, tool]"), "`bump` does not wait for `publish`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "needs: [plan, tag, publish, tool]", "needs: [plan, publish, tool]"), "`bump` does not wait for `tag`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "needs: [plan, tag, publish, tool]", "needs: [tag, publish, tool]"), "`bump` does not wait for `plan`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "needs: [plan, tag, publish, tool]", "needs: [plan, tag, publish]"), "`bump` does not wait for `tool`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "needs: [plan, tag, verify, tool]", "needs: [plan, tag, verify, tool, bump]"), "`site` waits for `bump`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs: [plan, tag, verify, tool]", "needs: [plan, tag, verify, tool, bump]"), "`publish` waits for `bump`");
+    // each input of the mint is exact: the repository is the variable's (an empty list would reach every repository of the installation), the scopes are the two
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "repositories: ${{ vars.BUMP_REPOSITORY }}\n", ""), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "repositories: ${{ vars.BUMP_REPOSITORY }}", "repositories: other-repo"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "repositories: ${{ vars.BUMP_REPOSITORY }}", "repositories: buildrules"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "repositories: ${{ vars.BUMP_REPOSITORY }}", "repositories: ${{ vars.BUMP_REPOSITORY }},buildrules"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "owner: ${{ github.repository_owner }}\n", ""), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "owner: ${{ github.repository_owner }}\n", "owner: other\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "app-id: ${{ vars.RELEASE_BOT_APP_ID }}", "app-id: 5395718"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "permission-pull-requests: write\n", ""), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "permission-pull-requests: write\n", "permission-pull-requests: read\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "permission-contents: write\n", "permission-contents: read\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "permission-pull-requests: write\n", "permission-pull-requests: write\n          permission-actions: write\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "permission-pull-requests: write\n", "permission-pull-requests: write\n          permission-actions: write\n"), key_token);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0", "v3.2.0"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", "private-key: ${{ secrets.OTHER_KEY }}"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", "private-key: ${{ secrets.OTHER_KEY }}"), "reads a secret");
+    // the token is the GH_TOKEN of the bump step and nothing else's
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "GH_TOKEN: ${{ steps.bump_bot.outputs.token }}", "GH_TOKEN: ${{ github.token }}"), "does not take the bot's token as its GH_TOKEN");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "GH_TOKEN: ${{ steps.bump_bot.outputs.token }}", "GH_TOKEN: ${{ github.token }}"), "uses GITHUB_TOKEN");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "GH_TOKEN: ${{ steps.bump_bot.outputs.token }}", "GH_TOKEN: ${{ steps.bot.outputs.token }}"), "does not take the bot's token as its GH_TOKEN");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      TAG: ${{ needs.plan.outputs.tag }}\n", "      TAG: ${{ needs.plan.outputs.tag }}\n      GH_TOKEN: ${{ steps.bump_bot.outputs.token }}\n"), "uses the bot's token other than once, in the bump step");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ steps.bump_bot.outputs.token }}"), key_token);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "GH_TOKEN: ${{ steps.bot.outputs.token }}", "GH_TOKEN: ${{ steps.bump_bot.outputs.token }}"), key_token);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}"), key_token);
+    // a second mint anywhere else
+    const second_mint = "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n      - run: chmod +x tool/release\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "      - run: chmod +x tool/release\n", second_mint), "used other than twice, in `tag` and in `bump`");
+    // the repository is named before a token exists, and the name is the owner's own plus the variable
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      - name: The internal repository is named\n        run: tool/release bump-check --internal-repo \"$INTERNAL_REPO\"\n", ""), "does not check, in a step of its own");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "tool/release bump-check ", "echo bump-check "), "does not check, in a step of its own");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "tool/release bump-check ", "echo bump-check "), "`bump` does not run `tool/release bump-check");
+    {
+        const moved = try mutateIn(a, r.wf, "bump", "      - name: The internal repository is named\n        run: tool/release bump-check --internal-repo \"$INTERNAL_REPO\"\n", "");
+        const after = try mutateIn(a, moved, "bump", "--submodule buildrules --workdir \"$RUNNER_TEMP/bump\"\n", "--submodule buildrules --workdir \"$RUNNER_TEMP/bump\"\n      - name: The internal repository is named\n        run: tool/release bump-check --internal-repo \"$INTERNAL_REPO\"\n");
+        try expectFinding(a, r, after, "mints the bot's token before it checks that the internal repository is named");
+    }
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "INTERNAL_REPO: ${{ github.repository_owner }}/${{ vars.BUMP_REPOSITORY }}", "INTERNAL_REPO: org/internal-repo"), "does not name the internal repository");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "INTERNAL_REPO: ${{ github.repository_owner }}/${{ vars.BUMP_REPOSITORY }}", "INTERNAL_REPO: ${{ github.repository_owner }}/${{ vars.OTHER }}"), "does not name the internal repository");
+    // the arguments the guard of the internal repository depends on
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", " --submodule buildrules", " --submodule other"), "does not pass --submodule buildrules");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "--sha \"$GITHUB_SHA\"", "--sha \"$TAG\""), "does not pass --sha \"$GITHUB_SHA\"");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "--tag \"$TAG\" ", ""), "does not pass --tag \"$TAG\"");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "--repo \"$GITHUB_REPOSITORY\" ", ""), "does not pass --repo \"$GITHUB_REPOSITORY\"");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "--internal-repo \"$INTERNAL_REPO\" --submodule", "--submodule"), "does not pass --internal-repo \"$INTERNAL_REPO\"");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "tool/release bump-internal ", "echo bump-internal "), "`bump` does not run `tool/release bump-internal");
+    // it holds a write token: no buck2 and no action but the download and the mint, single invocations
+    const buck2_run = "      - run: ./buck2 build --console simple -c buildrules_re.mode=local //tools/release:release\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      - run: chmod +x tool/release\n", buck2_run), "job `bump` holds a write scope and runs buck2");
+    const cache = "      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n        with:\n          path: x\n          key: x\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      - run: chmod +x tool/release\n", cache), "job `bump` holds a write scope and uses actions/cache");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      - run: chmod +x tool/release\n", "      - run: chmod +x tool/release && echo hi\n"), "more than one invocation");
 }
 
 test "rule: tag and publish run under their exact if" {
@@ -1044,7 +1234,7 @@ test "rule: the order gate -> beta -> gamma -> plan -> archive -> verify -> tag 
     // ci.yml must be callable
     try expectFinding(a, .{ .wf = r.wf, .ds = r.ds, .ci = "on:\n  pull_request:\n" }, r.wf, "no `workflow_call:` trigger");
     // a missing job
-    for ([_][]const u8{ "publish", "verify", "beta", "gamma", "site", "plan", "tag" }) |name| {
+    for ([_][]const u8{ "publish", "verify", "beta", "gamma", "site", "plan", "tag", "bump" }) |name| {
         const from = try std.fmt.allocPrint(a, "\n  {s}:\n", .{name});
         const to = try std.fmt.allocPrint(a, "\n  {s}_x:\n", .{name});
         const want = try std.fmt.allocPrint(a, "the job `{s}` is missing", .{name});

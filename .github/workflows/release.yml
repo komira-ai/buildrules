@@ -18,8 +18,10 @@
 #   site     the page of the release (the tag, the commit to pin in .buckconfig, the archive url and its sha256), as an artifact. Nothing deploys it.
 #   publish  creates the GitHub release from the verified files, once the tag exists and peels to the verified sha. A re-run creates no second
 #            release and replaces no asset: a file the release holds must be the same bytes or the job fails, and a missing file is added.
+#   bump     after publish: opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge,
+#            using the release bot's token for that repository alone (`contents: read` for its own token). Nothing waits for it.
 #
-# `contents: write` is held by publish only (tag writes with the bot token), each of tag and publish under the exact `if:` below; `id-token: write` by archive (the attestation), by gamma (the
+# `contents: write` is held by publish only (tag and bump write with the release bot's token, not their own), each of tag and publish under the exact `if:` below; `id-token: write` by archive (the attestation), by gamma (the
 # farm network) and by the call of beta (its farm leg), and `attestations: write` by archive only.
 # No job that writes runs buck2. ci/release_check.zig (`//ci:workflow`) holds this file to all of that, to the order
 # gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish (no job before the tag waits for it), to actions pinned by commit, and to local
@@ -292,6 +294,45 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: tool/release publish --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --previous "$PREVIOUS" --dist dist
+
+  # The last step of a release: a pull request in the internal repository that moves its `buildrules` submodule to the released commit, with
+  # auto-merge (tool/release bump-internal). It holds `contents: read` here and writes to the internal repository only through the release bot's token,
+  # minted for that repository alone and used by the bump step alone. Nothing waits for it: a failed bump is red, and un-releases nothing; a re-run
+  # opens nothing twice. The internal repository's bump guard admits the pull request: one gitlink, the branch bump/buildrules-v<semver>, a
+  # forward move, and the tag of this release naming the commit.
+  bump:
+    needs: [plan, tag, publish, tool]
+    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      INTERNAL_REPO: ${{ github.repository_owner }}/${{ vars.BUMP_REPOSITORY }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tool
+          path: tool
+      - run: chmod +x tool/release
+      # An empty BUMP_REPOSITORY would mint a token for every repository the App is installed on: refuse it before the token exists.
+      - name: The internal repository is named
+        run: tool/release bump-check --internal-repo "$INTERNAL_REPO"
+      - name: The token of the release bot, for the internal repository alone
+        id: bump_bot
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ vars.BUMP_REPOSITORY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: The pull request that moves the submodule to this release, with auto-merge
+        env:
+          GH_TOKEN: ${{ steps.bump_bot.outputs.token }}
+        run: tool/release bump-internal --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --internal-repo "$INTERNAL_REPO" --submodule buildrules --workdir "$RUNNER_TEMP/bump"
 
   site:
     needs: [plan, tag, verify, tool]
