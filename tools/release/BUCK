@@ -2,7 +2,7 @@
 # it is published, and the release. Zig, tested as a build action; `.github/workflows/release.yml` runs it with `buck2 run`, and
 # `//ci:workflow` checks that workflow.
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
-load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 
 _SRCS = [
@@ -14,6 +14,7 @@ _SRCS = [
     "cmds.zig",
     "bump.zig",
     "bump_test.zig",
+    "binaries.zig",
     "release.zig",
 ]
 
@@ -38,12 +39,29 @@ export_file(
     visibility = ["//site:"],
 )
 
+# What a release binary's file header must say for its target (an ELF of the right machine, static; a Mach-O of the right cpu). `release package` refuses a
+# binary that is not its target's, and cli/header_test.zig checks the four built binaries with it. Importers wait for its tests.
+zig_test(
+    name = "binhdr_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "binhdr.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+zig_module(
+    name = "binhdr",
+    src = "binhdr.zig",
+    unit_tests = [":binhdr_unit"],
+    visibility = ["PUBLIC"],
+)
+
 zig_test(
     name = "release_unit",
     exec_compatible_with = LINUX_X86_64,
     src = "release_test.zig",
     imports = _SRCS,
-    deps = ["//tools/scrub:scrub_lib"],
+    deps = ["//tools/scrub:scrub_lib", ":binhdr"],
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
 )
@@ -52,8 +70,8 @@ zig_exe(
     name = "release",
     exec_compatible_with = LINUX_X86_64,
     src = "release.zig",
-    imports = ["version.zig", "gz.zig", "tar.zig", "assets.zig", "page.zig", "cmds.zig", "bump.zig"],
-    deps = ["//tools/scrub:scrub_lib"],
+    imports = ["version.zig", "gz.zig", "tar.zig", "assets.zig", "page.zig", "cmds.zig", "bump.zig", "binaries.zig"],
+    deps = ["//tools/scrub:scrub_lib", ":binhdr"],
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
     unit_tests = [":release_unit", "buildrules//rules/pins:zig_next_version"],

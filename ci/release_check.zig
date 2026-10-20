@@ -16,7 +16,7 @@
 //!    internal repository's bump guard depends on;
 //!  - the jobs that write run no buck2 and only the checkout and download actions: the tool they run was built before any token existed;
 //!  - the attestation action is in `archive` only, every checkout drops its credentials, `run:` lines are single invocations (the
-//!    install of buck2 aside), no asset is ever replaced (`--clobber`), no secret is read but the release bot's private key (once, in `tag`).
+//!    install of buck2 aside), a cosign bundle is only ever named `<file>.sigstore.json` for `SHA256SUMS`, the source archive or a CLI tarball (the names `release sign` writes), no asset is ever replaced (`--clobber`), no secret is read but the release bot's private key (once, in `tag`).
 const std = @import("std");
 const wc = @import("workflow_check.zig");
 const t = std.testing;
@@ -307,10 +307,40 @@ pub fn usesRepo(line: []const u8) ?[]const u8 {
     return v[0 .. std.mem.indexOfScalar(u8, v, '@') orelse v.len];
 }
 
+/// The one spelling of a cosign bundle's name: `<file>.sigstore.json`, for `SHA256SUMS`, the source archive `buildrules-<V>.tar.gz` and the CLI tarballs
+/// `buildrules-cli-<V>-<target>.tar.gz` (what `release sign` writes, tools/release/binaries.zig). Every word of the workflow that mentions `sigstore` must
+/// be one of those shapes with the version and target left as a variable or written out, so a bundle a step uploads or verifies by another name (`.sigstore`,
+/// `.bundle`, `.sigstore.json.json`, a glob) is not one `sign` wrote.
+pub fn sigstoreName(word: []const u8) bool {
+    const suffix = ".sigstore.json";
+    if (!std.mem.endsWith(u8, word, suffix)) return false;
+    const stem = word[0 .. word.len - suffix.len];
+    if (std.mem.indexOf(u8, stem, "sigstore") != null) return false;
+    const base = if (std.mem.lastIndexOfScalar(u8, stem, '/')) |i| stem[i + 1 ..] else stem;
+    if (std.mem.eql(u8, base, "SHA256SUMS")) return true;
+    if (!std.mem.startsWith(u8, base, "buildrules-") or !std.mem.endsWith(u8, base, ".tar.gz") or std.mem.indexOfAny(u8, base, "*?[") != null) return false;
+    if (!std.mem.startsWith(u8, base, "buildrules-cli-")) return true;
+    // A CLI tarball: for a release target, or for a variable that stands for one.
+    if (std.mem.endsWith(u8, base, "}}.tar.gz")) return true;
+    for ([_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64" }) |tg| {
+        if (std.mem.endsWith(u8, base[0 .. base.len - ".tar.gz".len], tg) and base[base.len - ".tar.gz".len - tg.len - 1] == '-') return true;
+    }
+    return false;
+}
+
+fn sigstoreNames(a: std.mem.Allocator, f: *Findings, text: []const u8) !void {
+    var it = std.mem.tokenizeAny(u8, text, " \t\r\n\"'`,()=:;|<>");
+    while (it.next()) |word| {
+        if (std.mem.indexOf(u8, word, "sigstore") == null) continue;
+        if (!sigstoreName(word)) try add(a, f, "`{s}` names a cosign bundle other than `<file>.sigstore.json` of SHA256SUMS, `buildrules-<V>.tar.gz` or a `buildrules-...tar.gz` (what `release sign` writes)", .{word});
+    }
+}
+
 /// Everything wrong with `wf` (release.yml), given the dotslash file of the pinned buck2 and ci.yml.
 pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, ci_yml: []const u8) !Findings {
     var f = Findings.init(a);
     const text = try body(a, wf);
+    try sigstoreNames(a, &f, text);
 
     // Actions: every `uses:` pinned to a commit, but the call of ci.yml; a checkout drops its credentials.
     try wc.noContinueOnError(a, &f, text);
@@ -1538,4 +1568,47 @@ test "rule: no run line expands vars or github.event inline (the gamma-vars step
     // an expression in env, in `with:` or in `if:` is the safe place and is not a finding
     const ok = try mutateIn(a, r.wf, "gamma", "    timeout-minutes: 240\n", "    timeout-minutes: 240\n    if: ${{ vars.X == '' }}\n");
     for ((try checkRelease(a, ok, r.ds, r.ci)).items) |m| try t.expect(std.mem.indexOf(u8, m, "inline") == null);
+}
+
+test "rule: a cosign bundle is named <file>.sigstore.json, for the files release sign writes and no other spelling" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const step = "      - name: Upload {s}\n        run: chmod +x tool/release\n";
+    // The names `release sign` writes are accepted, written out or with the version and target as variables.
+    for ([_][]const u8{
+        "SHA256SUMS.sigstore.json",
+        "dist/SHA256SUMS.sigstore.json",
+        "dist/buildrules-0.0.7.tar.gz.sigstore.json",
+        "dist/buildrules-cli-0.0.7-linux-x86_64.tar.gz.sigstore.json",
+        "dist/buildrules-cli-0.0.7-linux-aarch64.tar.gz.sigstore.json",
+        "dist/buildrules-cli-0.0.7-macos-arm64.tar.gz.sigstore.json",
+        "dist/buildrules-cli-0.0.7-macos-x86_64.tar.gz.sigstore.json",
+        "dist/buildrules-cli-${{needs.plan.outputs.version}}-${{matrix.target}}.tar.gz.sigstore.json",
+    }) |good| {
+        const wf = try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", try std.fmt.allocPrint(a, step, .{good}));
+        const f = try checkRelease(a, wf, r.ds, r.ci);
+        for (f.items) |m| std.debug.print("finding: {s}\n", .{m});
+        try t.expectEqual(@as(usize, 0), f.items.len);
+    }
+    // Any other spelling is a finding (each a mutant of a defect B3 could ship: a name that `sign` never wrote).
+    for ([_][]const u8{
+        "SHA256SUMS.sigstore",
+        "SHA256SUMS.bundle.sigstore.json",
+        "SHA256SUMS.sigstore.json.json",
+        "SHA256SUMS-sigstore.json",
+        "SHA256SUMS.sigstore.jsn",
+        "sha256sums.sigstore.json",
+        "dist/*.sigstore.json",
+        "dist/buildrules-0.0.7.tgz.sigstore.json",
+        "dist/buildrules-0.0.7.tar.gz.sigstore",
+        "dist/buildrules-cli-0.0.7-linux-x86.tar.gz.sigstore.json",
+        "dist/buildrules-cli-0.0.7-windows-x86_64.tar.gz.sigstore.json",
+        "dist/cli-0.0.7-linux-x86_64.tar.gz.sigstore.json",
+    }) |bad| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", try std.fmt.allocPrint(a, step, .{bad})), "names a cosign bundle other than");
+    }
+    // The same in a job that does not write.
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x tool/release\n", try std.fmt.allocPrint(a, step, .{"dist/SHA256SUMS.sig.sigstore.jsn"})), "names a cosign bundle other than");
 }

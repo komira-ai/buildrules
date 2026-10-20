@@ -1,6 +1,6 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # The buildrules command line, in Zig, built by the pinned zig behind its unit tests.
-load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_module", "zig_test")
 load(":version.bzl", "cli_version")
 
 # The CLI is Zig 0.15 code (std.Io, ArrayList.empty): it builds with the pinned zig_next, as kpin does.
@@ -71,6 +71,50 @@ export_file(
     src = "src/main.zig",
     visibility = ["//site:"],
 )
+
+# The binaries of a release (RELEASING.md): the same program built for the four release targets. Each is a zig_exe of the same source and tests; only `target`
+# differs. They are built on the linux execution platform (zig cross-compiles a program that needs no SDK). An asset is named for the release target
+# (`linux-x86_64`...); the zig triple of each is written out twice on purpose: here, and again as the `expect` of its zig_exe_target_test below, so a
+# change to one alone is red.
+_CROSS = {
+    "linux-x86_64": "x86_64-linux-musl",
+    "linux-aarch64": "aarch64-linux-musl",
+    "macos-arm64": "aarch64-macos",
+    "macos-x86_64": "x86_64-macos",
+}
+
+[
+    zig_exe(
+        name = "buildrules_" + name.replace("-", "_"),
+        src = "src/main.zig",
+        imports = _SRCS,
+        deps = [":buildrules_version"],
+        zig = _ZIG,
+        target = triple,
+        unit_tests = [":" + test + "_unit" for test in _TESTS] + [":version_unit"],
+        visibility = ["PUBLIC"],
+    )
+    for name, triple in _CROSS.items()
+]
+
+zig_exe_target_test(name = "linux_x86_64_is_x86_64_linux_musl", exe = ":buildrules_linux_x86_64", expect = "x86_64-linux-musl", same_tests_as = ":buildrules", visibility = ["PUBLIC"])
+
+zig_exe_target_test(name = "linux_aarch64_is_aarch64_linux_musl", exe = ":buildrules_linux_aarch64", expect = "aarch64-linux-musl", same_tests_as = ":buildrules", visibility = ["PUBLIC"])
+
+zig_exe_target_test(name = "macos_arm64_is_aarch64_macos", exe = ":buildrules_macos_arm64", expect = "aarch64-macos", same_tests_as = ":buildrules", visibility = ["PUBLIC"])
+
+zig_exe_target_test(name = "macos_x86_64_is_x86_64_macos", exe = ":buildrules_macos_x86_64", expect = "x86_64-macos", same_tests_as = ":buildrules", visibility = ["PUBLIC"])
+
+# The bytes of the four: ELF machine or Mach-O cputype, from the files (header_test.zig).
+zig_test(
+    name = "header_unit",
+    src = "header_test.zig",
+    deps = ["//tools/release:binhdr"],
+    data = {name: ":buildrules_" + name.replace("-", "_") for name in _CROSS},
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
 
 # Read by the buildrules.dev site's tests (site/BUCK), which check the CLI page against its flags.
 export_file(
