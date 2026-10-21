@@ -1,0 +1,216 @@
+//! The API helpers `autopin` leans on: the shapes a name must have, the raw read at a commit, the package.json guard,
+//! and the `workflow_run` event. Every test is named for the defect it catches.
+
+const std = @import("std");
+const api_mod = @import("autopin_api.zig");
+const event_mod = @import("autopin_event.zig");
+const fx = @import("autopin_fixture_test.zig");
+const gh = @import("autopin_gh.zig");
+const t = std.testing;
+
+fn arena() std.heap.ArenaAllocator {
+    return std.heap.ArenaAllocator.init(t.allocator);
+}
+
+test "shapes: sha1, repository, branch names" {
+    try t.expect(gh.isSha1("0123456789abcdef0123456789abcdef01234567"));
+    try t.expect(!gh.isSha1("0123456789ABCDEF0123456789abcdef01234567"));
+    try t.expect(!gh.isSha1("abc"));
+    try t.expect(gh.isRepo("acme/widgets"));
+    try t.expect(gh.isRepo("a.b/c_d-e"));
+    try t.expect(!gh.isRepo("noslash"));
+    try t.expect(!gh.isRepo("a/b/c"));
+    try t.expect(!gh.isRepo("a b/c"));
+    try t.expect(!gh.isRepo("/c"));
+    try t.expect(!gh.isRepo("a/"));
+    try t.expect(gh.isBranchName("main"));
+    try t.expect(gh.isBranchName("release/1.2"));
+    try t.expect(!gh.isBranchName(""));
+    try t.expect(!gh.isBranchName("a..b"));
+    try t.expect(!gh.isBranchName("a//b"));
+    try t.expect(!gh.isBranchName("a b"));
+}
+
+test "dependabot branches: the prefix and the segments, nothing that climbs or ends oddly" {
+    try t.expect(gh.isDependabotBranch("dependabot/npm_and_yarn/site/left-pad-1.3.1"));
+    try t.expect(gh.isDependabotBranch("dependabot/npm_and_yarn/@scope/pkg-2.0.0"));
+    try t.expect(!gh.isDependabotBranch("main"));
+    try t.expect(!gh.isDependabotBranch("dependabot/cargo/x"));
+    try t.expect(!gh.isDependabotBranch("dependabot/npm_and_yarn/"));
+    try t.expect(!gh.isDependabotBranch("dependabot/npm_and_yarn/a/../b"));
+    try t.expect(!gh.isDependabotBranch("dependabot/npm_and_yarn/a//b"));
+    try t.expect(!gh.isDependabotBranch("dependabot/npm_and_yarn/a/"));
+    try t.expect(!gh.isDependabotBranch("dependabot/npm_and_yarn/a."));
+    try t.expect(!gh.isDependabotBranch("dependabot/npm_and_yarn/a b"));
+    try t.expect(!gh.isDependabotBranch("dependabot/npm_and_yarn/a;b"));
+}
+
+test "the git blob id of bytes is sha1 of the header and the bytes" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expectEqualStrings("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391", try gh.blobSha1(a, ""));
+    try t.expectEqualStrings("ce013625030ba8dba906f756967f9e9ca394464a", try gh.blobSha1(a, "hello\n"));
+}
+
+test "oneLine: control bytes, newlines above all, become question marks" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expectEqualStrings("a?::b?c?d", try gh.oneLine(a, "a\n::b\rc\x7fd"));
+    try t.expectEqualStrings("plain/path.txt", try gh.oneLine(a, "plain/path.txt"));
+}
+
+fn same(base: []const u8, head: []const u8) !bool {
+    var ar = arena();
+    defer ar.deinit();
+    return gh.sameOutsideDependencies(ar.allocator(), base, head);
+}
+
+test "package.json guard: only the dependency maps may differ" {
+    try t.expect(try same("{\"name\":\"a\",\"dependencies\":{\"x\":\"1\"}}", "{\"name\":\"a\",\"dependencies\":{\"x\":\"2\"}}"));
+    try t.expect(try same("{\"name\":\"a\"}", "{\"name\":\"a\",\"devDependencies\":{\"x\":\"2\"},\"optionalDependencies\":{}}"));
+    try t.expect(try same("{\"name\":\"a\",\"scripts\":{\"t\":\"x\"},\"dependencies\":{}}", "{\"dependencies\":{\"y\":\"1\"},\"scripts\":{\"t\":\"x\"},\"name\":\"a\"}"));
+    try t.expect(!try same("{\"name\":\"a\",\"scripts\":{\"t\":\"x\"}}", "{\"name\":\"a\",\"scripts\":{\"t\":\"y\"}}"));
+    try t.expect(!try same("{\"name\":\"a\",\"scripts\":{\"t\":\"x\"}}", "{\"name\":\"a\",\"scripts\":{\"t\":\"x\",\"u\":\"z\"}}"));
+    try t.expect(!try same("{\"name\":\"a\"}", "{\"name\":\"b\"}"));
+    try t.expect(!try same("{\"name\":\"a\",\"version\":\"1\"}", "{\"name\":\"a\"}"));
+    try t.expect(!try same("{\"name\":\"a\"}", "{\"name\":\"a\",\"buildrules\":{}}"));
+    try t.expect(!try same("{\"name\":\"a\",\"files\":[\"x\"]}", "{\"name\":\"a\",\"files\":[\"y\"]}"));
+    try t.expect(!try same("{\"n\":1}", "{\"n\":2}"));
+    try t.expect(!try same("{\"n\":1.5}", "{\"n\":1.25}"));
+    try t.expect(!try same("{\"n\":true}", "{\"n\":false}"));
+    try t.expect(try same("{\"n\":null,\"b\":true,\"f\":1.5,\"i\":3,\"a\":[1,\"x\"]}", "{\"n\":null,\"b\":true,\"f\":1.5,\"i\":3,\"a\":[1,\"x\"]}"));
+    try t.expect(!try same("{\"n\":[1,2]}", "{\"n\":[1]}"));
+    try t.expect(!try same("{\"n\":{\"a\":1}}", "{\"n\":{\"b\":1}}"));
+    try t.expect(!try same("{\"n\":1}", "{\"n\":\"1\"}"));
+    try t.expect(!try same("not json", "{}"));
+    try t.expect(!try same("{}", "[]"));
+}
+
+const key = "repos/o/r/contents/f.txt?ref=" ++ "1" ** 40;
+
+test "readFile: the bytes are believed only when length and blob hash agree with the metadata" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var f = fx.Fake{ .a = a };
+    const bytes = "hello\n";
+    f.putAccept(.GET, key, api_mod.json_accept, 200, "{\"type\":\"file\",\"sha\":\"ce013625030ba8dba906f756967f9e9ca394464a\",\"size\":6,\"content\":\"\"}");
+    f.putAccept(.GET, key, api_mod.raw_accept, 200, bytes);
+    const got = (try gh.readFile(a, f.api(), "o/r", "f.txt", "1" ** 40)).?;
+    try t.expectEqualStrings(bytes, got.bytes);
+    // The raw request carried the raw media type, and the JSON request did not.
+    try t.expectEqualStrings(api_mod.json_accept, f.log.items[0].accept);
+    try t.expectEqualStrings(api_mod.raw_accept, f.log.items[1].accept);
+}
+
+test "readFile: a 404 is no file, other statuses are errors" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var f = fx.Fake{ .a = a };
+    f.putAccept(.GET, key, api_mod.json_accept, 404, "{}");
+    try t.expect((try gh.readFile(a, f.api(), "o/r", "f.txt", "1" ** 40)) == null);
+    f.putAccept(.GET, key, api_mod.json_accept, 500, "{}");
+    try t.expectError(error.Unreadable, gh.readFile(a, f.api(), "o/r", "f.txt", "1" ** 40));
+    f.putAccept(.GET, key, api_mod.json_accept, 200, "");
+    try t.expectError(error.Unreadable, gh.readFile(a, f.api(), "o/r", "f.txt", "1" ** 40));
+}
+
+test "readFile: metadata that is malformed is refused (no sha, a bad sha, no size, a size over the cap, not JSON)" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var f = fx.Fake{ .a = a };
+    f.putAccept(.GET, key, api_mod.raw_accept, 200, "hello\n");
+    const bad = [_][]const u8{
+        "{\"type\":\"file\",\"size\":6}",
+        "{\"type\":\"file\",\"sha\":\"zz\",\"size\":6}",
+        "{\"type\":\"file\",\"sha\":\"ce013625030ba8dba906f756967f9e9ca394464a\"}",
+        "{\"type\":\"file\",\"sha\":\"ce013625030ba8dba906f756967f9e9ca394464a\",\"size\":99999999}",
+        "{\"type\":\"file\",\"sha\":\"ce013625030ba8dba906f756967f9e9ca394464a\",\"size\":-1}",
+    };
+    for (bad) |b| {
+        f.putAccept(.GET, key, api_mod.json_accept, 200, b);
+        try t.expectError(error.BadJson, gh.readFile(a, f.api(), "o/r", "f.txt", "1" ** 40));
+    }
+    f.putAccept(.GET, key, api_mod.json_accept, 200, "<html>");
+    try t.expectError(error.BadJson, gh.readFile(a, f.api(), "o/r", "f.txt", "1" ** 40));
+}
+
+test "readFile: a directory or a symlink is not a file; a raw answer that is not 200 is an error" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var f = fx.Fake{ .a = a };
+    f.putAccept(.GET, key, api_mod.json_accept, 200, "{\"type\":\"dir\"}");
+    try t.expectError(error.NotAFile, gh.readFile(a, f.api(), "o/r", "f.txt", "1" ** 40));
+    f.putAccept(.GET, key, api_mod.json_accept, 200, "{\"type\":\"file\",\"sha\":\"ce013625030ba8dba906f756967f9e9ca394464a\",\"size\":6}");
+    f.putAccept(.GET, key, api_mod.raw_accept, 502, "");
+    try t.expectError(error.Unreadable, gh.readFile(a, f.api(), "o/r", "f.txt", "1" ** 40));
+}
+
+fn ev(a: std.mem.Allocator, from: []const u8, to: []const u8) ![]u8 {
+    const good = try fx.eventJson(a, 3, fx.head);
+    if (from.len == 0) return good;
+    try t.expect(std.mem.indexOf(u8, good, from) != null);
+    return std.mem.replaceOwned(u8, a, good, from, to);
+}
+
+fn refusedWith(text: []const u8, why: []const u8) !void {
+    var ar = arena();
+    defer ar.deinit();
+    var reason: ?[]const u8 = null;
+    try t.expectError(error.Refused, event_mod.parse(ar.allocator(), text, &reason));
+    try t.expect(std.mem.indexOf(u8, reason.?, why) != null);
+}
+
+test "event: the compute run's own event is read, with its attempt and the pull requests it belongs to" {
+    var ar = arena();
+    defer ar.deinit();
+    var why: ?[]const u8 = null;
+    const e = try event_mod.parse(ar.allocator(), try ev(ar.allocator(), "", ""), &why);
+    try t.expectEqualStrings(fx.repo, e.repo);
+    try t.expectEqual(@as(i64, 42), e.repo_id);
+    try t.expectEqual(@as(i64, 1001), e.run_id);
+    try t.expectEqual(@as(i64, 3), e.run_attempt);
+    try t.expectEqualStrings(fx.head, e.head_sha);
+    try t.expectEqual(@as(usize, 1), e.pull_requests.len);
+    try t.expectEqual(@as(i64, 7), e.pull_requests[0]);
+}
+
+test "event: a run that did not succeed, was not a pull_request, or is of another workflow file is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try refusedWith(try ev(a, "\"conclusion\":\"success\"", "\"conclusion\":\"cancelled\""), "did not succeed");
+    try refusedWith(try ev(a, "\"event\":\"pull_request\"", "\"event\":\"pull_request_target\""), "pull_request event");
+    try refusedWith(try ev(a, ".github/workflows/autopin-compute.yml", ".github/workflows/autopin-compute.yml.evil"), "compute workflow file");
+}
+
+test "event: a run of a fork, or by someone other than Dependabot, is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try refusedWith(try ev(a, "\"head_repository\":{\"id\":42", "\"head_repository\":{\"id\":43"), "fork");
+    try refusedWith(try ev(a, "\"full_name\":\"acme/demo\"},\"actor\"", "\"full_name\":\"mallory/demo\"},\"actor\""), "fork");
+    try refusedWith(try ev(a, "\"actor\":{\"login\":\"dependabot[bot]\"}", "\"actor\":{\"login\":\"dependabot-preview[bot]\"}"), "actor is not Dependabot");
+    try refusedWith(try ev(a, "\"triggering_actor\":{\"login\":\"dependabot[bot]\"}", "\"triggering_actor\":{\"login\":\"alice\"}"), "triggering actor");
+}
+
+test "event: missing or malformed fields are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try refusedWith("not json", "not JSON");
+    try refusedWith("{}", "no workflow_run");
+    try refusedWith(try ev(a, "\"run_attempt\":3", "\"run_attempt\":0"), "malformed");
+    try refusedWith(try ev(a, "\"id\":1001", "\"id\":-5"), "malformed");
+    try refusedWith(try ev(a, fx.head, "short"), "malformed");
+    try refusedWith(try ev(a, "\"pull_requests\":[{\"number\":7}]", "\"pull_requests\":{}"), "not a list");
+    try refusedWith(try ev(a, "\"pull_requests\":[{\"number\":7}]", "\"pull_requests\":[{}]"), "no number");
+    try refusedWith(try ev(a, "\"repository\":{\"full_name\":\"acme/demo\",\"id\":42}", "\"repository\":{\"id\":42}"), "no repository");
+    try refusedWith(try ev(a, "\"repository\":{\"full_name\":\"acme/demo\",\"id\":42}", "\"repository\":{\"full_name\":\"acme/demo\"}"), "repository id");
+    try refusedWith(try ev(a, "\"repository\":{\"full_name\":\"acme/demo\",\"id\":42}", "\"repository\":{\"full_name\":\"a b\",\"id\":42}"), "plain owner/name");
+}

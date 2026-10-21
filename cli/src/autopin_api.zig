@@ -96,6 +96,9 @@ pub fn download(a: std.mem.Allocator, api: Api, path: []const u8, max_bytes: usi
 pub const Http = struct {
     allocator: std.mem.Allocator,
     token: []const u8,
+    base_url: []const u8 = "https://api.github.com",
+    /// Tests only: allow http to 127.0.0.1.
+    allow_http_loopback: bool = false,
 
     pub fn api(self: *Http) Api {
         return .{ .ctx = self, .sendFn = send };
@@ -103,8 +106,8 @@ pub const Http = struct {
 
     fn send(ctx: *anyopaque, a: std.mem.Allocator, req: Request) anyerror!Response {
         const self: *Http = @ptrCast(@alignCast(ctx));
-        const url = if (req.url) |u| u else try std.fmt.allocPrint(a, "https://api.github.com/{s}", .{req.path});
-        if (!fetch.urlAllowed(url, false)) return error.UrlNotAllowed;
+        const url = if (req.url) |u| u else try std.fmt.allocPrint(a, "{s}/{s}", .{ self.base_url, req.path });
+        if (!fetch.urlAllowed(url, self.allow_http_loopback)) return error.UrlNotAllowed;
         var client = std.http.Client{ .allocator = a, .read_buffer_size = 16 * 1024 };
         defer client.deinit();
         const uri = try std.Uri.parse(url);
@@ -139,7 +142,8 @@ pub const Http = struct {
         }
         var transfer: [64]u8 = undefined;
         const body_reader = response.reader(&transfer);
-        const body = body_reader.allocRemaining(a, .limited(req.max_body)) catch |e| switch (e) {
+        // One byte more than the cap: the reader reports "too long" when it reaches its limit, even at the end of the body.
+        const body = body_reader.allocRemaining(a, .limited(req.max_body + 1)) catch |e| switch (e) {
             error.StreamTooLong => return error.ResponseTooLarge,
             error.OutOfMemory => return error.OutOfMemory,
             else => return response.bodyErr() orelse error.ReadFailed,

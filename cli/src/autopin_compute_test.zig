@@ -436,3 +436,17 @@ test "compute: a pins.lock.bzl with no NPM block is refused" {
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "no NPM block"));
 }
+
+test "compute: a path with a newline in it is printed on one line, so no line of output can start a workflow command" {
+    reset();
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    try syncedBuildrules(h, "site", &two_pkgs);
+    try event(h);
+    try h.put("site/package-lock.json", try lockJson(h.a(), &two_pkgs, ",\"node_modules/x\\n::error::boom\":{\"version\":\"1.0.0\"}"));
+    const r = runCompute(h, "artifact", &.{"site=buildrules-lock"});
+    try t.expectEqual(@as(u8, 1), r.code);
+    var lines = std.mem.splitScalar(u8, r.err, '\n');
+    while (lines.next()) |l| try t.expect(!std.mem.startsWith(u8, l, "::"));
+    try t.expect(kit.contains(r.err, "x?::error::boom"));
+}

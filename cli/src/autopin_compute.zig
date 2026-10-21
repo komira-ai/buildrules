@@ -8,6 +8,7 @@
 const std = @import("std");
 const ctxm = @import("ctx.zig");
 const fetch = @import("fetch.zig");
+const gh = @import("autopin_gh.zig");
 const lock_mod = @import("autopin_lock.zig");
 const manifest_mod = @import("autopin_manifest.zig");
 const npm_cmd = @import("npm_cmd.zig");
@@ -163,7 +164,7 @@ fn compute(root: *Ctx, o: Opts) !u8 {
             sd.add("{s}", .{@errorName(e)});
             break :blk null;
         };
-        for (sd.msgs.items) |m| _ = root.fail("{s}: {s}", .{ set.dir, m });
+        for (sd.msgs.items) |m| _ = root.fail("{s}: {s}", .{ set.dir, try gh.oneLine(a, m) });
         if (sd.lost > 0) _ = root.fail("{s}: {s}", .{ set.dir, Diag.lost_text });
         if (sd.count() > 0) {
             bad += 1;
