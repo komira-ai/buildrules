@@ -390,6 +390,7 @@ test "bind: a row whose name or version differs from the entry's is refused" {
     const p = try entriesAndRows(a, .pins_lock, "");
     const rows = try a.dupe(table.Row, p.rows);
     rows[1].name = "left-padx";
+    rows[1].url = reg ++ "left-padx/-/left-padx-1.3.0.tgz"; // consistent with the new name, so only the name check can refuse it
     try expectBound(a, p.entries, rows, .pins_lock, "left-pad@1.3.0");
 }
 
