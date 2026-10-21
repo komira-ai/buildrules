@@ -582,6 +582,8 @@ const OneShot = struct {
     }
 
     fn finish(self: *OneShot) void {
+        // A server nobody connected to is still in accept: one connection of our own lets it end.
+        if (std.net.tcpConnectToAddress(self.server.listen_address)) |s| s.close() else |_| {}
         self.thread.join();
         self.server.deinit();
     }
@@ -603,8 +605,12 @@ test "download: the real function reads a tarball into its digests, refuses an e
     const url2 = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}/x.tgz", .{missing.port});
     try t.expect(std.meta.isError(compute.fetchWith(a, url2, true)));
     missing.finish();
-    // The production function allows no plain http at all, not even to the loopback.
-    try t.expect(std.meta.isError(compute.httpFetch(a, "http://127.0.0.1:9/x.tgz")));
+    // The production function allows no plain http at all, not even to a loopback server that would answer.
+    var plain = OneShot{ .response = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\nhello" };
+    try plain.start();
+    const url3 = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}/x.tgz", .{plain.port});
+    try t.expect(std.meta.isError(compute.httpFetch(a, url3)));
+    plain.finish();
 }
 
 test "compute: an --out that is a file, not a directory, is an error and writes nothing" {
