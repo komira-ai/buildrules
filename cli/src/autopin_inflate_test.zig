@@ -17,6 +17,19 @@ fn arena() std.heap.ArenaAllocator {
     return std.heap.ArenaAllocator.init(t.allocator);
 }
 
+/// Like `expectError`, but a stream that unexpectedly inflates is reported by its length, not printed.
+fn failsWith(expected: anyerror, actual: anyerror![]u8) !void {
+    if (actual) |got| {
+        std.debug.print("expected {s}, inflated {d} bytes\n", .{ @errorName(expected), got.len });
+        return error.TestUnexpectedResult;
+    } else |e| {
+        if (e != expected) {
+            std.debug.print("expected {s}, found {s}\n", .{ @errorName(expected), @errorName(e) });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
 /// A fixed-Huffman stream: the byte 'a', then `count` matches of 258 bytes at distance 1.
 fn runOfA(a: std.mem.Allocator, count: usize) ![]u8 {
     var out = std.ArrayList(u8).empty;
@@ -78,8 +91,8 @@ test "the limit holds to the byte: a stored block" {
     defer ar.deinit();
     const a = ar.allocator();
     try t.expectEqual(@as(usize, 12), (try inflate.inflate(a, &stored_hello, 12)).len);
-    try t.expectError(error.TooLong, inflate.inflate(a, &stored_hello, 11));
-    try t.expectError(error.TooLong, inflate.inflate(a, &stored_hello, 0));
+    try failsWith(error.TooLong, inflate.inflate(a, &stored_hello, 11));
+    try failsWith(error.TooLong, inflate.inflate(a, &stored_hello, 0));
 }
 
 test "the limit holds to the byte: the literals of a fixed block" {
@@ -87,8 +100,8 @@ test "the limit holds to the byte: the literals of a fixed block" {
     defer ar.deinit();
     const a = ar.allocator();
     try t.expectEqual(@as(usize, 12), (try inflate.inflate(a, &fixed_hello, 12)).len);
-    try t.expectError(error.TooLong, inflate.inflate(a, &fixed_hello, 11));
-    try t.expectError(error.TooLong, inflate.inflate(a, &fixed_hello, 0));
+    try failsWith(error.TooLong, inflate.inflate(a, &fixed_hello, 11));
+    try failsWith(error.TooLong, inflate.inflate(a, &fixed_hello, 0));
 }
 
 test "the limit holds to the byte: a dynamic block" {
@@ -96,7 +109,7 @@ test "the limit holds to the byte: a dynamic block" {
     defer ar.deinit();
     const a = ar.allocator();
     try t.expectEqual(@as(usize, 19), (try inflate.inflate(a, &dynamic_abc, 19)).len);
-    try t.expectError(error.TooLong, inflate.inflate(a, &dynamic_abc, 18));
+    try failsWith(error.TooLong, inflate.inflate(a, &dynamic_abc, 18));
 }
 
 test "the limit holds to the byte: a match that would run past it by one byte is refused before any of it is written" {
@@ -105,8 +118,8 @@ test "the limit holds to the byte: a match that would run past it by one byte is
     const a = ar.allocator();
     const run = try runOfA(a, 3);
     try t.expectEqual(@as(usize, 775), (try inflate.inflate(a, run, 775)).len);
-    try t.expectError(error.TooLong, inflate.inflate(a, run, 774));
-    try t.expectError(error.TooLong, inflate.inflate(a, run, 100));
+    try failsWith(error.TooLong, inflate.inflate(a, run, 774));
+    try failsWith(error.TooLong, inflate.inflate(a, run, 100));
 }
 
 test "huffman: an over-subscribed code is refused, a complete or an incomplete one is accepted" {
@@ -124,8 +137,8 @@ test "a bomb is cut off at the limit however small the stream is" {
     const a = ar.allocator();
     const bomb = try runOfA(a, 20000);
     try t.expect(bomb.len < 40000);
-    try t.expectError(error.TooLong, inflate.inflate(a, bomb, 100));
-    try t.expectError(error.TooLong, inflate.inflate(a, bomb, 1 << 20));
+    try failsWith(error.TooLong, inflate.inflate(a, bomb, 100));
+    try failsWith(error.TooLong, inflate.inflate(a, bomb, 1 << 20));
     try t.expectEqual(@as(usize, 1 + 258 * 20000), (try inflate.inflate(a, bomb, 1 + 258 * 20000)).len);
 }
 
@@ -136,7 +149,7 @@ test "every proper prefix of a stream is refused" {
     const streams = [_][]const u8{ &stored_hello, &fixed_hello, &dynamic_abc };
     for (streams) |s| {
         var n: usize = 0;
-        while (n < s.len) : (n += 1) try t.expectError(error.Invalid, inflate.inflate(a, s[0..n], 1000));
+        while (n < s.len) : (n += 1) try failsWith(error.Invalid, inflate.inflate(a, s[0..n], 1000));
     }
 }
 
@@ -147,7 +160,7 @@ test "bytes after the last block are refused" {
     const streams = [_][]const u8{ &stored_hello, &fixed_hello, &dynamic_abc };
     for (streams) |s| {
         const longer = try std.mem.concat(a, u8, &.{ s, "x" });
-        try t.expectError(error.TrailingData, inflate.inflate(a, longer, 1000));
+        try failsWith(error.TrailingData, inflate.inflate(a, longer, 1000));
     }
 }
 
@@ -157,13 +170,13 @@ test "a stored block whose length is not the complement of its check is refused"
     const a = ar.allocator();
     var bad = stored_hello;
     bad[3] = 0xf4;
-    try t.expectError(error.Invalid, inflate.inflate(a, &bad, 1000));
+    try failsWith(error.Invalid, inflate.inflate(a, &bad, 1000));
 }
 
 test "block type 3 is refused" {
     var ar = arena();
     defer ar.deinit();
-    try t.expectError(error.Invalid, inflate.inflate(ar.allocator(), &.{0b0000_0111}, 1000));
+    try failsWith(error.Invalid, inflate.inflate(ar.allocator(), &.{0b0000_0111}, 1000));
 }
 
 test "a distance before the start of the output is refused" {
@@ -172,7 +185,7 @@ test "a distance before the start of the output is refused" {
     // BFINAL, fixed; length code 257 (7 bits 0000001); distance code 0 (5 bits 00000); end of block.
     // Bits, low first: 1,1,0 | 0,0,0,0,0,0,1 | 0,0,0,0,0 | 0,0,0,0,0,0,0
     const bad = [_]u8{ 0b0000_0011, 0b0000_0010, 0b0000_0000, 0b0000_0000 };
-    try t.expectError(error.Invalid, inflate.inflate(ar.allocator(), &bad, 1000));
+    try failsWith(error.Invalid, inflate.inflate(ar.allocator(), &bad, 1000));
 }
 
 test "no single changed byte or bit of a dynamic stream crashes the decoder (every result is bytes or an error)" {
