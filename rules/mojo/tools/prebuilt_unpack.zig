@@ -1,17 +1,28 @@
-//! prebuilt_unpack: the `.mojoc` of a registry package, out of its `.conda`.
+//! prebuilt_unpack: the `.mojoc` of a registry package, and its static native libraries, out of its `.conda`.
 //!
-//! usage: prebuilt_unpack <package.conda> <name> <out.mojoc>
+//! usage: prebuilt_unpack <package.conda> <name> <out.mojoc> [--natives <out-dir> [--native <soname>=<sha256>]...]
 //!
 //! A registry package is a `.conda` holding `lib/mojo/<name>.mojoc` (and `lib/mojo/<name>.mopm.json`), written by
 //! `mopm pack` (spec/package-metadata.schema.json). The zip walk and the zstd/tar reading are those of
 //! conda_unpack.zig (the compiler closure's unpacker), which cannot be used here: it insists on the compiler's
-//! members and on `info/paths.json`, which a mopm package does not carry. Nothing but the one member is written.
-//! The file's sha256 was checked when it was downloaded (pinned_file), so only its shape is checked here: a regular
-//! file that is not empty.
+//! members and on `info/paths.json`, which a mopm package does not carry. Only the named members are written.
+//! The `.conda`'s own sha256 was checked when it was downloaded (pinned_file), so for the `.mojoc` only its shape is
+//! checked here: a regular file that is not empty.
+//!
+//! A static native library is the member `lib/<soname>` of the same file (`lib/lib<stem>.a`, F3 of the natives design: one
+//! `.conda` per subdir). Each `--native` is one the package's lock entry pins (`soname`, `sha256`, from mopm's unit graph),
+//! and the member's bytes are hashed against that value: nothing in the `.conda` itself is a trust anchor, since the archive
+//! is opaque code that is linked into the consumer's program. A soname that is not `lib<stem>.a`, a member that is missing,
+//! duplicated, empty, not a regular file (a symlink, a hard link, a directory) or too large, and a hash that differs are all
+//! refused, and when any one is, nothing at all is written (the `.mojoc` included). The natives are written flat, by
+//! soname, into `<out-dir>`, which is the layout of `mopm unit build --natives`.
 
 const std = @import("std");
 
 const window_len: u32 = 1 << 27;
+
+/// The largest member taken: the registry's bound on a whole unpacked package (512 MB).
+pub const max_member: u64 = 512 << 20;
 
 fn le16(b: []const u8, at: usize) u16 {
     return std.mem.readInt(u16, b[at..][0..2], .little);
@@ -67,8 +78,15 @@ pub fn payload(data: []const u8) Error![]const u8 {
     return pkg orelse error.NoPayload;
 }
 
-/// The bytes of `member` in the zstd-compressed tar `tar_zst`.
-pub fn member(a: std.mem.Allocator, tar_zst: []const u8, want: []const u8) Error![]u8 {
+/// The bytes of each member of `wants` (full member names) in the zstd-compressed tar `tar_zst`, in the order of `wants`, in one pass over
+/// the archive. Refused, with `bad.*` naming the member: `NoMember` (absent), `DuplicateMember` (named twice in the archive: which one a
+/// tar extractor keeps is its own business, so there is no right answer), `NotAFile` (a symlink or a directory; a hard link is the tar
+/// reader's `TarUnsupportedHeader`), `EmptyMember`, `TooLarge`. On an error nothing is left allocated.
+pub fn members(a: std.mem.Allocator, tar_zst: []const u8, wants: []const []const u8, bad: *[]const u8) Error![][]u8 {
+    const found = try a.alloc(?[]u8, wants.len);
+    defer a.free(found);
+    @memset(found, null);
+    errdefer for (found) |f| if (f) |bytes| a.free(bytes);
     const window = try a.alloc(u8, window_len + std.compress.zstd.block_size_max);
     defer a.free(window);
     var name_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -76,37 +94,175 @@ pub fn member(a: std.mem.Allocator, tar_zst: []const u8, want: []const u8) Error
     var zin: std.Io.Reader = .fixed(tar_zst);
     var dz = std.compress.zstd.Decompress.init(&zin, window, .{ .window_len = window_len });
     var it = std.tar.Iterator.init(&dz.reader, .{ .file_name_buffer = &name_buf, .link_name_buffer = &link_buf });
-    while (try it.next()) |f| {
-        if (!std.mem.eql(u8, f.name, want)) {
+    while (true) {
+        bad.* = "(the tar)";
+        const f = (try it.next()) orelse break;
+        const at = indexOf(wants, f.name) orelse {
             // The iterator would discard the body itself, but the discard of this release's zstd reader asserts: stream it into nothing.
             if (f.size != 0) {
                 var sink = std.Io.Writer.Discarding.init(&.{});
                 try it.streamRemaining(f, &sink.writer);
             }
             continue;
-        }
+        };
+        bad.* = wants[at];
+        if (found[at] != null) return error.DuplicateMember;
         if (f.kind != .file) return error.NotAFile;
         if (f.size == 0) return error.EmptyMember;
-        const bytes = try it.reader.readAlloc(a, @intCast(f.size));
+        if (f.size > max_member) return error.TooLarge;
+        found[at] = try it.reader.readAlloc(a, @intCast(f.size));
         it.unread_file_bytes = 0;
-        return bytes;
     }
-    return error.NoMember;
+    const out = try a.alloc([]u8, wants.len);
+    for (found, 0..) |f, i| {
+        out[i] = f orelse {
+            bad.* = wants[i];
+            a.free(out);
+            return error.NoMember;
+        };
+    }
+    return out;
 }
 
-fn die(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("prebuilt_unpack: " ++ fmt ++ "\n", args);
-    std.process.exit(2);
+fn indexOf(names: []const []const u8, name: []const u8) ?usize {
+    for (names, 0..) |n, i| if (std.mem.eql(u8, n, name)) return i;
+    return null;
+}
+
+/// One static native library the lock pins: `lib/<soname>` in the package, `sha256` of its bytes.
+pub const Native = struct { soname: []const u8, sha256: [32]u8 };
+
+/// `lib<stem>.a`, one path component of the plain characters a library name has. A name that could leave the output directory
+/// (`/`, `..`), start a dotfile, or name something that is not a static archive is refused before it is used as a path.
+pub fn checkSoname(soname: []const u8) error{BadSoname}!void {
+    if (!std.mem.startsWith(u8, soname, "lib") or !std.mem.endsWith(u8, soname, ".a") or soname.len <= "lib.a".len) return error.BadSoname;
+    for (soname) |c| {
+        const ok = std.ascii.isAlphanumeric(c) or c == '_' or c == '-' or c == '.' or c == '+';
+        if (!ok) return error.BadSoname;
+    }
+    if (std.mem.indexOf(u8, soname, "..") != null) return error.BadSoname;
+}
+
+/// `<soname>=<64 lowercase hex digits>`.
+pub fn parseNative(arg: []const u8) error{ BadNative, BadSoname }!Native {
+    const eq = std.mem.indexOfScalar(u8, arg, '=') orelse return error.BadNative;
+    try checkSoname(arg[0..eq]);
+    const digits = arg[eq + 1 ..];
+    if (digits.len != 64) return error.BadNative;
+    var sha: [32]u8 = undefined;
+    _ = std.fmt.hexToBytes(&sha, digits) catch return error.BadNative;
+    for (digits) |c| if (std.ascii.isUpper(c)) return error.BadNative;
+    return .{ .soname = arg[0..eq], .sha256 = sha };
+}
+
+pub const Options = struct {
+    conda: []const u8,
+    name: []const u8,
+    out: []const u8,
+    natives_dir: ?[]const u8 = null,
+    natives: []const Native = &.{},
+};
+
+const usage = "usage: prebuilt_unpack <package.conda> <name> <out.mojoc> [--natives <out-dir> [--native <soname>=<sha256>]...]";
+
+/// The command line, or `BadUsage` / `BadNative` / `BadSoname` / `DuplicateNative` with the reason in `why.*`.
+pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8, why: *[]const u8) Error!Options {
+    if (args.len < 3) return refuse(why, error.BadUsage, usage);
+    var o = Options{ .conda = args[0], .name = args[1], .out = args[2] };
+    var natives = std.ArrayList(Native).empty;
+    var i: usize = 3;
+    while (i < args.len) : (i += 1) {
+        const flag = args[i];
+        const is_dir = std.mem.eql(u8, flag, "--natives");
+        const is_native = std.mem.eql(u8, flag, "--native");
+        if ((!is_dir and !is_native) or i + 1 >= args.len) return refuse(why, error.BadUsage, usage);
+        i += 1;
+        if (is_dir) {
+            if (o.natives_dir != null) return refuse(why, error.BadUsage, usage);
+            o.natives_dir = args[i];
+            continue;
+        }
+        const n = parseNative(args[i]) catch |e| {
+            why.* = try std.fmt.allocPrint(a, "--native {s}: expected <soname>=<64 lowercase hex digits> with a soname lib<stem>.a ({s})", .{ args[i], @errorName(e) });
+            return e;
+        };
+        for (natives.items) |m| {
+            if (std.mem.eql(u8, m.soname, n.soname)) {
+                why.* = try std.fmt.allocPrint(a, "--native names {s} twice", .{n.soname});
+                return error.DuplicateNative;
+            }
+        }
+        try natives.append(a, n);
+    }
+    if (natives.items.len != 0 and o.natives_dir == null) return refuse(why, error.BadUsage, usage);
+    o.natives = natives.items;
+    return o;
+}
+
+fn refuse(why: *[]const u8, e: anyerror, msg: []const u8) anyerror {
+    why.* = msg;
+    return e;
+}
+
+fn hex(bytes: []const u8) [64]u8 {
+    var d: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &d, .{});
+    return std.fmt.bytesToHex(d, .lower);
+}
+
+/// Unpack: every refusal happens before the first write.
+pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, args: []const []const u8, why: *[]const u8) Error!void {
+    const o = try parseArgs(a, args, why);
+    const data = cwd.readFileAlloc(a, o.conda, 1 << 30) catch |e| {
+        why.* = try std.fmt.allocPrint(a, "cannot read {s}: {s}", .{ o.conda, @errorName(e) });
+        return e;
+    };
+    const pkg = payload(data) catch |e| {
+        why.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ o.conda, @errorName(e) });
+        return e;
+    };
+    const names = try a.alloc([]const u8, 1 + o.natives.len);
+    names[0] = try std.fmt.allocPrint(a, "lib/mojo/{s}.mojoc", .{o.name});
+    for (o.natives, 1..) |n, i| names[i] = try std.fmt.allocPrint(a, "lib/{s}", .{n.soname});
+    var bad: []const u8 = "";
+    const bodies = members(a, pkg, names, &bad) catch |e| {
+        why.* = try std.fmt.allocPrint(a, "{s}: {s}: {s}", .{ o.conda, bad, @errorName(e) });
+        return e;
+    };
+    for (o.natives, 1..) |n, i| {
+        const got = hex(bodies[i]);
+        const want = std.fmt.bytesToHex(n.sha256, .lower);
+        if (!std.mem.eql(u8, &got, &want)) {
+            why.* = try std.fmt.allocPrint(a, "{s}: {s} hashes to {s}, the lock pins {s}", .{ o.conda, names[i], got, want });
+            return error.Sha256Mismatch;
+        }
+    }
+    cwd.writeFile(.{ .sub_path = o.out, .data = bodies[0] }) catch |e| {
+        why.* = try std.fmt.allocPrint(a, "cannot write {s}: {s}", .{ o.out, @errorName(e) });
+        return e;
+    };
+    if (o.natives_dir) |dir| {
+        cwd.makePath(dir) catch |e| {
+            why.* = try std.fmt.allocPrint(a, "cannot create {s}: {s}", .{ dir, @errorName(e) });
+            return e;
+        };
+        for (o.natives, 1..) |n, i| {
+            const path = try std.fs.path.join(a, &.{ dir, n.soname });
+            cwd.writeFile(.{ .sub_path = path, .data = bodies[i] }) catch |e| {
+                why.* = try std.fmt.allocPrint(a, "cannot write {s}: {s}", .{ path, @errorName(e) });
+                return e;
+            };
+        }
+    }
 }
 
 pub fn main() !void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
     const args = try std.process.argsAlloc(a);
-    if (args.len != 4) die("usage: prebuilt_unpack <package.conda> <name> <out.mojoc>", .{});
-    const data = std.fs.cwd().readFileAlloc(a, args[1], 1 << 30) catch |e| die("cannot read {s}: {s}", .{ args[1], @errorName(e) });
-    const want = try std.fmt.allocPrint(a, "lib/mojo/{s}.mojoc", .{args[2]});
-    const pkg = payload(data) catch |e| die("{s}: {s}", .{ args[1], @errorName(e) });
-    const bytes = member(a, pkg, want) catch |e| die("{s}: {s}: {s}", .{ args[1], want, @errorName(e) });
-    std.fs.cwd().writeFile(.{ .sub_path = args[3], .data = bytes }) catch |e| die("cannot write {s}: {s}", .{ args[3], @errorName(e) });
+    var why: []const u8 = "";
+    run(a, std.fs.cwd(), args[1..], &why) catch |e| {
+        std.debug.print("prebuilt_unpack: {s}\n", .{if (why.len != 0) why else @errorName(e)});
+        std.process.exit(2);
+    };
 }

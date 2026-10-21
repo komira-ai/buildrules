@@ -3,6 +3,9 @@
     ws/                    app -> util -> base: three workspace members, each a package of its own (mopm.toml, mopm.lock, BUCK)
       util/base/           the leaf; util/ imports it; ws/ (app) imports util and the registry package cnative
     registry/cnative/      the publisher's side of cnative: a Mojo package over a C library
+    registry/probe_sys/    the publisher's side of probe_sys: a `-sys` package (an empty Mojo module over a static C library) that needs base_sys's
+      base_sys/            the other `-sys` package, a workspace member of probe_sys
+    sys_app/               imports probe_sys from the registry stand-in: both static archives come out of the `.conda` files, with no `natives` in its BUCK file
     copy_of_base/          base's sources at another path; `:same_bytes` fails unless the two `.mojoc` files are equal
     mopm-toolchain.toml    the versions every package here is built with (found by walking up)
 
@@ -14,6 +17,11 @@
 `ws/mopm.lock` records the `cnative` package as it would come from a registry: the URL, sha256 and size of the `.conda` that
 `buck2 build //examples/mojo/registry/cnative:conda` makes with `mopm pack`, and the sha256 of `libcnative.so.1` (`:libcnative`, built by rules/cxx).
 When `cnative`'s sources change, rebuild both, put the new sha256 and size in `ws/mopm.lock` and run `buildrules mojo sync`.
+
+`sys_app/mopm.lock` records `base_sys` and `probe_sys` the same way, and also what `mopm lock` writes for a package with a static native library: the sha256 of the archive
+(`lib/libbase_sys.a` and `lib/libprobe_sys.a` of the `.conda`, which are the `cxx_library` archives `:base_c[static-pic]` and `:probe_c[static-pic]`), its `kind`, and probe_sys's `needs`.
+Build the two `:conda` targets (`registry/probe_sys:conda`, `registry/probe_sys/base_sys:conda`) and the two archives, put the four sha256 and the two sizes in the lock, and run `buildrules mojo sync`:
+a lock that disagrees with a `.conda` fails the download's check, and one that disagrees with an archive fails `prebuilt_unpack` (a hash that differs) before anything is linked.
 
 The URL in the lock is a placeholder channel; a machine that has the file points the download at it in the `.buckconfig.local` of the cell that declares it, for example
 `[buildrules] url_map = https://conda.mopm.dev/=http://mirror.invalid/channel/` in the root `.buckconfig.local` (the sha256 is still checked). The mopm tarball

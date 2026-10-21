@@ -15,8 +15,11 @@ One line per package. The targets come from the package's unit graph, which `bui
 
 A workspace member (a path dependency) is a package of its own with its own BUCK file; this package's graph names it, and
 its `:lib` is what the units here import. A registry dependency is a sha256-pinned `.conda`, matched to the graph's Mojo version
-by mopm, fetched and unpacked here. Native libraries are declared inputs: `natives = {"<soname>": "<target>"}`; mopm checks
-each against the sha256 in the graph before it compiles anything.
+by mopm, fetched and unpacked here. Native libraries are declared inputs and mopm checks each against the sha256 in the graph before it compiles
+anything. The static libraries (`lib<stem>.a`) of a registry package come from the lock: the `.conda` that holds the `.mojoc` holds them too,
+`prebuilt_unpack` takes each out after hashing it against the lock's value, and a unit links them in the graph's order (a library before every
+library it needs) with nothing written in the BUCK file. Any other native library (a shared one, a workspace member's) is an entry of
+`natives = {"<soname>": "<target>"}`; one the lock provides may not also be named there.
 
 The gate. `:lib` is a copy of `:lib_ungated` made by an action that takes the marker of every test run as an input, and a test run writes
 its marker only when the test passed. A failing test therefore leaves `:lib` unbuildable, and so every target that imports it (a
@@ -105,6 +108,33 @@ def _check_table(t):
     if g["toolchain"]["closure_sha256"] != t["CLOSURE_SHA256"]:
         fail("the table records toolchain closure {} but its unit graph pins {}: the file was edited by hand; run `buildrules mojo sync`".format(t["CLOSURE_SHA256"], g["toolchain"]["closure_sha256"]))
 
+def own_static_natives(unit):
+    """The static native libraries a registry package ships, `{soname: sha256}`, in the order of the unit's `natives` (mopm's link order). The
+    unit of a prebuilt package lists its whole closure's natives; these are the ones of `unit["package"]` itself, which come out of its `.conda`."""
+    return {n["soname"]: n["sha256"] for n in unit["natives"] if n.get("kind") == "static" and n["package"] == unit["package"]}
+
+def native_wiring(unit, prebuilt_packages, user_natives, here, refuse = fail):
+    """Where each native library of `unit` comes from: `(sonames, labels)`, `sonames` in the order mopm's graph lists them (a library before every
+    library it needs: the order of the link line) and `labels` the target for each. A static library of a registry package of the graph is the
+    sub-target `:prebuilt_<package>[<soname>]` of the unpacked `.conda`, so the lock alone gives it; every other native (a shared library,
+    a workspace member's) is a user's `natives = {soname: target}` entry. A library the lock provides that `user_natives` also names is refused:
+    two sources for one file. `refuse` is `fail` in a build; a test passes a recorder (rules/rust/refusal.bzl)."""
+    sonames = []
+    labels = {}
+    for n in unit["natives"]:
+        soname = n["soname"]
+        sonames.append(soname)
+        owner = n["package"]
+        if n.get("kind") == "static" and owner in prebuilt_packages:
+            if soname in user_natives:
+                refuse("{}: the native library {} comes from the lock (the registry package {}); remove it from mojo_package(natives = {{...}})".format(here, soname, owner))
+            labels[soname] = ":prebuilt_{}[{}]".format(owner, soname)
+        elif soname in user_natives:
+            labels[soname] = user_natives[soname]
+        else:
+            refuse("{}: {} links the native library {}; add it to mojo_package(natives = {{...}})".format(here, unit["id"], soname))
+    return sonames, labels
+
 def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]):
     if table == None:
         fail("mojo_package needs its table: load mojo_package from the buildrules.mojo.bzl next to mopm.toml (`buildrules mojo sync` writes it)")
@@ -115,6 +145,7 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
     here = native.package_name()
     units = {u["id"]: u for u in graph["units"]}
     root = graph["package"].split("@")[0]
+    prebuilt_packages = {u["package"]: True for u in graph["units"] if u["kind"] == "prebuilt"}
     toolchain = "toolchains//:mojo_" + vname(mojo)
     mopm = "toolchains//:mopm_" + vname(table["MOPM"]["version"])
     build_args = isa_select(lambda l: list(ISA_LEVELS[l]["mojo"]), [])
@@ -205,10 +236,7 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
     def common(uid, kind, product, profile = None):
         u = units[uid]
         cl = _closure(units, uid)
-        sonames = [n["soname"] for n in u["natives"]]
-        for s in sonames:
-            if s not in natives:
-                fail("{}: {} links the native library {}; add it to mojo_package(natives = {{...}})".format(here, uid, s))
+        sonames, native_labels = native_wiring(u, prebuilt_packages, natives, here)
         return dict(
             deps = [label_of(d, ":lib_ungated" if kind == "test" else ":lib") for d in u["deps"]],
             graph = slice_of(uid, profile),
@@ -216,7 +244,7 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
             mojo = mojo,
             mopm = mopm,
             native_sonames = sonames,
-            natives = {s: natives[s] for s in sonames},
+            natives = native_labels,
             closure_names = [units[c]["package"] for c in cl],
             package = u["package"],
             product = product,
@@ -252,6 +280,7 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
                 name = name_once("prebuilt_" + u["package"]),
                 archive = ":prebuilt_" + u["package"] + ".conda",
                 deps = [label_of(d) for d in u["deps"]],
+                natives = own_static_natives(u),
                 package = u["package"],
                 unit_id = uid,
                 visibility = visibility,

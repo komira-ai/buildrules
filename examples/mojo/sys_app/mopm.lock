@@ -1,0 +1,15 @@
+{
+  "lock_version": 2,
+  "mojo": ["1.0.0"],
+  "toolchain": {"1.0.0": {"linux-64": "fd654c4192487587d8f8d9402d060e45e218b79da7b8964503a703710e49b15d"}},
+  "channels": ["https://conda.mopm.dev/"],
+  "packages": [
+    {"name": "base_sys", "version": "1.0.0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
+     "artifacts": {"1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/linux-64/mojo-base_sys-1.0.0-mojo1.0.0_0.conda", "sha256": "9af3d58e0c1d0a37bdfe6c1c1b687ed36fcc65eede9609924c8e547baefd6cf7", "size": 9729}},
+     "native": [{"id": "base_sys", "soname": "libbase_sys.a", "sha256": "6750995389251611980641e1ab2c3c3877dc63e6261ff02e93dae67ecbd18ec2", "kind": "static"}]},
+    {"name": "probe_sys", "version": "1.0.0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
+     "artifacts": {"1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/linux-64/mojo-probe_sys-1.0.0-mojo1.0.0_0.conda", "sha256": "9b0c6bf4b20c13e092be7c15c8811d3ac4858ddf62cea7592dbebabdff0eca49", "size": 9733}},
+     "deps": ["base_sys"],
+     "native": [{"id": "probe_sys", "soname": "libprobe_sys.a", "sha256": "1f64969d6c7b100a527051c47679e054690774fc7a156563f686bfa1a1f61859", "kind": "static", "needs": ["libbase_sys.a"]}]}
+  ]
+}

@@ -481,13 +481,17 @@ every declared input, then executes `T/mojo_compile` with an empty environment).
 - `--src`: the unit's sources at the paths the graph names; the target's `srcs` are the graph's, so a file the graph does not name is not an input.
 - `--deps`: `<package>.mojoc` of every unit in the closure, flat: the outputs of the dependency targets (a member's `:lib`, a registry package's `prebuilt_<name>`),
   checked against the graph's closure at analysis.
-- `--natives`: the native libraries by soname, the targets of `natives = {...}`. mopm checks each against the sha256 in the graph before it compiles anything.
-  (mopm's graph names the natives of registry packages; a member's `[native.<id>]` is not in it yet. The example's library is the native of the registry package `cnative`.)
+- `--natives`: the native libraries by soname. mopm checks each against the sha256 in the graph before it compiles anything. A static library (`lib<stem>.a`) of a registry package is
+  not named in the BUCK file: it is the sub-target `:prebuilt_<package>[<soname>]` of the package's unpacked `.conda`, chosen from the graph (`kind` static, the package of the unit that ships it). Every other
+  native is a target of `natives = {...}`, and one the lock provides may not be named there. mopm lists the libraries of a unit in link order (a library before every library it needs), `native_sonames` keeps
+  that order, and mopm links them in it; `--natives` itself is a flat directory. (A workspace member's `[native.<id>]` is not in mopm's graph yet. The `cnative` example's shared library is a `natives = {...}` entry.)
 - `--toolchain`: a directory assembled from `mojo_launch` (as `mojo_compile`), the wrapper (`wrapper`), the compiler closure (`compiler`), the zig (`zig`), `CLOSURE_SHA256`
   and `toolchain.cfg`. `mojo_launch` puts the wrapper's options (where the closure and the zig are) in front of mopm's arguments, inserts the ISA flags after `build`,
   and rewrites mopm's `--source-root` for `precompile` (below). It runs no compiler and owns no policy.
 
-A registry dependency is a `pinned_file` (URL, sha256, size of the `.conda` the graph names for this Mojo version) unpacked by `prebuilt_unpack`, never compiled.
+A registry dependency is a `pinned_file` (URL, sha256, size of the `.conda` the graph names for this Mojo version) unpacked by `prebuilt_unpack`, never compiled. The same program takes the package's static native libraries out of the same file, `lib/<soname>` for each `--native <soname>=<sha256>` that the
+rule passes from the graph (the lock's value): the member is hashed first, and a hash that differs, a member that is missing, doubled, empty, a link or too large, or a soname that is not `lib<stem>.a`
+is refused, with nothing written. Nothing in the `.conda` is trusted but its bytes' agreement with the lock.
 `-c buildrules.url_map="<from>=<to> ..."` in the `.buckconfig.local` of the cell that declares the download (the toolchain downloads are in the `toolchains` cell, whose
 `.buckconfig.local` is its own) changes where a download is fetched from and nothing else: the sha256 is still checked.
 
@@ -539,7 +543,7 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 - **`mopm unit test` runs the binary with an empty environment**, so a test that needs `libKGENCompilerRTShared.so` cannot pass in that mode on a hermetic toolchain. The run here is its own action.
 - **kcov needs `personality(ADDR_NO_RANDOMIZE)`**, which the farm's worker sandbox answers with ENOSYS. kcov is patched to go on (the binaries are not position independent and kcov runs `--skip-solibs`).
 - **`mopm lock` contacts the registry even for a project of path dependencies**, so the examples' `mopm.lock` files are written by hand (their closure hash is mopm's own, read from its refusal).
-- **`mopm pack` refuses a package with `[native.<id>]`**, and puts no native library in the `.conda`; a registry package's native library is declared in the consumer's `mopm.lock`, and its bytes come from buildrules.
+- **`mopm pack` packs a static native library** (mopm 0.0.20 and later: `[native.<id>] kind = "static"`, one archive per subdir given as `--native <id>=<subdir>:<file>`, the file written as `lib/<file name>`), and `mopm lock` pins its sha256 in the lock. A shared library is still not packed: its sha256 is in the consumer's `mopm.lock` and its bytes come from buildrules (`natives = {...}`).
 
 ### 12.8 The gate
 
@@ -548,7 +552,8 @@ A library that is not tested is not a library: `:lib` is the `.mojoc` behind the
 ### Status
 
 The examples: `examples/mojo/ws` (`app` -> `util` -> `base`, three packages in a chain, plus the registry package `cnative` with a C library built by `rules/cxx`'s `c_shared`) and
-`examples/mojo/registry/cnative` (the publisher's side: its `.mojoc`, `mopm pack`, the library). The proofs and their `Commands:` lines are in the commit message of the branch `mojo`.
+`examples/mojo/registry/cnative` (the publisher's side: its `.mojoc`, `mopm pack`, the library); `examples/mojo/sys_app` consumes two `-sys` packages (an empty Mojo module over a static C library) whose archives
+come out of their `.conda` files, with no `natives` in its BUCK file: `examples/mojo/registry/probe_sys` (which needs `base_sys`, a member below it) is the publisher's side, built by `rules/cxx` and `mopm pack`. The proofs and their `Commands:` lines are in the commit message of the branch `mojo`.
 
 Limits: linux x86-64 only; one Mojo version (mopm pins one); the coverage is line coverage of what the compiler emitted code for (a function no test reaches emits none, so the percentage is an
 upper bound); workspace members' natives are not in mopm's graph; `mopm unit test` and the supervisor, a published mopm release, and Arm are not covered.
@@ -662,7 +667,7 @@ and checked against their sha256, with the same command lines and inputs as on a
 `x86-64-v3` tests need a CPU with AVX2, BMI1/BMI2, FMA and MOVBE (the CI workflow checks `/proc/cpuinfo` first). Action cache keys do not depend on the mode.
 
 The public CI (`.github/workflows/ci.yml`) builds `//ci:all` this way on `ubuntu-latest`. `//ci:all` is every target of the tree except the ones `ci/all.bzl` lists with a reason each: the refusal fixtures
-(`probe_env`, `probe_tree`, `probe_usr`, `cnative:coverage`, which are red by design) and `ci/negative` (a planted defect that a wildcard build skips; the completeness check analyses it on the platform it breaks on and fails unless it is red for the reason it plants, `ci/negative.bzl`). Before it builds, the workflow runs
+(`probe_env`, `probe_tree`, `probe_usr`, and the `:coverage` of `cnative`, `probe_sys` and `base_sys`, which are red by design) and `ci/negative` (a planted defect that a wildcard build skips; the completeness check analyses it on the platform it breaks on and fails unless it is red for the reason it plants, `ci/negative.bzl`). Before it builds, the workflow runs
 `buck2 bxl //ci:completeness.bxl:check`, which fails and names every target of `//...` and `crates//...` that is in the closure of neither `//ci:all` nor `//ci:mojo` and is not excluded, so a new target cannot go unbuilt.
 `//ci:all` also builds `//ci:floors`: the Zig tests of each package run again under kcov and with LLVM's block counters, and the Node tests under `jest --coverage`, and each package's lines and branches
 are held to its `coverage_floor.txt` both ways (a fall fails, and so does a rise the floor has not been raised to); `rules/coverage/README.md` says what is measured and what is not.

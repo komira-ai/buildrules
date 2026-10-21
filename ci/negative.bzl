@@ -25,6 +25,8 @@ CASES = [
     ("//ci/negative:zig_coverage_of_no_test", PLATFORM, "test_targets is empty: a package with no test has no coverage to measure"),
     ("//ci/negative:cross_exe_with_other_tests", PLATFORM, "waits for the unit tests"),
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
+    ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
+    ("//examples/mojo/registry/probe_sys/base_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
 ]
 
 def _analyse(ctx, label, platform = PLATFORM):
@@ -75,6 +77,7 @@ GATE_PACKAGES = [
     "//examples/mojo/ws",
     "//examples/mojo/ws/util",
     "//examples/mojo/ws/util/base",
+    "//examples/mojo/sys_app",
 ]
 
 def _built(ctx, label):
