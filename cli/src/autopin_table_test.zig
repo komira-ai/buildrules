@@ -691,3 +691,14 @@ test "oom: SETS parsing and matching fail closed at every allocation" {
     }.f;
     try oom.sweep(run, {});
 }
+
+test "lock: an integrity of 88 base64 characters that decode to more than 64 bytes is refused, not decoded into a 64-byte buffer" {
+    const valid = @import("valid.zig");
+    // No padding: 88 characters are 66 bytes. One padding character: 65. Padding in the middle. Each used to overrun the buffer.
+    try t.expect(!valid.isSri512("sha512-" ++ "A" ** 88));
+    try t.expect(!valid.isSri512("sha512-" ++ "A" ** 87 ++ "="));
+    try t.expect(!valid.isSri512("sha512-" ++ "A" ** 40 ++ "==" ++ "A" ** 46));
+    try t.expect(valid.isSri512("sha512-" ++ "A" ** 86 ++ "=="));
+    const R = "https://registry.npmjs.org/";
+    try expectRefused(",\"node_modules/x\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "x/-/x-1.0.0.tgz\",\"integrity\":\"sha512-" ++ "A" ** 88 ++ "\"}", "integrity is not a sha512");
+}
