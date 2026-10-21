@@ -7,7 +7,9 @@
 //!    has: either way the pair no longer shows that one line is what the rule refuses on;
 //!  - the control and the fixture running different tests;
 //!  - ci/negative.bzl naming a target that is not in the BUCK file, a platform that is not the ISA one, or a reason the rule no longer gives;
-//!  - ci/completeness.bxl (the step of the public CI) not running the check.
+//!  - ci/completeness.bxl (the step of the public CI) not running the check;
+//!  - a fixture of ci/negative.bzl's CASES that is not in ci/negative/BUCK, lacks the platform it is compatible with, or is not excluded in ci/all.bzl, and a fixture
+//!    of ci/negative/BUCK (compatible only with that platform) that CASES does not assert: either way a planted defect would not be held red.
 const std = @import("std");
 const t = std.testing;
 
@@ -114,6 +116,67 @@ pub fn wiringFindings(a: std.mem.Allocator, completeness: []const u8) ![]const [
     return f.toOwnedSlice(a);
 }
 
+/// The id after `//ci/negative:` on each line of `text` that has one in quotes, in order.
+fn caseIds(a: std.mem.Allocator, text: []const u8) ![]const []const u8 {
+    var out = std.ArrayList([]const u8).empty;
+    const marker = "(\"//ci/negative:";
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |l| {
+        const at = std.mem.indexOf(u8, l, marker) orelse continue;
+        const rest = l[at + marker.len ..];
+        try out.append(a, rest[0 .. std.mem.indexOfScalar(u8, rest, '"') orelse continue]);
+    }
+    return out.toOwnedSlice(a);
+}
+
+/// The ids of the BUCK file's calls that carry the compatibility line: the `name` before each occurrence of it.
+fn compatIds(a: std.mem.Allocator, buck: []const u8) ![]const []const u8 {
+    var out = std.ArrayList([]const u8).empty;
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, buck, from, compat)) |at| : (from = at + compat.len) {
+        const head = buck[0..at];
+        const n = std.mem.lastIndexOf(u8, head, "    name = \"") orelse continue;
+        const rest = head[n + "    name = \"".len ..];
+        try out.append(a, rest[0 .. std.mem.indexOfScalar(u8, rest, '"') orelse continue]);
+    }
+    return out.toOwnedSlice(a);
+}
+
+/// The findings about ci/negative.bzl's CASES against ci/negative/BUCK and ci/all.bzl: every fixture it names is declared, is compatible only with the platform it breaks
+/// on, and is excluded from the wildcard build; and every fixture of the BUCK file with that compatibility line is the pair or in CASES.
+pub fn casesFindings(a: std.mem.Allocator, bzl: []const u8, buck: []const u8, all: []const u8) ![]const []const u8 {
+    var f = Findings.empty;
+    const cases_at = std.mem.indexOf(u8, bzl, "\nCASES = [") orelse {
+        try add(a, &f, "ci/negative.bzl has no CASES", .{});
+        return f.toOwnedSlice(a);
+    };
+    const cases_end = std.mem.indexOfPos(u8, bzl, cases_at, "\n]") orelse bzl.len;
+    const ids = try caseIds(a, bzl[cases_at..cases_end]);
+    if (ids.len == 0) try add(a, &f, "ci/negative.bzl: CASES names no fixture of //ci/negative", .{});
+    for (ids) |id| {
+        var needle_buf: [160]u8 = undefined;
+        const needle = std.fmt.bufPrint(&needle_buf, "    name = \"{s}\",", .{id}) catch continue;
+        const at = std.mem.indexOf(u8, buck, needle) orelse {
+            try add(a, &f, "ci/negative.bzl: CASES names //ci/negative:{s}, which ci/negative/BUCK does not declare", .{id});
+            continue;
+        };
+        const end = std.mem.indexOfPos(u8, buck, at, "\n)") orelse buck.len;
+        if (std.mem.indexOf(u8, buck[at..end], compat) == null)
+            try add(a, &f, "{s} lacks `{s}`: a wildcard build would not skip it", .{ id, compat });
+        var label_buf: [160]u8 = undefined;
+        const label = std.fmt.bufPrint(&label_buf, "//ci/negative:{s}", .{id}) catch continue;
+        if (std.mem.indexOf(u8, all, label) == null)
+            try add(a, &f, "ci/all.bzl does not exclude {s}: the completeness check would call it uncovered", .{label});
+    }
+    for (try compatIds(a, buck)) |id| {
+        var label_buf: [160]u8 = undefined;
+        const label = std.fmt.bufPrint(&label_buf, "//ci/negative:{s}", .{id}) catch continue;
+        if (std.mem.indexOf(u8, bzl, label) == null)
+            try add(a, &f, "ci/negative/BUCK declares {s}, which ci/negative.bzl neither asserts red nor names as the pair", .{label});
+    }
+    return f.toOwnedSlice(a);
+}
+
 fn readAll(a: std.mem.Allocator, work: []const u8, rel: []const u8) ![]u8 {
     const path = try std.fs.path.join(a, &.{ work, rel });
     return std.fs.cwd().readFileAlloc(a, path, 1 << 20);
@@ -142,6 +205,7 @@ test "the real fixture, control, constants and CI step are as planted" {
     try expectNone(try buckFindings(a, try readAll(a, work, "ci/negative/BUCK")));
     try expectNone(try bzlFindings(a, try readAll(a, work, "ci/negative.bzl"), try readAll(a, work, "rules/rust/test_run.bzl")));
     try expectNone(try wiringFindings(a, try readAll(a, work, "ci/completeness.bxl")));
+    try expectNone(try casesFindings(a, try readAll(a, work, "ci/negative.bzl"), try readAll(a, work, "ci/negative/BUCK"), try readAll(a, work, "ci/all.bzl")));
 }
 
 // ---- planted text ----
@@ -260,4 +324,61 @@ test "wiring: the CI step passes, and a completeness check that does not run it 
     try expectOne(try wiringFindings(a, "    negative = negative_problems(ctx)\n    if problems or negative:\n"), "load(\"@buildrules//ci:negative.bzl\"");
     const none = try wiringFindings(a, "");
     try t.expectEqual(@as(usize, 3), none.len);
+}
+
+// ---- CASES ----
+
+const CASES_BZL =
+    \\PLATFORM = "x"
+    \\
+    \\CASES = [
+    \\    ("//ci/negative:first_fixture", PLATFORM, "one reason"),
+    \\    ("//examples/mojo/registry/cnative:coverage", "p", "another reason"),
+    \\    ("//ci/negative:second_fixture", PLATFORM, "a third reason"),
+    \\]
+    \\
+;
+
+const CASES_BUCK =
+    \\thing(
+    \\    name = "first_fixture",
+    \\    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+    \\)
+    \\
+    \\thing(
+    \\    name = "second_fixture",
+    \\    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+    \\)
+    \\
+;
+
+const CASES_ALL = "\"//ci/negative:first_fixture + //ci/negative:second_fixture\": \"why\",";
+
+test "cases: fixtures that are declared, incompatible with the wildcard platform and excluded pass" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    try expectNone(try casesFindings(arena.allocator(), CASES_BZL, CASES_BUCK, CASES_ALL));
+}
+
+test "cases: a fixture the BUCK file does not declare, one a wildcard build would build, and one not excluded are each found" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const first_only = CASES_BUCK[0 .. std.mem.indexOf(u8, CASES_BUCK, "\nthing(\n    name = \"second_fixture\"").? + 1];
+    try expectOne(try casesFindings(a, CASES_BZL, first_only, CASES_ALL), "CASES names //ci/negative:second_fixture, which ci/negative/BUCK does not declare");
+    // the second call loses its line: only its own block is searched, not the file
+    const second = std.mem.indexOf(u8, CASES_BUCK, "    name = \"second_fixture\"").?;
+    const lost = try std.mem.concat(a, u8, &.{ CASES_BUCK[0..second], try replaced(a, CASES_BUCK[second..], "    target_compatible_with = [\"buildrules//platforms:isa_x86_64_v3\"],\n", "") });
+    try expectOne(try casesFindings(a, CASES_BZL, lost, CASES_ALL), "second_fixture lacks `target_compatible_with");
+    try expectOne(try casesFindings(a, CASES_BZL, CASES_BUCK, "\"//ci/negative:first_fixture\": \"why\","), "does not exclude //ci/negative:second_fixture");
+}
+
+test "cases: a planted fixture that CASES does not assert, and a CASES that is gone, are found" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const extra = try std.mem.concat(a, u8, &.{ CASES_BUCK, "thing(\n    name = \"unasserted\",\n    target_compatible_with = [\"buildrules//platforms:isa_x86_64_v3\"],\n)\n" });
+    try expectOne(try casesFindings(a, CASES_BZL, extra, CASES_ALL), "declares //ci/negative:unasserted, which ci/negative.bzl neither asserts red nor names as the pair");
+    try expectOne(try casesFindings(a, "PLATFORM = \"x\"\n", CASES_BUCK, CASES_ALL), "ci/negative.bzl has no CASES");
+    try expectOne(try casesFindings(a, "PLATFORM = \"x\"\n\nCASES = [\n]\n", "", CASES_ALL), "CASES names no fixture");
 }

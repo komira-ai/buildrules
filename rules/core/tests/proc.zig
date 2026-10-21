@@ -37,7 +37,8 @@ pub fn expectRefusal(name: []const u8, r: Run, code: u8, msgs: []const []const u
     var ok = r.code == code and r.stdout.len == 0;
     for (msgs) |m| ok = ok and std.mem.indexOf(u8, r.stderr, m) != null;
     if (!ok) {
-        std.debug.print("{s}: exit {d}, want {d} with stderr holding {any} and nothing on stdout; stdout:\n{s}\nstderr:\n{s}\n", .{ name, r.code, code, msgs, r.stdout, r.stderr });
+        std.debug.print("{s}: exit {d}, want {d} with nothing on stdout; stdout:\n{s}\nstderr:\n{s}\nwanted on stderr:\n", .{ name, r.code, code, r.stdout, r.stderr });
+        for (msgs) |m| std.debug.print("  {s}\n", .{m});
         return error.TestUnexpectedResult;
     }
 }

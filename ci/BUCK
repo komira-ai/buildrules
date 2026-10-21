@@ -266,7 +266,7 @@ export_file(
 export_file(
     name = "all.bzl",
     src = "all.bzl",
-    visibility = ["//beta:"],
+    visibility = ["//beta:", "//ci/negative:"],
 )
 
 # Read by the buildrules.dev site tests (site/BUCK), which check its pages against this file.

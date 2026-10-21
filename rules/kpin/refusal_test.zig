@@ -68,7 +68,8 @@ const Env = struct {
         var ok = r.code == code and r.out.len == 0 and !e.exists("pins.lock.bzl.kpin-tmp");
         for (msgs) |m| ok = ok and std.mem.indexOf(u8, r.err, m) != null;
         if (!ok) {
-            std.debug.print("{s}: exit {d} (want {d}), stdout:\n{s}\nstderr:\n{s}\nwanted on stderr: {any}\n", .{ name, r.code, code, r.out, r.err, msgs });
+            std.debug.print("{s}: exit {d} (want {d}), stdout:\n{s}\nstderr:\n{s}\nwanted on stderr:\n", .{ name, r.code, code, r.out, r.err });
+            for (msgs) |m| std.debug.print("  {s}\n", .{m});
             return error.TestUnexpectedResult;
         }
     }
