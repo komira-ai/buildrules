@@ -302,3 +302,21 @@ test "fuzz: random and mutated streams never write past the limit and never cras
         }
     }
 }
+
+const oom = @import("autopin_oom_test.zig");
+
+test "oom: inflating each kind of block fails closed at every allocation" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const run = struct {
+        fn f(al: std.mem.Allocator, args: anytype) !bool {
+            _ = inflate.inflate(al, args.bytes, 1 << 20) catch return true;
+            return false;
+        }
+    }.f;
+    try oom.sweep(run, .{ .bytes = @as([]const u8, &stored_hello) });
+    try oom.sweep(run, .{ .bytes = @as([]const u8, &fixed_hello) });
+    try oom.sweep(run, .{ .bytes = @as([]const u8, &dynamic_abc) });
+    try oom.sweep(run, .{ .bytes = try runOfA(a, 3) });
+}

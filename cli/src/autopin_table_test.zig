@@ -4,6 +4,7 @@
 const std = @import("std");
 const lock = @import("autopin_lock.zig");
 const sets_mod = @import("autopin_sets.zig");
+const sets = sets_mod;
 const table = @import("autopin_table.zig");
 const Diag = @import("diag.zig").Diag;
 const t = std.testing;
@@ -597,4 +598,74 @@ test "lock: very deep nesting is refused, not a stack overflow" {
 
 fn kit_contains(h: []const u8, n: []const u8) bool {
     return std.mem.indexOf(u8, h, n) != null;
+}
+
+const oom = @import("autopin_oom_test.zig");
+
+test "oom: reading a lock, reading and binding a table, and making fresh tables fail closed at every allocation" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const lock_text = try lockWith(a, ",\"node_modules/x/node_modules/@s/n\":{\"version\":\"1.0.0\",\"resolved\":\"https://registry.npmjs.org/@s/n/-/n-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}");
+    const pj = "{\"name\":\"demo\",\"version\":\"1.0.0\",\"scripts\":{\"test\":\"jest\"},\"buildrules\":{\"dist\":\"dist\"}}";
+    const rows_text = try block(a, &.{ try scopeRow(a, "        \"os\": [\"darwin\"],\n"), try padRow(a) });
+    const run = struct {
+        fn f(al: std.mem.Allocator, args: anytype) !bool {
+            var diag = Diag.init(al);
+            const entries = try lock.read(al, args.lock, &diag);
+            if (diag.count() > 0) return true;
+            const rows = table.parseRows(al, args.rows, .buildrules_lock, &diag) catch return true;
+            if (diag.count() > 0) return true;
+            try table.bind(al, entries[0..2], rows, .buildrules_lock, &diag);
+            const fresh = (try table.freshBuildrules(al, args.pj, args.lock, rows, &diag)) orelse return true;
+            if (diag.count() > 0) return true;
+            const sp = table.split(fresh) orelse return true;
+            _ = try table.freshPins(al, sp.prefix, rows);
+            _ = try table.emitPinsNpm(al, rows);
+            return diag.count() > 0;
+        }
+    }.f;
+    // bind sees entries and rows that disagree (a third entry): that is a refusal; the sweep needs a success to start from.
+    var diag = Diag.init(a);
+    _ = try lock.read(a, lock_text, &diag);
+    try t.expectEqual(@as(usize, 0), diag.count());
+    try oom.sweep(run, .{ .lock = lock_text, .rows = rows_text, .pj = pj });
+}
+
+test "oom: a lock and a table that are refused are refused at every allocation too" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const bad = try lockWith(a, ",\"node_modules/x\":{\"name\":\"y\",\"version\":\"1.0.0\",\"resolved\":\"x\",\"integrity\":\"y\"},\"node_modules/g\":{\"version\":\"1.0.0\"}");
+    const run = struct {
+        fn f(al: std.mem.Allocator, args: anytype) !bool {
+            var diag = Diag.init(al);
+            _ = try lock.read(al, args.lock, &diag);
+            return diag.count() > 0;
+        }
+    }.f;
+    try oom.sweep(run, .{ .lock = bad });
+    const bad_rows = try std.mem.concat(a, u8, &.{ "NPM = {\n", try padRow(a), try padRow(a), "}\n" });
+    const run_rows = struct {
+        fn f(al: std.mem.Allocator, args: anytype) !bool {
+            var diag = Diag.init(al);
+            _ = table.parseRows(al, args.rows, .pins_lock, &diag) catch return true;
+            return diag.count() > 0;
+        }
+    }.f;
+    try oom.sweep(run_rows, .{ .rows = bad_rows });
+}
+
+test "oom: SETS parsing and matching fail closed at every allocation" {
+    const run = struct {
+        fn f(al: std.mem.Allocator, _: void) !bool {
+            const s = try sets.Sets.parse(al, &.{ "site=buildrules-lock", "infra/x=pins-lock" });
+            _ = try s.outputIndex(al, "infra/x/pins.lock.bzl");
+            _ = try s.prMayTouch(al, "site/package.json");
+            _ = try s.prMayTouch(al, "elsewhere");
+            _ = try sets.Sets.tablePath(al, s.items[0]);
+            return false;
+        }
+    }.f;
+    try oom.sweep(run, {});
 }

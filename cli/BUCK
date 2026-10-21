@@ -28,6 +28,7 @@ _TESTS = [
     "autopin_compute",
     "autopin_inflate",
     "autopin_manifest",
+    "autopin_oom",
     "autopin_safe",
     "autopin_table",
     "autopin_zip",

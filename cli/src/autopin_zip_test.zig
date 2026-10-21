@@ -862,3 +862,23 @@ test "a manifest member that lies about its size, and an empty deflate member, a
     const z2 = try build(a, &.{.{ .name = "a.txt", .data = "", .comp = "\x03\x00" }});
     try t.expectEqual(@as(usize, 0), (try readIt(a, z2))[0].data.len);
 }
+
+const oom = @import("autopin_oom_test.zig");
+
+test "oom: reading an archive (deflate members with descriptors, a stored member, a long match) fails closed at every allocation" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try build(a, &.{
+        .{ .name = "manifest.json", .data = "{}\n" },
+        .{ .name = "a.txt", .data = "a" ** 517, .comp = try runOfA(a, 2) },
+        .{ .name = "b.txt", .method = 0, .descriptor = false },
+    });
+    const run = struct {
+        fn f(al: std.mem.Allocator, args: anytype) !bool {
+            _ = zip.read(al, args.bytes, &names, .{}) catch return true;
+            return false;
+        }
+    }.f;
+    try oom.sweep(run, .{ .bytes = z.bytes });
+}

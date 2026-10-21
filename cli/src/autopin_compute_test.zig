@@ -513,3 +513,37 @@ test "compute: a package.json or package-lock.json nested deeper than a real one
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "nests deeper"));
 }
+
+const oom = @import("autopin_oom_test.zig");
+
+test "oom: compute fails closed at every allocation, for a bump of each kind of table and for no change" {
+    reset();
+    defer teardown();
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    try syncedBuildrules(h, "site", &two_pkgs);
+    try syncedPins(h, "infra", &two_pkgs);
+    try event(h);
+    try h.put("site/package-lock.json", try lockJson(h.a(), &three_pkgs, ""));
+    try h.put("infra/package-lock.json", try lockJson(h.a(), &three_pkgs, ""));
+    try oom.sweepCommand(h, &.{ "autopin", "compute", "--event", "event.json", "--out", "artifact", "--set", "site=buildrules-lock", "--set", "infra=pins-lock" }, &.{"artifact"});
+    // nothing to do
+    const h2 = try kit.Harness.create();
+    defer h2.destroy();
+    try syncedBuildrules(h2, "site", &two_pkgs);
+    try event(h2);
+    try oom.sweepCommand(h2, &.{ "autopin", "compute", "--event", "event.json", "--out", "artifact", "--set", "site=buildrules-lock" }, &.{"artifact"});
+}
+
+test "oom: compute that refuses fails closed at every allocation too (hostile lock, republished version, wrong tarball)" {
+    reset();
+    defer teardown();
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    try syncedBuildrules(h, "site", &two_pkgs);
+    try syncedPins(h, "infra", &two_pkgs);
+    try event(h);
+    try h.put("site/package-lock.json", try lockJson(h.a(), &two_pkgs, ",\"node_modules/x\":{\"name\":\"y\",\"version\":\"1.0.0\"}"));
+    try h.put("infra/package-lock.json", try std.mem.replaceOwned(u8, h.a(), try lockJson(h.a(), &two_pkgs, ""), sri_a, sri_b));
+    try oom.sweepCommand(h, &.{ "autopin", "compute", "--event", "event.json", "--out", "artifact", "--set", "site=buildrules-lock", "--set", "infra=pins-lock" }, &.{"artifact"});
+}

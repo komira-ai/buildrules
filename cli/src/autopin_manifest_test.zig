@@ -336,3 +336,23 @@ test "json: a one-byte change anywhere in a valid manifest never crashes the rea
         }
     }
 }
+
+const oom = @import("autopin_oom_test.zig");
+
+test "oom: reading a manifest and pairing it with its members fails closed at every allocation" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const mt = try manifest.render(a, try manifestFor(a, "table"));
+    const run = struct {
+        fn f(al: std.mem.Allocator, args: anytype) !bool {
+            const s = try sets(al);
+            const m = manifest.parse(al, args.text, s) catch return true;
+            const entries = [_]zip.Entry{ .{ .name = "manifest.json", .data = args.text }, .{ .name = "site/buildrules.lock.bzl", .data = "table" } };
+            _ = manifest.members(al, m, &entries, s) catch return true;
+            _ = manifest.render(al, m) catch return true;
+            return false;
+        }
+    }.f;
+    try oom.sweep(run, .{ .text = mt });
+}
