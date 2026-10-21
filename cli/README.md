@@ -37,8 +37,8 @@ again fails at a different line for each size of its input.
 (`Diag.add`, `Ctx.say`, one per call site) the figure keeps the largest count of blocks that ran in any one test program, so the tests of several files count together only
 as one program.
 
-A coverage build counts how often each block ran in one byte that wraps, so a block that ran 256 times reads as one that did not (`zig_cov_runner.zig` writes the byte as it is). `testkit.saturateCounters`
-sets every non-zero counter to one between the runs of a loop; without it the figure differs by a few blocks from one run of the same tests to the next, and an exact floor would fail at random.
+A coverage build counts how often each block ran in one byte that wraps, so a block that ran 256 times reads as one that did not. `zig_cov_runner.zig` sets every non-zero counter to one between tests, so a wrap cannot span tests; it cannot repair a block that ONE test runs 256 or more times. `testkit.saturateCounters`
+does that between the iterations of a loop inside a test (a replay or sweep); without it the figure differs by a few blocks from one run of the same tests to the next, and an exact floor would fail at random.
 The replays and sweeps allocate from one fixed buffer, reset for each run: from a heap whose addresses change, the runs of one command line did not allocate the same things in the same order, and
 the allocation that was failed was not the one that was meant.
 
@@ -47,4 +47,4 @@ made (no input makes it allocate); the safety-check blocks Zig's debug build app
 (the array arm of `val.pyDumps`, which only a flat table reaches; the line after a successful https download in `buckgen` and `npm_cmd`, which needs a server with a certificate
 the program trusts); a child that is killed by a signal (`Ctx.spawn`, `Ctx.execReal`).
 
-The wrap is a defect of the coverage runner, not of the tests: the proper fix is a saturating read in `zig_cov_runner.zig`, after which `testkit.saturateCounters` can go. Until then, any change to a test or to the code can move the figure by a few blocks, and the floor is exact in both directions, so a change that moves it sets the new floor from the failure message.
+Any change to a test or to the code can move the figure by a few blocks, and the floor is exact in both directions, so a change that moves it sets the new floor from the failure message.
