@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const npm_cmd = @import("npm_cmd.zig");
+const safe = @import("autopin_safe.zig");
 const valid = @import("valid.zig");
 const Diag = @import("diag.zig").Diag;
 
@@ -97,10 +98,10 @@ fn nameOfPath(path: []const u8) ?[]const u8 {
         if (!std.mem.startsWith(u8, rest, marker)) return null;
         rest = rest[marker.len..];
         if (std.mem.indexOf(u8, rest, "/" ++ marker)) |i| {
-            if (!valid.isPackageName(rest[0..i])) return null;
+            if (!isNpmName(rest[0..i])) return null;
             rest = rest[i + 1 ..];
         } else {
-            return if (valid.isPackageName(rest) and std.mem.indexOf(u8, rest, marker) == null) rest else null;
+            return if (isNpmName(rest)) rest else null;
         }
     }
 }
@@ -122,6 +123,10 @@ fn text(o: std.json.ObjectMap, key: []const u8) ?[]const u8 {
 /// The entries of the lock, sorted by key, one per `name@version` (entries at several paths collapse; their
 /// integrity must agree). Problems go to `diag`, each naming the path; the result is then not to be used.
 pub fn read(a: std.mem.Allocator, lock_text: []const u8, diag: *Diag) ![]Entry {
+    if (!safe.jsonDepthOk(lock_text)) {
+        diag.add("package-lock.json nests deeper than {d} levels", .{safe.max_json_depth});
+        return &.{};
+    }
     const parsed = std.json.parseFromSlice(std.json.Value, a, lock_text, .{}) catch {
         diag.add("package-lock.json is not valid JSON", .{});
         return &.{};
@@ -220,4 +225,26 @@ pub fn read(a: std.mem.Allocator, lock_text: []const u8, diag: *Diag) ![]Entry {
         try out.append(a, en);
     }
     return out.items;
+}
+
+fn nameSegment(x: []const u8) bool {
+    if (x.len == 0) return false;
+    for (x, 0..) |c, i| {
+        const first_ok = std.ascii.isAlphanumeric(c) or c == '-' or c == '~';
+        const rest_ok = first_ok or c == '.' or c == '_';
+        if (!(if (i == 0) first_ok else rest_ok)) return false;
+    }
+    return true;
+}
+
+/// An npm package name: an optional `@scope/` and one segment, each segment of letters, digits, `-` and `~`, then also
+/// `.` and `_` after the first character (upper case is allowed: old packages have it). No other `/`, no `..`
+/// component, no `+`, no `@` in the middle.
+pub fn isNpmName(s: []const u8) bool {
+    if (s.len == 0 or s.len > 214) return false;
+    if (s[0] == '@') {
+        const slash = std.mem.indexOfScalar(u8, s, '/') orelse return false;
+        return nameSegment(s[1..slash]) and nameSegment(s[slash + 1 ..]);
+    }
+    return nameSegment(s);
 }

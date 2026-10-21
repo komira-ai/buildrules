@@ -287,3 +287,52 @@ test "members: a listed name that is no SETS output is refused even with a good 
     const m = manifest.Manifest{ .pr = 7, .head_sha = head, .base_sha = base, .files = files };
     try t.expectError(error.MemberNotInSets, manifest.members(a, m, &.{ entry("manifest.json", "{}"), entry(".github/workflows/ci.yml", "x") }, try sets(a)));
 }
+
+test "manifest: every pr that is not a plain integer in 1..999999999 is refused, whatever its spelling" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const bad_prs = [_][]const u8{ "0", "-1", "1000000000", "99999999999999999999", "9999999999999999", "1.0", "1e3", "\"7\"", "01", "-0", "7.", "+7", "0x7", "null", "true", "[7]", "1E2", "999999999999999" };
+    for (bad_prs) |p| {
+        if (parseWith(a, try prManifest(a, p))) |m| {
+            std.debug.print("accepted pr {s} as {d}\n", .{ p, m.pr });
+            return error.TestUnexpectedResult;
+        } else |_| {}
+    }
+    for ([_][]const u8{ "1", "999999999", " 7 " }) |p| _ = try parseWith(a, try prManifest(a, p));
+}
+
+test "manifest: nesting that is too deep, an invalid byte in a string, and paths that only look like a SETS output are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var deep = std.ArrayList(u8).empty;
+    try deep.appendSlice(a, "{\"pr\":7,\"x\":");
+    try deep.appendNTimes(a, '[', 200000);
+    if (parseWith(a, deep.items)) |_| return error.TestUnexpectedResult else |_| {}
+    const inv = "{\"pr\":7,\"head_sha\":\"" ++ head ++ "\",\"base_sha\":\"" ++ base ++ "\",\"files\":[{\"path\":\"site/buildrules.lock.bzl\xff\",\"sha256\":\"" ++ sha_a ++ "\"}]}";
+    if (parseWith(a, inv)) |_| return error.TestUnexpectedResult else |_| {}
+    const paths = [_][]const u8{ "site/buildrules.lock.bzl ", "Site/buildrules.lock.bzl", "./site/buildrules.lock.bzl", "site//buildrules.lock.bzl", "site/buildrules.lock.bzl/", "site/../site/buildrules.lock.bzl", "site/buildrules.lock.bzl\\n" };
+    for (paths) |p| {
+        const text = try std.fmt.allocPrint(a, "{{\"pr\":7,\"head_sha\":\"{s}\",\"base_sha\":\"{s}\",\"files\":[{{\"path\":\"{s}\",\"sha256\":\"{s}\"}}]}}", .{ head, base, p, sha_a });
+        if (parseWith(a, text)) |_| {
+            std.debug.print("accepted path {s}\n", .{p});
+            return error.TestUnexpectedResult;
+        } else |_| {}
+    }
+}
+
+test "json: a one-byte change anywhere in a valid manifest never crashes the reader" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var i: usize = 0;
+    while (i < good.len) : (i += 1) {
+        var c: u16 = 0;
+        while (c < 256) : (c += 1) {
+            const tmp = try a.dupe(u8, good);
+            tmp[i] = @intCast(c);
+            _ = parseWith(a, tmp) catch {};
+        }
+    }
+}

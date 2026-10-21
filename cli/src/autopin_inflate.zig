@@ -6,7 +6,7 @@
 //! decoded bit by bit, which is slow and small, and enough for members of 2 MiB.
 //!
 //! Refused: a stream that ends early, a stored block whose length and its complement disagree, an over-subscribed
-//! code, a length or distance code outside the tables, a distance before the start of the output, a dynamic header
+//! code, an incomplete one (zlib and puff refuse them too: only a lone length-1 code or none at all is allowed for a literal or distance code), a length or distance code outside the tables, a distance before the start of the output, a dynamic header
 //! without an end-of-block code, and bytes after the last block.
 
 const std = @import("std");
@@ -41,9 +41,14 @@ pub const Huffman = struct {
     count: [max_bits + 1]u16 = [_]u16{0} ** (max_bits + 1),
     symbol: [320]u16 = [_]u16{0} ** 320,
 
-    /// A canonical code from the code lengths of the symbols (0 = unused). Over-subscribed codes are refused;
-    /// an incomplete code is accepted (a symbol that is not in it is refused when it is read).
-    pub fn build(h: *Huffman, lengths: []const u8) Error!void {
+    /// How complete a code must be. `complete`: every bit string decodes (the code-length code, the fixed literal code).
+    /// `puff`: complete, or no symbol at all, or one symbol of length 1 (what zlib and puff accept for the literal and
+    /// distance codes of a dynamic block). `any`: whatever is not over-subscribed (the fixed distance code has 30 of 32).
+    pub const Mode = enum { complete, puff, any };
+
+    /// A canonical code from the code lengths of the symbols (0 = unused). Over-subscribed codes are refused, and
+    /// incomplete ones as `mode` says.
+    pub fn build(h: *Huffman, lengths: []const u8, mode: Mode) Error!void {
         h.count = [_]u16{0} ** (max_bits + 1);
         for (lengths) |l| h.count[l] += 1;
         var left: i32 = 1;
@@ -52,6 +57,14 @@ pub const Huffman = struct {
             left <<= 1;
             left -= h.count[len];
             if (left < 0) return error.Invalid;
+        }
+        if (left > 0 and mode != .any) {
+            var used: usize = 0;
+            for (lengths) |l| {
+                if (l != 0) used += 1;
+            }
+            const single = used == 1 and h.count[1] == 1;
+            if (mode == .complete or (used != 0 and !single)) return error.Invalid;
         }
         var offs: [max_bits + 2]u16 = undefined;
         offs[1] = 0;
@@ -144,9 +157,9 @@ const State = struct {
         var lengths: [288]u8 = undefined;
         for (&lengths, 0..) |*l, i| l.* = if (i < 144) 8 else if (i < 256) 9 else if (i < 280) 7 else 8;
         var lit = Huffman{};
-        try lit.build(&lengths);
+        try lit.build(&lengths, .complete);
         var dist = Huffman{};
-        try dist.build(&([_]u8{5} ** 30));
+        try dist.build(&([_]u8{5} ** 30), .any);
         try self.codes(&lit, &dist);
     }
 
@@ -159,7 +172,7 @@ const State = struct {
         var idx: usize = 0;
         while (idx < ncode) : (idx += 1) lengths[clen_order[idx]] = @intCast(try self.bits.need(3));
         var lencode = Huffman{};
-        try lencode.build(lengths[0..19]);
+        try lencode.build(lengths[0..19], .complete);
         idx = 0;
         lengths = [_]u8{0} ** 320;
         while (idx < nlen + ndist) {
@@ -188,9 +201,9 @@ const State = struct {
         }
         if (lengths[256] == 0) return error.Invalid;
         var lit = Huffman{};
-        try lit.build(lengths[0..nlen]);
+        try lit.build(lengths[0..nlen], .puff);
         var dist = Huffman{};
-        try dist.build(lengths[nlen .. nlen + ndist]);
+        try dist.build(lengths[nlen .. nlen + ndist], .puff);
         try self.codes(&lit, &dist);
     }
 };

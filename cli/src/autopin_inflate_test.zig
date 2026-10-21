@@ -124,11 +124,11 @@ test "the limit holds to the byte: a match that would run past it by one byte is
 
 test "huffman: an over-subscribed code is refused, a complete or an incomplete one is accepted" {
     var h = inflate.Huffman{};
-    try t.expectError(error.Invalid, h.build(&.{ 1, 1, 1 }));
-    try t.expectError(error.Invalid, h.build(&.{ 1, 1, 2 }));
-    try h.build(&.{ 1, 2, 2 });
-    try h.build(&.{1});
-    try h.build(&.{ 0, 0, 0 });
+    try t.expectError(error.Invalid, h.build(&.{ 1, 1, 1 }, .any));
+    try t.expectError(error.Invalid, h.build(&.{ 1, 1, 2 }, .any));
+    try h.build(&.{ 1, 2, 2 }, .complete);
+    try h.build(&.{1}, .puff);
+    try h.build(&.{ 0, 0, 0 }, .puff);
 }
 
 test "a bomb is cut off at the limit however small the stream is" {
@@ -209,6 +209,96 @@ test "no single changed byte or bit of a dynamic stream crashes the decoder (eve
             if (inflate.inflate(a, &copy, 64)) |got| {
                 try t.expect(got.len <= 64);
             } else |_| {}
+        }
+    }
+}
+
+test "huffman: an incomplete code is refused, except a lone length-1 code or no code where puff allows it" {
+    var h = inflate.Huffman{};
+    try t.expectError(error.Invalid, h.build(&.{ 2, 2 }, .complete));
+    try t.expectError(error.Invalid, h.build(&.{ 2, 2 }, .puff));
+    try t.expectError(error.Invalid, h.build(&.{ 1, 2 }, .puff));
+    try t.expectError(error.Invalid, h.build(&.{1}, .complete));
+    try t.expectError(error.Invalid, h.build(&.{ 0, 0 }, .complete));
+    try t.expectError(error.Invalid, h.build(&.{2}, .puff));
+    try h.build(&.{ 2, 2 }, .any);
+    try h.build(&.{ 1, 1 }, .complete);
+    try h.build(&.{ 1, 0 }, .puff);
+}
+
+/// Bits of a header, least significant first.
+fn bitsOf(a: std.mem.Allocator, fields: []const [2]u32) ![]u8 {
+    var out = std.ArrayList(u8).empty;
+    var cur: u8 = 0;
+    var n: u4 = 0;
+    for (fields) |f| {
+        var i: u32 = 0;
+        while (i < f[1]) : (i += 1) {
+            cur |= @as(u8, @intCast((f[0] >> @as(u5, @intCast(@min(i, 31)))) & 1)) << @intCast(n);
+            n += 1;
+            if (n == 8) {
+                try out.append(a, cur);
+                cur = 0;
+                n = 0;
+            }
+        }
+    }
+    if (n > 0) try out.append(a, cur);
+    return out.items;
+}
+
+test "a dynamic header that asks for more than 286 length codes is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    // BFINAL 1, BTYPE 2, HLIT 29 (286 + 2 = 288 codes), HDIST 0, HCLEN 0, then plenty of bytes
+    const s = try bitsOf(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 31, 5 }, .{ 0, 5 }, .{ 0, 4 }, .{ 0, 64 } });
+    try failsWith(error.Invalid, inflate.inflate(a, s, 100));
+}
+
+test "a dynamic header that asks for more than 30 distance codes is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const s = try bitsOf(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 0, 5 }, .{ 31, 5 }, .{ 0, 4 }, .{ 0, 64 } });
+    try failsWith(error.Invalid, inflate.inflate(a, s, 100));
+}
+
+test "a dynamic block whose code lengths run past the number it announced is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    // HLIT 0 (257) and HDIST 0 (1): 258 lengths. The code-length code has two symbols, 0 and 18, each of length 1 (0 is "0", 18 is "1").
+    // Order of the three-bit lengths: 16, 17, 18, 0 (HCLEN 0 = four of them). Then symbol 18 with 138 repeats twice: 276 > 258.
+    const s = try bitsOf(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 0, 5 }, .{ 0, 5 }, .{ 0, 4 }, .{ 0, 3 }, .{ 0, 3 }, .{ 1, 3 }, .{ 1, 3 }, .{ 1, 1 }, .{ 127, 7 }, .{ 1, 1 }, .{ 127, 7 }, .{ 0, 32 } });
+    try failsWith(error.Invalid, inflate.inflate(a, s, 100));
+}
+
+test "a dynamic block with an incomplete code-length code is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    // HCLEN 0: lengths for 16, 17, 18, 0 are 0, 0, 0, 1: one code of length 1 is incomplete for the code-length code.
+    const s = try bitsOf(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 0, 5 }, .{ 0, 5 }, .{ 0, 4 }, .{ 0, 3 }, .{ 0, 3 }, .{ 0, 3 }, .{ 1, 3 }, .{ 0, 64 } });
+    try failsWith(error.Invalid, inflate.inflate(a, s, 100));
+}
+
+test "fuzz: random and mutated streams never write past the limit and never crash" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const r = prng.random();
+    const maxes = [_]usize{ 0, 1, 2, 5, 100, 1 << 16 };
+    var n: usize = 0;
+    while (n < 20000) : (n += 1) {
+        const len = r.intRangeAtMost(usize, 1, 80);
+        const buf = try a.alloc(u8, len);
+        r.bytes(buf);
+        if (n % 3 == 0) buf[0] = (buf[0] & 0xf8) | 0b101;
+        if (n % 3 == 1) buf[0] = (buf[0] & 0xf8) | 0b011;
+        for (maxes) |m| {
+            if (inflate.inflate(a, buf, m)) |out| try t.expect(out.len <= m) else |_| {}
         }
     }
 }

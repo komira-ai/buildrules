@@ -31,6 +31,7 @@ const Part = struct {
     made_by: u16 = 0x031e,
     eattr: u32 = 0o100644 << 16,
     cd_extra: []const u8 = "",
+    lfh_extra: []const u8 = "",
     declared_usize: ?u32 = null,
 };
 
@@ -115,8 +116,10 @@ fn build(a: std.mem.Allocator, parts: []const Part) !Z {
             put32(&h, 22, usize_);
         }
         put16(&h, 26, @intCast(p.name.len));
+        put16(&h, 28, @intCast(p.lfh_extra.len));
         try out.appendSlice(a, &h);
         try out.appendSlice(a, p.name);
+        try out.appendSlice(a, p.lfh_extra);
         z.data[i] = out.items.len;
         try out.appendSlice(a, comp);
         z.desc[i] = out.items.len;
@@ -773,4 +776,89 @@ test "a well-formed extra field that is not zip64 is accepted" {
     const extra = [_]u8{ 0x55, 0x54, 0x05, 0x00, 1, 0, 0, 0, 0 };
     const z = try build(ar.allocator(), &.{.{ .name = "a.txt", .cd_extra = &extra }});
     try t.expectEqualStrings("hello\n", (try readIt(ar.allocator(), z))[0].data);
+}
+
+test "a zip64 extra field in a local header is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const extra = [_]u8{ 0x01, 0x00, 0x08, 0x00, 0, 0, 0, 0, 0, 0, 0, 0 };
+    const z = try build(a, &.{.{ .name = "a.txt", .lfh_extra = &extra }});
+    try t.expectError(error.Zip64, readIt(a, z));
+}
+
+test "a malformed extra field in a local header is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const extra = [_]u8{ 0x55, 0x54, 0x20, 0x00, 1 };
+    const z = try build(a, &.{.{ .name = "a.txt", .lfh_extra = &extra }});
+    try t.expectError(error.BadExtra, readIt(a, z));
+}
+
+test "a well-formed extra field in a local header is accepted" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const extra = [_]u8{ 0x55, 0x54, 0x05, 0x00, 1, 0, 0, 0, 0 };
+    const z = try build(a, &.{.{ .name = "a.txt", .lfh_extra = &extra }});
+    try t.expectEqualStrings("hello\n", (try readIt(a, z))[0].data);
+}
+
+test "a DEL byte in a name is refused" {
+    try expectName("a\x7f.txt", error.NonAsciiName);
+}
+
+fn sameEntries(x: []const zip.Entry, y: []const zip.Entry) bool {
+    if (x.len != y.len) return false;
+    for (x, y) |p, q| {
+        if (!std.mem.eql(u8, p.name, q.name) or !std.mem.eql(u8, p.data, q.data)) return false;
+    }
+    return true;
+}
+
+test "fuzz: every one-byte change, every one-byte deletion and every truncation of an archive: no crash, and an archive that is accepted has the original members" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const comp = try runOfA(a, 2);
+    const z = try build(a, &.{
+        .{ .name = "manifest.json", .data = "{}\n" },
+        .{ .name = "a.txt", .data = "a" ** 517, .comp = comp },
+        .{ .name = "b.txt", .method = 0, .descriptor = false },
+    });
+    const orig = try readIt(a, z);
+    const masks = [_]u8{ 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0xff };
+    var i: usize = 0;
+    while (i < z.bytes.len) : (i += 1) {
+        for (masks) |m| {
+            var tmp = Z{ .bytes = try a.dupe(u8, z.bytes) };
+            tmp.bytes[i] ^= m;
+            if (readIt(a, tmp)) |got| try t.expect(sameEntries(orig, got)) else |_| {}
+        }
+        var del = std.ArrayList(u8).empty;
+        try del.appendSlice(a, z.bytes[0..i]);
+        try del.appendSlice(a, z.bytes[i + 1 ..]);
+        if (readIt(a, Z{ .bytes = del.items })) |got| try t.expect(sameEntries(orig, got)) else |_| {}
+        if (readIt(a, Z{ .bytes = z.bytes[0..i] })) |_| return error.TestUnexpectedResult else |_| {}
+    }
+}
+
+test "two central entries sharing one local header are refused, whatever their names" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try build(a, &.{ .{ .name = "a.txt" }, .{ .name = "b.txt" } });
+    put32(z.bytes, z.cd[1] + 42, @intCast(z.lfh[0]));
+    try t.expectError(error.LocalHeaderMismatch, readIt(a, z));
+}
+
+test "a manifest member that lies about its size, and an empty deflate member, are handled" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try build(a, &.{.{ .name = "manifest.json", .data = "{}\n", .declared_usize = 1 }});
+    try t.expectError(error.InflatedBeyondDeclared, readIt(a, z));
+    const z2 = try build(a, &.{.{ .name = "a.txt", .data = "", .comp = "\x03\x00" }});
+    try t.expectEqual(@as(usize, 0), (try readIt(a, z2))[0].data.len);
 }

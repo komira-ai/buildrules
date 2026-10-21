@@ -146,7 +146,7 @@ pub fn parseRows(a: std.mem.Allocator, npm: []const u8, kind: sets_mod.Kind, dia
             }
         }
         if (!std.mem.eql(u8, line, "    },")) return l.bad("expected the end of the row `    }},` (an extra or reordered field?)");
-        if (!valid.isPackageName(name) or !lock_mod.isStrictSemver(version)) return l.bad("a name or version outside the registry's sets");
+        if (!lock_mod.isNpmName(name) or !lock_mod.isStrictSemver(version)) return l.bad("a name or version outside the registry's sets");
         if (!valid.isUrl(url) or !valid.isSri512(sri) or !valid.isSha256(sha)) return l.bad("a url, sri512 or sha256 outside its set");
         const want_key = try std.fmt.allocPrint(a, "{s}@{s}", .{ name, version });
         if (!std.mem.eql(u8, key, want_key)) return l.bad("a key that is not name@version");

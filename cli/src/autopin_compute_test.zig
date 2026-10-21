@@ -436,3 +436,49 @@ test "compute: a pins.lock.bzl with no NPM block is refused" {
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "no NPM block"));
 }
+
+test "compute: nothing from a lock reaches the log except on one line that starts with the program's own words (newline, carriage return, escape, alias, version, resolved)" {
+    const hostile = [_][]const u8{
+        ",\"node_modules/x\\n::error::INJECT1\":{\"version\":\"1.0.0\",\"resolved\":\"https://registry.npmjs.org/y/-/y-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}",
+        ",\"node_modules/x\":{\"name\":\"y\\n::error::INJECT2\",\"version\":\"1.0.0\",\"resolved\":\"https://registry.npmjs.org/y/-/y-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}",
+        ",\"node_modules/x\":{\"version\":\"1.0.0\\n::error::INJECT3\",\"resolved\":\"https://registry.npmjs.org/y/-/y-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}",
+        ",\"node_modules/x\":{\"version\":\"1.0.0\",\"resolved\":\"https://registry.npmjs.org/x/-/x-1.0.0.tgz\\n::error::INJECT4\",\"integrity\":\"" ++ sri_a ++ "\"}",
+        ",\"node_modules/x\\r::error::INJECT5\\u001b[2K\":{\"version\":\"1.0.0\"}",
+        ",\"node_modules/x\\u2028::error::INJECT6\":{\"version\":\"1.0.0\"}",
+    };
+    for (hostile) |extra| {
+        for ([_][]const u8{ "buildrules-lock", "pins-lock" }) |kind| {
+            reset();
+            const h = try kit.Harness.create();
+            defer h.destroy();
+            const is_pins = std.mem.eql(u8, kind, "pins-lock");
+            if (is_pins) try syncedPins(h, "site", &two_pkgs) else try syncedBuildrules(h, "site", &two_pkgs);
+            try event(h);
+            try h.put("site/package-lock.json", try lockJson(h.a(), &two_pkgs, extra));
+            const r = runCompute(h, "artifact", &.{try std.fmt.allocPrint(h.a(), "site={s}", .{kind})});
+            try t.expectEqual(@as(u8, 1), r.code);
+            var lines = std.mem.splitScalar(u8, r.err, '\n');
+            while (lines.next()) |l| {
+                if (l.len == 0) continue;
+                try t.expect(std.mem.startsWith(u8, l, "buildrules: "));
+                for (l) |c| try t.expect(c >= 0x20 and c <= 0x7e);
+            }
+            try t.expect(std.mem.indexOf(u8, r.out, "::") == null);
+        }
+    }
+}
+
+test "compute: a package.json or package-lock.json nested deeper than a real one is refused, not a stack overflow" {
+    reset();
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    try syncedBuildrules(h, "site", &two_pkgs);
+    try event(h);
+    var deep = std.ArrayList(u8).empty;
+    try deep.appendSlice(h.a(), "{\"name\":\"demo\",\"x\":");
+    try deep.appendNTimes(h.a(), '[', 100000);
+    try h.put("site/package.json", deep.items);
+    const r = runCompute(h, "artifact", &.{"site=buildrules-lock"});
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "nests deeper"));
+}

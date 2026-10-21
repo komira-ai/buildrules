@@ -11,6 +11,7 @@ const fetch = @import("fetch.zig");
 const lock_mod = @import("autopin_lock.zig");
 const manifest_mod = @import("autopin_manifest.zig");
 const npm_cmd = @import("npm_cmd.zig");
+const safe = @import("autopin_safe.zig");
 const sets_mod = @import("autopin_sets.zig");
 const table_mod = @import("autopin_table.zig");
 const Diag = @import("diag.zig").Diag;
@@ -146,7 +147,7 @@ fn compute(root: *Ctx, o: Opts) !u8 {
     const sets = sets_mod.Sets.parse(a, o.set_values) catch |e| return root.usage("autopin compute: --set: {s}", .{@errorName(e)});
     var diag = Diag.init(a);
     const ev = (try readEvent(root, o.event.?, &diag)) orelse {
-        for (diag.msgs.items) |m| _ = root.fail("{s}", .{m});
+        for (diag.msgs.items) |m| _ = root.fail("{s}", .{try safe.oneLine(a, m)});
         return ctxm.exit_fail;
     };
     if (!try outDirEmpty(root, o.out.?)) return root.fail("autopin compute: --out {s} is not empty", .{o.out.?});
@@ -163,7 +164,7 @@ fn compute(root: *Ctx, o: Opts) !u8 {
             sd.add("{s}", .{@errorName(e)});
             break :blk null;
         };
-        for (sd.msgs.items) |m| _ = root.fail("{s}: {s}", .{ set.dir, m });
+        for (sd.msgs.items) |m| _ = root.fail("{s}: {s}", .{ set.dir, try safe.oneLine(a, m) });
         if (sd.lost > 0) _ = root.fail("{s}: {s}", .{ set.dir, Diag.lost_text });
         if (sd.count() > 0) {
             bad += 1;

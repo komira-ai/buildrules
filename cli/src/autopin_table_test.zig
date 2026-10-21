@@ -507,3 +507,81 @@ test "table: a statement whose middle reads as a row key, over a complete row bo
     // The key is read from the characters between the first five and the last four: here exactly left-pad@1.3.0.
     try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", "    (left-pad@1.3.0)xyz\n", body, "}\n" }), .pins_lock);
 }
+
+test "npm names: an optional scope and one segment, nothing npm never makes" {
+    const good = [_][]const u8{ "left-pad", "@scope/pkg", "a", "A_b.c", "a.b", "x~y", "-x", "@s/n", "a-b_c.d-1" };
+    for (good) |n| try t.expect(lock.isNpmName(n));
+    const bad = [_][]const u8{ "", "a/./b", "a/b/c", "a/b", "@", "@s", "@s/", "@/n", "@s/n/m", "a@b", "a+b", "_x", ".x", "@_s/n", "@s/.n", "a/-/b", "a b", "a\"b", "a..b/c", "x" ** 215 };
+    for (bad) |n| {
+        if (lock.isNpmName(n)) std.debug.print("accepted name {s}\n", .{n});
+        try t.expect(!lock.isNpmName(n));
+    }
+}
+
+test "lock: a path whose package name is not an npm name is refused" {
+    const R = "https://registry.npmjs.org/";
+    try expectRefused(",\"node_modules/a/b/c\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "a/b/c/-/c-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a/b/c");
+    try expectRefused(",\"node_modules/@s/n/m\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "@s/n/m/-/m-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/@s/n/m");
+    try expectRefused(",\"node_modules/_x\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "_x/-/_x-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/_x");
+    try expectRefused(",\"node_modules/a+b\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "a+b/-/a+b-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a+b");
+    try expectRefused(",\"node_modules/node_modules/x\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "x/-/x-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/node_modules/x");
+}
+
+test "lock: a nested node_modules chain of valid names is accepted" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var diag = Diag.init(a);
+    const R = "https://registry.npmjs.org/";
+    const got = try readLock(a, try lockWith(a, ",\"node_modules/a/node_modules/@s/b\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "@s/b/-/b-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}"), &diag);
+    try t.expectEqual(@as(usize, 0), diag.count());
+    try t.expectEqual(@as(usize, 3), got.len);
+}
+
+test "lock: the resolved url must be exactly the derived one (host case, trailing dot, encoding, query, fragment, scheme)" {
+    const R = "https://registry.npmjs.org/";
+    const sri = sri_a;
+    const cases = [_][3][]const u8{
+        .{ "node_modules/@s/n", R ++ "@s/n/-/@s/n-1.0.0.tgz", "1.0.0" },
+        .{ "node_modules/@s/n", R ++ "%40s%2fn/-/n-1.0.0.tgz", "1.0.0" },
+        .{ "node_modules/a", "https://REGISTRY.npmjs.org/a/-/a-1.0.0.tgz", "1.0.0" },
+        .{ "node_modules/a", "https://registry.npmjs.org./a/-/a-1.0.0.tgz", "1.0.0" },
+        .{ "node_modules/a", R ++ "a/-/a-1.0.0.tgz#sha1=ab", "1.0.0" },
+        .{ "node_modules/a", R ++ "a/-/a-1.0.tgz", "1.0" },
+        .{ "node_modules/a", R ++ "a/-/a-v1.0.0.tgz", "v1.0.0" },
+        .{ "node_modules/a", R ++ "a/-/a-1.0.0-.tgz", "1.0.0-" },
+        .{ "node_modules/a", R ++ "a/-/a-1.0.0-01.tgz", "1.0.0-01" },
+        .{ "node_modules/a", R ++ "a/-/a-1.0.0+.tgz", "1.0.0+" },
+        .{ "node_modules/a", R ++ "a/-/a-1.0.0-a..b.tgz", "1.0.0-a..b" },
+        .{ "node_modules/a/node_modules", R ++ "a/-/a-1.0.0.tgz", "1.0.0" },
+        .{ "node_modules/../x", R ++ "../x/-/x-1.0.0.tgz", "1.0.0" },
+    };
+    for (cases) |c| {
+        var ar = arena();
+        defer ar.deinit();
+        const a = ar.allocator();
+        var diag = Diag.init(a);
+        const entry = try std.fmt.allocPrint(a, ",\"{s}\":{{\"version\":\"{s}\",\"resolved\":\"{s}\",\"integrity\":\"{s}\"}}", .{ c[0], c[2], c[1], sri });
+        _ = try readLock(a, try lockWith(a, entry), &diag);
+        if (diag.count() == 0) std.debug.print("accepted {s} {s} {s}\n", .{ c[0], c[1], c[2] });
+        try t.expect(diag.count() > 0);
+    }
+}
+
+test "lock: very deep nesting is refused, not a stack overflow" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var s = std.ArrayList(u8).empty;
+    try s.appendSlice(a, "{\"lockfileVersion\":3,\"packages\":{\"\":{},\"node_modules/x\":{\"version\":");
+    try s.appendNTimes(a, '[', 300000);
+    var d = Diag.init(a);
+    const e = try lock.read(a, s.items, &d);
+    try t.expectEqual(@as(usize, 0), e.len);
+    try t.expect(d.count() > 0);
+    try t.expect(kit_contains(d.msgs.items[0], "nests deeper"));
+}
+
+fn kit_contains(h: []const u8, n: []const u8) bool {
+    return std.mem.indexOf(u8, h, n) != null;
+}

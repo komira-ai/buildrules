@@ -9,6 +9,7 @@ const std = @import("std");
 const ctxm = @import("ctx.zig");
 const fetch = @import("fetch.zig");
 const valid = @import("valid.zig");
+const safe = @import("autopin_safe.zig");
 const Diag = @import("diag.zig").Diag;
 const Ctx = ctxm.Ctx;
 
@@ -210,6 +211,10 @@ pub fn strList(a: std.mem.Allocator, o: std.json.ObjectMap, key: []const u8, dia
 
 /// The packages of package-lock.json (lockfileVersion 3) that have a tarball, sorted by key, each once.
 fn readLock(a: std.mem.Allocator, text: []const u8, diag: *Diag) ![]Pin {
+    if (!safe.jsonDepthOk(text)) {
+        diag.add("package-lock.json nests deeper than {d} levels", .{safe.max_json_depth});
+        return &.{};
+    }
     const parsed = std.json.parseFromSlice(std.json.Value, a, text, .{}) catch {
         diag.add("package-lock.json is not valid JSON", .{});
         return &.{};
@@ -305,6 +310,10 @@ fn lessPin(_: void, x: Pin, y: Pin) bool {
 pub const Manifest = struct { name: ?[]const u8, version: ?[]const u8, scripts: []const [2][]const u8, policy: std.json.ObjectMap };
 
 pub fn readManifest(a: std.mem.Allocator, text: []const u8, diag: *Diag) !?Manifest {
+    if (!safe.jsonDepthOk(text)) {
+        diag.add("package.json nests deeper than {d} levels", .{safe.max_json_depth});
+        return null;
+    }
     const parsed = std.json.parseFromSlice(std.json.Value, a, text, .{}) catch {
         diag.add("package.json is not valid JSON", .{});
         return null;

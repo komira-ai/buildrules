@@ -137,3 +137,29 @@ test "download: a second redirect is refused, not followed; a non-200 is a failu
     var gone = Fake{ .a = a, .answers = &.{ .{ .status = 302, .location = blob }, .{ .status = 404 } } };
     try t.expectError(error.DownloadFailed, api_mod.download(a, gone.api(), "p", 1024));
 }
+
+test "download: a Location with an escape, an IPv6 literal, a space, a different scheme case, or a host in the path is refused" {
+    try expectNeverRequested(&.{
+        "https://a%2eblob.core.windows.net/x",
+        "https://a.blob.core.windows.net%2f@evil.com/x",
+        "https://evil.com/a.blob.core.windows.net",
+        "https://evil.com?.blob.core.windows.net",
+        "https://evil.com#.blob.core.windows.net",
+        "HTTPS://a.blob.core.windows.net/x",
+        "https:///a.blob.core.windows.net/x",
+        "https://a.blob.core.windows.net /x",
+        "https://[::1]/x",
+        "https://a.BLOB.core.windows.net/x",
+        "https://a.blob.core.windows.net./x",
+        "https://evil.com@a.blob.core.windows.net/x",
+        "https://xactions.githubusercontent.com/x",
+        "https://a.actions.githubusercontent.com.evil.io/x",
+    });
+}
+
+test "download: the allowed hosts are accepted, with a query that carries a signature" {
+    try t.expect(api_mod.redirectAllowed("https://a.blob.core.windows.net/x?sig=abc%3D&se=1"));
+    try t.expect(api_mod.redirectAllowed("https://pipelines.actions.githubusercontent.com/a/b"));
+    try t.expect(api_mod.redirectAllowed("https://a-b.blob.core.windows.net"));
+    try t.expect(api_mod.redirectAllowed("https://a.b.actions.githubusercontent.com/x"));
+}
