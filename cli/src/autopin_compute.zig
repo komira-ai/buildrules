@@ -154,7 +154,9 @@ fn compute(root: *Ctx, o: Opts) !u8 {
 
     var repo = root.into(o.dir) catch |e| return root.fail("cannot open {s}: {s}", .{ o.dir, @errorName(e) });
     defer repo.dir.close();
+    const previous_fetcher = npm_cmd.fetcher;
     npm_cmd.fetcher = &capped;
+    defer npm_cmd.fetcher = previous_fetcher;
 
     var files = std.ArrayList(manifest_mod.File).empty;
     var bad: usize = 0;

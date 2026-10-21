@@ -29,7 +29,18 @@ fn fake(a: std.mem.Allocator, url: []const u8) anyerror!fetch.Digest.Result {
     return .{ .sha256 = sha_a, .sri512 = served_sri, .size = served_size };
 }
 
+var saved_npm: ?npm.Fetch = null;
+var saved_compute: ?npm.Fetch = null;
+
+/// Puts back the two download seams a test replaced: the tests of one package may share a program, and another test relies on the real one.
+fn teardown() void {
+    if (saved_npm) |f| npm.fetcher = f;
+    if (saved_compute) |f| compute.fetcher = f;
+}
+
 fn reset() void {
+    if (saved_npm == null) saved_npm = npm.fetcher;
+    if (saved_compute == null) saved_compute = compute.fetcher;
     fetches = 0;
     served_sri = sri_a;
     served_size = 11;
@@ -115,6 +126,7 @@ fn readManifest(h: *kit.Harness, out: []const u8, sets: []const []const u8) !man
 
 test "compute: a lock bump gives the regenerated table and a manifest for the pull request, fetching only the new package" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try syncedBuildrules(h, "site", &two_pkgs);
@@ -141,6 +153,7 @@ test "compute: a lock bump gives the regenerated table and a manifest for the pu
 
 test "compute: nothing to do gives an empty file list and no table, and a rerun on the committed result changes nothing" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try syncedBuildrules(h, "site", &two_pkgs);
@@ -167,6 +180,7 @@ test "compute: nothing to do gives an empty file list and no table, and a rerun 
 
 test "compute: a pins.lock.bzl directory keeps its header and PINS block and gets the new row" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try syncedPins(h, "infra", &two_pkgs);
@@ -185,6 +199,7 @@ test "compute: a pins.lock.bzl directory keeps its header and PINS block and get
 
 test "compute: two directories, one in sync and one bumped, write only the bumped one" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try syncedBuildrules(h, "site", &two_pkgs);
@@ -200,6 +215,7 @@ test "compute: two directories, one in sync and one bumped, write only the bumpe
 
 test "compute: a directory that --set does not name is never regenerated" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try syncedBuildrules(h, "site", &two_pkgs);
@@ -215,6 +231,7 @@ test "compute: a directory that --set does not name is never regenerated" {
 
 test "compute: a version republished with other bytes is refused and nothing is uploaded" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try syncedBuildrules(h, "site", &two_pkgs);
@@ -240,6 +257,7 @@ test "compute: a version republished with other bytes is refused and nothing is 
 
 test "compute: a tarball whose sha512 is not the lock's pins nothing" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try syncedBuildrules(h, "site", &two_pkgs);
@@ -266,6 +284,7 @@ test "compute: a hostile lock is refused before any download (alias, other host,
     };
     for (hostile) |extra| {
         reset();
+        defer teardown();
         const h = try kit.Harness.create();
         defer h.destroy();
         try syncedBuildrules(h, "site", &two_pkgs);
@@ -286,6 +305,7 @@ test "compute: a hostile lock is refused before any download (alias, other host,
 
 test "compute: downloads are capped: only the registry is fetched from" {
     reset();
+    defer teardown();
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -297,6 +317,7 @@ test "compute: downloads are capped: only the registry is fetched from" {
 
 test "compute: downloads are capped: 64 MiB for one tarball" {
     reset();
+    defer teardown();
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -309,6 +330,7 @@ test "compute: downloads are capped: 64 MiB for one tarball" {
 
 test "compute: downloads are capped: 512 MiB together" {
     reset();
+    defer teardown();
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -322,6 +344,7 @@ test "compute: downloads are capped: 512 MiB together" {
 
 test "compute: the 201st new package is refused" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try syncedPins(h, "infra", &two_pkgs);
@@ -336,6 +359,7 @@ test "compute: the 201st new package is refused" {
     try t.expect(!h.has("artifact/manifest.json"));
     // 200 are fine.
     reset();
+    defer teardown();
     const ok = try runCompute200(h);
     try t.expectEqual(@as(u8, 0), ok.code);
 }
@@ -349,6 +373,7 @@ fn runCompute200(h: *kit.Harness) !kit.Run {
 
 test "compute: the event must be a pull_request event with a number and 40-hex shas" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try syncedBuildrules(h, "site", &two_pkgs);
@@ -372,6 +397,7 @@ test "compute: the event must be a pull_request event with a number and 40-hex s
 
 test "compute: a non-empty --out is refused (stale files would be uploaded)" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try syncedBuildrules(h, "site", &two_pkgs);
@@ -385,6 +411,7 @@ test "compute: a non-empty --out is refused (stale files would be uploaded)" {
 
 test "compute: a set without its table, or without a lock, is refused" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try h.put(".buckconfig", "[cells]\n");
@@ -401,6 +428,7 @@ test "compute: a set without its table, or without a lock, is refused" {
 
 test "compute: usage errors exit 2" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     const cases = [_][]const []const u8{
@@ -427,6 +455,7 @@ test "compute: usage errors exit 2" {
 
 test "compute: a pins.lock.bzl with no NPM block is refused" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try syncedPins(h, "infra", &two_pkgs);
@@ -449,6 +478,7 @@ test "compute: nothing from a lock reaches the log except on one line that start
     for (hostile) |extra| {
         for ([_][]const u8{ "buildrules-lock", "pins-lock" }) |kind| {
             reset();
+            defer teardown();
             const h = try kit.Harness.create();
             defer h.destroy();
             const is_pins = std.mem.eql(u8, kind, "pins-lock");
@@ -470,6 +500,7 @@ test "compute: nothing from a lock reaches the log except on one line that start
 
 test "compute: a package.json or package-lock.json nested deeper than a real one is refused, not a stack overflow" {
     reset();
+    defer teardown();
     const h = try kit.Harness.create();
     defer h.destroy();
     try syncedBuildrules(h, "site", &two_pkgs);
