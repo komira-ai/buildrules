@@ -39,5 +39,6 @@ describe('serve.js (the local preview)', () => {
     expect(serve.TYPES['.html']).toContain('text/html');
     expect(serve.TYPES['.css']).toContain('text/css');
     expect(serve.TYPES['.svg']).toBe('image/svg+xml');
+    expect(serve.TYPES['.sh']).toContain('text/plain');
   });
 });

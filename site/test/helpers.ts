@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
-import { ICON, siteFiles, STYLESHEET } from '../tools/build';
+import { ICON, INSTALL, siteFiles, STYLESHEET } from '../tools/build';
 
 export const SITE_DIR = resolve(__dirname, '..');
 /** The repository root: the tests read the rule sources and the contract at their paths there. */
@@ -9,7 +9,7 @@ export const REPO_DIR = resolve(SITE_DIR, '..');
 export const repoFile = (rel: string): string => readFileSync(join(REPO_DIR, rel), 'utf8');
 
 export function builtSite(): Map<string, string | Buffer> {
-  return siteFiles(readFileSync(join(SITE_DIR, 'static', STYLESHEET)), readFileSync(join(SITE_DIR, 'static', ICON)));
+  return siteFiles(readFileSync(join(SITE_DIR, 'static', STYLESHEET)), readFileSync(join(SITE_DIR, 'static', ICON)), readFileSync(join(SITE_DIR, 'static', INSTALL)));
 }
 
 export const html = (files: ReadonlyMap<string, string | Buffer>, file: string): string => {
