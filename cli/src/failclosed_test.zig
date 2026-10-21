@@ -1,4 +1,4 @@
-//! What the command line does when an allocation fails, and what it promises about the files it writes. Each test names the defect it catches.
+//! What the command line does when an allocation fails, and what it promises about the files it writes. Each test names the defect it catches. The sweeps run in the one program of all_test.zig too, so they leave the globals (the fetcher) as they found them.
 //!
 //! A sweep runs a command with the allocator failing at its 1st, 2nd, ... allocation (and at every one after it) until a run meets no failure. A command that
 //! could not allocate has not looked at everything it was asked to look at, so for a gate (`check`) an exit of 0 is a wrong answer, not a lucky one.
@@ -309,6 +309,9 @@ test "mojo check: with ONE allocation failing and every other working, a synced 
 }
 
 test "npm sync: with an allocation failing anywhere, the exit is not 0" {
+    // The fetcher is a global the other test files read (npm_cmd_test expects the real one first): put it back.
+    const real_fetcher = npm.fetcher;
+    defer npm.fetcher = real_fetcher;
     var i: usize = 0;
     var open: usize = 0;
     while (i < 20_000) : (i += 1) {

@@ -6,17 +6,46 @@
 # tests, so a test is in the closure of what it gates), when its rule only describes a configuration, or when ci/all.bzl lists it under
 # EXCLUDED with a reason. Anything else is an uncovered target: this fails and names it. It also fails when an exclusion matches nothing, or
 # when //ci:all builds a target that is excluded (the exclusion would be a lie). It also holds the planted defect of ci/negative red (ci/negative.bzl).
+# It also fails for a package that neither the scrub nor the no-shell lint (//ci:no_shell) is given, unless NO_SHELL_EXCLUDED (ci/no_shell.bzl) lists it with a reason.
 
 load("@buildrules//ci:all.bzl", "EXCLUDED", "MIRROR_ONLY", "NOT_BUILT_KINDS")
 load("@buildrules//ci:negative.bzl", "negative_problems")
+load("@buildrules//ci:no_shell.bzl", "NO_SHELL_EXCLUDED")
 
 def _targets(q, expr):
     return [str(t.label) for t in q.eval(expr)]
 
+# Every package of the tree is read by the scrub and by the no-shell lint (the `scrub_files` of each is in `packages` of //tools/scrub:scrub and of
+# //ci:no_shell), or is in NO_SHELL_EXCLUDED (ci/no_shell.bzl) with a reason: a package that is in neither is a package whose files nobody reads.
+def _pkg(label):
+    return "{}//{}".format(label.cell, label.package)
+
+def _package_problems(q):
+    problems = []
+    packages = {}
+    for t in q.eval("//... + crates//... + toolchains//..."):
+        packages[_pkg(t.label)] = True
+    both = {}
+    for name, owner in [("//ci:no_shell", "ci/BUCK"), ("//tools/scrub:scrub", "tools/scrub/BUCK")]:
+        listed = {}
+        for t in q.eval("deps({}, 1)".format(name)):
+            if t.label.name == "scrub_files":
+                listed[_pkg(t.label)] = True
+                both[_pkg(t.label)] = True
+        for p in sorted(packages.keys()):
+            if p not in listed and p not in NO_SHELL_EXCLUDED:
+                problems.append("the package {} is not in the packages of {} ({}): add `scrub_files()` to its BUCK file and its label to the list, or list it in NO_SHELL_EXCLUDED in ci/no_shell.bzl with a reason".format(p, name, owner))
+    for p in NO_SHELL_EXCLUDED:
+        if p not in packages:
+            problems.append("NO_SHELL_EXCLUDED lists {}, which is no package (remove it)".format(p))
+        if p in both:
+            problems.append("NO_SHELL_EXCLUDED lists {}, which a list reads (remove the entry)".format(p))
+    return problems
+
 def _impl(ctx):
     q = ctx.uquery()
     tree = "(//... + crates//...)"
-    problems = []
+    problems = _package_problems(q)
 
     for pattern in EXCLUDED:
         if not _targets(q, pattern):

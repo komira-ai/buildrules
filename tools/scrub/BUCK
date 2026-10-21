@@ -85,6 +85,7 @@ scrub_test(
     "//rules/check:scrub_files",
     "//rules/toolbox:scrub_files",
     "//rules/minicfg:scrub_files",
+    "//rules/mojo/tests:scrub_files",
     "//rules/mojo:scrub_files",
     "//rules/mopm:scrub_files",
     "//rules/node/tests:scrub_files",
