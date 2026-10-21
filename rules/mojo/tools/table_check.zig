@@ -16,7 +16,7 @@ const std = @import("std");
 const graph_open = "GRAPH_JSON = r'''";
 const graph_close = "'''\n";
 
-pub const Error = error{ NoGraph, Differs };
+pub const Error = error{ NoGraph, Differs, EmptyOutput };
 
 /// The text of the graph in a table: what `sync` wrote between the markers.
 pub fn graphOf(table: []const u8) error{NoGraph}![]const u8 {
@@ -47,6 +47,8 @@ pub fn lineAt(text: []const u8, offset: usize) struct { no: usize, text: []const
 
 /// The comparison, with the reason in the error message when the two differ.
 pub fn check(a: std.mem.Allocator, table: []const u8, mopm_out: []const u8, why: *[]const u8) (Error || std.mem.Allocator.Error)!void {
+    // mopm printed nothing: there is no graph to be the same as, whatever the table holds (a blank block would pass the newline allowance).
+    if (mopm_out.len == 0) return error.EmptyOutput;
     const graph = try graphOf(table);
     const at = firstDifference(graph, mopm_out) orelse return;
     const t = lineAt(graph, at);
@@ -82,6 +84,7 @@ pub fn main() !void {
     var why: []const u8 = "";
     check(a, table, r.stdout, &why) catch |e| switch (e) {
         error.NoGraph => die("{s} has no GRAPH_JSON = r'''...''' block", .{args[4]}),
+        error.EmptyOutput => die("`mopm plan --unit-graph --locked` printed nothing", .{}),
         error.Differs => die("{s}: {s}", .{ args[4], why }),
         error.OutOfMemory => return e,
     };

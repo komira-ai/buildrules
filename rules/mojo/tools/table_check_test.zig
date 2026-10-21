@@ -37,7 +37,17 @@ test "the same text is the same, with or without the newline sync adds" {
     try T.check(a, try table(a, graph), graph, &why);
     // mopm's output without a final newline: sync wrote one
     try T.check(a, try table(a, graph), graph[0 .. graph.len - 1], &why);
-    try T.check(a, try table(a, "\n"), "", &why);
+}
+
+test "mopm printing nothing is refused, even against a blank block" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    try t.expectError(error.EmptyOutput, T.check(a, try table(a, "\n"), "", &why));
+    try t.expectError(error.EmptyOutput, T.check(a, try table(a, graph), "", &why));
+    // and not for a table that has no block either: nothing to compare is the first thing said
+    try t.expectError(error.EmptyOutput, T.check(a, "nothing", "", &why));
 }
 
 test "any other difference is one, and names the line" {
