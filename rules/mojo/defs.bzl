@@ -6,7 +6,8 @@
 One line per package. The targets come from the package's unit graph, which `buildrules mojo sync` committed as
 `buildrules.mojo.lock.bzl` (mopm's own output, verbatim): nothing here parses mopm.toml or decides what "build Mojo" means.
 
-    :lib        the package's `.mojoc` (mode `lib`)
+    :lib        the package's `.mojoc` (mode `lib`), behind the run of every test: it exists only if they all pass (below)
+    :lib_ungated  the same `.mojoc` as compiled, which the package's own tests import (what `:lib` waits for)
     :test       every test file, built once and run: `:<stem>` (the run) behind `:<stem>__bin` (the compile)
     :build      the library and the binaries of `[targets] bins`
     :coverage   every test again as a debug build run under kcov, one Cobertura report per test file
@@ -16,6 +17,10 @@ A workspace member (a path dependency) is a package of its own with its own BUCK
 its `:lib` is what the units here import. A registry dependency is a sha256-pinned `.conda`, matched to the graph's Mojo version
 by mopm, fetched and unpacked here. Native libraries are declared inputs: `natives = {"<soname>": "<target>"}`; mopm checks
 each against the sha256 in the graph before it compiles anything.
+
+The gate. `:lib` is a copy of `:lib_ungated` made by an action that takes the marker of every test run as an input, and a test run writes
+its marker only when the test passed. A failing test therefore leaves `:lib` unbuildable, and so every target that imports it (a
+member's units, a binary, `:build`, a conda package made from it). Build `:lib_ungated` to work on a library whose tests are red.
 
 The ISA level of the target platform reaches the test and binary builds as compiler flags (rules/isa.bzl, one table for every
 toolchain) and the test runs as the platform's `exec_compatible_with`, so the farm schedules it on a worker that has the level.
@@ -27,7 +32,7 @@ load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/mopm:pins.bzl", "vname")
 load(":check.bzl", "mojo_check_rule")
-load(":unit.bzl", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
+load(":unit.bzl", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_gated_lib_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
 
 SCHEMA = 1
 
@@ -158,12 +163,14 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
     )
 
 
-    def label_of(uid):
+    def label_of(uid, own = ":lib"):
+        # `own` is the target of this package's own library: `:lib`, the one behind the tests, for everything but the tests, which
+        # import the compiled `:lib_ungated` (they are what `:lib` waits for).
         u = units[uid]
         if u["kind"] == "prebuilt":
             return ":prebuilt_" + u["package"]
         if u["package"] == root:
-            return ":lib"
+            return own
         suffix = "src/" + u["package"]
         r = u["root"]
         if r != suffix and not r.endswith("/" + suffix):
@@ -203,7 +210,7 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
             if s not in natives:
                 fail("{}: {} links the native library {}; add it to mojo_package(natives = {{...}})".format(here, uid, s))
         return dict(
-            deps = [label_of(d) for d in u["deps"]],
+            deps = [label_of(d, ":lib_ungated" if kind == "test" else ":lib") for d in u["deps"]],
             graph = slice_of(uid, profile),
             kind = kind,
             mojo = mojo,
@@ -251,7 +258,7 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
                 exec_compatible_with = LINUX_X86_64,
             )
         elif kind == "lib" and u["package"] == root:
-            mojo_unit_rule(name = name_once("lib"), **common(uid, "lib", u["outputs"][0]))
+            mojo_unit_rule(name = name_once("lib_ungated"), **common(uid, "lib", u["outputs"][0]))
             libs.append(":lib")
             builds.append(":lib")
         elif kind == "bin":
@@ -308,6 +315,19 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
                 visibility = visibility,
             )
             covs.append(":" + stem + "__cov")
+    # `:lib`, the library as every other target sees it, exists only if every test of the package passed: its `.mojoc` is made by an
+    # action that takes each test run's marker as an input (mojo_gated_lib_rule). The package's own tests import `:lib_ungated`.
+    if libs:
+        mojo_gated_lib_rule(
+            name = name_once("lib"),
+            lib = ":lib_ungated",
+            test_runs = tests,
+            package = own_lib["package"],
+            check = ":check",
+            exec_compatible_with = LINUX_X86_64,
+            visibility = visibility,
+        )
+
     # Line coverage of the package from its tests' reports. Fails when a source of the library is in no report.
     mojo_cov_summary_rule(
         name = name_once("coverage"),

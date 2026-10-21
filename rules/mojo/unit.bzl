@@ -231,6 +231,39 @@ mojo_test_run_rule = rule(
     },
 )
 
+def _gated_lib_impl(ctx):
+    lib = ctx.attrs.lib[MojoLibInfo]
+    markers = [t[MojoTestRunInfo].marker for t in ctx.attrs.test_runs]
+
+    # The public `.mojoc` is a copy of the compiled one made by an action that has every test run's marker among its inputs.
+    # A marker exists only when its test passed, so when any test fails this action never runs and the file does not exist: no
+    # target that imports the library (it reads this file) and no `buck2 build` of the library can succeed.
+    out = ctx.actions.declare_output(ctx.attrs.package + ".mojoc")
+    ctx.actions.run(
+        cmd_args(_file(ctx.attrs.busybox), "cp", lib.mojoc, out.as_output(), hidden = markers),
+        category = "mojo_gate",
+        identifier = ctx.label.name,
+    )
+    closure = dict(lib.closure)
+    closure[ctx.attrs.package] = out
+    return _validated(ctx, [
+        DefaultInfo(default_output = out),
+        MojoLibInfo(id = lib.id, mojoc = out, closure = closure),
+    ])
+
+# The library as the world sees it (`:lib`): the compiled library (`:lib_ungated`, which the package's own tests import) behind the
+# runs of all of its tests. Same bytes as the compiled `.mojoc`, so a dependent's cache key moves only when the library does.
+mojo_gated_lib_rule = rule(
+    impl = _gated_lib_impl,
+    attrs = {
+        "busybox": attrs.exec_dep(default = "buildrules//rules/pins:busybox"),
+        "check": _CHECK_ATTR,
+        "lib": attrs.dep(providers = [MojoLibInfo]),
+        "package": attrs.string(),
+        "test_runs": attrs.list(attrs.dep(providers = [MojoTestRunInfo]), default = []),
+    },
+)
+
 def _cov_run_impl(ctx):
     info = ctx.attrs.bin[MojoExeInfo]
     have = ctx.attrs._exec_isa[ExecIsaInfo].level

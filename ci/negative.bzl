@@ -1,4 +1,4 @@
-"""The planted defect of ci/negative must stay red: what the check holds it to (ci/negative.bxl, and ci/completeness.bxl, which the public CI runs).
+"""The planted defects of ci/negative must stay red (and the Mojo gate, `gate_problems`, below): what the check holds them to (ci/negative.bxl, and ci/completeness.bxl, which the public CI runs).
 
 A wildcard build skips the fixture (it is compatible only with the platform it breaks on), so nothing else notices if it turns green. `negative_problems`
 analyses it on that platform and reports every way it is not red for the reason it plants. The control (`v3_test_with_isa_property`: the same test run with
@@ -53,4 +53,58 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
+    return problems + gate_problems(ctx)
+
+# The gate of a Mojo library (docs/contract.md, 12.8): a library's public `.mojoc` exists only if every test of its package passed. Two things are held.
+#
+#   behaviour  //ci/mojo_gate:consumer_of_red reads a library that waits for a failing test run, and must FAIL to build; the same library behind
+#              a passing run, //ci/mojo_gate:consumer_of_green, must build. The two are one rule (`mojo_gated_lib_rule`) and one consumer; they differ
+#              by the failing test, so the red is that test's. They use a stand-in for the compiler, so this needs no Mojo toolchain.
+#   wiring     the real packages' `:lib` (made by `mojo_package`) has every test run of its package among its dependencies, so the rule above is
+#              what guards a real library and not only the fixture.
+GATE_PLATFORM = "buildrules//platforms:linux_x86_64"
+GATE_GREEN = "//ci/mojo_gate:consumer_of_green"
+GATE_RED = "//ci/mojo_gate:consumer_of_red"
+GATE_PACKAGES = [
+    "//examples/mojo/copy_of_base",
+    "//examples/mojo/ws",
+    "//examples/mojo/ws/util",
+    "//examples/mojo/ws/util/base",
+]
+
+def _built(ctx, label):
+    """(artifacts built, artifacts that failed) of building `label` on GATE_PLATFORM."""
+    built = 0
+    failed = 0
+    for _, result in ctx.build(label, target_platform = GATE_PLATFORM).items():
+        ok = result.artifacts()
+        bad = result.failures()
+        built += len(list(ok)) if ok else 0
+        failed += len(list(bad)) if bad else 0
+    return built, failed
+
+def gate_problems(ctx):
+    """Every way the Mojo gate is not held: a list of strings, empty when all is as planted."""
+    problems = []
+    built, failed = _built(ctx, GATE_GREEN)
+    if failed or not built:
+        problems.append("{} (the library behind a passing test) must build, and it built {} artifact(s) and failed {}".format(GATE_GREEN, built, failed))
+    built, failed = _built(ctx, GATE_RED)
+    if not failed:
+        problems.append("{} built ({} artifact(s)): a library behind a failing test is usable, the gate is gone".format(GATE_RED, built))
+
+    q = ctx.uquery()
+    for package in GATE_PACKAGES:
+        want = sorted([str(t.label) for t in q.eval("kind('mojo_test_run_rule', {}:)".format(package))])
+        if not want:
+            problems.append("{} has no test run: the gate check has nothing to hold there".format(package))
+            continue
+        lib = package + ":lib"
+        have = [str(t.label) for t in q.eval("deps({})".format(lib))]
+        for test in want:
+            if test not in have:
+                problems.append("{} does not wait for {}: a failing test would not stop the library".format(lib, test))
+        ungated = [str(x.label) for x in q.eval("deps({}:lib_ungated)".format(package))]
+        if [t for t in want if t in ungated]:
+            problems.append("{}:lib_ungated waits for a test: the tests import it, so that is a cycle in waiting".format(package))
     return problems

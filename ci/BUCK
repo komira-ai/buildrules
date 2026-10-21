@@ -217,6 +217,7 @@ group(name = "floors", deps = [
 # (`buck2 bxl //ci:completeness.bxl:check`) fails when a target of the tree is in neither this closure, //ci:mojo's, nor EXCLUDED in ci/all.bzl.
 group(name = "all", deps = [
     ":matrix",
+    "//ci/mojo_gate:consumer_of_green",
     ":workflow",
     ":floors",
     "//cli:buildrules",
