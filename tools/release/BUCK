@@ -48,6 +48,12 @@ export_file(
     visibility = ["//site:"],
 )
 
+export_file(
+    name = "binaries.zig",
+    src = "binaries.zig",
+    visibility = ["//site:"],
+)
+
 # What a release binary's file header must say for its target (an ELF of the right machine, static; a Mach-O of the right cpu). `release package` refuses a
 # binary that is not its target's, and cli/header_test.zig checks the three built binaries with it. Importers wait for its tests.
 zig_test(

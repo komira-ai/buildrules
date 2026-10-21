@@ -1,0 +1,36 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The refusals of the coverage rules: the one made while the graph is analysed (rules/coverage/checks.bzl, called by zig_cover.bzl) as an analysis test
+# (rules/rust/refusal.bzl), and those of the tools, which are run as processes over files the test writes (floor_refuse_test.zig).
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/coverage:checks.bzl", "check_test_targets")
+load("//rules/rust:refusal.bzl", "accepts", "refuses")
+load("//rules:matrix.bzl", "group")
+load("//rules/zig:zig.bzl", "zig_test")
+
+_ALL = []
+
+# A coverage target for a package that has no test: it would be a floor of nothing.
+_ALL.append(refuses("zig_coverage_without_tests_is_refused", check_test_targets, ["//rules/pkg:coverage", []], ["//rules/pkg:coverage", "test_targets is empty", "a package with no test has no coverage to measure"]))
+
+_ALL.append(accepts("zig_coverage_with_a_test_is_accepted", check_test_targets, ["//rules/pkg:coverage", ["//rules/pkg:a_unit"]]))
+
+# cov_floor and cov_summary as the processes the public targets hand out: a floor file that is malformed, a floor the coverage does not meet, coverage that
+# measured nothing, a jest summary that is not one, a source that no report names, a bad command line. The first case of the file is the control that a floor
+# the coverage meets is accepted.
+zig_test(
+    name = "coverage_tools_refuse",
+    exec_compatible_with = LINUX_X86_64,
+    src = "floor_refuse_test.zig",
+    deps = ["//rules/core/tests:refusal_proc"],
+    env_tools = {
+        "COV_FLOOR": "//rules/coverage:cov_floor",
+        "COV_SUMMARY": "//rules/coverage:cov_summary",
+    },
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+# Every refusal of this package, for //ci:refusals.
+group(name = "all", deps = _ALL + [":coverage_tools_refuse"], visibility = ["PUBLIC"])
+
+scrub_files()

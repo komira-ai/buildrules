@@ -38,6 +38,7 @@ key, so they keep their cache keys.
 """
 
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load(":checks.bzl", "check_action", "check_package_path", "check_same_packages", "check_srcs_without_package_json", "check_table", "merge_staged")
 load(":modules.bzl", "NodeModulesInfo", "node_tree_build", "node_tree_test")
 load(":pins.bzl", "NODE")
 
@@ -98,8 +99,7 @@ _npm_unpack = rule(
 
 def _tree_impl(ctx):
     where = str(ctx.label.raw_target())
-    if sorted(ctx.attrs.packages.keys()) != sorted(ctx.attrs.sri512.keys()):
-        fail("{}: packages and sri512 name different packages".format(where))
+    check_same_packages(where, "packages and sri512", ctx.attrs.packages.keys(), ctx.attrs.sri512.keys())
     spec = ctx.actions.write_json(
         "spec.json",
         {
@@ -213,15 +213,6 @@ def _platform_ok(row, field, current):
                 allowed = True
     return (not allowed_any) or allowed
 
-def _merge(*dicts):
-    out = {}
-    for d in dicts:
-        for k, v in d.items():
-            if k in out and out[k] != v:
-                fail("npm_package: {} is staged twice, as {} and as {}".format(k, out[k], v))
-            out[k] = v
-    return out
-
 def _script_of(scripts, name):
     """npm run's pre/post hooks around a script, `&&`-joined."""
     parts = []
@@ -256,14 +247,8 @@ def npm_package(
         step_data, step_tools, step_env: the same for one step ({step: ...}); tools are {command name: executable label}.
         visibility: of the steps, :node_modules and :dist.
     """
-    if path not in ("", "."):
-        fail("npm_package: path must be \".\" (the BUCK file next to package.json); got {}".format(repr(path)))
-    if table == None:
-        fail("npm_package: `table` is required; load npm_package from the generated buildrules.bzl (`buildrules npm sync` writes it)")
-    if table["SCHEMA"] != _SCHEMA:
-        fail("npm_package: the table has SCHEMA {}, these rules read {}: run `buildrules npm sync`".format(table["SCHEMA"], _SCHEMA))
-    if node == None and table["NODE"] != NODE["version"]:
-        fail("npm_package: the table was made for node {} and buildrules pins {}: run `buildrules npm sync`".format(table["NODE"], NODE["version"]))
+    check_package_path(path)
+    check_table(table, _SCHEMA, NODE["version"], node != None)
     pkg = table["PACKAGE"]
     policy = pkg.get("buildrules", {})
     scripts = pkg.get("scripts", {})
@@ -322,9 +307,9 @@ def npm_package(
         if dist:
             skip.append(dist + "/**")
         srcs = native.glob(["**"], exclude = skip)
-    elif "package.json" in srcs:
-        fail("npm_package: srcs must not hold package.json; the steps read the normalized copy (:package.json.steps)")
-    base_data = _merge(data, {here + "/package.json" if here else "package.json": ":package.json.steps"})
+    else:
+        check_srcs_without_package_json(srcs)
+    base_data = merge_staged([data, {here + "/package.json" if here else "package.json": ":package.json.steps"}])
 
     ran = []
     for step in _STEPS:
@@ -344,7 +329,7 @@ def npm_package(
             node = node,
             script = text,
             srcs = srcs,
-            data = _merge(base_data, step_data.get(step, {})),
+            data = merge_staged([base_data, step_data.get(step, {})]),
             env = step_env.get(step, {}),
             tools = step_tools.get(step, {}),
         )
@@ -369,9 +354,5 @@ def npm_package(
 
     # 4. actions: the policy's chains of steps
     for act, chain in policy.get("actions", {}).items():
-        if act in _STEPS or act in ("dist", "check", "node_modules"):
-            fail("npm_package: the action {} has a step's or a target's name".format(act))
-        for s in chain:
-            if s not in _STEPS:
-                fail("npm_package: the action {} names {}, which is not a step ({})".format(act, s, ", ".join(_STEPS)))
+        check_action(act, chain, _STEPS, ["dist", "check", "node_modules"])
         _step(name = act, deps = [":" + s for s in chain], visibility = visibility)

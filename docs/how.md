@@ -4,8 +4,8 @@ Part 2 of 2. Part 1 ([why.md](why.md)) is the argument and the design. This part
 get started, configure, and examples per language.
 
 Everything here is version 0 and runs on **linux x86_64 only**. It describes the repository at its
-current `main`. Items marked **planned** do not exist yet: Arm and macOS hosts for the rules and an install
-script. A Homebrew formula and an apt repository are made by every release and are published only **after
+current `main`. Items marked **planned** do not exist yet: Arm and macOS hosts for the rules. A Homebrew
+formula and an apt repository are made by every release and are published only **after
 setup** (RELEASING.md): until then there is none.
 
 ## 1. Getting started
@@ -24,9 +24,25 @@ setup** (RELEASING.md): until then there is none.
 
 ### 1.2 Get the command line
 
-A release carries the command line as a static program for three platforms, as a Debian package for the
-two Linux ones, and a source archive (an install script is **planned**; the Homebrew formula and the apt
-repository come **after setup**, below). Pick a release from the
+The install script picks the program for your machine, checks its sha256 against the release's
+`SHA256SUMS`, and installs it as `~/.buildrules/bin/buildrules`. It needs `curl`, `tar` and `awk`, edits
+no startup file, needs no root, and installs nothing if a check fails:
+
+```sh
+curl -fsSL https://buildrules.dev/install.sh | sh
+```
+
+The site is not published yet (**planned**), so that address answers only after the repository owner has
+published it. Until then run the script from a checkout of the repository: `sh site/static/install.sh`.
+Options follow `sh -s --` when the script is piped: `--version V` installs that release instead of the
+latest, `--prefix DIR` installs `DIR/bin/buildrules` instead of under `~/.buildrules`, `--verify` also
+checks the keyless signature of the tarball with `cosign verify-blob` (it stops if `cosign` is not
+installed), and `--releases-url URL` reads releases from a mirror. The macOS program is for Apple
+silicon: on an Intel Mac the script stops and says so before it asks for anything.
+
+Or by hand: a release carries the command line as a static program for three platforms, as a Debian package
+for the two Linux ones, and a source archive (the Homebrew formula and the apt repository come **after
+setup**, below). Pick a release from the
 [releases page](https://github.com/komira-ai/buildrules/releases). To use a program, unpack the
 tarball of your platform (`linux-x86_64`, `linux-aarch64`, or `macos-arm64`), check it,
 and put `buildrules` on your `PATH`:

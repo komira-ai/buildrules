@@ -30,6 +30,13 @@ tsc_check(
     srcs = _SRCS,
 )
 
+# The install script served as buildrules.dev/install.sh, which tools/install tests against fake releases.
+export_file(
+    name = "install.sh",
+    src = "static/install.sh",
+    visibility = ["//tools/install:"],
+)
+
 # `npm test`. The tests check the rendered pages, every link and fragment between them, and that
 # the content names rules and commands that exist: they read the rule sources and the contract
 # (the files in `data`) at their paths in the repository.
@@ -85,6 +92,7 @@ jest_test(
         "tools/release/version.zig": "//tools/release:version.zig",
         "tools/release/page.zig": "//tools/release:page.zig",
         "tools/release/binhdr.zig": "//tools/release:binhdr.zig",
+        "tools/release/binaries.zig": "//tools/release:binaries.zig",
         "tools/stage/gamma.zig": "//tools/stage:gamma.zig",
         "beta/mojo/STEPS": "//beta:mojo_steps",
         "rules/cxx/archive.bzl": "//rules/cxx:archive.bzl",

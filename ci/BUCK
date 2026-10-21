@@ -61,6 +61,11 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:recorded_toolchain_file_is_accepted",
     "//rules/mojo/tests:missing_toolchain_file_is_refused",
     "//rules/mojo/tests:present_toolchain_file_is_accepted",
+    "//rules/core/tests:all",
+    "//rules/zig/tests:all",
+    "//rules/cxx/tests:all",
+    "//rules/node/tests:all",
+    "//rules/coverage/tests:all",
 ])
 
 group(name = "matrix", deps = [
@@ -238,6 +243,7 @@ group(name = "all", deps = [
     "//tools/deploy:apt_publish_driver",
     "//tools/deploy:tap",
     "//tools/deploy:tap_driver",
+    "//tools/install:install_script_test",
     "//beta:beta_check",
     "//rules/gate:gate",
     "//rules/kpin:kpin",
@@ -269,7 +275,7 @@ export_file(
 export_file(
     name = "all.bzl",
     src = "all.bzl",
-    visibility = ["//beta:"],
+    visibility = ["//beta:", "//ci/negative:"],
 )
 
 # Read by the buildrules.dev site tests (site/BUCK), which check its pages against this file.

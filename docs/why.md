@@ -32,7 +32,7 @@ Four ideas carry the design:
 Status: version 0, linux x86_64 only for the rules. The public repository's releases hold a
 source archive and the command line for three platforms (section 8). Section 9 lists what is not done.
 
-Planned and not built: Arm and macOS (and Windows) hosts for the rules, an install script, and Python rules.
+Planned and not built: Arm and macOS (and Windows) hosts for the rules, and Python rules.
 A Homebrew formula and an apt repository are made by every release and published only after setup (RELEASING.md).
 
 ## 2. The problem
@@ -514,7 +514,10 @@ same bytes. A consumer relies on the published file and its sha256, not on remak
 runs the linux x86_64 program only; the other two are built from the same source behind the same
 tests and checked for their file header and their version, and are not yet run on their own
 platform. The command line is also built from the source archive on your farm or machine (part 2).
-Other channels are planned (section 9).
+The install script (`site/static/install.sh`, served by the site once it is published) installs the command
+line for your platform after checking its sha256, and `--verify` adds a cosign check of its signature
+(part 2). A test runs it against fake releases and plants a defect for each of its checks. Other
+channels are planned (section 9).
 
 ## 9. Trade-offs, limits and what is not done
 
@@ -556,8 +559,8 @@ Other channels are planned (section 9).
 
 - A Homebrew formula and an apt repository: the release builds the formula and the Debian packages
   and publishes them only after setup (the tap's guard and the apt settings, RELEASING.md), so none
-  exists for buildrules yet; an install script is planned. The release binaries of the command line are
-  unpacked by hand (part 2), and only the linux x86_64 one is run by a user beta.
+  exists for buildrules yet. The release binaries of the command line are installed with the install
+  script or unpacked by hand (part 2), and only the linux x86_64 one is run by a user beta.
 - Arm and macOS hosts (planned): their beta legs, which `beta.yml` declares and skips, and execution
   platforms for the Arm instruction-set levels.
 - A published, deployed `buildrules.dev` (the site is built and tested; its hosting stack is a step

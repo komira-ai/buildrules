@@ -42,3 +42,18 @@ refusal_test = rule(
         "refusals": attrs.list(attrs.string(), default = []),
     },
 )
+
+def refuses(name, check, args, contains, kwargs = {}):
+    """A refusal test for `check(*args, refuse = ...)`: green only if the check refused and every string of `contains` is in what it said. Make the
+    check accept what it must refuse and the target stops existing (analysis fails: "expected a refusal"). Returns the target's label, for a group."""
+    refusals, refuse = recording()
+    check(*args, **dict(kwargs, refuse = refuse))
+    refusal_test(name = name, refusals = refusals, contains = contains, visibility = ["PUBLIC"])
+    return ":" + name
+
+def accepts(name, check, args, kwargs = {}):
+    """The other half of `refuses`: green only if `check(*args)` accepts, so a check that refuses everything is red too."""
+    refusals, refuse = recording()
+    check(*args, **dict(kwargs, refuse = refuse))
+    refusal_test(name = name, refusals = refusals, none = True, visibility = ["PUBLIC"])
+    return ":" + name

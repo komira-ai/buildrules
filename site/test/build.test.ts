@@ -19,10 +19,15 @@ describe('the build', () => {
   test('writes every page, the assets, robots.txt and sitemap.xml', () => {
     expect(buildSite(join(SITE_DIR, 'static'), a)).toEqual([]);
     const files = listing(a);
-    expect(files).toEqual(expect.arrayContaining(['index.html', '404.html', 'robots.txt', 'sitemap.xml', 'assets/icon.svg']));
+    expect(files).toEqual(expect.arrayContaining(['index.html', '404.html', 'robots.txt', 'sitemap.xml', 'assets/icon.svg', 'install.sh']));
     expect(files.filter((f) => /^assets\/site\.[0-9a-f]{12}\.css$/.test(f))).toHaveLength(1);
     expect(files.filter((f) => f.endsWith('index.html'))).toHaveLength(PAGES.length);
-    expect(files).toHaveLength(PAGES.length + 5);
+    expect(files).toHaveLength(PAGES.length + 6);
+  });
+  test('serves the install script as it is in static/: the same bytes, a shell script with #!/bin/sh', () => {
+    const served = readFileSync(join(a, 'install.sh'));
+    expect(served.equals(readFileSync(join(SITE_DIR, 'static', 'install.sh')))).toBe(true);
+    expect(served.toString('utf8').startsWith('#!/bin/sh\n')).toBe(true);
   });
   test('is deterministic: a second build is byte-identical', () => {
     expect(buildSite(join(SITE_DIR, 'static'), b)).toEqual([]);
