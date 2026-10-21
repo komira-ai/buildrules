@@ -1,24 +1,29 @@
 //! The no-shell lint (`//ci:no_shell`): the build rules are leaving busybox and every shell, one action at a time, and this check keeps them from coming back
 //! while they go. It reads every file of every package (the `scrub_files` outputs, as the scrub does) and refuses, outside comments:
 //!
-//!  - `busybox`: the word, in a BUCK, .bzl, .bxl or .zig file (an attribute, a call, a path, a string);
-//!  - `shell-word`: a shell interpreter as a whole string (the first word of an argv: `sh`, `bash`, `dash`, `ash`, `zsh`, `ksh`, or a path ending in one);
+//!  - `busybox`: the word;
+//!  - `shell-word`: a string whose first word is a shell interpreter (`sh`, `bash`, `dash`, `ash`, `zsh`, `ksh`, `fish`, `csh`, `tcsh`, or a path ending in one): a whole
+//!    string (an element of an argv) or a command line (`"sh -c '...'"`);
 //!  - `shell-c`: the flag that hands a shell a script (`-c`, `-euc`, `-ec`, ...) as the string that directly follows a shell word. `zig cc -c` and a
 //!    cdk `-c context=...` follow other words and stay green;
-//!  - `bin-sh`: a longer string that names `/bin/sh`, `/bin/bash` or `/bin/dash` (a path built for a shell);
-//!  - `heredoc`: a triple-quoted string of a BUCK, .bzl or .bxl file that is a shell script (a line `set -eu`, `case "`, `export `, or a quoted `$1`, `$@`, `${`);
-//!  - `shebang`: a file whose first line names a shell interpreter, directly or through `env`;
-//!  - `sh-file`: any file named `*.sh` or `*.bash`.
+//!  - `bin-sh`: a string that names `/bin/` followed by a shell (a path built for a shell: `/bin/sh`, `/bin/dash`, ...), whatever else it holds;
+//!  - `heredoc`: a multi-line string that is a shell script (a line `set -eu`, `case "`, `export `, or a quoted `$1`, `$@`, `${`): a triple-quoted string, a
+//!    backtick template, a run of Zig `\\` lines;
+//!  - `shebang`: a file whose first line names a shell interpreter, directly or through `env`, and a string that starts with such a line;
+//!  - `sh-file`: any file named `*.sh`, `*.bash`, `*.ksh`, `*.zsh`, `*.fish`, `*.csh` or `*.tcsh`.
 //!
-//! Not read: `.github/` (the CI `run:` blocks are bash by nature and linted by workflow_check.zig), `docs/`, `third_party/`, and `tools/held/` until the held
-//! scripts are gone (`exclude_held`). Comments are not read: a BUCK or .bzl `#` comment, a Zig `//` comment. A word inside a string is read, and so is a docstring.
+//! The word rules read these files, by their strings and code: BUCK, .bzl, .bxl, .toml (comments `#`), .zig (`//`; a run of `\\` lines is one string), .rs, .c, .cc, .h,
+//! .js, .mjs, .ts (`//` and `/* */`; .js, .mjs and .ts also backtick strings). A word inside a string is read, so a docstring or a URL that holds one counts. The file rules
+//! (`sh-file`, `shebang` at the first line) read every file. Not read: markdown and every other type for words, `.github/` (the CI `run:` blocks are bash by nature and
+//! linted by workflow_check.zig), `docs/`, `third_party/`, and `tools/held/` until the held scripts are gone (`exclude_held`).
 //!
 //! The allow-list (ci/no_shell_allow.tsv): one row per `file<TAB>rule<TAB>max`, no line numbers, so an edit that moves a line conflicts with nothing. A file with a
 //! use that no row allows is red, and so is a count above its row's max. A row whose count has fallen below its max is stale: a warning while the migration runs,
 //! red when `strict_stale` is true (the last step of the migration flips it and empties the list). Each pull request of the migration lowers or deletes the rows
 //! it makes stale. `permanent` holds what stays for good, each entry with its reason: the shipped installer is run as `curl | sh`, so it needs a shell.
 //!
-//! A pure function of the files' text, tested below against planted text; ci/no_shell_main.zig reads the tree.
+//! A pure function of the files' text, tested below against planted text; ci/no_shell_main.zig reads the tree, and ci/completeness.bxl holds the list of packages
+//! it is given to every package of the tree.
 const std = @import("std");
 const t = std.testing;
 
@@ -81,12 +86,12 @@ pub const permanent = [_]Permanent{
     .{ .file = "tools/install/install_script_test.zig", .rule = .shell_word, .max = 1, .why = "the installer's test runs it with the absolute path of the system shell and an empty PATH" },
 };
 
-// ---- the vocabulary (in parts, so that this file does not hold what it refuses) ---------------------------------------------------
+// ---- the vocabulary (in parts, so that this file does not hold what it refuses; no piece is itself a shell's name) -----------------
 
 const bb_word = "busy" ++ "box";
 const BB = bb_word ++ "@";
-const shells = [_][]const u8{ "s" ++ "h", "bas" ++ "h", "das" ++ "h", "as" ++ "h", "zs" ++ "h", "ks" ++ "h" };
-const bin_paths = [_][]const u8{ "/bin/s" ++ "h", "/bin/bas" ++ "h", "/bin/das" ++ "h" };
+const shells = [_][]const u8{ "s" ++ "h", "bas" ++ "h", "das" ++ "h", "as" ++ "h", "zs" ++ "h", "ks" ++ "h", "fis" ++ "h", "cs" ++ "h", "tcs" ++ "h" };
+const shell_exts = [_][]const u8{ ".s" ++ "h", ".bas" ++ "h", ".ks" ++ "h", ".zs" ++ "h", ".fis" ++ "h", ".cs" ++ "h", ".tcs" ++ "h" };
 const env_word = "e" ++ "nv";
 
 fn isShellName(base: []const u8) bool {
@@ -94,10 +99,13 @@ fn isShellName(base: []const u8) bool {
     return false;
 }
 
-/// A string that is one shell interpreter: no blank in it, and its last path segment is a shell's name.
-fn isShellWord(s: []const u8) bool {
-    if (s.len == 0 or std.mem.indexOfAny(u8, s, " \t\n") != null) return false;
-    return isShellName(std.fs.path.basename(s));
+/// The first word of `s` (up to a blank) is a shell interpreter, or a path ending in one: null when it is not; true when it is all of `s`, false when
+/// a command line follows. A word that starts a shebang is not read here.
+fn shellFirst(s: []const u8) ?bool {
+    const end = std.mem.indexOfAny(u8, s, " \t\n\\") orelse s.len;
+    if (end == 0 or std.mem.startsWith(u8, s, "#!")) return null;
+    if (!isShellName(std.fs.path.basename(s[0..end]))) return null;
+    return end == s.len;
 }
 
 /// `-c`, `-euc`, `-ec`, `-lc`: option letters of a shell, c among them.
@@ -111,14 +119,22 @@ fn isCFlag(s: []const u8) bool {
     return has_c;
 }
 
+/// `/bin/` followed by a shell's name, whole (`/bin/sha256sum` is not one).
 fn hasBinPath(s: []const u8) bool {
-    for (bin_paths) |p| if (std.mem.indexOf(u8, s, p) != null) return true;
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, s, from, "/bin/")) |i| {
+        var j = i + 5;
+        while (j < s.len and std.ascii.isAlphanumeric(s[j])) j += 1;
+        if (isShellName(s[i + 5 .. j])) return true;
+        from = i + 5;
+    }
     return false;
 }
 
-/// A triple-quoted string that is a script: a line that opens like one, or a quoted positional parameter.
-fn looksLikeScript(body: []const u8) bool {
-    if (std.mem.indexOf(u8, body, "\"$1\"") != null or std.mem.indexOf(u8, body, "\"$@\"") != null or std.mem.indexOf(u8, body, "\"${") != null) return true;
+/// A multi-line string that is a script: a line that opens like one, or a quoted positional parameter (and, outside a JavaScript template, a quoted `${`).
+fn looksLikeScript(body: []const u8, template: bool) bool {
+    if (std.mem.indexOf(u8, body, "\"$1\"") != null or std.mem.indexOf(u8, body, "\"$@\"") != null) return true;
+    if (!template and std.mem.indexOf(u8, body, "\"${") != null) return true;
     var it = std.mem.splitScalar(u8, body, '\n');
     while (it.next()) |raw| {
         const ln = std.mem.trimLeft(u8, raw, " \t");
@@ -127,10 +143,17 @@ fn looksLikeScript(body: []const u8) bool {
     return false;
 }
 
+/// The end of the first line of `text`: a newline, or the two characters `\n` of a string that spells one.
+fn firstLineEnd(text: []const u8) usize {
+    const real = std.mem.indexOfScalar(u8, text, '\n') orelse text.len;
+    const spelled = std.mem.indexOf(u8, text[0..real], "\\n") orelse real;
+    return spelled;
+}
+
 /// The first line of `text` is `#!` and names a shell, directly or after `env` (and its options).
 fn shellShebang(text: []const u8) bool {
     if (!std.mem.startsWith(u8, text, "#!")) return false;
-    const eol = std.mem.indexOfScalar(u8, text, '\n') orelse text.len;
+    const eol = firstLineEnd(text);
     var words = std.mem.tokenizeAny(u8, text[2..eol], " \t\r");
     const first = words.next() orelse return false;
     const base = std.fs.path.basename(first);
@@ -144,23 +167,48 @@ fn shellShebang(text: []const u8) bool {
 }
 
 fn isShFile(path: []const u8) bool {
-    return std.mem.endsWith(u8, path, ".s" ++ "h") or std.mem.endsWith(u8, path, ".bas" ++ "h");
+    for (shell_exts) |e| if (std.mem.endsWith(u8, path, e)) return true;
+    return false;
 }
 
 // ---- the scan ----------------------------------------------------------------------------------------------------------------------
 
 pub const Hit = struct { path: []const u8, rule: Rule, line: usize };
 
-const Lang = enum { starlark, zig };
+/// How a language writes comments and strings.
+const Lang = struct {
+    hash: bool = false, // `#` comments
+    slash: bool = false, // `//` comments
+    block: bool = false, // `/* */` comments
+    triple: bool = false, // `"""` and `'''` strings
+    raw: bool = false, // Zig: a run of `\\` lines is one string
+    single: bool = true, // `'` opens a string (not in Rust: a lifetime)
+    tick: bool = false, // a backtick opens a string that may span lines
+};
+
+const hash_lang = Lang{ .hash = true, .triple = true };
+const zig_lang = Lang{ .slash = true, .raw = true };
+const c_lang = Lang{ .slash = true, .block = true };
+const js_lang = Lang{ .slash = true, .block = true, .tick = true };
+const rust_lang = Lang{ .slash = true, .block = true, .single = false };
 
 fn langOf(path: []const u8) ?Lang {
     const base = std.fs.path.basename(path);
-    if (std.mem.eql(u8, base, "BUCK") or std.mem.startsWith(u8, base, "BUCK.") or std.mem.endsWith(u8, base, ".bzl") or std.mem.endsWith(u8, base, ".bxl")) return .starlark;
-    if (std.mem.endsWith(u8, base, ".zig")) return .zig;
+    if (std.mem.eql(u8, base, "BUCK") or std.mem.startsWith(u8, base, "BUCK.")) return hash_lang;
+    const ext = std.fs.path.extension(base);
+    const hash_exts = [_][]const u8{ ".bzl", ".bxl", ".toml" };
+    for (hash_exts) |e| if (std.mem.eql(u8, ext, e)) return hash_lang;
+    if (std.mem.eql(u8, ext, ".zig")) return zig_lang;
+    const c_exts = [_][]const u8{ ".c", ".cc", ".h" };
+    for (c_exts) |e| if (std.mem.eql(u8, ext, e)) return c_lang;
+    const js_exts = [_][]const u8{ ".js", ".mjs", ".ts" };
+    for (js_exts) |e| if (std.mem.eql(u8, ext, e)) return js_lang;
+    if (std.mem.eql(u8, ext, ".rs")) return rust_lang;
     return null;
 }
 
 const Scanner = struct {
+    a: std.mem.Allocator,
     hits: *std.ArrayList(Hit),
     path: []const u8,
     lang: Lang,
@@ -174,31 +222,49 @@ const Scanner = struct {
         try s.hits.append(.{ .path = s.path, .rule = rule, .line = line });
     }
 
-    /// One hit per line that names " ++ bb_word ++ ", however often.
+    /// One hit per line that names the word, however often.
     fn bbAt(s: *Scanner, line: usize) !void {
         if (s.bb_line == line) return;
         s.bb_line = line;
         try s.hit(.busy_box, line);
     }
 
-    fn bbIn(s: *Scanner, body: []const u8, first_line: usize) !void {
-        var l = first_line;
-        var it = std.mem.splitScalar(u8, body, '\n');
-        while (it.next()) |ln| : (l += 1) {
-            if (std.mem.indexOf(u8, ln, bb_word) != null) try s.bbAt(l);
-        }
-    }
-
     fn eol(s: *Scanner, from: usize) usize {
         return std.mem.indexOfScalarPos(u8, s.text, from, '\n') orelse s.text.len;
+    }
+
+    /// The text of one string literal (`multi`: it may span lines), whatever the language wrote it with.
+    fn body(s: *Scanner, b: []const u8, first_line: usize, multi: bool, template: bool) !void {
+        var l = first_line;
+        var lines = std.mem.splitScalar(u8, b, '\n');
+        while (lines.next()) |ln| : (l += 1) {
+            if (std.mem.indexOf(u8, ln, bb_word) != null) try s.bbAt(l);
+        }
+        const lead = std.mem.trimLeft(u8, b, " \t\r\n");
+        if (shellShebang(lead)) {
+            try s.hit(.shebang, first_line);
+            s.prev_shell = false;
+        } else if (shellFirst(b)) |whole| {
+            try s.hit(.shell_word, first_line);
+            s.prev_shell = whole;
+        } else {
+            if (s.prev_shell and isCFlag(b)) {
+                try s.hit(.shell_c, first_line);
+            } else if (hasBinPath(b)) {
+                try s.hit(.bin_sh, first_line);
+            }
+            s.prev_shell = false;
+        }
+        if (multi and looksLikeScript(b, template)) try s.hit(.heredoc, first_line);
     }
 
     /// The string that opens at `start` (a quote `q`); returns the index after it.
     fn string(s: *Scanner, start: usize, q: u8) !usize {
         const text = s.text;
         const first_line = s.line;
-        const multi = s.lang == .starlark and start + 2 < text.len and text[start + 1] == q and text[start + 2] == q;
-        const from = start + (if (multi) @as(usize, 3) else 1);
+        const triple = s.lang.triple and q != '`' and start + 2 < text.len and text[start + 1] == q and text[start + 2] == q;
+        const multi = triple or q == '`';
+        const from = start + (if (triple) @as(usize, 3) else 1);
         var j = from;
         var to = text.len;
         var end = text.len;
@@ -208,7 +274,7 @@ const Scanner = struct {
                 j += 2;
                 continue;
             }
-            if (multi) {
+            if (triple) {
                 if (ch == q and j + 2 < text.len and text[j + 1] == q and text[j + 2] == q) {
                     to = j;
                     end = j + 3;
@@ -218,33 +284,44 @@ const Scanner = struct {
                 to = j;
                 end = j + 1;
                 break;
-            } else if (ch == '\n') {
+            } else if (ch == '\n' and !multi) {
                 to = j;
                 end = j;
                 break;
             }
             j += 1;
         }
-        const body = text[from..to];
-        try s.bbIn(body, first_line);
-        if (isShellWord(body)) {
-            try s.hit(.shell_word, first_line);
-            s.prev_shell = true;
-        } else {
-            if (s.prev_shell and isCFlag(body)) {
-                try s.hit(.shell_c, first_line);
-            } else if (hasBinPath(body)) {
-                try s.hit(.bin_sh, first_line);
-            }
-            s.prev_shell = false;
-        }
-        if (multi and looksLikeScript(body)) try s.hit(.heredoc, first_line);
+        try s.body(text[from..to], first_line, multi, q == '`');
         s.line += std.mem.count(u8, text[start..end], "\n");
         return end;
     }
 
+    /// A run of Zig `\\` lines starting at `start`: one string. Returns the index of the end of its last line.
+    fn rawLines(s: *Scanner, start: usize) !usize {
+        const text = s.text;
+        var buf = std.ArrayList(u8).init(s.a);
+        var j = start;
+        while (true) {
+            const e = s.eol(j);
+            try buf.appendSlice(text[j + 2 .. e]);
+            var m = e + 1;
+            while (m < text.len and (text[m] == ' ' or text[m] == '\t')) m += 1;
+            if (m + 1 < text.len and text[m] == '\\' and text[m + 1] == '\\') {
+                try buf.append('\n');
+                j = m;
+                continue;
+            }
+            j = e;
+            break;
+        }
+        try s.body(buf.items, s.line, true, false);
+        s.line += std.mem.count(u8, text[start..j], "\n");
+        return j;
+    }
+
     fn run(s: *Scanner) !void {
         const text = s.text;
+        const lang = s.lang;
         var i: usize = 0;
         while (i < text.len) {
             const c = text[i];
@@ -254,15 +331,16 @@ const Scanner = struct {
                 i += 1;
             } else if (c == ' ' or c == '\t' or c == '\r' or c == ',') {
                 i += 1;
-            } else if ((s.lang == .starlark and c == '#') or (s.lang == .zig and c == '/' and next == '/')) {
+            } else if ((lang.hash and c == '#') or (lang.slash and c == '/' and next == '/')) {
                 i = s.eol(i);
-            } else if (s.lang == .zig and c == '\\' and next == '\\') {
-                // a line of a multi-line string literal: text, not a comment
-                const e = s.eol(i);
-                try s.bbIn(text[i + 2 .. e], s.line);
-                s.prev_shell = false;
-                i = e;
-            } else if (c == '"' or c == '\'') {
+            } else if (lang.block and c == '/' and next == '*') {
+                const close = std.mem.indexOfPos(u8, text, i + 2, "*/");
+                const end = if (close) |k| k + 2 else text.len;
+                s.line += std.mem.count(u8, text[i..end], "\n");
+                i = end;
+            } else if (lang.raw and c == '\\' and next == '\\') {
+                i = try s.rawLines(i);
+            } else if (c == '"' or (lang.single and c == '\'') or (lang.tick and c == '`')) {
                 i = try s.string(i, c);
             } else {
                 s.prev_shell = false;
@@ -276,11 +354,11 @@ const Scanner = struct {
 };
 
 /// Every use in one file, in file order.
-pub fn scanFile(path: []const u8, text: []const u8, hits: *std.ArrayList(Hit)) !void {
+pub fn scanFile(a: std.mem.Allocator, path: []const u8, text: []const u8, hits: *std.ArrayList(Hit)) !void {
     if (isShFile(path)) try hits.append(.{ .path = path, .rule = .sh_file, .line = 1 });
     if (shellShebang(text)) try hits.append(.{ .path = path, .rule = .shebang, .line = 1 });
     const lang = langOf(path) orelse return;
-    var s = Scanner{ .hits = hits, .path = path, .lang = lang, .text = text };
+    var s = Scanner{ .a = a, .hits = hits, .path = path, .lang = lang, .text = text };
     try s.run();
 }
 
@@ -376,7 +454,7 @@ pub fn run(a: std.mem.Allocator, entries: []const Entry, allow: []const u8, opt:
     for (entries) |e| {
         if (excluded(e.path, opt)) continue;
         rep.scanned += 1;
-        try scanFile(e.path, e.text, &hits);
+        try scanFile(a, e.path, e.text, &hits);
     }
     std.mem.sort(Hit, hits.items, {}, hitLess);
     var counts = std.ArrayList(Count).init(a);
@@ -428,7 +506,7 @@ const Arena = std.heap.ArenaAllocator;
 
 fn hitsOf(a: std.mem.Allocator, path: []const u8, text: []const u8) ![]Hit {
     var hits = std.ArrayList(Hit).init(a);
-    try scanFile(path, text, &hits);
+    try scanFile(a, path, text, &hits);
     return hits.items;
 }
 
@@ -476,14 +554,14 @@ test "a line of a Zig multi-line string is text, and is read" {
 
 test "shell word: sh, bash, a path to one, as a whole string" {
     try expectShape("a/x.bzl", "cmd_args(bb, \"s" ++ "h\")\n", "shell-word@1");
-    try expectShape("a/x.bzl", "cmd_args(\"/usr/bin/ba" ++ "sh\")\n", "shell-word@1");
+    try expectShape("a/x.bzl", "cmd_args(\"/usr/bin/bas" ++ "h\")\n", "shell-word@1");
     try expectShape("a/x.zig", "const argv = &.{ \"/bin/s" ++ "h\" };\n", "shell-word@1");
-    try expectShape("a/x.zig", "const argv = &.{ \"da" ++ "sh\" };\n", "shell-word@1");
+    try expectShape("a/x.zig", "const argv = &.{ \"das" ++ "h\" };\n", "shell-word@1");
 }
 
 test "GREEN control: a word that merely contains a shell's name, or a string of several words, is not a shell word" {
-    try expectShape("a/x.bzl", "x = [\"shell\", \"bashful\", \"sh " ++ "-x\", \"\", \"a.s" ++ "h\", \"fish\"]\n", "");
-    try expectShape("a/x.bzl", "x = ['bash --version']\n", "");
+    try expectShape("a/x.bzl", "x = [\"shell\", \"bashful\", \"\", \"a.s" ++ "h\", \"fishing\", \"shy cat\", \"ashes x\", \"-x\"]\n", "");
+    try expectShape("a/x.bzl", "x = [\" \", \"\\n\"]\n", "");
 }
 
 test "shell -c: the flag directly after a shell word, on one line or across lines and comments" {
@@ -505,10 +583,10 @@ test "GREEN control: a shell word followed by something else before -c is not a 
 }
 
 test "bin-sh: a longer string that names a shell's path; a path that ends in a shell is a shell word, once" {
-    try expectShape("a/x.zig", "const p = \"{s}/../bin/" ++ "sh\";\n", "shell-word@1");
+    try expectShape("a/x.zig", "const p = \"{s}/../bin/s" ++ "h\";\n", "shell-word@1");
     try expectShape("a/x.zig", "const p = \"X=/bin/s" ++ "h:Y\";\n", "bin-sh@1");
-    try expectShape("a/x.bzl", "x = \"exec /bin/ba" ++ "sh -x\"\n", "bin-sh@1");
-    try expectShape("a/x.zig", "const p = \"/bin/" ++ "sh\";\n", "shell-word@1");
+    try expectShape("a/x.bzl", "x = \"exec /bin/bas" ++ "h -x\"\n", "bin-sh@1");
+    try expectShape("a/x.zig", "const p = \"/bin/s" ++ "h\";\n", "shell-word@1");
 }
 
 test "heredoc: a triple-quoted script, however it opens; a docstring is not one" {
@@ -522,9 +600,9 @@ test "heredoc: a triple-quoted script, however it opens; a docstring is not one"
     try expectShape("a/x.bzl", "def f():\n    \"\"\"One file built into an executable.\n\n    A second paragraph.\n    \"\"\"\n    return 1\n", "");
 }
 
-test "GREEN control: a one-line string that looks like a script is not a heredoc; a Zig multi-line string is not read as one" {
+test "GREEN control: a one-line string that looks like a script is not a heredoc; a Zig run of backslash lines is" {
     try expectShape("a/x.bzl", "x = \"set -eu\"\n", "");
-    try expectShape("a/x.zig", "const s =\n    \\\\set -eu\n    \\\\echo hi\n;\n", "");
+    try expectShape("a/x.zig", "const s =\n    \\\\set -eu\n    \\\\echo hi\n;\n", "heredoc@2");
 }
 
 test "a triple-quoted string with an escaped quote, a lone quote and an unterminated end are read to their end" {
@@ -537,8 +615,8 @@ test "a triple-quoted string with an escaped quote, a lone quote and an untermin
 
 test "shebang: a shell named directly or through env, on the first line only" {
     try expectShape("a/tool", "#!/bin/s" ++ "h\necho\n", "shebang@1");
-    try expectShape("a/tool", "#!/usr/bin/env ba" ++ "sh\n", "shebang@1");
-    try expectShape("a/tool", "#!/usr/bin/env -S da" ++ "sh -e\n", "shebang@1");
+    try expectShape("a/tool", "#!/usr/bin/env bas" ++ "h\n", "shebang@1");
+    try expectShape("a/tool", "#!/usr/bin/env -S das" ++ "h -e\n", "shebang@1");
     try expectShape("a/tool", "#! /bin/bas" ++ "h", "shebang@1");
 }
 
@@ -628,7 +706,7 @@ test "MUTANT: a new .sh file is red, however empty" {
 test "MUTANT: a new shell shebang and a new heredoc are red" {
     var arena = Arena.init(t.allocator);
     defer arena.deinit();
-    const rep = try runWith(arena.allocator(), &.{ entryOf("tools/run", "#!/usr/bin/env ba" ++ "sh\n"), entryOf("rules/y.bzl", "_S = \"\"\"set -eu\n\"\"\"\n") }, "", opt_loose);
+    const rep = try runWith(arena.allocator(), &.{ entryOf("tools/run", "#!/usr/bin/env bas" ++ "h\n"), entryOf("rules/y.bzl", "_S = \"\"\"set -eu\n\"\"\"\n") }, "", opt_loose);
     try expectErr(rep, "tools/run:1: [shebang]");
     try expectErr(rep, "rules/y.bzl:1: [heredoc]");
 }
@@ -726,8 +804,8 @@ test "MUTANT: a permanent entry whose file no longer needs it is red; so is one 
     defer arena.deinit();
     const a = arena.allocator();
     const rep = try run(a, &.{perm_tree[1]}, "", opt_loose);
-    try expectErr(rep, "permanent entry site/static/install." ++ "sh sh-file: the file no longer needs it");
-    try expectErr(rep, "permanent entry site/static/install." ++ "sh shebang");
+    try expectErr(rep, "permanent entry site/static/install.s" ++ "h sh-file: the file no longer needs it");
+    try expectErr(rep, "permanent entry site/static/install.s" ++ "h shebang");
     try t.expectEqual(@as(usize, 2), rep.errors.items.len);
     const swapped = [_]Entry{ perm_tree[0], .{ .path = "tools/install/install_script_test.zig", .text = "const x = 1;\n" } };
     const rep2 = try run(a, &swapped, "", opt_loose);
@@ -755,7 +833,7 @@ test "GREEN control: tools/held is not read while exclude_held holds, and is rea
     var arena = Arena.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const held = [_]Entry{ entryOf("tools/held/mirror.s" ++ "h", "#!/bin/ba" ++ "sh\n"), entryOf("tools/held/BUCK", "x = busy" ++ "box\n") };
+    const held = [_]Entry{ entryOf("tools/held/mirror.s" ++ "h", "#!/bin/bas" ++ "h\n"), entryOf("tools/held/BUCK", "x = busy" ++ "box\n") };
     const skipped = try runWith(a, &held, "", .{ .strict = false, .held_excluded = true });
     try t.expectEqual(@as(usize, 0), skipped.errors.items.len);
     const read = try runWith(a, &held, "", .{ .strict = false, .held_excluded = false });
@@ -816,7 +894,7 @@ test "the list generated from a tree makes that tree green exactly, with no warn
             "rules/b.bzl\t" ++ bb_word ++ "\t2\n" ++
             "rules/b.bzl\tshell-word\t1\n" ++
             "rules/b.bzl\tshell-c\t1\n" ++
-            "tools/z." ++ "sh\tsh-file\t1\n",
+            "tools/z.s" ++ "h\tsh-file\t1\n",
         first.current,
     );
     const second = try runWith(a, &tree, first.current, opt_loose);
@@ -838,6 +916,105 @@ test "the vocabulary: every rule has a name and a sentence, and parses back" {
     }
     try t.expect(Rule.parse("nope") == null);
     for (permanent) |p| try t.expect(p.why.len > 20);
+}
+
+test "MUTANT: a command line in one string is a shell word when its first word is a shell, with or without a path" {
+    try expectShape("a/x.bzl", "x = \"s" ++ "h -c 'echo hi'\"\n", "shell-word@1");
+    try expectShape("a/x.bzl", "x = \"bas" ++ "h -c \"\n", "shell-word@1");
+    try expectShape("a/x.zig", "const c = \"/usr/bin/zs" ++ "h -lc 'x'\";\n", "shell-word@1");
+    try expectShape("a/x.zig", "const c = \"tcs" ++ "h\t-f\";\n", "shell-word@1");
+    try expectShape("a/x.zig", "const c = \"cs" ++ "h \";\n", "shell-word@1");
+}
+
+test "GREEN control: a string that merely starts like a shell's name, or has it later, is not a command line" {
+    try expectShape("a/x.bzl", "x = [\"shell -c\", \"bashful x\", \"echo sh -c\", \"my sh\", \"fish-food\", \"dashboard x\"]\n", "");
+}
+
+test "a one-string command is no argv: the flag after it is not a shell -c" {
+    try expectShape("a/x.bzl", "x = [\"s" ++ "h -c\", \"-c\"]\n", "shell-word@1");
+}
+
+test "MUTANT: a string that starts with a shell shebang is a shebang, however it is quoted" {
+    try expectShape("a/x.bzl", "ctx.actions.write(out, \"#!/bin/s" ++ "h\\necho hi\\n\")\n", "shebang@1");
+    try expectShape("a/x.bzl", "ctx.actions.write(out, \"\"\"#!/usr/bin/env bas" ++ "h\necho hi\n\"\"\")\n", "shebang@1");
+    try expectShape("a/x.bzl", "x = \"\"\"\n\n  #!/bin/das" ++ "h\necho\n\"\"\"\n", "shebang@1");
+    try expectShape("a/x.zig", "const s = \"#!/usr/bin/env -S fis" ++ "h\\n\";\n", "shebang@1");
+    try expectShape("a/x.zig", "const s =\n    \\\\#!/bin/s" ++ "h\n    \\\\echo\n;\n", "shebang@2");
+}
+
+test "GREEN control: a string that starts with another interpreter's shebang is not a shell shebang" {
+    try expectShape("a/x.bzl", "ctx.actions.write(out, \"#!/usr/bin/env python3\\nprint(1)\\n\")\n", "");
+    try expectShape("a/x.bzl", "x = \"#!/usr/bin/perl\"\n", "");
+    try expectShape("a/x.bzl", "x = \"#!\"\n", "");
+}
+
+test "MUTANT: a shebang whose shell is only in a path later in the string is still a bin-sh use" {
+    try expectShape("a/x.bzl", "x = \"#!/usr/bin/python3\\n# run via /bin/bas" ++ "h\"\n", "bin-sh@1");
+}
+
+test "MUTANT: every shell the lint knows is a word, a path, a shebang and a file extension" {
+    const names = [_][]const u8{ "s" ++ "h", "bas" ++ "h", "das" ++ "h", "as" ++ "h", "zs" ++ "h", "ks" ++ "h", "fis" ++ "h", "cs" ++ "h", "tcs" ++ "h" };
+    var arena = Arena.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const exts = [_][]const u8{ "s" ++ "h", "bas" ++ "h", "ks" ++ "h", "zs" ++ "h", "fis" ++ "h", "cs" ++ "h", "tcs" ++ "h" };
+    for (exts) |e| try expectShape(try std.fmt.allocPrint(a, "a/tool.{s}", .{e}), "", "sh-file@1");
+    for (names) |n| {
+        try expectShape("a/x.bzl", try std.fmt.allocPrint(a, "x = [\"{s}\"]\n", .{n}), "shell-word@1");
+        try expectShape("a/x.bzl", try std.fmt.allocPrint(a, "x = \"exec /bin/{s} -x\"\n", .{n}), "bin-sh@1");
+        try expectShape("a/x.bzl", try std.fmt.allocPrint(a, "x = \"run /bin/{s}:/usr\"\n", .{n}), "bin-sh@1");
+        try expectShape("a/tool", try std.fmt.allocPrint(a, "#!/usr/bin/{s}\n", .{n}), "shebang@1");
+        try expectShape("a/tool", try std.fmt.allocPrint(a, "#!/usr/bin/env {s}\n", .{n}), "shebang@1");
+    }
+}
+
+test "GREEN control: a name that only begins with a shell's name, or is a longer program of /bin, is not a shell path" {
+    try expectShape("a/x.bzl", "x = \"/bin/sha256sum\"\ny = \"/usr/bin/shasum -a 1\"\nz = \"/bin/ashes\"\nw = \"/bin/cat\"\n", "");
+    try expectShape("a/mush.txt", "", "");
+    try expectShape("a/tool.fishy", "", "");
+}
+
+test "a Zig run of backslash lines is one string, read by every rule" {
+    try expectShape("a/x.zig", "const s =\n    \\\\" ++ "s" ++ "h -c 'x'\n    \\\\next\n;\n", "shell-word@2");
+    try expectShape("a/x.zig", "const s =\n    \\\\x=/bin/s" ++ "h:y\n;\n", "bin-sh@2");
+    try expectShape("a/x.zig", "const s =\n    \\\\a\n    \\\\set -eu\n;\nconst y = busy" ++ "box;\n", "heredoc@2 " ++ BB ++ "5");
+    try expectShape("a/x.zig", "const s =\n    \\\\a\n    \\\\\n    \\\\busy" ++ "box\n;\n", BB ++ "4");
+    try expectShape("a/x.zig", "const s =\n    \\\\a\n\n    \\\\set -eu\n;\n", "heredoc@4");
+    try expectShape("a/x.zig", "const s = \\\\a", "");
+}
+
+test "GREEN control: a Zig run of backslash lines without a script or a shell is not a use" {
+    try expectShape("a/x.zig", "const s =\n    \\\\name: ci\n    \\\\on: push\n    \\\\# a comment, not a shell\n;\n", "");
+}
+
+test "the word rules read .rs, .c, .cc, .h, .js, .mjs, .ts and .toml as well" {
+    const names = [_][]const u8{ "a/x.rs", "a/x.c", "a/x.cc", "a/x.h", "a/x.js", "a/x.mjs", "a/x.ts" };
+    for (names) |n| {
+        try expectShape(n, "const a = \"busy" ++ "box\";\nconst b = [\"s" ++ "h\", \"-c\"];\n", BB ++ "1 shell-word@2 shell-c@2");
+    }
+    try expectShape("a/Cargo.toml", "[a]\nx = \"busy" ++ "box\"\ny = '''\nset -eu\n'''\n", BB ++ "2 heredoc@3");
+}
+
+test "GREEN control: comments of C, JavaScript, Rust and TOML are not read, nor is a Rust lifetime a string" {
+    try expectShape("a/x.c", "/* busy" ++ "box\n   s" ++ "h */\nint x; // busy" ++ "box\n", "");
+    try expectShape("a/x.ts", "// busy" ++ "box\n/** busy" ++ "box */ const x = 1;\n", "");
+    try expectShape("a/x.rs", "fn f<'a>(x: &'a str) -> &'a str { x } // busy" ++ "box\nconst y: &str = \"busy" ++ "box\";\n", BB ++ "2");
+    try expectShape("a/x.toml", "# busy" ++ "box\nx = 1 # busy" ++ "box\n", "");
+    try expectShape("a/x.c", "/* never closed busy" ++ "box", "");
+}
+
+test "a block comment keeps the line count, and a backtick string spans lines" {
+    try expectShape("a/x.js", "/* a\nb\nc */\nconst x = busy" ++ "box;\n", BB ++ "4");
+    try expectShape("a/x.js", "const x = `a\nb busy" ++ "box\nc`;\nconst y = busy" ++ "box;\n", BB ++ "2 " ++ BB ++ "4");
+    try expectShape("a/x.ts", "const x = `set -eu\necho`;\n", "heredoc@1");
+    try expectShape("a/x.ts", "const x = `never closed busy" ++ "box", BB ++ "1");
+    try expectShape("a/x.ts", "const h = `<a href=\"${url}\">`;\n", "");
+}
+
+test "GREEN control: a type that no rule reads for words is not read" {
+    try expectShape("a/x.md", "busy" ++ "box \"s" ++ "h\"\n", "");
+    try expectShape("a/x.yml", "run: busy" ++ "box\n", "");
+    try expectShape("a/x.json", "{\"a\": \"busy" ++ "box\"}\n", "");
 }
 
 test "this file holds none of what it refuses (its tests spell the words in parts)" {
