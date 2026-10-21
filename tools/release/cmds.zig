@@ -5,7 +5,9 @@
 //!  - `plan`: which version, if any, this commit is released as (reads tags, writes nothing);
 //!  - `archive`: the deterministic source archive of a commit under the planned version's prefix, and its SHA256SUMS;
 //!  - `verify`: everything that must hold before a file is published (nothing here writes);
-//!  - `tag`: the annotated tag of the verified commit (the one step that writes the repository, with publish);
+//!  - `tag` (`settleTag`): fetches the tags again, in the serialized job, and then either ends the run as superseded (its commit is contained in the newest
+//!    release tag's commit), refuses (the planned number was taken by another commit), or makes the annotated tag of the verified commit (the one step that
+//!    writes the repository, with publish), and says which tag publish, the site and the bump take;
 //!  - `publish`: the GitHub release of the verified files, created once and never changed.
 const std = @import("std");
 const version = @import("version.zig");
@@ -241,6 +243,93 @@ pub fn createTag(a: std.mem.Allocator, io: Io, o: TagOpts) !TagMade {
         "-f",  try std.fmt.allocPrint(a, "sha={s}", .{object}),
     });
     return .created;
+}
+
+pub const SettleOpts = struct {
+    root: []const u8,
+    repo: []const u8,
+    /// The tag the plan chose when the run began (provisional: the build stamped its number into the binaries and the archive).
+    tag: []const u8,
+    sha: []const u8,
+};
+
+pub const Settled = struct {
+    /// The commit is contained in the newest release tag's commit: that release carries its changes, so this run makes no tag, release or bump.
+    superseded: bool,
+    made: ?TagMade = null,
+    /// The tag that names `sha` after this step (empty when superseded). Publish, site and bump take it from here, not from the plan.
+    tag: []const u8 = "",
+    number: []const u8 = "",
+    reason: []const u8,
+};
+
+/// The `key=value` lines the tag job appends to $GITHUB_OUTPUT.
+pub fn settleOutputs(a: std.mem.Allocator, r: Settled) ![]u8 {
+    return std.fmt.allocPrint(a, "superseded={s}\ntag={s}\nnumber={s}\nmade={s}\nreason={s}\n", .{
+        if (r.superseded) "true" else "false",
+        r.tag,
+        r.number,
+        if (r.made) |m| @tagName(m) else "none",
+        r.reason,
+    });
+}
+
+/// The tag step, inside the serialized job (concurrency group `release`): the plan ran long ago, and two pushes that landed close together both planned
+/// the same number. So the tags are fetched again here and the decision is made on what exists now:
+///  - a tag that names `sha` already is this release (a re-run): it must be the planned one, and it is kept;
+///  - `sha` contained in the commit of the newest release tag (an ancestor of it, or it): that release carries these changes, so the run ends as
+///    superseded and makes nothing;
+///  - otherwise the next free number is the planned one, and the tag is made; if it is not (another run took the number first), the run fails
+///    with `NumberTaken`: the binaries, the archive, the sums, the signatures and the attestations carry the planned number, so the run cannot be
+///    tagged under another one without rebuilding, and nothing in the job that holds the token rebuilds. A re-run of the whole workflow plans
+///    again, from the tags that exist, and releases the commit under the free number.
+pub fn settleTag(a: std.mem.Allocator, io: Io, o: SettleOpts) !Settled {
+    if (!isSha(o.sha)) return error.BadSha;
+    const planned = version.parseTag(o.tag) orelse return error.BadTag;
+    _ = try must(io, a, &.{ "git", "-C", o.root, "fetch", "--force", "--quiet", "--tags", "origin" });
+    const refs = try must(io, a, &.{ "git", "-C", o.root, "for-each-ref", "--format=%(refname:strip=2)%09%(objecttype)%09%(objectname)%09%(*objectname)", "refs/tags/" });
+    const tags = try parseTagRefs(a, refs);
+    var all = std.ArrayList(version.Version).empty;
+    for (tags) |tg| try all.append(a, tg.v);
+
+    for (tags) |tg| {
+        if (!std.mem.eql(u8, tg.commit, o.sha)) continue;
+        if (version.Version.order(tg.v, planned) != .eq) {
+            std.debug.print("release: the commit {s} already has the tag {s}, but this run was built as {s}: refusing to make a second tag\n", .{ o.sha, tg.name, o.tag });
+            return error.TagMismatch;
+        }
+        const made = try createTag(a, io, .{ .root = o.root, .repo = o.repo, .tag = o.tag, .sha = o.sha });
+        return .{ .superseded = false, .made = made, .tag = o.tag, .number = try version.numberText(a, planned), .reason = "this commit already has its release tag" };
+    }
+
+    if (version.latest(all.items)) |newest| {
+        const newest_commit = tagCommit(tags, newest);
+        const anc = try io.run(a, &.{ "git", "-C", o.root, "merge-base", "--is-ancestor", o.sha, newest_commit });
+        if (anc.code == 0) {
+            const name = tagOf(tags, newest);
+            const reason = try std.fmt.allocPrint(a, "{s} is contained in {s} ({s}), which was tagged while this run was building: that release carries its changes, so this run makes no tag, release or bump", .{ o.sha, name, newest_commit });
+            return .{ .superseded = true, .reason = reason };
+        }
+        if (anc.code != 1) {
+            std.debug.print("release: git merge-base exited {d}: {s}\n", .{ anc.code, anc.stderr });
+            return error.CommandFailed;
+        }
+    }
+
+    const free = try version.next(all.items, .{ .major = planned.major, .minor = planned.minor });
+    if (version.Version.order(free, planned) != .eq) {
+        std.debug.print("release: {s} was planned and built for {s}, but the next free number is {s} (another run tagged first, at another commit): nothing is tagged; re-run all jobs of this run to release the commit as {s}\n", .{ o.tag, o.tag, try version.tagName(a, free), try version.tagName(a, free) });
+        return error.NumberTaken;
+    }
+    const made = try createTag(a, io, .{ .root = o.root, .repo = o.repo, .tag = o.tag, .sha = o.sha });
+    return .{ .superseded = false, .made = made, .tag = o.tag, .number = try version.numberText(a, planned), .reason = "the planned number is free" };
+}
+
+fn tagCommit(tags: []const TagRef, v: version.Version) []const u8 {
+    for (tags) |tg| {
+        if (version.Version.order(tg.v, v) == .eq) return tg.commit;
+    }
+    return "";
 }
 
 // ---- archive ----------------------------------------------------------------------------------------------------------------------------
@@ -726,6 +815,158 @@ test "the tag step: a re-run keeps the tag it has; a tag on another commit, a ba
     } };
     try t.expectError(error.BadTagObject, createTag(a, odd.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.1", .sha = sha_a }));
     try t.expectEqual(@as(usize, 0), odd.count("git/refs"));
+}
+
+/// One `for-each-ref` line: an annotated tag (its own object, here `e`s) peeled to `commit`.
+fn tagLine(comptime name: []const u8, comptime commit: []const u8) []const u8 {
+    return name ++ "\ttag\t" ++ "e" ** 40 ++ "\t" ++ commit ++ "\n";
+}
+
+const sha_1 = "1" ** 40;
+const sha_2 = "2" ** 40;
+const sha_3 = "3" ** 40;
+const sha_4 = "4" ** 40;
+const sha_5 = "5" ** 40;
+/// The tags v0.0.1 to v0.0.5, each at its own commit.
+const tags_1_to_5 = tagLine("v0.0.1", sha_1) ++ tagLine("v0.0.2", sha_2) ++ tagLine("v0.0.3", sha_3) ++ tagLine("v0.0.4", sha_4) ++ tagLine("v0.0.5", sha_5);
+/// ... and v0.0.6 at commit B, which appeared after commit A (sha_a) planned v0.0.6.
+const tags_1_to_6_at_b = tags_1_to_5 ++ tagLine("v0.0.6", sha_b);
+
+fn creatingRules(refs: []const u8, ancestor: Out) [6]Fake.Rule {
+    return .{
+        .{ .needle = " fetch ", .out = ok("") },
+        .{ .needle = "for-each-ref", .out = ok(refs) },
+        .{ .needle = "merge-base --is-ancestor", .out = ancestor },
+        .{ .needle = "rev-parse", .out = fail(1, "") },
+        .{ .needle = "git/tags", .out = ok(sha_c ++ "\n") },
+        .{ .needle = "git/refs" },
+    };
+}
+
+test "the tag race: A planned v0.0.6, v0.0.6 appeared at B, and A is an ancestor of B: A ends superseded (exit 0) and writes nothing" {
+    // The defect: both pushes planned v0.0.6, B tagged first, and A went red with TagNamesOtherCommit although B's release already carries A's changes.
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // `rev-parse` answers B: a run without the re-check goes on to createTag and fails with TagNamesOtherCommit.
+    var fake = Fake{ .a = a, .rules = &.{
+        .{ .needle = " fetch ", .out = ok("") },
+        .{ .needle = "for-each-ref", .out = ok(tags_1_to_6_at_b) },
+        .{ .needle = "merge-base --is-ancestor " ++ sha_a ++ " " ++ sha_b },
+        .{ .needle = "rev-parse", .out = ok(sha_b ++ "\n") },
+    } };
+    const r = try settleTag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.6", .sha = sha_a });
+    try t.expect(r.superseded);
+    try t.expect(r.made == null);
+    try t.expectEqualStrings("", r.tag);
+    try t.expectEqualStrings("", r.number);
+    try t.expect(std.mem.indexOf(u8, r.reason, "v0.0.6") != null);
+    try t.expectEqual(@as(usize, 0), fake.count("gh "));
+    try t.expectEqualStrings("superseded=true\ntag=\nnumber=\nmade=none\nreason=" ++ sha_a ++ " is contained in v0.0.6 (" ++ sha_b ++ "), which was tagged while this run was building: that release carries its changes, so this run makes no tag, release or bump\n", try settleOutputs(a, r));
+    // the tags are fetched again before they are read
+    try t.expect(std.mem.indexOf(u8, fake.calls.items[0], " fetch --force --quiet --tags origin") != null);
+    try t.expect(std.mem.indexOf(u8, fake.calls.items[1], "for-each-ref") != null);
+}
+
+test "the tag race: contained is decided by the ancestry test against the newest tag's commit, whatever number the run planned" {
+    // A run that planned v0.0.9 (a number no tag has) is superseded all the same when its commit is an ancestor of the newest tag's commit.
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fake = Fake{ .a = a, .rules = &.{
+        .{ .needle = " fetch ", .out = ok("") },
+        .{ .needle = "for-each-ref", .out = ok(tags_1_to_6_at_b) },
+        .{ .needle = "merge-base --is-ancestor " ++ sha_c ++ " " ++ sha_b },
+    } };
+    const r = try settleTag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.9", .sha = sha_c });
+    try t.expect(r.superseded);
+    try t.expectEqual(@as(usize, 0), fake.count("gh "));
+}
+
+test "the tag race: A is not contained in B and the number is taken: the run fails with NumberTaken, and nothing is created" {
+    // The incident itself in the other order: the earlier push tagged v0.0.6, and this later commit, which is not contained in it, planned v0.0.6 too.
+    // It cannot be tagged v0.0.6 (the tag names the other commit) and cannot be tagged v0.0.7 (its binaries, archive and signatures say 0.0.6).
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var rules = creatingRules(tags_1_to_6_at_b, fail(1, ""));
+    rules[3] = .{ .needle = "rev-parse", .out = ok(sha_b ++ "\n") }; // a run without the re-check meets this and fails with TagNamesOtherCommit
+    var fake = Fake{ .a = a, .rules = &rules };
+    try t.expectError(error.NumberTaken, settleTag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.6", .sha = sha_a }));
+    try t.expectEqual(@as(usize, 0), fake.count("gh "));
+    // a planned number below the tags (a stale plan) is refused the same way
+    var stale = Fake{ .a = a, .rules = &rules };
+    try t.expectError(error.NumberTaken, settleTag(a, stale.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.4", .sha = sha_a }));
+    try t.expectEqual(@as(usize, 0), stale.count("gh "));
+}
+
+test "the tag race: A is not contained in the newest tag and the planned number is the next free one: the tag is made" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const rules = creatingRules(tags_1_to_5, fail(1, ""));
+    var fake = Fake{ .a = a, .rules = &rules };
+    const r = try settleTag(a, fake.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.6", .sha = sha_a });
+    try t.expect(!r.superseded);
+    try t.expectEqual(TagMade.created, r.made.?);
+    try t.expectEqualStrings("v0.0.6", r.tag);
+    try t.expectEqualStrings("0.0.6", r.number);
+    try t.expectEqual(@as(usize, 1), fake.count("ref=refs/tags/v0.0.6 -f sha=" ++ sha_c));
+    try t.expectEqualStrings("superseded=false\ntag=v0.0.6\nnumber=0.0.6\nmade=created\nreason=the planned number is free\n", try settleOutputs(a, r));
+    // the first release: no tag at all, so nothing to be contained in
+    const first_rules = creatingRules("", fail(1, ""));
+    var first = Fake{ .a = a, .rules = &first_rules };
+    const f = try settleTag(a, first.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.1", .sha = sha_a });
+    try t.expectEqual(TagMade.created, f.made.?);
+    try t.expectEqual(@as(usize, 0), first.count("merge-base"));
+}
+
+test "the tag race: a re-run of a tagged commit keeps its own tag even when newer releases exist; a different tag at the commit is refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // v0.0.6 names A and v0.0.7 names B (a descendant): the re-run of A's failed publish is not superseded, it carries on with the tag it has
+    var again = Fake{ .a = a, .rules = &.{
+        .{ .needle = " fetch ", .out = ok("") },
+        .{ .needle = "for-each-ref", .out = ok(comptime tags_1_to_5 ++ tagLine("v0.0.6", sha_a) ++ tagLine("v0.0.7", sha_b)) },
+        .{ .needle = "merge-base --is-ancestor", .out = ok("") },
+        .{ .needle = "rev-parse", .out = ok(sha_a ++ "\n") },
+    } };
+    const r = try settleTag(a, again.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.6", .sha = sha_a });
+    try t.expect(!r.superseded);
+    try t.expectEqual(TagMade.existed, r.made.?);
+    try t.expectEqualStrings("v0.0.6", r.tag);
+    try t.expectEqual(@as(usize, 0), again.count("gh "));
+    // the commit has v0.0.7 but this run was built as v0.0.6: its stamps are wrong for that tag
+    var other = Fake{ .a = a, .rules = &.{
+        .{ .needle = " fetch ", .out = ok("") },
+        .{ .needle = "for-each-ref", .out = ok(comptime tags_1_to_5 ++ tagLine("v0.0.7", sha_a)) },
+    } };
+    try t.expectError(error.TagMismatch, settleTag(a, other.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.6", .sha = sha_a }));
+}
+
+test "the tag race: a failed fetch, a failed ancestry test, a bad sha or a bad tag stop the step before anything is created" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var nofetch = Fake{ .a = a, .rules = &.{.{ .needle = " fetch ", .out = fail(128, "fatal: unable to access") }} };
+    try t.expectError(error.CommandFailed, settleTag(a, nofetch.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.6", .sha = sha_a }));
+    try t.expectEqual(@as(usize, 1), nofetch.calls.items.len);
+    const rules = creatingRules(tags_1_to_5, fail(128, "fatal: Not a valid commit name"));
+    var broken = Fake{ .a = a, .rules = &rules };
+    try t.expectError(error.CommandFailed, settleTag(a, broken.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.6", .sha = sha_a }));
+    try t.expectEqual(@as(usize, 0), broken.count("gh "));
+    var none = Fake{ .a = a, .rules = &.{} };
+    try t.expectError(error.BadSha, settleTag(a, none.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.6", .sha = "main" }));
+    try t.expectError(error.BadTag, settleTag(a, none.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0", .sha = sha_a }));
+    try t.expectEqual(@as(usize, 0), none.calls.items.len);
+    // a tag line ahead of the planned MAJOR.MINOR (VERSION went backwards) is the plan's error too
+    var ahead = Fake{ .a = a, .rules = &.{
+        .{ .needle = " fetch ", .out = ok("") },
+        .{ .needle = "for-each-ref", .out = ok(comptime tagLine("v0.1.1", sha_b)) },
+        .{ .needle = "merge-base --is-ancestor", .out = fail(1, "") },
+    } };
+    try t.expectError(error.TagsAheadOfVersionFile, settleTag(a, ahead.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.6", .sha = sha_a }));
 }
 
 test "plan: a bad input is refused before any call" {
@@ -1627,6 +1868,21 @@ test "out of memory: plan, tag, archive, verify and publish fail or find, and ne
         }
     };
     try sweepOutOfMemory(Tag_{ .a = a });
+
+    const Settle_ = struct {
+        a: std.mem.Allocator,
+        refs: []const u8,
+        code: u8,
+        fn call(self: @This(), x: std.mem.Allocator) !bool {
+            const rules = creatingRules(self.refs, .{ .code = self.code, .stdout = "", .stderr = "" });
+            var fake = Fake{ .a = self.a, .rules = &rules };
+            const r = try settleTag(x, fake.io(), .{ .root = "/w", .repo = "o/n", .tag = "v0.0.6", .sha = sha_a });
+            _ = try settleOutputs(x, r);
+            return r.superseded or r.made != null;
+        }
+    };
+    try sweepOutOfMemory(Settle_{ .a = a, .refs = tags_1_to_5, .code = 1 });
+    try sweepOutOfMemory(Settle_{ .a = a, .refs = tags_1_to_6_at_b, .code = 0 });
 
     const Archive_ = struct {
         a: std.mem.Allocator,

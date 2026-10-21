@@ -31,7 +31,16 @@ const Findings = wc.Findings;
 const add = wc.add;
 
 pub const tag_if = "${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}";
-pub const publish_if = tag_if;
+/// publish and bump also skip a run the tag job ended as superseded (a release made meanwhile contains its commit): they are not the plan's alone.
+pub const publish_if = "${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork && needs.tag.outputs.superseded != 'true' }}";
+const superseded_clause = "needs.tag.outputs.superseded != 'true'";
+/// The tag job's outputs, which publish, site and bump use in place of the plan's: the plan ran before the build, and a push that landed meanwhile may have taken the number.
+const tag_outputs =
+    "    outputs:\n" ++
+    "      superseded: ${{ steps.settle.outputs.superseded }}\n" ++
+    "      tag: ${{ steps.settle.outputs.tag }}\n" ++
+    "      number: ${{ steps.settle.outputs.number }}\n";
+const tag_env_final = "      TAG: ${{ needs.tag.outputs.tag }}\n";
 /// The `if:` of the jobs that run for every commit the plan released.
 pub const released_if = "${{ needs.plan.outputs.released == 'true' }}";
 /// build-cli, beta, gamma, archive, attest, verify, tag, publish and site run only for a commit the plan released.
@@ -532,7 +541,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         // The job's own token only reads; the write is the release bot's token for the internal repository, minted by one step with exact inputs and used by one step.
         if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read"))
             try add(a, &f, "the job `bump` is not `contents: read` alone: it writes to the internal repository with the release bot's token, not its own", .{});
-        if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, tag_if)) try add(a, &f, "the job `bump` is not under its exact `if:` ({s})", .{tag_if});
+        if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, publish_if)) try add(a, &f, "the job `bump` is not under its exact `if:` ({s})", .{publish_if});
         for (bump_needs) |need| {
             if (!hasNeed(j, need)) try add(a, &f, "the job `bump` does not wait for `{s}` (it opens the pull request after the tag exists and the release is published)", .{need});
         }
@@ -560,6 +569,20 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     // Nothing waits for `bump`: a failed bump is red and un-releases nothing.
     for (jobs) |*j| {
         if (hasNeed(j, "bump")) try add(a, &f, "the job `{s}` waits for `bump`: nothing may, a failed bump un-releases nothing", .{j.name});
+    }
+    // The race of two pushes that plan the same number: the tag job (alone in its concurrency group) settles it, and what comes after takes the tag from its outputs.
+    if (jobNamed(jobs, "tag")) |_| {
+        const jt = jobBlock(text, "tag");
+        if (std.mem.indexOf(u8, jt, tag_outputs) == null) try add(a, &f, "the job `tag` does not output `superseded`, `tag` and `number` of its step `settle`, which publish, site and bump use", .{});
+        if (std.mem.indexOf(u8, jt, "        id: settle\n") == null or std.mem.indexOf(u8, jt, " --sha \"$GITHUB_SHA\" --output \"$GITHUB_OUTPUT\"") == null)
+            try add(a, &f, "the step of `tag` that runs `tool/release tag` is not `id: settle` with `--output \"$GITHUB_OUTPUT\"`: its outputs would not reach the jobs after it", .{});
+    }
+    for ([_][]const u8{ "publish", "bump", "site" }) |name| {
+        const j = jobNamed(jobs, name) orelse continue;
+        const jb = jobBlock(text, name);
+        if (std.mem.indexOf(u8, jb, tag_env_final) == null) try add(a, &f, "the job `{s}` does not take its tag from the tag job (`TAG: ${{{{ needs.tag.outputs.tag }}}}`)", .{name});
+        if (std.mem.indexOf(u8, jb, "needs.plan.outputs.tag") != null) try add(a, &f, "the job `{s}` reads the plan's tag, which a push that landed meanwhile may have taken: it uses `needs.tag.outputs.tag`", .{name});
+        if (j.if_expr == null or std.mem.indexOf(u8, j.if_expr.?, superseded_clause) == null) try add(a, &f, "the job `{s}` does not skip a superseded run (`{s}` in its `if:`)", .{ name, superseded_clause });
     }
     // The jobs that sign, tag, publish or bump run only for a push to main of a commit the plan released, not a fork: a pull request makes none of them.
     if (jobNamed(jobs, "tag")) |j| {
@@ -1195,6 +1218,10 @@ const fixture_wf =
     \\      cancel-in-progress: false
     \\    permissions:
     \\      contents: read
+    \\    outputs:
+    \\      superseded: ${{ steps.settle.outputs.superseded }}
+    \\      tag: ${{ steps.settle.outputs.tag }}
+    \\      number: ${{ steps.settle.outputs.number }}
     \\    env:
     \\      TAG: ${{ needs.plan.outputs.tag }}
     \\    steps:
@@ -1217,19 +1244,20 @@ const fixture_wf =
     \\          repositories: buildrules
     \\          permission-contents: write
     \\      - name: The annotated tag of the verified commit
+    \\        id: settle
     \\        env:
     \\          GH_TOKEN: ${{ steps.bot.outputs.token }}
-    \\        run: tool/release tag --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA"
+    \\        run: tool/release tag --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --output "$GITHUB_OUTPUT"
     \\
     \\  publish:
     \\    needs: [plan, tag, verify, tool]
-    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork && needs.tag.outputs.superseded != 'true' }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
     \\    permissions:
     \\      contents: write
     \\    env:
-    \\      TAG: ${{ needs.plan.outputs.tag }}
+    \\      TAG: ${{ needs.tag.outputs.tag }}
     \\      PREVIOUS: ${{ needs.plan.outputs.previous }}
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1252,14 +1280,14 @@ const fixture_wf =
     \\
     \\  bump:
     \\    needs: [plan, tag, publish, tool]
-    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork && needs.tag.outputs.superseded != 'true' }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
     \\    environment: release
     \\    permissions:
     \\      contents: read
     \\    env:
-    \\      TAG: ${{ needs.plan.outputs.tag }}
+    \\      TAG: ${{ needs.tag.outputs.tag }}
     \\      INTERNAL_REPO: ${{ github.repository_owner }}/${{ vars.BUMP_REPOSITORY }}
     \\    steps:
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -1286,13 +1314,13 @@ const fixture_wf =
     \\
     \\  site:
     \\    needs: [plan, tag, verify, tool]
-    \\    if: ${{ needs.plan.outputs.released == 'true' }}
+    \\    if: ${{ needs.plan.outputs.released == 'true' && needs.tag.outputs.superseded != 'true' }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
     \\    permissions:
     \\      contents: read
     \\    env:
-    \\      TAG: ${{ needs.plan.outputs.tag }}
+    \\      TAG: ${{ needs.tag.outputs.tag }}
     \\    steps:
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
@@ -1387,7 +1415,7 @@ test "the jobs are parsed as the rules read them" {
     try t.expectEqual(@as(usize, 13), jobs.len);
     const bp = jobNamed(jobs, "bump").?;
     try t.expect(hasNeed(bp, "plan") and hasNeed(bp, "tag") and hasNeed(bp, "publish") and hasNeed(bp, "tool"));
-    try t.expectEqualStrings(tag_if, bp.if_expr.?);
+    try t.expectEqualStrings(publish_if, bp.if_expr.?);
     try t.expectEqualStrings("read", permLevel(bp, "contents").?);
     try t.expectEqual(@as(usize, 1), bp.perms.items.len);
     const tg = jobNamed(jobs, "tag").?;
@@ -1564,7 +1592,7 @@ test "rule: the internal repository's submodule bump runs after publish, with th
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", " && github.ref == 'refs/heads/main'", ""), exact);
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", " && !github.event.repository.fork", ""), exact);
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "needs.plan.outputs.released == 'true' && ", ""), exact);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}\n", ""), exact);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork && needs.tag.outputs.superseded != 'true' }}\n", ""), exact);
     // it waits for the plan, the tag, the publish and the tool; and nothing waits for it
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "needs: [plan, tag, publish, tool]", "needs: [plan, tag, tool]"), "`bump` does not wait for `publish`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "needs: [plan, tag, publish, tool]", "needs: [plan, publish, tool]"), "`bump` does not wait for `tag`");
@@ -1592,7 +1620,7 @@ test "rule: the internal repository's submodule bump runs after publish, with th
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "GH_TOKEN: ${{ steps.bump_bot.outputs.token }}", "GH_TOKEN: ${{ github.token }}"), "does not take the bot's token as its GH_TOKEN");
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "GH_TOKEN: ${{ steps.bump_bot.outputs.token }}", "GH_TOKEN: ${{ github.token }}"), "uses GITHUB_TOKEN");
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "GH_TOKEN: ${{ steps.bump_bot.outputs.token }}", "GH_TOKEN: ${{ steps.bot.outputs.token }}"), "does not take the bot's token as its GH_TOKEN");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      TAG: ${{ needs.plan.outputs.tag }}\n", "      TAG: ${{ needs.plan.outputs.tag }}\n      GH_TOKEN: ${{ steps.bump_bot.outputs.token }}\n"), "uses the bot's token other than once, in the bump step");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      TAG: ${{ needs.tag.outputs.tag }}\n", "      TAG: ${{ needs.tag.outputs.tag }}\n      GH_TOKEN: ${{ steps.bump_bot.outputs.token }}\n"), "uses the bot's token other than once, in the bump step");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ steps.bump_bot.outputs.token }}"), key_token);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "GH_TOKEN: ${{ steps.bot.outputs.token }}", "GH_TOKEN: ${{ steps.bump_bot.outputs.token }}"), key_token);
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}"), key_token);
@@ -1640,7 +1668,7 @@ test "rule: tag and publish run under their exact if" {
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", " && github.ref == 'refs/heads/main'", ""), exact_pub);
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "github.event_name == 'push'", "true"), exact_pub);
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs.plan.outputs.released == 'true' && ", ""), exact_pub);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}\n", ""), exact_pub);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork && needs.tag.outputs.superseded != 'true' }}\n", ""), exact_pub);
 }
 
 test "rule: the order gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish, and nothing before the tag waits for it" {
@@ -1786,7 +1814,7 @@ test "rule: the page of the release is made from the verified files by a job tha
     const r = try fx(a);
     try expectFinding(a, r, try mutateIn(a, r.wf, "site", "      contents: read\n", "      contents: write\n"), "job `site` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "site", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `site` holds `id-token: write`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ true }}"), "`site` runs even when the plan released nothing");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "if: ${{ needs.plan.outputs.released == 'true' && needs.tag.outputs.superseded != 'true' }}", "if: ${{ needs.tag.outputs.superseded != 'true' }}"), "`site` runs even when the plan released nothing");
     try expectFinding(a, r, try mutateIn(a, r.wf, "site", "tool/release site ", "echo site "), "`site` does not run `tool/release site");
     try expectFinding(a, r, try mutateIn(a, r.wf, "site", "name: release-site", "name: other"), "does not upload the artifact `release-site`");
 }
@@ -1897,6 +1925,36 @@ test "rule: the jobs that test the commit name the pushed commit, and the jobs t
         try expectFinding(a, r, try mutateIn(a, r.wf, name, "--sha \"$GITHUB_SHA\"", "--sha \"$TAG\""), "must name `--sha \"$GITHUB_SHA\"`");
         try expectFinding(a, r, try mutateIn(a, r.wf, name, "    env:\n", "    env:\n      CANDIDATE: ${{ github.sha }}\n"), "must name `--sha \"$GITHUB_SHA\"`");
     }
+}
+
+test "rule: the tag job settles the race of two pushes that planned the same number, and publish, site and bump use its outputs, not the plan's" {
+    // The defect: the number is taken at the plan, long before the tag; a push that landed meanwhile took it, the tag job went red with TagNamesOtherCommit and
+    // the later commit was never released. The job that tags (alone, in group `release`) decides from the tags as they are then; what follows must use its answer.
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const outs = "does not output `superseded`, `tag` and `number` of its step `settle`";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      superseded: ${{ steps.settle.outputs.superseded }}\n", ""), outs);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      tag: ${{ steps.settle.outputs.tag }}\n", ""), outs);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      number: ${{ steps.settle.outputs.number }}\n", ""), outs);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "steps.settle.outputs.tag", "steps.bot.outputs.tag"), outs);
+    const step = "is not `id: settle` with `--output";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "        id: settle\n", ""), step);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", " --output \"$GITHUB_OUTPUT\"", ""), step);
+    for ([_][]const u8{ "publish", "bump", "site" }) |name| {
+        const own = try std.fmt.allocPrint(a, "the job `{s}` does not take its tag from the tag job", .{name});
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "      TAG: ${{ needs.tag.outputs.tag }}\n", "      TAG: ${{ needs.plan.outputs.tag }}\n"), own);
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "      TAG: ${{ needs.tag.outputs.tag }}\n", "      TAG: ${{ needs.plan.outputs.tag }}\n"), "reads the plan's tag");
+        // the plan's tag read beside the tag job's is found too
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "    env:\n", "    env:\n      OLD: ${{ needs.plan.outputs.tag }}\n"), "reads the plan's tag");
+        const skip = try std.fmt.allocPrint(a, "the job `{s}` does not skip a superseded run", .{name});
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, " && needs.tag.outputs.superseded != 'true'", ""), skip);
+    }
+    // the exact `if:` of publish and bump holds the clause, whatever else it says
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", " && needs.tag.outputs.superseded != 'true'", ""), "`publish` is not under its exact `if:`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", " && needs.tag.outputs.superseded != 'true'", ""), "`bump` is not under its exact `if:`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs.tag.outputs.superseded != 'true'", "needs.tag.outputs.superseded == 'true'"), "`publish` is not under its exact `if:`");
 }
 
 test "rule: the tag job is in the release concurrency group and none is cancelled" {
