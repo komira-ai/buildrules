@@ -402,8 +402,8 @@ const cosign_tries: u32 = 3;
 /// cosign's FINAL stderr line says the trusted root (the TUF repository) could not be fetched: a network failure that says nothing about the
 /// signature. Only these retry; any other refusal (a signature or certificate mismatch) is final. Only the last line counts: in legacy-bundle
 /// mode cosign prints the `Could not fetch trusted_root.json ... Continuing` warning and may then report a real mismatch, which is a verdict.
-/// One more shape retries: cosign v2.5 and v2.6 (cmd/cosign/cli/verify/verify_blob.go) end a failed fetch with `trusted root is required when
-/// using new bundle format`, raised when the trusted material is nil, and the fetch error itself is only an earlier warning line. That final
+/// One more shape retries: cosign v3.0.6 (cmd/cosign/cli/verify/common.go, under `co.TrustedMaterial == nil && !verifyOfflineWithKey`) ends a failed fetch with `trusted root is required when
+/// using new bundle format`, raised when the trusted material is nil after the fetch failed, and the fetch error itself is only an earlier warning line. That final
 /// line retries only when an earlier line holds one of the fetch markers; alone it says nothing about why the root is missing.
 fn isTrustedRootFetchFailure(stderr: []const u8) bool {
     const text = std.mem.trim(u8, stderr, " \r\n");
@@ -422,6 +422,12 @@ fn isTrustedRootFetchFailure(stderr: []const u8) bool {
     return false;
 }
 
+
+/// The waits (in ms) that `verify` would have slept between the tries of `cosign verify-blob`; for tests.
+pub const Waits = struct {
+    ms: [16]u64 = undefined,
+    n: usize = 0,
+};
 
 pub const VerifyOpts = struct {
     root: []const u8,
@@ -453,6 +459,8 @@ pub const VerifyOpts = struct {
     cosign: []const u8 = "cosign",
     /// The delay before the second try of a `cosign verify-blob` that could not fetch the trusted root; the third waits twice as long.
     retry_ms: u32 = 2000,
+    /// A test seam: when set, the waits between the tries are recorded here and not slept.
+    waits: ?*Waits = null,
 };
 
 /// Every reason the files must not be published; empty when there is none. Nothing is written.
@@ -531,7 +539,11 @@ pub fn verify(a: std.mem.Allocator, io: Io, o: VerifyOpts) !assets.Findings {
                 });
                 // Only a failure to fetch the Sigstore trusted root is retried (a network flake, not a verdict on the signature).
                 if (got.code == 0 or tries >= cosign_tries or !isTrustedRootFetchFailure(got.stderr)) break got;
-                std.Thread.sleep(@as(u64, o.retry_ms) * tries * std.time.ns_per_ms);
+                const wait_ms = @as(u64, o.retry_ms) * tries;
+                if (o.waits) |w| {
+                    w.ms[w.n] = wait_ms;
+                    w.n += 1;
+                } else std.Thread.sleep(wait_ms * std.time.ns_per_ms);
             };
             if (c.code != 0 and isTrustedRootFetchFailure(c.stderr)) {
                 try assets.add(a, &f, "the signature of {s} could not be checked: cosign could not fetch the Sigstore trusted root in {d} tries (a network failure, not a verdict on the signature): {s}", .{ file, tries, trimNl(c.stderr) });
@@ -1436,9 +1448,11 @@ test "verify: a Sigstore trusted-root fetch failure is retried up to 3 tries; a 
     const rules = verifyRules(tar_bytes, tree_ok, ok(""), "tag\n", peeled_a);
     const r = try releaseOf(a, tar_bytes, "v0.0.1", "0.0.1");
     var o = opts(r);
-    o.retry_ms = 1;
+    o.retry_ms = 7;
+    var waited = Waits{}; // the waits are recorded, not slept
+    o.waits = &waited;
 
-    // the stderr of the release run that this retry exists for (cosign v2.5, addresses elided): the fetch error is only a warning line and the final
+    // the stderr of the release run that this retry exists for (cosign v3.0.6, addresses elided): the fetch error is only a warning line and the final
     // line is its consequence
     const incident = "WARNING: Could not fetch trusted_root.json from the TUF repository. Continuing with individual targets. Error from TUF: error getting live trusted root: failed to create TUF client failed to load metadata: tuf refresh failed: Get \"https://tuf-repo-cdn.sigstore.dev/14.root.json\": read tcp ...: read: connection reset by peer\n" ++
         "Error: trusted root is required when using new bundle format\n" ++
@@ -1476,6 +1490,7 @@ test "verify: a Sigstore trusted-root fetch failure is retried up to 3 tries; a 
         var rs = rules;
         if (c.bad.len > 0) rs[6].out = fail(1, c.bad);
         var fake = Fake{ .a = a, .rules = &rs, .flaky_n = c.flaky_n, .flaky_out = fail(1, c.flaky) };
+        waited.n = 0;
         const got = try verify(a, fake.io(), o);
         switch (c.want) {
             .clean => try expectClean(got),
@@ -1489,6 +1504,9 @@ test "verify: a Sigstore trusted-root fetch failure is retried up to 3 tries; a 
             },
         }
         try t.expectEqual(base + c.extra_calls, fake.count("cosign verify-blob"));
+        // every extra call waited first, and the wait grows with the try: 7 ms, then 14 ms
+        try t.expectEqual(c.extra_calls, waited.n);
+        for (waited.ms[0..waited.n], 0..) |ms, i| try t.expectEqual(@as(u64, 7 * (i + 1)), ms);
     }
 }
 
