@@ -1427,7 +1427,8 @@ test "verify: a correct release has no finding, and every check was made on ever
 
 test "verify: a Sigstore trusted-root fetch failure is retried up to 3 tries; a signature mismatch never is" {
     // The defects: no retry (a network flake fails the release), a retry of everything (a bad signature is asked about again and again), a retry
-    // without a bound, a fetch failure reported as a verdict on the signature, a marker loose enough to match a mismatch, or a marker that never retries.
+    // without a bound, a fetch failure reported as a verdict on the signature, a marker loose enough to match a mismatch, a marker that never retries,
+    // the warning of the legacy bundle mode taken for the verdict, and the "trusted root is required" line retried without the fetch warning before it.
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -1436,68 +1437,59 @@ test "verify: a Sigstore trusted-root fetch failure is retried up to 3 tries; a 
     const r = try releaseOf(a, tar_bytes, "v0.0.1", "0.0.1");
     var o = opts(r);
     o.retry_ms = 1;
-    const tuf = fail(1, "WARNING: Could not fetch trusted_root.json from the TUF repository: tuf refresh failed: Get https://tuf-repo-cdn.sigstore.dev/timestamp.json: i/o timeout\nError: error getting live trusted root: tuf refresh failed");
 
-    // the calls of a clean verify: one per verified file (derived here, not typed in, so a new verified file cannot break this test)
-    var fake = Fake{ .a = a, .rules = &rules };
-    try expectClean(try verify(a, fake.io(), o));
-    const base = fake.count("cosign verify-blob");
-    try t.expect(base > 0);
-
-    // the fetch fails twice, then works: no finding, and the flake cost exactly two more calls
-    fake = Fake{ .a = a, .rules = &rules, .flaky_n = 2, .flaky_out = tuf };
-    try expectClean(try verify(a, fake.io(), o));
-    try t.expectEqual(base + 2, fake.count("cosign verify-blob"));
-
-    // it fails 3 times: three tries on that file, then a finding that says it is a fetch failure, not a bad signature
-    fake = Fake{ .a = a, .rules = &rules, .flaky_n = 3, .flaky_out = tuf };
-    const f3 = try verify(a, fake.io(), o);
-    try expectFinding(f3, "could not fetch the Sigstore trusted root in 3 tries");
-    try t.expectEqual(@as(usize, 1), f3.items.len);
-    try t.expectEqual(base + 2, fake.count("cosign verify-blob"));
-
-    // each of the three markers alone, as the final line, is retried (dropping any one from the list turns exactly its case red)
-    for ([_][]const u8{
-        "Error: tuf refresh failed: Get https://tuf-repo-cdn.sigstore.dev/timestamp.json: i/o timeout",
-        "Error: Could not fetch trusted_root.json from the TUF repository",
-        "Error: error getting live trusted root: boom",
-    }) |msg| {
-        fake = Fake{ .a = a, .rules = &rules, .flaky_n = 1, .flaky_out = fail(1, msg) };
-        try expectClean(try verify(a, fake.io(), o));
-        try t.expectEqual(base + 1, fake.count("cosign verify-blob"));
-    }
-
-    // the incident that this retry exists for (stderr of cosign v2.5, addresses elided): the fetch error is only a warning line and the final line is
-    // its consequence; retried because the warning is there
+    // the stderr of the release run that this retry exists for (cosign v2.5, addresses elided): the fetch error is only a warning line and the final
+    // line is its consequence
     const incident = "WARNING: Could not fetch trusted_root.json from the TUF repository. Continuing with individual targets. Error from TUF: error getting live trusted root: failed to create TUF client failed to load metadata: tuf refresh failed: Get \"https://tuf-repo-cdn.sigstore.dev/14.root.json\": read tcp ...: read: connection reset by peer\n" ++
         "Error: trusted root is required when using new bundle format\n" ++
         "error during command execution: trusted root is required when using new bundle format";
-    fake = Fake{ .a = a, .rules = &rules, .flaky_n = 1, .flaky_out = fail(1, incident) };
-    try expectClean(try verify(a, fake.io(), o));
-    try t.expectEqual(base + 1, fake.count("cosign verify-blob"));
+    const no_warning = "Error: trusted root is required when using new bundle format\nerror during command execution: trusted root is required when using new bundle format";
 
-    // a mismatch whose text says "tuf" and "trusted root" in another context is a verdict: one call per file, each a finding
-    var bad_sig = rules;
-    bad_sig[6].out = fail(1, "Error: invalid signature when validating ASN.1 encoded signature: the tuf client and the trusted root of this bundle disagree");
-    fake = Fake{ .a = a, .rules = &bad_sig };
-    const fm = try verify(a, fake.io(), o);
-    try expectFinding(fm, "the signature of buildrules-0.0.1.tar.gz does not verify");
-    try t.expectEqual(base, fake.count("cosign verify-blob"));
-    try t.expectEqual(base, fm.items.len);
+    // the calls of a clean verify: one per verified file (derived here, not typed in, so a new verified file cannot break this test)
+    var clean = Fake{ .a = a, .rules = &rules };
+    try expectClean(try verify(a, clean.io(), o));
+    const base = clean.count("cosign verify-blob");
+    try t.expect(base > 0);
 
-    // the legacy-bundle warning followed by a real mismatch is a verdict too: only the final line counts
-    bad_sig[6].out = fail(1, "WARNING: Could not fetch trusted_root.json from the TUF repository: tuf refresh failed: i/o timeout. Continuing\nError: invalid signature when validating ASN.1 encoded signature");
-    fake = Fake{ .a = a, .rules = &bad_sig };
-    const fw = try verify(a, fake.io(), o);
-    try expectFinding(fw, "the signature of buildrules-0.0.1.tar.gz does not verify");
-    try t.expectEqual(base, fake.count("cosign verify-blob"));
-
-    // the same final lines with no fetch warning before them say nothing about why the root is missing: a verdict, not retried
-    bad_sig[6].out = fail(1, "Error: trusted root is required when using new bundle format\nerror during command execution: trusted root is required when using new bundle format");
-    fake = Fake{ .a = a, .rules = &bad_sig };
-    const fn2 = try verify(a, fake.io(), o);
-    try expectFinding(fn2, "the signature of buildrules-0.0.1.tar.gz does not verify");
-    try t.expectEqual(base, fake.count("cosign verify-blob"));
+    const Want = enum { clean, fetch_finding, verdicts };
+    const TryCase = struct { flaky_n: usize = 0, flaky: []const u8 = "", bad: []const u8 = "", extra_calls: usize, want: Want };
+    const warn_then_tuf = "WARNING: Could not fetch trusted_root.json from the TUF repository: tuf refresh failed: Get https://tuf-repo-cdn.sigstore.dev/timestamp.json: i/o timeout\nError: error getting live trusted root: tuf refresh failed";
+    const cases = [_]TryCase{
+        // the fetch fails twice, then works: no finding, and the flake cost exactly two more calls
+        .{ .flaky_n = 2, .flaky = warn_then_tuf, .extra_calls = 2, .want = .clean },
+        // it fails 3 times: three tries on that file, then one finding that says it is a fetch failure, not a bad signature
+        .{ .flaky_n = 3, .flaky = warn_then_tuf, .extra_calls = 2, .want = .fetch_finding },
+        // each of the three markers alone, as the final line, is retried (dropping any one from the list turns exactly its case red)
+        .{ .flaky_n = 1, .flaky = "Error: tuf refresh failed: Get https://tuf-repo-cdn.sigstore.dev/timestamp.json: i/o timeout", .extra_calls = 1, .want = .clean },
+        .{ .flaky_n = 1, .flaky = "Error: Could not fetch trusted_root.json from the TUF repository", .extra_calls = 1, .want = .clean },
+        .{ .flaky_n = 1, .flaky = "Error: error getting live trusted root: boom", .extra_calls = 1, .want = .clean },
+        // the incident is retried: its final line needs the fetch warning before it, and it has one
+        .{ .flaky_n = 1, .flaky = incident, .extra_calls = 1, .want = .clean },
+        // a mismatch whose text says "tuf" and "trusted root" in another context is a verdict: one call per file, each a finding
+        .{ .bad = "Error: invalid signature when validating ASN.1 encoded signature: the tuf client and the trusted root of this bundle disagree", .extra_calls = 0, .want = .verdicts },
+        // the legacy-bundle warning followed by a real mismatch is a verdict too: only the final line counts
+        .{ .bad = "WARNING: Could not fetch trusted_root.json from the TUF repository: tuf refresh failed: i/o timeout. Continuing\nError: invalid signature when validating ASN.1 encoded signature", .extra_calls = 0, .want = .verdicts },
+        // the incident's final lines with no fetch warning before them say nothing about why the root is missing: a verdict
+        .{ .bad = no_warning, .extra_calls = 0, .want = .verdicts },
+    };
+    for (cases) |c| {
+        var rs = rules;
+        if (c.bad.len > 0) rs[6].out = fail(1, c.bad);
+        var fake = Fake{ .a = a, .rules = &rs, .flaky_n = c.flaky_n, .flaky_out = fail(1, c.flaky) };
+        const got = try verify(a, fake.io(), o);
+        switch (c.want) {
+            .clean => try expectClean(got),
+            .fetch_finding => {
+                try expectFinding(got, "could not fetch the Sigstore trusted root in 3 tries");
+                try t.expectEqual(@as(usize, 1), got.items.len);
+            },
+            .verdicts => {
+                try expectFinding(got, "the signature of buildrules-0.0.1.tar.gz does not verify");
+                try t.expectEqual(base, got.items.len);
+            },
+        }
+        try t.expectEqual(base + c.extra_calls, fake.count("cosign verify-blob"));
+    }
 }
 
 test "verify --dry checks everything but the signatures and attestations, which a pull request does not make" {
