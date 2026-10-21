@@ -26,7 +26,7 @@ var served_size: u64 = 11;
 fn fake(a: std.mem.Allocator, url: []const u8) anyerror!fetch.Digest.Result {
     _ = a;
     _ = url;
-    fetches += 1;
+    if (!kit.replaying) fetches += 1;
     return .{ .sha256 = sha_a, .sri512 = served_sri, .size = served_size };
 }
 

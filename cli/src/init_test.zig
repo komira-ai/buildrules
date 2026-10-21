@@ -155,3 +155,115 @@ test "init then cargo new then check: the files init wrote are the ones the othe
     try t.expectEqual(@as(u8, 0), h.run(&.{ "cargo", "new", "crates/hello" }).code);
     try t.expect(kit.contains(h.read("Cargo.toml"), "members = [\"crates/hello\"]"));
 }
+
+// ---- more of init: arguments, the destination, the messages --------------------------------------------------------
+
+test "init: a flag without its value, a second directory, and a path with a byte Buck2 refuses are exit 2" {
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    for ([_][]const u8{ "--path", "--git", "--commit", "--cell", "--rust-version" }) |flag| {
+        const r = h.run(&.{ "init", flag });
+        try t.expectEqual(@as(u8, 2), r.code);
+        try t.expect(kit.contains(r.err, "needs a value"));
+    }
+    const more = h.run(&.{ "init", "one", "two", "--path", "bu" });
+    try t.expectEqual(@as(u8, 2), more.code);
+    try t.expect(kit.contains(more.err, "more than one directory"));
+    // The bytes a cell path may hold: letters, digits and - _ . / +; everything else, each alone, is refused.
+    const allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./+";
+    var c: usize = 1;
+    while (c < 256) : (c += 1) {
+        const b: u8 = @intCast(c);
+        const path = [_]u8{ 'a', b, 'b' };
+        const r = h.run(&.{ "init", "--path", &path });
+        const ok = std.mem.indexOfScalar(u8, allowed, b) != null;
+        try t.expectEqual(@as(u8, if (ok) 0 else 2), r.code);
+        if (ok) {
+            // Remove what the run wrote so the next byte starts from nothing.
+            for ([_][]const u8{ ".buckconfig", ".gitignore", "Cargo.toml", "rust-toolchain.toml", ".buckconfig.local.example" }) |f| h.tmp.dir.deleteFile(f) catch {};
+        }
+    }
+    for ([_][]const u8{ ".", "a/./b", "a//b", "", "a/..", "x" ** 257 }) |p| {
+        try t.expectEqual(@as(u8, 2), h.run(&.{ "init", "--path", p }).code);
+    }
+    try t.expectEqual(@as(u8, 2), h.run(&.{ "init", "--commit", commit }).code);
+    try t.expectEqual(@as(u8, 2), h.run(&.{ "init", "--path", "bu", "--commit", commit }).code);
+    // A commit is 40 lower-case hex digits: one wrong byte anywhere is refused.
+    var bad_commit: [40]u8 = commit.*;
+    bad_commit[39] = 'g';
+    try t.expectEqual(@as(u8, 2), h.run(&.{ "init", "--git", "https://example.invalid/x.git", "--commit", &bad_commit }).code);
+    bad_commit[39] = '/';
+    try t.expectEqual(@as(u8, 2), h.run(&.{ "init", "--git", "https://example.invalid/x.git", "--commit", &bad_commit }).code);
+    bad_commit[39] = ':';
+    try t.expectEqual(@as(u8, 2), h.run(&.{ "init", "--git", "https://example.invalid/x.git", "--commit", &bad_commit }).code);
+    bad_commit[39] = '`';
+    try t.expectEqual(@as(u8, 2), h.run(&.{ "init", "--git", "https://example.invalid/x.git", "--commit", &bad_commit }).code);
+    try t.expectEqual(@as(u8, 2), h.run(&.{ "init", "--git", "https://example.invalid/x.git", "--commit", commit ++ "0" }).code);
+}
+
+test "init: a directory that cannot be made is a failure that names it, and a nested one is made" {
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    try h.put("afile", "not a directory");
+    const r = h.run(&.{ "init", "afile/sub", "--path", "bu" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cannot create afile/sub"));
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "init", "deep/er/repo", "--path", "bu" }).code);
+    try t.expect(h.has("deep/er/repo/.buckconfig"));
+}
+
+test "init: the messages say what was written, kept or appended, with the number of lines" {
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    const first = h.run(&.{ "init", "--path", "bu" });
+    try t.expect(kit.contains(first.out, "wrote   .buckconfig"));
+    try t.expect(kit.contains(first.out, "wrote   .gitignore (+2 lines)"));
+    const again = h.run(&.{ "init", "--path", "bu" });
+    try t.expect(kit.contains(again.out, "kept    .buckconfig (exists, is what init writes)"));
+    try t.expect(kit.contains(again.out, "kept    Cargo.toml (exists)"));
+    try t.expect(kit.contains(again.out, "kept    .gitignore (has the buildrules lines)"));
+    const partial = try kit.Harness.create();
+    defer partial.destroy();
+    try partial.put(".gitignore", "buck-out/\n");
+    const one = partial.run(&.{ "init", "--path", "bu" });
+    try t.expect(kit.contains(one.out, "appended .gitignore (+1 line)"));
+    try t.expect(!kit.contains(one.out, "+1 lines"));
+    try t.expectEqualStrings("buck-out/\n.buckconfig.local\n", partial.read(".gitignore"));
+}
+
+test "buildrules with no command, with help, with --version, and with a command it does not know" {
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    const none = h.run(&.{});
+    try t.expectEqual(@as(u8, 2), none.code);
+    try t.expect(kit.contains(none.err, "usage: buildrules <command>"));
+    for ([_][]const u8{ "--help", "-h", "help" }) |flag| {
+        const r = h.run(&.{flag});
+        try t.expectEqual(@as(u8, 0), r.code);
+        try t.expect(kit.contains(r.out, "usage: buildrules <command>"));
+    }
+    const v = h.run(&.{"--version"});
+    try t.expectEqual(@as(u8, 0), v.code);
+    try t.expect(std.mem.startsWith(u8, v.out, "buildrules "));
+    // `<command> --help` and `-h` print that command's flags.
+    const usages = [_]struct { cmd: []const u8, text: []const u8 }{
+        .{ .cmd = "init", .text = "usage: buildrules init" },
+        .{ .cmd = "cargo", .text = "usage: buildrules cargo new" },
+        .{ .cmd = "sync", .text = "usage: buildrules sync" },
+        .{ .cmd = "check", .text = "usage: buildrules check" },
+        .{ .cmd = "npm", .text = "usage: buildrules npm sync" },
+        .{ .cmd = "mojo", .text = "usage: buildrules mojo sync" },
+    };
+    for (usages) |u| {
+        for ([_][]const u8{ "--help", "-h" }) |flag| {
+            const r = h.run(&.{ u.cmd, flag });
+            try t.expectEqual(@as(u8, 0), r.code);
+            try t.expect(kit.contains(r.out, u.text));
+        }
+    }
+    // A command that is not one, with or without --help, is a usage error.
+    const unknown = h.run(&.{ "frobnicate", "--help" });
+    try t.expectEqual(@as(u8, 2), unknown.code);
+    try t.expect(kit.contains(unknown.err, "unknown command frobnicate"));
+    try t.expectEqual(@as(u8, 2), h.run(&.{"frobnicate"}).code);
+}

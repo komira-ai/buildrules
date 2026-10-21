@@ -30,7 +30,7 @@
 #              Its outputs (`tag`, `number`, `superseded`) are what publish, site and bump use, not the plan's.
 #   site       the page of the release (the tag, the commit to pin in .buckconfig, the archive url and its sha256), as an artifact. Nothing deploys it.
 #   publish    creates the GitHub release from the verified files, once the tag (the one `tag` made) exists and peels to the verified sha. A re-run creates no second
-#              release and replaces no asset: a file the release holds must be the same bytes or the job fails, and a missing file is added.
+#              release and replaces no asset: a file the release holds must be the same bytes or the job fails (a signature bundle may differ when the file it signs is the same bytes: every signing makes a new one, so a re-run of a released commit ends green), and a missing file is added.
 #   bump       after publish: opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge,
 #              using the release bot's token for that repository alone (`contents: read` for its own token). Nothing waits for it.
 #   tap        after publish: renders `Formula/buildrules.rb` from the verified SHA256SUMS (`channels formula`) and opens the pull request that adds it to the

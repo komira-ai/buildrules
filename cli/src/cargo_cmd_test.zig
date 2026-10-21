@@ -11,13 +11,18 @@ const t = std.testing;
 var seen: [8][]const u8 = undefined;
 var seen_len: usize = 0;
 var fake_code: u8 = 0;
+var fake_error: ?anyerror = null;
 
 fn fakeCargo(ctx: *ctxm.Ctx, argv: []const []const u8) anyerror!u8 {
-    seen_len = 0;
-    for (argv) |x| {
-        seen[seen_len] = try ctx.a.dupe(u8, x);
-        seen_len += 1;
+    // A replay (testkit.zig) runs the command on a copy; only the run the test made is on the record.
+    if (!kit.replaying) {
+        seen_len = 0;
+        for (argv) |x| {
+            seen[seen_len] = try ctx.a.dupe(u8, x);
+            seen_len += 1;
+        }
     }
+    if (fake_error) |e| return e;
     if (fake_code != 0) return fake_code;
     const path = argv[argv.len - 1];
     const name = std.fs.path.basename(path);
@@ -30,6 +35,7 @@ fn withFake(h: *kit.Harness) void {
     h.ctx.runner = &fakeCargo;
     seen_len = 0;
     fake_code = 0;
+    fake_error = null;
 }
 
 // ---- the pure edits ---------------------------------------------------------------------
@@ -317,4 +323,128 @@ test "adopt keeps the rules a BUCK file already has, refuses a glob it cannot ex
     const r = h.run(&.{ "cargo", "adopt" });
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "glob"));
+}
+
+// ---- more of cargo: the edits at their edges, the arguments, the failures -------------------------------------------------
+
+test "ensureBuck: a BUCK file that has the load but not the call gets the call only; text without a final newline gets one" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const load_only = "load(\"//:buildrules.bzl\", \"cargo_package\")";
+    try t.expectEqualStrings(load_only ++ "\n\ncargo_package(path = \".\")\n", (try cargo_cmd.ensureBuck(a, load_only)).?);
+    try t.expectEqualStrings(load_only ++ "\n\ncargo_package(path = \".\")\n", (try cargo_cmd.ensureBuck(a, load_only ++ "\n")).?);
+    try t.expectEqualStrings("load(\"//:buildrules.bzl\", \"cargo_package\")\n\nx()\n\ncargo_package(path = \".\")\n", (try cargo_cmd.ensureBuck(a, "x()")).?);
+}
+
+test "ensureMetadata: a manifest without a final newline and one that is only a package table" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const got = (try cargo_cmd.ensureMetadata(a, "[package]\nname = \"x\"")).?;
+    try t.expect(std.mem.startsWith(u8, got, "[package]\nname = \"x\"\n\n[package.metadata.buildrules]\n"));
+    try t.expectError(error.NoPackageTable, cargo_cmd.ensureMetadata(a, ""));
+}
+
+test "ensureMember: the edges of the members list: no bracket, no closing bracket, brackets and commas in strings, whitespace, a glob over a root-level package" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expectError(error.BadMembers, cargo_cmd.ensureMember(a, "[workspace]\nmembers = \"x\"\n", "b"));
+    try t.expectError(error.BadMembers, cargo_cmd.ensureMember(a, "[workspace]\nmembers = [\"x\"\n", "b"));
+    // `]` inside a string does not close the list; a quote that never closes ends the search for the member.
+    try t.expectEqualStrings("[workspace]\nmembers = [\"a]b\", \"c\"]\n", (try member(a, "[workspace]\nmembers = [\"a]b\"]\n", "c")).edited);
+    try t.expectError(error.BadMembers, tag(a, "[workspace]\nmembers = [\"x\", \"y]\n", "z"));
+    // Spaces before the closing bracket and a trailing comma on one line.
+    try t.expectEqualStrings("[workspace]\nmembers = [\"a\", \"b\" ]\n", (try member(a, "[workspace]\nmembers = [\"a\" ]\n", "b")).edited);
+    try t.expectEqualStrings("[workspace]\nmembers = [\"a\", \"b\"]\n", (try member(a, "[workspace]\nmembers = [\"a\",]\n", "b")).edited);
+    // The blanks that were inside the empty list stay where they were, after the new member.
+    try t.expectEqualStrings("[workspace]\nmembers = [\"b\" ]\n", (try member(a, "[workspace]\nmembers = [ ]\n", "b")).edited);
+    try t.expectEqualStrings("[workspace]\nmembers = [\"b\"\n]\n", (try member(a, "[workspace]\nmembers = [\n]\n", "b")).edited);
+    // A glob covers only the packages directly below it; a bare name is not under any glob.
+    try t.expect((try tag(a, "[workspace]\nmembers = [\"crates/*\"]\n", "crates/a/b")) == .edited);
+    try t.expect((try tag(a, "[workspace]\nmembers = [\"crates/*\"]\n", "pkg")) == .edited);
+    try t.expect((try tag(a, "[workspace]\nmembers = [\"pkg\"]\n", "pkg")) == .present);
+    // `members` as the start of another key is not the list.
+    try t.expect((try tag(a, "[workspace]\nmembership = [\"x\"]\nmembers = [\"pkg\"]\n", "pkg")) == .present);
+}
+
+test "cargo: arguments that are wrong are exit 2 and write nothing" {
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    try withRoot(h);
+    const bad = [_][]const []const u8{
+        &.{"cargo"},
+        &.{ "cargo", "new", "p", "--cargo" },
+        &.{ "cargo", "new", "p", "--bogus" },
+        &.{ "cargo", "new", "a", "b" },
+        &.{ "cargo", "init", "a", "b" },
+        &.{ "cargo", "adopt", "a", "--cargo", "c" },
+    };
+    for (bad) |argv| try t.expectEqual(@as(u8, 2), h.run(argv).code);
+    try t.expect(!h.has("p"));
+    try t.expect(!h.has("a"));
+}
+
+test "cargo: the workspace root is not a package, a directory that is not there cannot be initialised, a name that is not a crate name cannot be scaffolded" {
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    try withRoot(h);
+    var r = h.run(&.{ "cargo", "new", "." });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "workspace root"));
+    r = h.run(&.{ "cargo", "adopt", "." });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cargo adopt: . is the workspace root"));
+    r = h.run(&.{ "cargo", "init", "nowhere" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cargo init: nowhere does not exist"));
+    r = h.run(&.{ "cargo", "adopt", "nowhere" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cargo adopt: nowhere is not a Cargo package"));
+    r = h.run(&.{ "cargo", "new", "crates/bad name" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "BadPackageName"));
+    try t.expect(!h.has("crates/bad name/Cargo.toml"));
+}
+
+test "cargo init of a directory that exists without a manifest scaffolds or runs cargo init, and keeps a source file that is there" {
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    withFake(h);
+    try withRoot(h);
+    try h.put("pk/src/main.rs", "// mine\n");
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "cargo", "init", "pk" }).code);
+    try t.expectEqualStrings("// mine\n", h.read("pk/src/main.rs"));
+    try t.expect(kit.contains(h.read("pk/Cargo.toml"), "name = \"pk\""));
+    try h.put("pinned/cargo", "");
+    try h.put("pq/readme", "");
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "cargo", "init", "pq", "--cargo", "pinned/cargo" }).code);
+    try t.expectEqualStrings("init", seen[1]);
+    try t.expectEqual(@as(usize, 5), seen_len);
+}
+
+test "cargo: a cargo that cannot be run is an error that names the verb, and the root manifest is the one place members are added" {
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    withFake(h);
+    try withRoot(h);
+    try h.put("cargo", "");
+    fake_error = error.AccessDenied;
+    const r = h.run(&.{ "cargo", "new", "p", "--cargo", "cargo" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cargo new: AccessDenied"));
+    fake_error = null;
+    try t.expect(!h.has("p/BUCK"));
+}
+
+test "cargo adopt with no member to adopt says so, and a workspace with a glob it cannot expand cannot be adopted wholesale" {
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    try withRoot(h);
+    const r = h.run(&.{ "cargo", "adopt" });
+    try t.expectEqual(@as(u8, 0), r.code);
+    try t.expect(kit.contains(r.out, "adopt  no member packages in the workspace"));
+    try h.put("Cargo.toml", "[workspace]\nmembers = [\"[ab]\"]\n");
+    try t.expectEqual(@as(u8, 1), h.run(&.{ "cargo", "adopt" }).code);
 }

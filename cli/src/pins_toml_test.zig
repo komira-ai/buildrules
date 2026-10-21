@@ -35,7 +35,10 @@ fn refused(text: []const u8, needle: []const u8) !void {
     if (pins_toml.render(arena.allocator(), text, &d)) |_| {
         return error.AcceptedABadFile;
     } else |_| {}
-    for (d.msgs.items) |m| if (std.mem.indexOf(u8, m, needle) != null) return;
+    for (d.msgs.items) |m| if (std.mem.indexOf(u8, m, needle) != null) {
+        try @import("testkit.zig").sweepRefusalLast(pins_toml.render, .{text});
+        return;
+    };
     std.debug.print("no message names `{s}`; got:\n", .{needle});
     for (d.msgs.items) |m| std.debug.print("  {s}\n", .{m});
     return error.WrongMessage;
@@ -119,4 +122,71 @@ test "a quote or backslash in a value cannot reach the generated Starlark" {
 
 test "a date key is refused: the tarballs are fetched from versioned URLs, and a pin file that still carries a date is out of date" {
     try refused("[rust.\"1.86.0\"]\ndate = \"d\"\n", "unknown key `date`");
+}
+
+// ---- refusals, line by line ------------------------------------------------------------------------------
+
+test "a header that is not closed, not quoted or not a version table is refused with its line" {
+    try refused("[rust.\"1.86.0\"\n", "unterminated table header");
+    try refused("# c\n[rust.\"1.86.0]\n", "the version in [rust.\"1.86.0] is not quoted");
+    try refused("[rust.\"1.86.0\"x]\n", "cannot read the header");
+    try refused("[rust.\"1.86.0\".rustc]\nsha256 = \"" ++ h1 ++ "\"\n", "comes before [rust.\"1.86.0\"]");
+    try refused("[rust.\"1.86.0\"]\n[rust.\"1.86.0\".cargo2]\n", "unknown component \"cargo2\"");
+    try refused("[rust.\"1.86.0\"]\n[rust.\"1.86.0\".rustc]\nthis is not a pair\n", "not `key = value`: this is not a pair");
+    try refused("[rust.\"1.86.0\"]\n[rust.\"1.86.0\".rustc]\nsize = abc\n", "size must be the file's length");
+    try refused("[rust.\"1.86.0\"]\n[rust.\"1.86.0\".rustc]\nsha256 = " ++ h1 ++ "\n", "sha256 must be a quoted string");
+    try refused("[rust.\"1.86.0\"]\n[rust.\"1.86.0\".rustc]\nsha256 = \"" ++ h1 ++ "\n", "sha256 must be a quoted string");
+    try refused("[rust.\"1.86.0\"]\n[rust.\"1.86.0\".rustc]\nsha256 = \"\n", "sha256 must be a quoted string");
+    try refused("[rust.\"1.86.0\"]\n[rust.\"1.86.0\".rustc]\nsha256 = \"a\"b\"\n", "sha256 must be a quoted string");
+    try refused("[rust.\"1.86.0\"]\n[rust.\"1.86.0\".rustc]\nsha256 = \"x\" # one quote and a hash\n", "sha256 is not 64");
+    try refused("[rust.\"1.86.0\"]\n[rust.\"1.86.0\".rustc]\nsize = 1 # bytes\nsha256 = \"" ++ h1 ++ "\"\n", "component rust-std needs both sha256 and size");
+}
+
+test "mopm tables are left to mopm_pins.zig: their keys and a header with no closing bracket are not errors here" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    var d = Diag.init(arena.allocator());
+    const mixed = "[mopm.\"0.0.2\"]\nurl = \"u\"\nsize = 1\n" ++ good ++ "[mopm.\"0.0.3\"\nurl = \"v\"\n";
+    const out = try pins_toml.render(arena.allocator(), mixed, &d);
+    try t.expect(std.mem.indexOf(u8, out, "\"1.86.0\"") != null);
+    try t.expect(std.mem.indexOf(u8, out, "mopm") == null);
+}
+
+/// `good` and a second version whose four sizes together have `4 + pad` digits (the digits are in the output, so the output is `pad` bytes longer).
+fn paddedGood(a: std.mem.Allocator, pad: usize) ![]u8 {
+    var o = std.ArrayList(u8).empty;
+    try o.appendSlice(a, good);
+    try o.appendSlice(a, "[rust.\"1.80.1\"]\n");
+    var left = pad;
+    for (pinned_components, [_][]const u8{ h1, h2, h3, h4 }) |c, h| {
+        const extra = @min(left, 18);
+        left -= extra;
+        try o.print(a, "[rust.\"1.80.1\".{s}]\nsha256 = \"{s}\"\nsize = 1{s}\n", .{ c, h, ("0" ** 18)[0..extra] });
+    }
+    return o.toOwnedSlice(a);
+}
+
+const pinned_components = pins_toml.components;
+
+const PinsCall = struct {
+    text: []const u8,
+    want_rows: usize,
+    pub fn call(self: @This(), a: std.mem.Allocator) !bool {
+        var d = Diag.init(a);
+        const out = try pins_toml.render(a, self.text, &d);
+        return std.mem.count(u8, out, "\"sha256\"") == self.want_rows;
+    }
+};
+
+test "out of memory: a failing allocation ends the rendering with an error, never with a shorter file (at every size of the output)" {
+    const kit = @import("testkit.zig");
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    try kit.sweepOom(PinsCall{ .text = "", .want_rows = 0 }, true);
+    // The output grows by 1.5 times and 8 bytes; a text of every length around the sizes at which it grows puts the failing allocation at each of the appends.
+    var pad: usize = 0;
+    while (pad <= 72) : (pad += 1) {
+        _ = arena.reset(.retain_capacity);
+        try kit.sweepOom(PinsCall{ .text = try paddedGood(arena.allocator(), pad), .want_rows = 8 }, true);
+    }
 }

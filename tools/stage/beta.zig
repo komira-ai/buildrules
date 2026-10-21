@@ -38,7 +38,7 @@ pub const Options = struct {
 
 /// `buildrules.url_map`: the mirrors of the pinned downloads, each checked byte-identical to the primary (docs/pins.md, "Mirrors"). A pin with no
 /// entry here (the rust tarballs, the github releases, the npm and crates.io packages) has no mirror and is fetched from its own host.
-pub const mirror_map = "https://busybox.net/=https://web.archive.org/web/2024id_/https://busybox.net/" ++
+pub const mirror_map = "https://github.com/komira-ai/buildrules/releases/download/mirror-busybox-1.35.0/=https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/" ++
     " https://ziglang.org/download/=https://zig.linus.dev/zig/" ++
     " https://conda.anaconda.org/conda-forge/=https://repo.prefix.dev/conda-forge/" ++
     " https://nodejs.org/dist/=https://registry.npmmirror.com/-/binary/node/";
@@ -610,7 +610,7 @@ test "a build that failed only because a pinned download timed out is made again
     // 2 failed + 4 good ones (the step's build, the expect's, the first hash, the second directory's)
     try t.expectEqual(@as(usize, 6), fake.count("build --console simple"));
     // the first retry asks the same host, the second goes to the mirrors
-    try t.expectEqual(@as(usize, 1), fake.count("buildrules.url_map=https://busybox.net/=https://web.archive.org/"));
+    try t.expectEqual(@as(usize, 1), fake.count("buildrules.url_map=https://github.com/komira-ai/buildrules/releases/download/mirror-busybox-1.35.0/=https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/"));
 }
 
 test "a download that keeps failing is red after the retries, and a compile or hash failure is not made again" {

@@ -35,13 +35,22 @@ _TESTS = [
     "cargo_cmd",
     "buckgen",
     "contract",
+    "ctx",
+    "fetch",
+    "growth",
     "init",
+    "lockreaders",
     "failclosed",
     "mojo_cmd",
+    "mojo_lock",
+    "mopm_pins",
     "pins_toml",
     "npm_cmd",
     "sync_check",
+    "toml",
     "unitgen",
+    "val",
+    "valid",
 ]
 
 [
@@ -54,6 +63,15 @@ _TESTS = [
     )
     for name in _TESTS
 ]
+
+# All of the above in one program: the coverage of the package is measured on it (see src/all_test.zig for why one program).
+zig_test(
+    name = "all_unit",
+    src = "src/all_test.zig",
+    imports = _SRCS,
+    deps = [":buildrules_version"],
+    zig = _ZIG,
+)
 
 # What the stamp is: `--version` prints it, and it is the VERSION file's MAJOR.MINOR with `-dev`, or a release number of that MAJOR.MINOR
 # (a build with -c buildrules.release_version=...). The VERSION file is the test's data.
@@ -69,7 +87,7 @@ zig_test(
 # The coverage of the sources the unit tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. The tests of
 # the files themselves and the shared test kit are not counted, nor is contract.zig, which holds constants and no code.
 zig_coverage(
-    test_targets = [":" + name + "_unit" for name in _TESTS] + [":version_unit"],
+    test_targets = [":all_unit", ":version_unit"],
     expect = ["cli/" + f for f in glob(["src/*.zig"], exclude = ["src/*_test.zig", "src/testkit.zig", "src/contract.zig"])],
 )
 
