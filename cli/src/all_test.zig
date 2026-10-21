@@ -4,6 +4,10 @@
 //! program of their own (BUCK), which is what gates the build.
 
 test {
+    _ = @import("autopin_check_test.zig");
+    _ = @import("autopin_gh_test.zig");
+    _ = @import("autopin_http_test.zig");
+    _ = @import("autopin_push_test.zig");
     _ = @import("autopin_api_test.zig");
     _ = @import("autopin_compute_test.zig");
     _ = @import("autopin_inflate_test.zig");

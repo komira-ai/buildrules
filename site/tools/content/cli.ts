@@ -105,6 +105,17 @@ export const cli: Page = {
       ['`--dir DIR`', 'the repository root; default `.`'],
     ),
     p('The lock must be strict: only registry tarballs with a sha512 integrity and the canonical `registry.npmjs.org` URL, strict semver versions, and no alias, link, git, `file:` or workspace entry. A tarball the table lacks is downloaded from `registry.npmjs.org` only, without following a redirect, at most 64 MiB each, 200 new and 512 MiB in all, and its sha512 must be the lock\'s. The new table is read back and bound to the lock offline before it is written.'),
+    code('buildrules autopin commit-check --event FILE --out DIR --set DIR=KIND [--set DIR=KIND ...] --app-login LOGIN [--github-output FILE]\nbuildrules autopin commit-push --plan DIR --set DIR=KIND [--set DIR=KIND ...] --author-name NAME --author-email EMAIL', 'usage'),
+    p('The other two halves, run by the default branch\'s copy of a workflow after `compute` finished. `commit-check` reads the artifact as untrusted bytes (a zip reader that refuses zip64, encryption, overlapping or hidden entries, links, odd names, bombs; a strict manifest; tables read with the generator\'s own grammar) and reads the pull request, its commits, its files, the lock, `package.json` and the tables at the head commit from the GitHub API with a read-only token (`GH_TOKEN`), each file by its git blob hash. It writes under `--out` only tables it re-made itself, at paths from `--set`, and a `plan.json`. `commit-push` turns that plan into one commit on the pull request\'s branch with the Git Data API (`GH_TOKEN`, write access), whose parent is the head commit, and moves the branch with `force: false`.'),
+    table(
+      ['Flag', 'Meaning'],
+      ['`--app-login LOGIN`', '`commit-check`: the autopin App\'s bot login, `<name>[bot]`; a commit by it, as by Dependabot, may be on the pull request'],
+      ['`--github-output FILE`', '`commit-check`: append `has_change=true` or `has_change=false` to this file (GITHUB_OUTPUT)'],
+      ['`--plan DIR`', '`commit-push`: the directory `commit-check` wrote (`plan.json` and the tables)'],
+      ['`--author-name NAME`', '`commit-push`: the App\'s bot name, `<name>[bot]`; the author and the committer of the commit'],
+      ['`--author-email EMAIL`', '`commit-push`: the App\'s bot address, `<id>+<name>[bot]@users.noreply.github.com`'],
+    ),
+    p('`commit-check` exits 0 when it checked or skipped (a pull request that is closed, moved on, edited by someone else, or that changes a file outside `--set`; `has_change` says which) and 1 when what it was given is not what it claims to be. `commit-push` exits 0 when it committed or when the branch had moved (GitHub\'s non-fast-forward answer is the only failure that is a skip) and 1 for any other failure.'),
     h2('Not yet in the command line'),
     ul(
       'Commands for Zig and C/C++: those rules are used with hand-written `BUCK` files today.',

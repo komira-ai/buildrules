@@ -25,10 +25,14 @@ zig_module(
 
 _TESTS = [
     "autopin_api",
+    "autopin_check",
     "autopin_compute",
+    "autopin_gh",
+    "autopin_http",
     "autopin_inflate",
     "autopin_manifest",
     "autopin_oom",
+    "autopin_push",
     "autopin_safe",
     "autopin_table",
     "autopin_zip",

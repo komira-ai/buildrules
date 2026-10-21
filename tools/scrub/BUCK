@@ -85,6 +85,8 @@ scrub_test(
     "//rules/cxx:scrub_files",
     "//rules/gate:scrub_files",
     "//rules/kpin:scrub_files",
+    "//rules/check:scrub_files",
+    "//rules/toolbox:scrub_files",
     "//rules/minicfg:scrub_files",
     "//rules/mojo/tests:scrub_files",
     "//rules/mojo:scrub_files",
