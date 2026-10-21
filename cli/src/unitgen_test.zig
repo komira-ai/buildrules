@@ -1009,8 +1009,8 @@ test "generate: a unit with several dependencies lists them by extern name and t
         if (std.mem.eql(u8, val.getStr(u, "crate").?, "app")) deps_text = try val.litString(e.a(), val.get(u, "deps").?, 0);
     }
     // a_first < itoa; of the two itoa edges, the lower unit id comes first: the unit with the features [std] has the id that sorts first or second, never unsorted.
-    try t.expect(std.mem.indexOf(u8, deps_text, "[\"a_first\", \"itoa-1.0.15:") != null);
     const first_itoa = std.mem.indexOf(u8, deps_text, "[\"itoa\", \"").?;
+    try t.expect(std.mem.indexOf(u8, deps_text, "[\"a_first\", \"itoa-1.0.15:").? < first_itoa);
     const second_itoa = std.mem.indexOfPos(u8, deps_text, first_itoa + 1, "[\"itoa\", \"").?;
     const id1 = deps_text[first_itoa + 10 .. std.mem.indexOfScalarPos(u8, deps_text, first_itoa + 10, '"').?];
     const id2 = deps_text[second_itoa + 10 .. std.mem.indexOfScalarPos(u8, deps_text, second_itoa + 10, '"').?];

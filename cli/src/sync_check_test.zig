@@ -827,3 +827,14 @@ test "check: the working directory is the repository unless --dir says otherwise
     try t.expect(kit.contains(r.err, "cannot open nowhere"));
     try t.expectEqual(@as(u8, 0), h.run(&.{ "check", "--dir", "." }).code);
 }
+
+test "sync: a registry crate of a compiler that is not the default names that compiler in its target; the default's targets name none" {
+    const h = try fresh();
+    defer h.destroy();
+    try withRegistry(h, "the bytes of the crate");
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "sync", "--buck2", "./buck2" }).code);
+    try t.expect(!kit.contains(h.read("third_party/buildrules/BUCK"), "rustc ="));
+    try h.put("rust-toolchain.toml", "[toolchain]\nchannel = \"1.85.0\"\n");
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "sync", "--buck2", "./buck2" }).code);
+    try t.expect(kit.contains(h.read("third_party/buildrules/BUCK"), "    rustc = \"1.85.0\","));
+}
