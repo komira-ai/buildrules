@@ -202,10 +202,11 @@ const P = struct {
         return std.mem.trimRight(u8, p.s[start..p.i], " \t");
     }
 
-    fn number(p: *P, w: []const u8) ?Value {
+    /// The number `w` is, null when it is not one (a date, a time, a word). An allocation that fails is an error: it must not read as "not a number".
+    fn number(p: *P, w: []const u8) Error!?Value {
         var buf = std.ArrayList(u8).empty;
         for (w) |c| {
-            if (c != '_') buf.append(p.a, c) catch return null;
+            if (c != '_') buf.append(p.a, c) catch return error.OutOfMemory;
         }
         const t = buf.items;
         if (t.len == 0) return null;
@@ -281,7 +282,7 @@ const P = struct {
                 if (std.mem.eql(u8, w, "true")) return .{ .bool = true };
                 if (std.mem.eql(u8, w, "false")) return .{ .bool = false };
                 if (w.len == 0) return p.fail("a value was expected", .{});
-                if (p.number(w)) |n| return n;
+                if (try p.number(w)) |n| return n;
                 if (std.ascii.isDigit(w[0])) return .{ .string = w }; // a date or time
                 return p.fail("`{s}` is not a TOML value", .{w});
             },

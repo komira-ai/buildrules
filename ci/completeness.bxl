@@ -47,7 +47,7 @@ def _impl(ctx):
         if negative:
             report.append("ci/negative: {} problem(s) with the planted defect (ci/negative.bzl):\n  ".format(len(negative)) + "\n  ".join(negative))
         fail("\n".join(report))
-    ctx.output.print("ok: every target of the tree is built by //ci:all or //ci:mojo, or excluded with a reason ({} exclusions); the planted defects of ci/negative are red".format(len(EXCLUDED)))
+    ctx.output.print("ok: every target of the tree is built by //ci:all or //ci:mojo, or excluded with a reason ({} exclusions); the planted defects of ci/negative are red and the Mojo gate holds".format(len(EXCLUDED)))
 
 check = bxl_main(
     impl = _impl,

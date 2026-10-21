@@ -1,0 +1,70 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/mojo:same.bzl", "mojo_same")
+load("@buildrules//rules/mojo:unit.bzl", "mojo_gated_lib_rule")
+load(":fixture.bzl", "gate_fixture_lib", "gate_fixture_test")
+
+# The gate of a Mojo library (docs/contract.md, 12.8): `:lib` of a package is the compiled library behind the run of every test. These
+# are the two outcomes with a stand-in for the compiler and for the test, so they build on any runner:
+#
+#   green  `consumer_of_green`: the library behind a passing test. A target that reads the library builds. //ci:all builds it.
+#   red    `consumer_of_red`:   the same library with a second, failing test. The consumer must FAIL to build, because the library's
+#                               `.mojoc` is made by an action that has the failing test's marker among its inputs.
+#
+# `consumer_of_red` is a planted defect: it is excluded from the wildcard build (ci/all.bzl), and `buck2 bxl //ci:negative.bxl:check` (a part of
+# //ci:completeness.bxl:check) builds it, requires the failure, and requires the green one to build (ci/negative.bzl, `gate_problems`). Make the
+# gate not depend on the markers (rules/mojo/unit.bzl, `hidden = markers`) and the red consumer builds: that check is red.
+gate_fixture_lib(name = "compiled", package = "gated")
+
+gate_fixture_test(name = "test_passes", passes = True)
+
+# PLANTED DEFECT: a test that fails.
+gate_fixture_test(name = "test_fails", passes = False)
+
+mojo_gated_lib_rule(
+    name = "lib_green",
+    lib = ":compiled",
+    test_runs = [":test_passes"],
+    package = "gated",
+    exec_compatible_with = LINUX_X86_64,
+)
+
+mojo_gated_lib_rule(
+    name = "lib_red",
+    lib = ":compiled",
+    test_runs = [":test_passes", ":test_fails"],
+    package = "gated",
+    exec_compatible_with = LINUX_X86_64,
+)
+
+# The same two tests with the failing one FIRST: a gate that drops the first marker (a slice that starts at 1) is red only here.
+mojo_gated_lib_rule(
+    name = "lib_red_first",
+    lib = ":compiled",
+    test_runs = [":test_fails", ":test_passes"],
+    package = "gated",
+    exec_compatible_with = LINUX_X86_64,
+)
+
+# The consumers: a target that reads the library's `.mojoc` (`mojo_same` compares it with the compiled file, which it must equal byte for byte:
+# the gate adds no change to the bytes).
+mojo_same(
+    name = "consumer_of_green",
+    a = ":lib_green",
+    b = ":compiled",
+    visibility = ["//ci:"],
+)
+
+mojo_same(
+    name = "consumer_of_red",
+    a = ":lib_red",
+    b = ":compiled",
+)
+
+mojo_same(
+    name = "consumer_of_red_first",
+    a = ":lib_red_first",
+    b = ":compiled",
+)
+
+scrub_files()

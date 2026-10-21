@@ -115,7 +115,12 @@ jobs:
           dist=$(awk '$1 ~ /\/\/site:dist$/ { print $2 }' "$RUNNER_TEMP/site-outputs.txt")
           test -f "$dist/index.html"
           mkdir -p site-out
-          cp -r --no-preserve=mode "$dist" site-out/tree
+          # The path Buck2 prints for a directory is a relative symlink into buck-out (buck-out/v2/art/... -> ../../../site/__dist__/<hash>/dist). A plain `cp -r` copies
+          # the link, which dangles from site-out/, and upload-artifact omits a dangling link: no files, a red run (or, with a release page beside it, an upload without the site).
+          # -L copies what the link points at; the two tests below fail the step, not the upload, if a link or an empty tree is left.
+          cp -rL --no-preserve=mode "$dist" site-out/tree
+          test -z "$(find site-out -type l)"
+          test -f site-out/tree/index.html
 
       # The page of the release exists only when the triggering run released; a run that did not leaves the pages already uploaded as they are.
       - name: The page of the release, when the triggering run made one

@@ -34,6 +34,15 @@ PINS = {
         "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8",
         "size": 2353908,
     },
+    # OSV-Scanner: the daily advisory scan (.github/workflows/advisories.yml). The workflow downloads this url on a runner and checks this sha256;
+    # ci/advisories_check.zig compares both with this row and hashes the file the farm fetched.
+    "osv_scanner": {
+        "name": "osv-scanner_linux_amd64",
+        "url": "https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_linux_amd64",
+        "sha256": "160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b",
+        "size": 57725088,
+        "executable": True,
+    },
     # conda-forge: libgcc_s.so.1 (rustc, node), libstdc++.so.6 (node).
     "libgcc": {
         "name": "libgcc_15.3.0_linux-64.conda",

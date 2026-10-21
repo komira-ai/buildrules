@@ -599,6 +599,7 @@ pub fn generate(a: std.mem.Allocator, d: *Diag, in: Input) Error!Result {
     var ldiag = Diag.init(a);
     const entries = cargo_lock.parse(a, "Cargo.lock", in.cargo_lock, &ldiag) catch {
         for (ldiag.msgs.items) |m| d.add("unitgen: {s}", .{m});
+        d.lost += ldiag.lost;
         return error.Refused;
     };
     for (entries) |e| try gen.lock.put(try std.fmt.allocPrint(a, "{s} {s}", .{ e.name, e.version }), e);

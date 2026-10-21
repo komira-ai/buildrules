@@ -33,6 +33,13 @@ export_file(
     visibility = ["//ci:"],
 )
 
+# Read by the advisory workflow check (ci/BUCK).
+export_file(
+    name = "advisories.yml",
+    src = ".github/workflows/advisories.yml",
+    visibility = ["//ci:"],
+)
+
 # Read by the buildrules.dev site tests (site/BUCK), which check the Releases section against these.
 export_file(
     name = "RELEASING.md",
@@ -52,4 +59,4 @@ export_file(
     visibility = ["//ci:"],
 )
 
-scrub_files(extra = [".buckconfig", ".buckconfig.local.example", ".gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/beta.yml", ".github/workflows/site.yml", ".github/workflows/site-publish.yml"])
+scrub_files(extra = [".buckconfig", ".buckconfig.local.example", ".gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/beta.yml", ".github/workflows/site.yml", ".github/workflows/site-publish.yml", ".github/workflows/advisories.yml"])

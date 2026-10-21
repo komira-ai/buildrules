@@ -384,7 +384,7 @@ named chains of steps. `dist` is the directory the build script writes. Any othe
 
 ```toml
 [toolchain]
-mopm = "0.0.1"     # an exact release buildrules pins, or one buildrules-pins.toml supplies
+mopm = "0.0.15"     # an exact release buildrules pins, or one buildrules-pins.toml supplies
 mojo = "1.0.0"     # an exact release mopm pins a toolchain for
 ```
 
@@ -609,7 +609,7 @@ buck2 build //hello:ci //hello:coverage
 buildrules mojo check             # offline gate; `buildrules check` also runs it
 ```
 
-Targets: `:lib` (the `.mojoc`), `:test` and one `:<stem>` per test file, `:build` (library and
+Targets: `:lib` (the `.mojoc`, which exists only if every test of the package passed), `:lib_ungated` (the same file before the tests), `:test` and one `:<stem>` per test file, `:build` (library and
 binaries), `:coverage` (line coverage under kcov; red if a library source is in no report), `:ci`,
 `:check`. A workspace member is a package with its own BUCK file. Native libraries are declared with
 `natives = {"libx.so.1": "//path:target"}`. `mopm` is separate software: see <https://mopm.dev> for
@@ -624,7 +624,7 @@ shows which it is. Against a stand-in, point the download at a copy of its tarba
 `buildrules-pins.toml`:
 
 ```toml
-[mopm."0.0.2"]   # a version buildrules does not pin; one it pins (0.0.1 today) is refused here
+[mopm."0.0.2"]   # a version buildrules does not pin; one it pins (0.0.15 today) is refused here
 url = "<release url>"
 sha256 = "<64 hex>"
 size = <bytes>
