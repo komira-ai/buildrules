@@ -51,6 +51,67 @@ fn runFailingAt(h: *kit.Harness, argv: []const []const u8, index: usize) Outcome
     return .{ .code = code, .failed = fa.has_induced_failure };
 }
 
+/// An allocator that fails exactly one allocation, the `fail_at`th (counting from 0), and serves every other: the failure a persistent-failure allocator cannot
+/// make, because there every later `try` fails too and hides a branch that counts no error for the one that failed.
+const OneShot = struct {
+    parent: std.mem.Allocator,
+    fail_at: usize,
+    seen: usize = 0,
+    induced: bool = false,
+
+    fn allocator(self: *OneShot) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self: *OneShot = @ptrCast(@alignCast(ctx));
+        defer self.seen += 1;
+        if (self.seen == self.fail_at) {
+            self.induced = true;
+            return null;
+        }
+        return self.parent.rawAlloc(len, alignment, ra);
+    }
+
+    fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) bool {
+        const self: *OneShot = @ptrCast(@alignCast(ctx));
+        return self.parent.rawResize(memory, alignment, new_len, ra);
+    }
+
+    fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
+        const self: *OneShot = @ptrCast(@alignCast(ctx));
+        return self.parent.rawRemap(memory, alignment, new_len, ra);
+    }
+
+    fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ra: usize) void {
+        const self: *OneShot = @ptrCast(@alignCast(ctx));
+        self.parent.rawFree(memory, alignment, ra);
+    }
+};
+
+/// The read-only command `argv` exits 0 with every allocation working, and exits non-zero when any single allocation fails (the others succeeding).
+/// Catches a failure path that reports nothing and counts `@max(1, diag.count())` as zero: `lockfile.parse` returns Invalid from a failed append with no
+/// message, and `diag.msgs.items.len` there is 0, so a check that counted that would exit 0.
+fn expectFailsClosedOneShot(h: *kit.Harness, argv: []const []const u8) !void {
+    const good = h.run(argv);
+    if (good.code != 0) std.debug.panic("the command is not green to begin with: {s}", .{good.err});
+    var i: usize = 0;
+    while (i < 20_000) : (i += 1) {
+        var os = OneShot{ .parent = h.a(), .fail_at = i };
+        var c = h.ctx;
+        c.a = os.allocator();
+        h.out.clearRetainingCapacity();
+        h.err.clearRetainingCapacity();
+        const code = main.run(&c, argv);
+        if (!os.induced) {
+            try t.expect(code == 0);
+            return;
+        }
+        if (code == 0) std.debug.panic("`{s}` exited 0 with only allocation {d} failing", .{ argv[0], i });
+    }
+    return error.SweepDidNotEnd;
+}
+
 /// The read-only command `argv` exits 0 with every allocation working, and exits non-zero whenever one fails.
 fn expectFailsClosed(h: *kit.Harness, argv: []const []const u8) !void {
     const good = h.run(argv);
@@ -233,6 +294,18 @@ test "mojo check: with an allocation failing anywhere, a synced package is not r
     const h = try mojoSynced();
     defer h.destroy();
     try expectFailsClosed(h, &.{ "mojo", "check" });
+}
+
+test "check: with ONE allocation failing and every other working, a repository as sync left it still exits non-zero (the `@max(1, count)` of the table and pins sites)" {
+    const h = try cargoSynced();
+    defer h.destroy();
+    try expectFailsClosedOneShot(h, &.{"check"});
+}
+
+test "mojo check: with ONE allocation failing and every other working, a synced package still exits non-zero (the `@max(1, count)` sites of mojo_cmd)" {
+    const h = try mojoSynced();
+    defer h.destroy();
+    try expectFailsClosedOneShot(h, &.{ "mojo", "check" });
 }
 
 test "npm sync: with an allocation failing anywhere, the exit is not 0" {
