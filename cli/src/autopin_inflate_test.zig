@@ -4,6 +4,7 @@
 const std = @import("std");
 const inflate = @import("autopin_inflate.zig");
 const t = std.testing;
+const oom = @import("autopin_oom_test.zig");
 
 const stored_hello = [_]u8{ 0b0000_0001, 0b0000_1100, 0x00, 0b1111_0011, 0xff, 'H', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd', 0x0a };
 const fixed_hello = [_]u8{ 0xf3, 0x48, 0xcd, 0xc9, 0xc9, 0x57, 0x28, 0xcf, 0x2f, 0xca, 0x49, 0xe1, 0x02, 0x00 };
@@ -91,8 +92,8 @@ test "the limit holds to the byte: a stored block" {
     defer ar.deinit();
     const a = ar.allocator();
     try t.expectEqual(@as(usize, 12), (try inflate.inflate(a, &stored_hello, 12)).len);
-    try failsWith(error.TooLong, inflate.inflate(a, &stored_hello, 11));
-    try failsWith(error.TooLong, inflate.inflate(a, &stored_hello, 0));
+    try failsWith(error.TooLong, inf(a, &stored_hello, 11));
+    try failsWith(error.TooLong, inf(a, &stored_hello, 0));
 }
 
 test "the limit holds to the byte: the literals of a fixed block" {
@@ -100,8 +101,8 @@ test "the limit holds to the byte: the literals of a fixed block" {
     defer ar.deinit();
     const a = ar.allocator();
     try t.expectEqual(@as(usize, 12), (try inflate.inflate(a, &fixed_hello, 12)).len);
-    try failsWith(error.TooLong, inflate.inflate(a, &fixed_hello, 11));
-    try failsWith(error.TooLong, inflate.inflate(a, &fixed_hello, 0));
+    try failsWith(error.TooLong, inf(a, &fixed_hello, 11));
+    try failsWith(error.TooLong, inf(a, &fixed_hello, 0));
 }
 
 test "the limit holds to the byte: a dynamic block" {
@@ -109,7 +110,7 @@ test "the limit holds to the byte: a dynamic block" {
     defer ar.deinit();
     const a = ar.allocator();
     try t.expectEqual(@as(usize, 19), (try inflate.inflate(a, &dynamic_abc, 19)).len);
-    try failsWith(error.TooLong, inflate.inflate(a, &dynamic_abc, 18));
+    try failsWith(error.TooLong, inf(a, &dynamic_abc, 18));
 }
 
 test "the limit holds to the byte: a match that would run past it by one byte is refused before any of it is written" {
@@ -118,8 +119,8 @@ test "the limit holds to the byte: a match that would run past it by one byte is
     const a = ar.allocator();
     const run = try runOfA(a, 3);
     try t.expectEqual(@as(usize, 775), (try inflate.inflate(a, run, 775)).len);
-    try failsWith(error.TooLong, inflate.inflate(a, run, 774));
-    try failsWith(error.TooLong, inflate.inflate(a, run, 100));
+    try failsWith(error.TooLong, inf(a, run, 774));
+    try failsWith(error.TooLong, inf(a, run, 100));
 }
 
 test "huffman: an over-subscribed code is refused, a complete or an incomplete one is accepted" {
@@ -137,8 +138,8 @@ test "a bomb is cut off at the limit however small the stream is" {
     const a = ar.allocator();
     const bomb = try runOfA(a, 20000);
     try t.expect(bomb.len < 40000);
-    try failsWith(error.TooLong, inflate.inflate(a, bomb, 100));
-    try failsWith(error.TooLong, inflate.inflate(a, bomb, 1 << 20));
+    try failsWith(error.TooLong, inf(a, bomb, 100));
+    try failsWith(error.TooLong, inf(a, bomb, 1 << 20));
     try t.expectEqual(@as(usize, 1 + 258 * 20000), (try inflate.inflate(a, bomb, 1 + 258 * 20000)).len);
 }
 
@@ -149,7 +150,7 @@ test "every proper prefix of a stream is refused" {
     const streams = [_][]const u8{ &stored_hello, &fixed_hello, &dynamic_abc };
     for (streams) |s| {
         var n: usize = 0;
-        while (n < s.len) : (n += 1) try failsWith(error.Invalid, inflate.inflate(a, s[0..n], 1000));
+        while (n < s.len) : (n += 1) try failsWith(error.Invalid, inf(a, s[0..n], 1000));
     }
 }
 
@@ -160,7 +161,7 @@ test "bytes after the last block are refused" {
     const streams = [_][]const u8{ &stored_hello, &fixed_hello, &dynamic_abc };
     for (streams) |s| {
         const longer = try std.mem.concat(a, u8, &.{ s, "x" });
-        try failsWith(error.TrailingData, inflate.inflate(a, longer, 1000));
+        try failsWith(error.TrailingData, inf(a, longer, 1000));
     }
 }
 
@@ -170,13 +171,13 @@ test "a stored block whose length is not the complement of its check is refused"
     const a = ar.allocator();
     var bad = stored_hello;
     bad[3] = 0xf4;
-    try failsWith(error.Invalid, inflate.inflate(a, &bad, 1000));
+    try failsWith(error.Invalid, inf(a, &bad, 1000));
 }
 
 test "block type 3 is refused" {
     var ar = arena();
     defer ar.deinit();
-    try failsWith(error.Invalid, inflate.inflate(ar.allocator(), &.{0b0000_0111}, 1000));
+    try failsWith(error.Invalid, inf(ar.allocator(), &.{0b0000_0111}, 1000));
 }
 
 test "a distance before the start of the output is refused" {
@@ -185,7 +186,7 @@ test "a distance before the start of the output is refused" {
     // BFINAL, fixed; length code 257 (7 bits 0000001); distance code 0 (5 bits 00000); end of block.
     // Bits, low first: 1,1,0 | 0,0,0,0,0,0,1 | 0,0,0,0,0 | 0,0,0,0,0,0,0
     const bad = [_]u8{ 0b0000_0011, 0b0000_0010, 0b0000_0000, 0b0000_0000 };
-    try failsWith(error.Invalid, inflate.inflate(ar.allocator(), &bad, 1000));
+    try failsWith(error.Invalid, inf(ar.allocator(), &bad, 1000));
 }
 
 test "no single changed byte or bit of a dynamic stream crashes the decoder (every result is bytes or an error)" {
@@ -253,7 +254,7 @@ test "a dynamic header that asks for more than 286 length codes is refused" {
     const a = ar.allocator();
     // BFINAL 1, BTYPE 2, HLIT 29 (286 + 2 = 288 codes), HDIST 0, HCLEN 0, then plenty of bytes
     const s = try bitsOf(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 31, 5 }, .{ 0, 5 }, .{ 0, 4 }, .{ 0, 64 } });
-    try failsWith(error.Invalid, inflate.inflate(a, s, 100));
+    try failsWith(error.Invalid, inf(a, s, 100));
 }
 
 test "a dynamic header that asks for more than 30 distance codes is refused" {
@@ -261,7 +262,7 @@ test "a dynamic header that asks for more than 30 distance codes is refused" {
     defer ar.deinit();
     const a = ar.allocator();
     const s = try bitsOf(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 0, 5 }, .{ 31, 5 }, .{ 0, 4 }, .{ 0, 64 } });
-    try failsWith(error.Invalid, inflate.inflate(a, s, 100));
+    try failsWith(error.Invalid, inf(a, s, 100));
 }
 
 test "a dynamic block whose code lengths run past the number it announced is refused" {
@@ -271,7 +272,7 @@ test "a dynamic block whose code lengths run past the number it announced is ref
     // HLIT 0 (257) and HDIST 0 (1): 258 lengths. The code-length code has two symbols, 0 and 18, each of length 1 (0 is "0", 18 is "1").
     // Order of the three-bit lengths: 16, 17, 18, 0 (HCLEN 0 = four of them). Then symbol 18 with 138 repeats twice: 276 > 258.
     const s = try bitsOf(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 0, 5 }, .{ 0, 5 }, .{ 0, 4 }, .{ 0, 3 }, .{ 0, 3 }, .{ 1, 3 }, .{ 1, 3 }, .{ 1, 1 }, .{ 127, 7 }, .{ 1, 1 }, .{ 127, 7 }, .{ 0, 32 } });
-    try failsWith(error.Invalid, inflate.inflate(a, s, 100));
+    try failsWith(error.Invalid, inf(a, s, 100));
 }
 
 test "a dynamic block with an incomplete code-length code is refused" {
@@ -280,7 +281,7 @@ test "a dynamic block with an incomplete code-length code is refused" {
     const a = ar.allocator();
     // HCLEN 0: lengths for 16, 17, 18, 0 are 0, 0, 0, 1: one code of length 1 is incomplete for the code-length code.
     const s = try bitsOf(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 0, 5 }, .{ 0, 5 }, .{ 0, 4 }, .{ 0, 3 }, .{ 0, 3 }, .{ 0, 3 }, .{ 1, 3 }, .{ 0, 64 } });
-    try failsWith(error.Invalid, inflate.inflate(a, s, 100));
+    try failsWith(error.Invalid, inf(a, s, 100));
 }
 
 test "fuzz: random and mutated streams never write past the limit and never crash" {
@@ -303,7 +304,7 @@ test "fuzz: random and mutated streams never write past the limit and never cras
     }
 }
 
-const oom = @import("autopin_oom_test.zig");
+
 
 test "oom: inflating each kind of block fails closed at every allocation" {
     var ar = arena();
@@ -319,4 +320,15 @@ test "oom: inflating each kind of block fails closed at every allocation" {
     try oom.sweep(run, .{ .bytes = @as([]const u8, &fixed_hello) });
     try oom.sweep(run, .{ .bytes = @as([]const u8, &dynamic_abc) });
     try oom.sweep(run, .{ .bytes = try runOfA(a, 3) });
+}
+
+/// `inflate.inflate`, after running it under the allocation-failure sweep.
+fn inf(a: std.mem.Allocator, src: []const u8, max: usize) inflate.Error![]u8 {
+    oom.mustSweep(struct {
+        fn f(al: std.mem.Allocator, args: anytype) !bool {
+            _ = inflate.inflate(al, args.src, args.max) catch return true;
+            return false;
+        }
+    }.f, .{ .src = src, .max = max });
+    return inflate.inflate(a, src, max);
 }

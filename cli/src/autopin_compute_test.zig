@@ -10,6 +10,7 @@ const npm = @import("npm_cmd.zig");
 const sets_mod = @import("autopin_sets.zig");
 const table = @import("autopin_table.zig");
 const t = std.testing;
+const oom = @import("autopin_oom_test.zig");
 
 const sri_a = "sha512-" ++ "A" ** 86 ++ "==";
 const sri_b = "sha512-" ++ "B" ** 85 ++ "A==";
@@ -116,6 +117,12 @@ fn runCompute(h: *kit.Harness, out: []const u8, sets: []const []const u8) kit.Ru
     var argv = std.ArrayList([]const u8).empty;
     argv.appendSlice(h.a(), &.{ "autopin", "compute", "--event", "event.json", "--out", out }) catch unreachable;
     for (sets) |s| argv.appendSlice(h.a(), &.{ "--set", s }) catch unreachable;
+    if (!h.has(out)) {
+        // The whole command once for each allocation it makes, each failing the command; the real run follows.
+        const saved = fetches;
+        oom.sweepCommand(h, argv.items, &.{out}) catch |e| std.debug.panic("allocation-failure sweep: {s}", .{@errorName(e)});
+        fetches = saved;
+    }
     return h.run(argv.items);
 }
 
@@ -514,7 +521,7 @@ test "compute: a package.json or package-lock.json nested deeper than a real one
     try t.expect(kit.contains(r.err, "nests deeper"));
 }
 
-const oom = @import("autopin_oom_test.zig");
+
 
 test "oom: compute fails closed at every allocation, for a bump of each kind of table and for no change" {
     reset();

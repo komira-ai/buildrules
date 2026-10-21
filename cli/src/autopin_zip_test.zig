@@ -5,6 +5,7 @@
 const std = @import("std");
 const zip = @import("autopin_zip.zig");
 const t = std.testing;
+const oom = @import("autopin_oom_test.zig");
 
 const names = [_][]const u8{ "manifest.json", "site/buildrules.lock.bzl", "a.txt", "b.txt" };
 
@@ -176,6 +177,12 @@ fn arena() std.heap.ArenaAllocator {
 }
 
 fn readIt(a: std.mem.Allocator, z: Z) zip.Error![]zip.Entry {
+    oom.mustSweep(struct {
+        fn f(al: std.mem.Allocator, args: anytype) !bool {
+            _ = zip.read(al, args.bytes, &names, .{}) catch return true;
+            return false;
+        }
+    }.f, .{ .bytes = z.bytes });
     return zip.read(a, z.bytes, &names, .{});
 }
 
@@ -863,7 +870,7 @@ test "a manifest member that lies about its size, and an empty deflate member, a
     try t.expectEqual(@as(usize, 0), (try readIt(a, z2))[0].data.len);
 }
 
-const oom = @import("autopin_oom_test.zig");
+
 
 test "oom: reading an archive (deflate members with descriptors, a stored member, a long match) fails closed at every allocation" {
     var ar = arena();

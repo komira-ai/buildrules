@@ -70,3 +70,8 @@ test "sweep: a call that swallows an allocation failure is reported" {
     }.f;
     try sweep(closed, {});
 }
+
+/// `sweep` for a helper that cannot return an error: a swallowed failure is a panic that names it.
+pub fn mustSweep(comptime run: anytype, args: anytype) void {
+    sweep(run, args) catch |e| std.debug.panic("allocation-failure sweep: {s}", .{@errorName(e)});
+}

@@ -7,6 +7,7 @@ const manifest = @import("autopin_manifest.zig");
 const sets_mod = @import("autopin_sets.zig");
 const zip = @import("autopin_zip.zig");
 const t = std.testing;
+const oom = @import("autopin_oom_test.zig");
 
 const head = "1" ** 40;
 const base = "2" ** 40;
@@ -23,6 +24,12 @@ fn sets(a: std.mem.Allocator) !sets_mod.Sets {
 const good = "{\"pr\":7,\"head_sha\":\"" ++ head ++ "\",\"base_sha\":\"" ++ base ++ "\",\"files\":[{\"path\":\"site/buildrules.lock.bzl\",\"sha256\":\"" ++ sha_a ++ "\"}]}";
 
 fn parseWith(a: std.mem.Allocator, text: []const u8) !manifest.Manifest {
+    oom.mustSweep(struct {
+        fn f(al: std.mem.Allocator, args: anytype) !bool {
+            _ = manifest.parse(al, args.text, try sets(al)) catch return true;
+            return false;
+        }
+    }.f, .{ .text = text });
     return manifest.parse(a, text, try sets(a));
 }
 
@@ -337,7 +344,7 @@ test "json: a one-byte change anywhere in a valid manifest never crashes the rea
     }
 }
 
-const oom = @import("autopin_oom_test.zig");
+
 
 test "oom: reading a manifest and pairing it with its members fails closed at every allocation" {
     var ar = arena();

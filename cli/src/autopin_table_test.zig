@@ -8,6 +8,7 @@ const sets = sets_mod;
 const table = @import("autopin_table.zig");
 const Diag = @import("diag.zig").Diag;
 const t = std.testing;
+const oom = @import("autopin_oom_test.zig");
 
 const sri_a = "sha512-" ++ "A" ** 86 ++ "==";
 const sri_b = "sha512-" ++ "B" ** 85 ++ "A==";
@@ -35,6 +36,13 @@ fn expectRefused(extra: []const u8, needle: []const u8) !void {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
+    oom.mustSweep(struct {
+        fn f(al: std.mem.Allocator, args: anytype) !bool {
+            var d = Diag.init(al);
+            _ = try lock.read(al, try lockWith(al, args.extra), &d);
+            return d.count() > 0;
+        }
+    }.f, .{ .extra = extra });
     var diag = Diag.init(a);
     _ = try readLock(a, try lockWith(a, extra), &diag);
     try t.expect(diag.count() > 0);
@@ -192,6 +200,13 @@ fn expectBadBlock(text: []const u8, kind: sets_mod.Kind) !void {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
+    oom.mustSweep(struct {
+        fn f(al: std.mem.Allocator, args: anytype) !bool {
+            var d = Diag.init(al);
+            _ = table.parseRows(al, args.text, args.kind, &d) catch return true;
+            return d.count() > 0;
+        }
+    }.f, .{ .text = text, .kind = kind });
     var diag = Diag.init(a);
     try t.expectError(error.BadNpmBlock, parseBlock(a, text, kind, &diag));
     try t.expect(diag.count() > 0);
@@ -350,6 +365,13 @@ fn entriesAndRows(a: std.mem.Allocator, kind: sets_mod.Kind, row_extra: []const 
 }
 
 fn expectBound(a: std.mem.Allocator, entries: []const lock.Entry, rows: []const table.Row, kind: sets_mod.Kind, needle: ?[]const u8) !void {
+    oom.mustSweep(struct {
+        fn f(al: std.mem.Allocator, args: anytype) !bool {
+            var d = Diag.init(al);
+            try table.bind(al, args.entries, args.rows, args.kind, &d);
+            return d.count() > 0;
+        }
+    }.f, .{ .entries = entries, .rows = rows, .kind = kind });
     var diag = Diag.init(a);
     try table.bind(a, entries, rows, kind, &diag);
     if (needle) |n| {
@@ -600,7 +622,7 @@ fn kit_contains(h: []const u8, n: []const u8) bool {
     return std.mem.indexOf(u8, h, n) != null;
 }
 
-const oom = @import("autopin_oom_test.zig");
+
 
 test "oom: reading a lock, reading and binding a table, and making fresh tables fail closed at every allocation" {
     var ar = arena();
