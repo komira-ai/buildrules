@@ -98,6 +98,7 @@ test "step: a status file to wait for that is not there is named, and the step d
     try e.refuses("no --status", &.{ "step", "--limit-s", "5", "--", "x/exit" }, 2, "mut_step: usage error\n");
     try e.refuses("no --limit-s", &.{ "step", "--status", "status", "--", "x/exit" }, 2, "mut_step: usage error\n");
     try e.refuses("--status given twice", &.{ "step", "--status", "a", "--status", "b", "--limit-s", "5", "--", "x/exit" }, 2, "mut_step: usage error\n");
+    try e.refuses("--limit-s given twice", &.{ "step", "--status", "status", "--limit-s", "5", "--limit-s", "6", "--", "x/exit" }, 2, "mut_step: usage error\n");
 }
 
 test "rust: a timeout is a positive number of seconds, and the options are exactly the five" {

@@ -108,6 +108,12 @@ test "glibc_floor: an ELF within the floor is accepted; a usage error, a floor t
         defer tmp.cleanup();
         try tmp.dir.writeFile(.{ .sub_path = "notes.txt", .data = "not an elf\n" });
         try proc.expectRefusal("text for an ELF", try proc.run(a, tmp.dir, try exe(a, "GLIBC_FLOOR", &.{ "notes.txt", "2.34", "result.json" })), 1, &.{"glibc_floor: cannot read notes.txt: NotElf64"});
+        // The message names the file by its basename, and is the whole of stderr: a file in a directory is not named with the directory.
+        try tmp.dir.makeDir("sub");
+        try tmp.dir.writeFile(.{ .sub_path = "sub/notes.txt", .data = "not an elf\n" });
+        const nested = try proc.run(a, tmp.dir, try exe(a, "GLIBC_FLOOR", &.{ "sub/notes.txt", "2.34", "result.json" }));
+        try proc.expectRefusal("text for an ELF in a directory", nested, 1, &.{"glibc_floor: cannot read notes.txt: NotElf64"});
+        try std.testing.expectEqualStrings("glibc_floor: cannot read notes.txt: NotElf64\n", nested.stderr);
         // the validation result says so too: a build that reads it is red
         const result = try tmp.dir.readFileAlloc(a, "result.json", 1 << 16);
         try std.testing.expect(std.mem.indexOf(u8, result, "\"status\": \"failure\"") != null);
