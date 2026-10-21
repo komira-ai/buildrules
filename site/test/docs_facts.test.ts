@@ -424,18 +424,23 @@ describe('what is planned is marked planned', () => {
     for (const [who, t] of ALL) {
       for (const u of units(who, t).filter((l) => /Homebrew|apt repository|an install script/.test(l))) {
         seen++;
-        expect({ who, u, marked: /planned|none exist|not built/i.test(u) }).toEqual({ who, u, marked: true });
+        expect({ who, u, marked: /planned|none exist|not built|after setup/i.test(u) }).toEqual({ who, u, marked: true });
       }
     }
     expect(seen).toBeGreaterThanOrEqual(8);
   });
-  test('the repository really has none of them: no formula, no apt files, no install script in the release job', () => {
+  test('the release builds the formula and the Debian packages and publishes them only after setup: the tap and apt jobs exist, every apt job is gated, and the release job has no install script', () => {
     const release = repoFile('.github/workflows/release.yml');
-    expect(release).not.toMatch(/brew\b|apt-get install buildrules|install\.sh/);
-    // the release carries the command line and says the other channels are not built
-    expect(repoFile('RELEASING.md')).not.toContain('There are no binaries');
-    // the platforms of another host, where a tree has them, are pins and a local-mode platform; the check above ('a host that is not linux x86_64
-    // gets no ISA platform') holds either way
+    expect(release).toMatch(/\n {2}tap:\n/);
+    for (const j of ['apt-deploy-read', 'apt-index', 'apt-deploy-write']) expect({ j, has: new RegExp(`\\n {2}${j}:\\n`).test(release) }).toEqual({ j, has: true });
+    // a job whose settings are not made ends green and writes nothing: every step after the gate is behind it
+    expect(release).toContain("if: steps.gate.outputs.enabled == 'true'");
+    expect(release).not.toMatch(/apt-get install buildrules|install\.sh/);
+    // the release carries the command line and says the other channels are published after setup
+    const releasing = repoFile('RELEASING.md');
+    expect(releasing).not.toContain('There are no binaries');
+    expect(releasing).toContain('**after setup**');
+    expect(repoFile('docs/how.md')).toContain('**Homebrew and apt (after setup).**');
   });
 });
 

@@ -11,7 +11,7 @@ export_file(
 export_file(
     name = "release.yml",
     src = ".github/workflows/release.yml",
-    visibility = ["//ci:", "//site:"],
+    visibility = ["//ci:", "//site:", "//tools/channels:"],
 )
 
 export_file(

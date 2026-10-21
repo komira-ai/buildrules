@@ -1,0 +1,71 @@
+# tools/channels: the BUILD half of the release channels (a .deb, the Homebrew formula, the apt index of a .deb), byte for byte and with no network.
+# The DEPLOY half (the signed index, the upload, the pull request against the tap) is //tools/deploy; nothing here writes outside the directory it is
+# given. Vendored from the sibling tool's release channels (see the header of channels.zig for the commit), as a stopgap until the `deb_package` and
+# `brew_formula` rules exist.
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+# The sources of the library, named by a glob so a new file is picked up.
+_SRCS = glob(["*.zig"], exclude = ["channels.zig", "main.zig", "*_cli_test.zig"])
+
+# What the unit tests and the CLI driver read: the fixtures and the golden files.
+_DATA = glob(["testdata/**"])
+
+# The unit tests of every file and the golden files (the .deb, Packages, Release and the formula, built from the fixtures).
+zig_test(
+    name = "channels_test",
+    exec_compatible_with = LINUX_X86_64,
+    src = "channels.zig",
+    imports = _SRCS + _DATA,
+    busybox = "buildrules//rules/pins:busybox",
+)
+
+# The command line, not built unless the unit tests and the goldens pass.
+zig_exe(
+    name = "channels",
+    exec_compatible_with = LINUX_X86_64,
+    src = "main.zig",
+    imports = _SRCS,
+    unit_tests = [":channels_test"],
+    busybox = "buildrules//rules/pins:busybox",
+    visibility = ["PUBLIC"],
+)
+
+# The command line end to end: byte-determinism (twice, compare), the goldens, the refusals it must make, and the release's own `tap` job: the
+# render command read out of release.yml, run on the fixture, compared with the formula the tap's guard is to accept.
+zig_test(
+    name = "channels_cli",
+    exec_compatible_with = LINUX_X86_64,
+    src = "channels_cli_test.zig",
+    deps = ["//tools/harness:harness"],
+    exec_tools = {"CHANNELS": ":channels"},
+    data = dict(
+        {"tools/channels/" + f: f for f in _DATA},
+        **{
+            ".github/workflows/release.yml": "//:release.yml",
+            "packaging/deb/control": "//packaging/deb:control",
+            "packaging/deb/copyright": "//packaging/deb:copyright",
+            "packaging/deb/lintian-overrides": "//packaging/deb:lintian-overrides",
+        }
+    ),
+    busybox = "buildrules//rules/pins:busybox",
+    visibility = ["//ci:"],
+)
+
+# The coverage of the sources the unit tests compile (rules/coverage/README.md, "Zig coverage") and the floor it is held to.
+zig_coverage(
+    blocks = False,
+    test_targets = [":channels_test"],
+    expect = ["tools/channels/" + f for f in _SRCS + ["channels.zig"]],
+)
+
+# The formula the tap's guard is to accept, read by the tests of the tap (//tools/deploy:tap_driver).
+export_file(
+    name = "tap_guard_buildrules.rb",
+    src = "testdata/tap_guard_buildrules.rb",
+    visibility = ["//tools/deploy:"],
+)
+
+scrub_files()

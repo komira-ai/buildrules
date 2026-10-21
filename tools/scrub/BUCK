@@ -70,6 +70,7 @@ scrub_test(
     "//examples/unpinned:scrub_files",
     "//examples/zig:scrub_files",
     "//infra/site:scrub_files",
+    "//packaging/deb:scrub_files",
     "//platforms/exec:scrub_files",
     "//platforms:scrub_files",
     "//rules/core:scrub_files",
@@ -90,13 +91,16 @@ scrub_test(
     "//site:scrub_files",
     "//third_party/aws-lc:scrub_files",
     "toolchains//:scrub_files",
+    "//tools/channels:scrub_files",
+    "//tools/deploy:scrub_files",
+    "//tools/harness:scrub_files",
     "//tools/release:scrub_files",
     "//tools/scrub:scrub_files",
     "//tools/stage:scrub_files",
     "crates//:scrub_files",
     "crates//crates/zdemo:scrub_files",
     ],
-    require = ["README.md", "LICENSE", "BUCK", "cli/src/main.zig", "rules/mojo/defs.bzl", "tools/scrub/scrub.zig", "examples/crates/Cargo.toml", ".buckconfig", ".buckconfig.local.example", ".gitignore", "infra/site/.gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/beta.yml", "beta/rust/STEPS", "beta/README.md", "VERSION"],
+    require = ["README.md", "LICENSE", "BUCK", "cli/src/main.zig", "rules/mojo/defs.bzl", "tools/scrub/scrub.zig", "examples/crates/Cargo.toml", ".buckconfig", ".buckconfig.local.example", ".gitignore", "infra/site/.gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/beta.yml", "beta/rust/STEPS", "beta/README.md", "VERSION", "packaging/deb/control", "tools/channels/channels.zig", "tools/deploy/tap.zig"],
 )
 
 scrub_files()

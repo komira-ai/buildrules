@@ -1,0 +1,8 @@
+Maintainer: buildrules authors <buildrules@users.noreply.github.com>
+Homepage: https://buildrules.dev
+Description: command line of the buildrules hermetic Buck2 rules
+ buildrules sets up a repository for the buildrules rules and keeps its
+ generated files (Cargo, npm and Mojo packages) in step with the sources,
+ offline and with pinned tools.
+ .
+ This is a static binary: it needs nothing else installed.
