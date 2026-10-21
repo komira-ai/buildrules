@@ -10,9 +10,16 @@ fetch the pins from their mirrors (docs/pins.md) after the primary host failed.
 
 load(":url_map.bzl", "mapped_url")
 
+def check_pinned(who, sha256, size_bytes, refuse = fail):
+    """A download is pinned by its sha256 (64 lower-case hex digits) and its length: anything else is refused, naming the target. `refuse` is `fail`
+    in a rule; a test passes a recorder (rules/rust/refusal.bzl)."""
+    if size_bytes <= 0:
+        refuse("pinned_file {}: `size_bytes` must be the file's positive length in bytes".format(who))
+    if len(sha256) != 64 or any([c not in "0123456789abcdef" for c in sha256.elems()]):
+        refuse("pinned_file {}: `sha256` must be 64 lower-case hex digits, got {}".format(who, repr(sha256)))
+
 def _impl(ctx):
-    if ctx.attrs.size_bytes <= 0:
-        fail("pinned_file {}: `size_bytes` must be the file's positive length in bytes".format(ctx.label))
+    check_pinned(ctx.label, ctx.attrs.sha256, ctx.attrs.size_bytes)
     out = ctx.actions.declare_output(ctx.attrs.out or ctx.label.name, has_content_based_path = False)
     ctx.actions.download_file(
         out.as_output(),

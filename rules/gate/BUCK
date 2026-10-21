@@ -23,6 +23,7 @@ _SRCS = [
 
 _TESTS = [
     "mojo_test",
+    "refusal_test",
     "rust_test",
     "step_test",
     "supervise_test",

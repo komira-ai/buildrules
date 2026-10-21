@@ -1,0 +1,48 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The refusals of the C/C++ rules that are made while the graph is analysed (rules/cxx/checks.bzl, called by archive.bzl), as analysis tests
+# (rules/rust/refusal.bzl): each target exists, and is green, only if the rule refused what a user would really write. Make a check accept the input and its
+# target stops existing (analysis fails with "expected a refusal"). The tools own refusals, at build time, are //rules/cxx/tests:cxx_tools_refuse.
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/cxx:checks.bzl", "check_listed_once", "check_tree_dirs")
+load("//rules/rust:refusal.bzl", "accepts", "refuses")
+load("//rules:matrix.bzl", "group")
+load("//rules/zig:zig.bzl", "zig_test")
+
+_ALL = []
+
+_WHO = "//third_party/lib:src"
+
+# `tree_dirs` are directories of the one tree, projections of it; without `one_tree` there is no tree to project.
+_ALL.append(refuses("archive_files_tree_dirs_without_one_tree_is_refused", check_tree_dirs, [_WHO, False, ["include"]], ["//third_party/lib:src", "tree_dirs needs one_tree = True"]))
+
+_ALL.append(accepts("archive_files_tree_dirs_with_one_tree_is_accepted", check_tree_dirs, [_WHO, True, ["include"]]))
+
+_ALL.append(accepts("archive_files_without_tree_dirs_is_accepted", check_tree_dirs, [_WHO, False, []]))
+
+# The same output named by a file and a template, or a file named twice: one sub-target would hide the other.
+_ALL.append(refuses("archive_files_name_listed_twice_is_refused", check_listed_once, [_WHO, "snappy.cc", {"snappy.cc": 1}], ["//third_party/lib:src", "snappy.cc is listed twice"]))
+
+_ALL.append(accepts("archive_files_new_name_is_accepted", check_listed_once, [_WHO, "snappy-stubs.cc", {"snappy.cc": 1}]))
+
+# The tools as the processes the public targets hand out, over files the test writes: a bad command line, an archive that is not one, an ELF that depends on
+# its directory, a response file that cannot be read. glibc_floor and hermetic are also run on an ELF that passes.
+zig_test(
+    name = "cxx_tools_refuse",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools_refuse_test.zig",
+    deps = ["//rules/core/tests:refusal_proc"],
+    env_tools = {
+        "ELFSYMS": "//rules/cxx:elfsyms",
+        "GLIBC_FLOOR": "//rules/cxx:glibc_floor",
+        "HERMETIC": "//rules/cxx:hermetic",
+        "PREFIX_TOOL": "//rules/cxx:prefix_tool",
+        "ZIG_CC_LAUNCHER": "//rules/cxx:zig_cc_launcher",
+    },
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+# Every refusal of this package, for //ci:refusals.
+group(name = "all", deps = _ALL + [":cxx_tools_refuse"], visibility = ["PUBLIC"])
+
+scrub_files()

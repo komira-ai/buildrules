@@ -31,6 +31,7 @@ load("@buildrules//rules/core:test_runtime.bzl", "data_map")
 load("@buildrules//rules/zig:zig.bzl", "busybox_sh")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/core:rerun.bzl", "RERUN_ATTRS", "rerun_env", "rerun_info")
+load(":checks.bzl", "check_data_is_not_a_source", "check_exe", "check_expect_error", "check_not_a_package", "check_not_listed", "check_not_own_dep", "check_package_pin")
 
 NodeDistInfo = provider(
     doc = "An unpacked Node.js: its root directory (`bin/node`, `include/node`) and the libraries `node` loads beyond glibc.",
@@ -76,8 +77,7 @@ def _closure(where, deps):
     closure = {}
     for d in deps:
         for k, v in d[NpmPackageInfo].closure.items():
-            if k in closure and closure[k][0] != v[0]:
-                fail("{}: {} is pinned at {} and at {} in its deps".format(where, k, closure[k][0], v[0]))
+            check_package_pin(where, k, closure[k][0] if k in closure else None, v[0])
             closure[k] = v
     return closure
 
@@ -191,8 +191,7 @@ rm -rf "$T"
 """
 
 def _npm_tarball_impl(ctx):
-    if ctx.attrs.exe == "":
-        fail("{}: exe is empty: name the package's executable, or leave exe out".format(ctx.label.raw_target()))
+    check_exe(ctx.label.raw_target(), ctx.attrs.exe)
     out = ctx.actions.declare_output("package", dir = True)
     dist = ctx.attrs._node[NodeDistInfo]
     ctx.actions.run(
@@ -212,8 +211,7 @@ def _npm_tarball_impl(ctx):
         category = "npm_tarball",
     )
     closure = _closure(str(ctx.label.raw_target()), ctx.attrs.deps)
-    if ctx.attrs.package in closure:
-        fail("{}: {} is in its own deps".format(ctx.label.raw_target(), ctx.attrs.package))
+    check_not_own_dep(ctx.label.raw_target(), ctx.attrs.package, closure)
     closure[ctx.attrs.package] = (ctx.attrs.version, out)
     return [
         DefaultInfo(default_output = out),
@@ -268,20 +266,16 @@ rm -rf "$T"
 def _node_test_impl(ctx):
     dist = ctx.attrs.node[NodeDistInfo]
     where = str(ctx.label.raw_target())
-    if ctx.attrs.expect_error == "":
-        fail("{}: expect_error is empty: name the text the script must print on stderr, or leave expect_error out".format(where))
+    check_expect_error(where, ctx.attrs.expect_error)
     staged = {ctx.attrs.src.short_path: ctx.attrs.src}
     for s in ctx.attrs.srcs:
-        if s.short_path in staged:
-            fail("{}: {} is listed twice".format(where, s.short_path))
+        check_not_listed(where, s.short_path, staged)
         staged[s.short_path] = s
     for dest, a in data_map(ctx, where + ": data", ctx.attrs.data).items():
-        if dest in staged:
-            fail("{}: data destination {} is also a source".format(where, dest))
+        check_data_is_not_a_source(where, dest, staged)
         staged[dest] = a
     for k, v in _closure(where, ctx.attrs.deps).items():
-        if "node_modules/" + k in staged:
-            fail("{}: data destination node_modules/{} is also a package of deps".format(where, k))
+        check_not_a_package(where, k, staged)
         staged["node_modules/" + k] = v[1]
     root = ctx.actions.copied_dir(ctx.label.name + ".srcs", staged)
     out = ctx.actions.declare_output(ctx.label.name + ".pass")
@@ -335,8 +329,7 @@ def _esbuild_bundle_impl(ctx):
     where = str(ctx.label.raw_target())
     staged = {ctx.attrs.entry.short_path: ctx.attrs.entry}
     for s in ctx.attrs.srcs:
-        if s.short_path in staged:
-            fail("{}: {} is listed twice".format(where, s.short_path))
+        check_not_listed(where, s.short_path, staged)
         staged[s.short_path] = s
     for k, v in _closure(where, ctx.attrs.deps).items():
         staged["node_modules/" + k] = v[1]

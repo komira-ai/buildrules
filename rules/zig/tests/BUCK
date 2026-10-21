@@ -1,0 +1,100 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The refusals of the Zig rules (rules/zig/checks.bzl, called by zig.bzl) as analysis tests (rules/rust/refusal.bzl): each target exists, and is green, only if the rule
+# refused what a user would really write, with the message that tells them what to change. Make a check accept the input and its target stops existing (analysis
+# fails with "expected a refusal"); the accepted forms beside them hold the other side, so a check that refuses everything is red too.
+load("//rules/rust:refusal.bzl", "accepts", "refuses")
+load("//rules:matrix.bzl", "group")
+load(":cases.bzl", "every_mode", "mod")
+load("//rules/zig:checks.bzl", "check_exe_target", "check_exec_tool_name", "check_module_name", "check_optimize", "check_same_tests", "check_target_triple", "check_unique_dep_names", "check_unique_imports", "zig_closure")
+
+_ALL = []
+
+_WHO = "//app:tool"
+
+# ---- target: a zig target triple -----------------------------------------------------------------------------------------------------------------
+
+_ALL.append(accepts("zig_target_musl_is_accepted", check_target_triple, [_WHO, "x86_64-linux-musl"]))
+
+_ALL.append(accepts("zig_target_glibc_floor_is_accepted", check_target_triple, [_WHO, "x86_64-linux-gnu.2.34"]))
+
+# A space, an upper-case letter or a shell metacharacter is not a triple: the value is pasted into an action's command.
+_ALL.append(refuses("zig_target_with_a_space_is_refused", check_target_triple, [_WHO, "x86_64 linux-musl"], ["//app:tool", "is not a zig target triple", "\"x86_64 linux-musl\""]))
+
+_ALL.append(refuses("zig_target_upper_case_is_refused", check_target_triple, [_WHO, "X86_64-Linux-musl"], ["is not a zig target triple", "\"X86_64-Linux-musl\""]))
+
+_ALL.append(refuses("zig_target_empty_is_refused", check_target_triple, [_WHO, ""], ["is not a zig target triple"]))
+
+_ALL.append(refuses("zig_target_shell_metacharacter_is_refused", check_target_triple, [_WHO, "x86_64-linux-musl;rm"], ["is not a zig target triple"]))
+
+# ---- optimize: one of zig's modes ------------------------------------------------------------------------------------------------------------------
+
+_ALL.append(accepts("zig_optimize_every_mode_is_accepted", every_mode, [_WHO]))
+
+_ALL.append(refuses("zig_optimize_misspelled_is_refused", check_optimize, [_WHO, "releasefast"], ["optimize \"releasefast\" is not a zig optimization mode", "ReleaseSafe", "ReleaseSmall"]))
+
+_ALL.append(refuses("zig_optimize_empty_is_refused", check_optimize, [_WHO, ""], ["is not a zig optimization mode"]))
+
+# ---- zig_module: its own name, and the names it imports ---------------------------------------------------------------------------------------------
+
+_ALL.append(accepts("zig_module_ordinary_name_is_accepted", check_module_name, [_WHO, "util"]))
+
+_ALL += [
+    refuses("zig_module_named_{}_is_refused".format(n), check_module_name, [_WHO, n], ["a zig_module may not be named " + n, "root, std, builtin"])
+    for n in ["root", "std", "builtin"]
+]
+
+_ALL.append(accepts("zig_module_distinct_dep_names_are_accepted", check_unique_imports, [_WHO, ["a", "b", "c"]]))
+
+_ALL.append(refuses("zig_module_two_deps_of_one_name_is_refused", check_unique_imports, [_WHO, ["a", "b", "a"]], ["two deps are imported by one name", "a, b, a"]))
+
+_ALL.append(accepts("zig_exe_distinct_dep_names_are_accepted", check_unique_dep_names, [_WHO, [("a", "//x:a"), ("b", "//y:b")]]))
+
+# Two targets of one name in two packages: zig would see one import, so the rule says which two collide.
+_ALL.append(refuses("zig_exe_two_deps_of_one_name_is_refused", check_unique_dep_names, [_WHO, [("util", "//x:util"), ("util", "//y:util")]], ["two deps are imported as \"util\"", "//x:util", "//y:util"]))
+
+_ALL.append(refuses("zig_exe_the_same_dep_twice_is_refused", check_unique_dep_names, [_WHO, [("util", "//x:util"), ("util", "//x:util")]], ["two deps are imported as \"util\""]))
+
+# ---- the closure: two different modules under one name somewhere below ---------------------------------------------------------------------------
+
+_ALL.append(accepts("zig_closure_one_module_reached_twice_is_accepted", zig_closure, [_WHO, [mod("a", "//x:a", [("c", "//z:c")]), mod("b", "//x:b", [("c", "//z:c")])]]))
+
+_ALL.append(refuses(
+    "zig_closure_two_modules_of_one_name_below_is_refused",
+    zig_closure,
+    [_WHO, [mod("a", "//x:a", [("c", "//z:c")]), mod("b", "//x:b", [("c", "//w:c")])]],
+    ["two different modules are imported as \"c\"", "//z:c", "//w:c"],
+))
+
+# ---- exec_tools: the environment variable a driver test reads its tool from --------------------------------------------------------------------
+
+_TAKEN = ["PATH", "HOME", "ZIG_GLOBAL_CACHE_DIR", "TOOL_FROM_ENV_TOOLS"]
+
+_ALL.append(accepts("zig_exec_tool_name_is_accepted", check_exec_tool_name, [_WHO, "MY_TOOL", _TAKEN]))
+
+_ALL.append(refuses("zig_exec_tool_name_with_a_dash_is_refused", check_exec_tool_name, [_WHO, "MY-TOOL", _TAKEN], ["exec_tools name \"MY-TOOL\" is not a shell variable name"]))
+
+_ALL.append(refuses("zig_exec_tool_name_starting_with_a_digit_is_refused", check_exec_tool_name, [_WHO, "1TOOL", _TAKEN], ["is not a shell variable name"]))
+
+# The runner's own variable, the action's cache directory, or a tool env_tools already hands out: the test would read the wrong path.
+_ALL += [
+    refuses("zig_exec_tool_name_{}_is_refused".format(n.lower()), check_exec_tool_name, [_WHO, n, _TAKEN], ["exec_tools name " + n + " is set by the action or by env_tools"])
+    for n in ["PATH", "ZIG_GLOBAL_CACHE_DIR", "TOOL_FROM_ENV_TOOLS"]
+]
+
+# ---- zig_exe_target_test: the target of a cross-built program, and the tests it waits for -----------------------------------------------------
+
+_ALL.append(accepts("zig_exe_for_the_expected_target_is_accepted", check_exe_target, [_WHO, "//cli:tool", "x86_64-linux-musl", "x86_64-linux-musl"]))
+
+_ALL.append(refuses("zig_exe_for_another_target_is_refused", check_exe_target, [_WHO, "//cli:tool", "aarch64-linux-musl", "x86_64-linux-musl"], ["//cli:tool is built for \"aarch64-linux-musl\", not \"x86_64-linux-musl\""]))
+
+_ALL.append(accepts("zig_exe_with_the_same_tests_is_accepted", check_same_tests, [_WHO, "//cli:tool_arm", ["//cli:a", "//cli:b"], "//cli:tool", ["//cli:a", "//cli:b"]]))
+
+_ALL.append(refuses("zig_exe_with_other_tests_is_refused", check_same_tests, [_WHO, "//cli:tool_arm", ["//cli:a"], "//cli:tool", ["//cli:a", "//cli:b"]], ["//cli:tool_arm waits for the unit tests", "not those of //cli:tool"]))
+
+# A program with no tests at all would pass for a copy of any program that also has none.
+_ALL.append(refuses("zig_exe_with_no_tests_at_all_is_refused", check_same_tests, [_WHO, "//cli:tool_arm", [], "//cli:tool", []], ["an empty list is refused too"]))
+
+# Every refusal of this package, for //ci:refusals.
+group(name = "all", deps = _ALL, visibility = ["PUBLIC"])
+
+scrub_files()

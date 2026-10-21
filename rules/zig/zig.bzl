@@ -21,6 +21,7 @@ ZigExeInfo = provider(fields = {
     "unit_tests": provider_field(list),
 })
 load("@buildrules//rules/core:test_runtime.bzl", "RUNNER_ENV", "data_map")
+load(":checks.bzl", "check_exe_target", "check_exec_tool_name", "check_module_name", "check_optimize", "check_same_tests", "check_target_triple", "check_unique_dep_names", "check_unique_imports", "zig_closure")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/core:rerun.bzl", "RERUN_ATTRS", "rerun_env", "rerun_info")
 
@@ -119,35 +120,12 @@ ZigModuleInfo = provider(fields = {
     "closure": provider_field(list),
 })
 
-# Names zig gives modules of its own: the importing file is `root`, and
-# `std` and `builtin` are always there. A module of one of these names would
-# clash with them.
-_ZIG_RESERVED_MODULES = ["root", "std", "builtin"]
-
-def _zig_closure(where, deps):
-    """The modules `deps` (ZigModuleInfo of the direct deps, in order) reach,
-    each once, direct ones first. Fails when two different targets of one
-    import name are reached."""
-    out = []
-    labels = {}
-    for dep in deps:
-        for e in [struct(name = dep.name, label = dep.label, root = dep.root, inputs = dep.inputs, deps = dep.deps)] + dep.closure:
-            if e.name in labels:
-                if labels[e.name] != e.label:
-                    fail("{}: two different modules are imported as \"{}\": {} and {} (a zig_module's import name is its target name)".format(where, e.name, labels[e.name], e.label))
-                continue
-            labels[e.name] = e.label
-            out.append(e)
-    return out
-
 def _zig_module_impl(ctx):
-    if ctx.label.name in _ZIG_RESERVED_MODULES:
-        fail("{}: a zig_module may not be named {} (zig's own module names: {})".format(ctx.label.raw_target(), ctx.label.name, ", ".join(_ZIG_RESERVED_MODULES)))
+    check_module_name(ctx.label.raw_target(), ctx.label.name)
     passed = [t[DefaultInfo].default_outputs[0] for t in ctx.attrs.unit_tests]
     mods = [d[ZigModuleInfo] for d in ctx.attrs.deps]
     names = [m.name for m in mods]
-    if len(names) != len(set(names)):
-        fail("{}: two deps are imported by one name (a zig_module's import name is its target name): {}".format(ctx.label.raw_target(), ", ".join(names)))
+    check_unique_imports(ctx.label.raw_target(), names)
     where = str(ctx.label.raw_target())
     return [
         DefaultInfo(default_output = ctx.attrs.src, other_outputs = passed),
@@ -157,7 +135,7 @@ def _zig_module_impl(ctx):
             inputs = ctx.attrs.imports + passed,
             deps = names,
             label = where,
-            closure = _zig_closure(where, mods),
+            closure = zig_closure(where, mods),
         ),
     ]
 
@@ -186,7 +164,7 @@ def _zig_sources(ctx):
     those import. A build output (a module's `.passed`) is not a source."""
     package = ctx.label.package
     paths = [_repo_path(package, ctx.attrs.src)] + [_repo_path(package, i) for i in ctx.attrs.imports]
-    for e in _zig_closure(str(ctx.label.raw_target()), [d[ZigModuleInfo] for d in ctx.attrs.deps]):
+    for e in zig_closure(str(ctx.label.raw_target()), [d[ZigModuleInfo] for d in ctx.attrs.deps]):
         owner = _package_of(e.label)
         paths.append(_repo_path(owner, e.root))
         paths += [_repo_path(owner, i) for i in e.inputs if i.is_source]
@@ -204,12 +182,8 @@ def _zig_root(ctx):
     if not ctx.attrs.deps:
         return ctx.attrs.src
     mods = [d[ZigModuleInfo] for d in ctx.attrs.deps]
-    seen = {}
-    for d, m in zip(ctx.attrs.deps, mods):
-        if m.name in seen:
-            fail("{}: two deps are imported as \"{}\": {} and {} (a zig_module's import name is its target name)".format(ctx.label.raw_target(), m.name, seen[m.name], d.label.raw_target()))
-        seen[m.name] = d.label.raw_target()
-    closure = _zig_closure(str(ctx.label.raw_target()), mods)
+    check_unique_dep_names(ctx.label.raw_target(), [(m.name, d.label.raw_target()) for d, m in zip(ctx.attrs.deps, mods)])
+    closure = zig_closure(str(ctx.label.raw_target()), mods)
     args = [cmd_args("--dep", m.name) for m in mods]
     args.append(cmd_args(ctx.attrs.src, format = "-Mroot={}"))
     for e in closure:
@@ -218,12 +192,8 @@ def _zig_root(ctx):
     argfile, _ = ctx.actions.write(ctx.label.name + ".zig_modules", cmd_args(args), allow_args = True)
     return cmd_args(argfile, format = "@{}", hidden = [ctx.attrs.src] + [e.root for e in closure] + [i for e in closure for i in e.inputs])
 
-# zig's optimization modes, for `optimize`.
-ZIG_OPTIMIZE_MODES = ["Debug", "ReleaseSafe", "ReleaseFast", "ReleaseSmall"]
-
 def _zig_optimize(ctx):
-    if ctx.attrs.optimize not in ZIG_OPTIMIZE_MODES:
-        fail("{}: optimize {} is not a zig optimization mode ({})".format(ctx.label.raw_target(), repr(ctx.attrs.optimize), ", ".join(ZIG_OPTIMIZE_MODES)))
+    check_optimize(ctx.label.raw_target(), ctx.attrs.optimize)
     return ctx.attrs.optimize
 
 def _zig_exe_impl(ctx):
@@ -239,8 +209,7 @@ rm -rf "$T"
     # The target, the optimization mode and the strip flag are written into
     # the script, so that with the defaults the command (and the action key)
     # of every zig_exe is what it was before the attributes existed.
-    if not regex_match("^[a-z0-9_.-]+$", ctx.attrs.target):
-        fail("{}: target {} is not a zig target triple".format(ctx.label, repr(ctx.attrs.target)))
+    check_target_triple(ctx.label, ctx.attrs.target)
     script = script.replace("-OReleaseSafe -target TARGET -fstrip ", "-O{} -target {} {} ".format(_zig_optimize(ctx), ctx.attrs.target, "-fstrip" if ctx.attrs.strip else "-fno-strip"))
     cmd = busybox_sh(bb, script, zig, _zig_root(ctx), out.as_output())
     if ctx.attrs.imports:
@@ -292,8 +261,7 @@ def _zig_test_impl(ctx):
     validation = bool(ctx.attrs.env_tools or ctx.attrs.exec_tools)
     out = ctx.actions.declare_output(ctx.label.name + (".json" if validation else ".passed"))
     stamp = '{"version": 1, "data": {"status": "success", "message": "zig test passed"}}\n' if validation else "passed\n"
-    if not regex_match("^[a-z0-9_.-]+$", ctx.attrs.target):
-        fail("{}: target {} is not a zig target triple".format(ctx.label, repr(ctx.attrs.target)))
+    check_target_triple(ctx.label, ctx.attrs.target)
     # The launcher (tools/zig_launch.zig; no shell) gives the tests the busybox
     # applets as their PATH and a HOME, TMPDIR and caches of their own inside
     # the action's scratch directory, runs `zig test`, and writes the stamp
@@ -325,10 +293,7 @@ def _zig_test_impl(ctx):
         # reads, so a test without them is not a driver.
         where = str(ctx.label.raw_target())
         for name in ctx.attrs.exec_tools:
-            if not regex_match("^[A-Za-z_][A-Za-z0-9_]*$", name):
-                fail("{}: exec_tools name {} is not a shell variable name".format(where, repr(name)))
-            if name in RUNNER_ENV or name in _ZIG_TEST_OWN_ENV or name in ctx.attrs.env_tools:
-                fail("{}: exec_tools name {} is set by the action or by env_tools".format(where, name))
+            check_exec_tool_name(where, name, RUNNER_ENV + _ZIG_TEST_OWN_ENV + list(ctx.attrs.env_tools.keys()))
         srcs = data_map(ctx, where, ctx.attrs.data)
         tools = {name: dep[DefaultInfo].default_outputs[0] for name, dep in ctx.attrs.exec_tools.items()}
         data_manifest, _ = ctx.actions.write(ctx.label.name + ".data", [cmd_args(d, a, delimiter = "\t") for d, a in sorted(srcs.items())], allow_args = True)
@@ -412,8 +377,7 @@ zig_test_rule = rule(
 
 def _zig_bootstrap_exe_impl(ctx):
     zig = ctx.attrs.zig[DefaultInfo].default_outputs[0]
-    if not regex_match("^[a-z0-9_.-]+$", ctx.attrs.target):
-        fail("{}: target {} is not a zig target triple".format(ctx.label, repr(ctx.attrs.target)))
+    check_target_triple(ctx.label, ctx.attrs.target)
     # No script, no busybox: zig is run as the action's executable. Its caches
     # are directories of the action's working directory (as zig_cc_launcher's).
     env = {"ZIG_GLOBAL_CACHE_DIR": ".zig-cache/global", "ZIG_LOCAL_CACHE_DIR": ".zig-cache/local"}
@@ -485,12 +449,10 @@ zig_module = zig_module_rule
 
 def _zig_exe_target_test_impl(ctx):
     got = ctx.attrs.exe[ZigExeInfo].target
-    if got != ctx.attrs.expect:
-        fail("{}: {} is built for {}, not {}".format(ctx.label.raw_target(), ctx.attrs.exe.label.raw_target(), repr(got), repr(ctx.attrs.expect)))
+    check_exe_target(ctx.label.raw_target(), ctx.attrs.exe.label.raw_target(), got, ctx.attrs.expect)
     want_tests = ctx.attrs.same_tests_as[ZigExeInfo].unit_tests
     got_tests = ctx.attrs.exe[ZigExeInfo].unit_tests
-    if not want_tests or got_tests != want_tests:
-        fail("{}: {} waits for the unit tests {}, not those of {} ({}; an empty list is refused too)".format(ctx.label.raw_target(), ctx.attrs.exe.label.raw_target(), got_tests, ctx.attrs.same_tests_as.label.raw_target(), want_tests))
+    check_same_tests(ctx.label.raw_target(), ctx.attrs.exe.label.raw_target(), got_tests, ctx.attrs.same_tests_as.label.raw_target(), want_tests)
     return [DefaultInfo(default_output = ctx.actions.write(ctx.label.name + ".passed", "{} is built for {}\n".format(ctx.attrs.exe.label.raw_target(), got)))]
 
 # An analysis test: green only if `exe` (a `zig_exe`) is built for the zig target triple `expect`. It builds nothing but a marker, so it is
