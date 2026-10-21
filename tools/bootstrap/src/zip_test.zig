@@ -336,6 +336,10 @@ test "--max-output: the sizes a zip declares count, and a member cannot hold mor
     var d3 = kit.Dest.init();
     defer d3.deinit();
     try t.expectError(error.EntryCorrupt, d3.unpackMax(lying, .zip, 1 << 30));
+    // and none of the surplus reached the file
+    const written = try d3.read("f");
+    defer a.free(written);
+    try t.expect(written.len <= 5);
 }
 
 test "zip64 extra fields: values are read in order for the fields that are all ones, and a short field is refused" {
