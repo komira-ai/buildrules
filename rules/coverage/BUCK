@@ -348,7 +348,7 @@ zig_exe(
 export_file(
     name = "pins.bzl",
     src = "pins.bzl",
-    visibility = ["//site:"],
+    visibility = ["//site:", "//ci:"],
 )
 
 # The coverage of the sources the unit tests compile (README.md, "Zig coverage"), and the floor it is held to. The process tests (`*_exe_test`) run the

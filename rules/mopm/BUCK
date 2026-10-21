@@ -3,7 +3,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 export_file(
     name = "pins.bzl",
     src = "pins.bzl",
-    visibility = ["//site:"],
+    visibility = ["//site:", "//ci:"],
 )
 
 export_file(

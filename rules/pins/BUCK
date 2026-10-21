@@ -58,6 +58,13 @@ export_file(
     visibility = ["//site:", "//ci:"],
 )
 
+# Read by ci/pin_mirrors_check.zig, which checks the hosts of every download.
+export_file(
+    name = "hosts.bzl",
+    src = "hosts.bzl",
+    visibility = ["//ci:"],
+)
+
 
 # ---- the other hosts (hosts.bzl) -----------------------------------------------------------------
 # Downloads of linux-aarch64 and macos-aarch64: zig, node, rustc and its components. Nothing unpacks them yet (hosts.bzl says why); each is

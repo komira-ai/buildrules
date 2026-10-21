@@ -136,7 +136,7 @@ export_file(
 export_file(
     name = "pins.bzl",
     src = "pins.bzl",
-    visibility = ["//site:"],
+    visibility = ["//site:", "//ci:"],
 )
 
 # Read by the buildrules.dev site's tests (site/BUCK), which check its pages against this file.
