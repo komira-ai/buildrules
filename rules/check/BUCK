@@ -1,0 +1,100 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# check (README.md): what a rule's build action runs instead of a shell script: start a program in a prepared environment (run), compare its output
+# (expect), write a marker only when a test passed (marker), hash files (digest), compare files (same), copy a file (copy), audit machine code (isa).
+# One static Zig executable, built by the pinned zig behind its unit tests. No rule uses it yet.
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_test")
+
+# Zig 0.15 code (std.Io, ArrayList.empty): it builds with the pinned zig_next, as kpin and the command line do.
+_ZIG = "buildrules//rules/pins:zig_next"
+_ZIG_VERSION = "buildrules//rules/pins:zig_next_version"
+_TOOLBOX = "buildrules//rules/toolbox:toolbox"
+
+_SRCS = [
+    "check.zig",
+    "cmds.zig",
+    "common.zig",
+    "files.zig",
+    "isa.zig",
+    "runspec.zig",
+]
+
+# The test kit, and the cases of each part. The cases start programs, and the program is the toolbox (`TOOLBOX`): printenv, mkdir, cat, echo and
+# true/false are what the environment, the working directory and the exit status of a started program are read back with.
+_SUPPORT = ["checkkit.zig"]
+
+_TESTS = ["check", "cmds", "files", "isa", "oom", "runspec"]
+
+[
+    zig_test(
+        name = name + "_unit",
+        src = name + "_test.zig",
+        imports = _SRCS + _SUPPORT,
+        env_tools = {"TOOLBOX": _TOOLBOX},
+        zig = _ZIG,
+    )
+    for name in _TESTS
+]
+
+# All the cases in one test program. The coverage is measured on this one: the blocks that ran in it, so a block that one part's cases run and
+# another's do not is counted once.
+zig_test(
+    name = "all_unit",
+    src = "all_test.zig",
+    imports = _SRCS + _SUPPORT + [name + "_test.zig" for name in _TESTS],
+    env_tools = {"TOOLBOX": _TOOLBOX},
+    zig = _ZIG,
+)
+
+# The executable, built only when the unit tests passed.
+zig_exe(
+    name = "check",
+    src = "check.zig",
+    imports = _SRCS,
+    unit_tests = [":" + name + "_unit" for name in _TESTS] + [_ZIG_VERSION],
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+# The same program for the other hosts, cross-compiled by the one zig (no SDK is needed), behind the same tests.
+_NATIVE = {
+    "linux_aarch64": "aarch64-linux-musl",
+    "macos_arm64": "aarch64-macos",
+}
+
+[
+    zig_exe(
+        name = "check_" + name,
+        src = "check.zig",
+        imports = _SRCS,
+        target = triple,
+        unit_tests = [":" + t + "_unit" for t in _TESTS] + [_ZIG_VERSION],
+        zig = _ZIG,
+        visibility = ["PUBLIC"],
+    )
+    for name, triple in _NATIVE.items()
+]
+
+zig_exe_target_test(name = "linux_aarch64_is_aarch64_linux_musl", exe = ":check_linux_aarch64", expect = "aarch64-linux-musl", same_tests_as = ":check", visibility = ["PUBLIC"])
+
+zig_exe_target_test(name = "macos_arm64_is_aarch64_macos", exe = ":check_macos_arm64", expect = "aarch64-macos", same_tests_as = ":check", visibility = ["PUBLIC"])
+
+# The executable as a process (check_exe_test.zig): the command line from argv, the real environment and working directory, stdout flushed, the
+# exit status. A validation of `:check`; it adds nothing to the coverage.
+zig_test(
+    name = "check_exe_test",
+    src = "check_exe_test.zig",
+    imports = _SRCS + _SUPPORT,
+    env_tools = {"CHECK": ":check", "TOOLBOX": _TOOLBOX},
+    visibility = ["PUBLIC"],
+    zig = _ZIG,
+)
+
+# The coverage of the sources the unit tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. `main` is compiled into
+# no unit test (the process test runs it), so it has neither lines nor blocks there.
+zig_coverage(
+    test_targets = [":all_unit"],
+    expect = ["rules/check/" + f for f in _SRCS],
+)
+
+scrub_files()

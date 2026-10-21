@@ -96,15 +96,29 @@ pub fn download(a: std.mem.Allocator, api: Api, path: []const u8, max_bytes: usi
 pub const Http = struct {
     allocator: std.mem.Allocator,
     token: []const u8,
+    base_url: []const u8 = "https://api.github.com",
+    /// Tests only: allow http to 127.0.0.1.
+    allow_http_loopback: bool = false,
+    /// How long one read or one write on the connection may wait, in seconds. The deadlines are set once the connection exists. The
+    /// connect and the TLS handshake (done inside the connect) have no deadline of their own in the standard library client: a connect or a
+    /// handshake that hangs is ended only by the workflow job's `timeout-minutes`. A server that sends a
+    /// byte at a time can keep a body coming for longer than this; the cap on the body and the job's timeout bound that.
+    timeout_seconds: u32 = 60,
 
     pub fn api(self: *Http) Api {
         return .{ .ctx = self, .sendFn = send };
     }
 
+    fn setDeadlines(handle: std.posix.socket_t, seconds: u32) !void {
+        const tv = std.posix.timeval{ .sec = @intCast(seconds), .usec = 0 };
+        try std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv));
+        try std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.SNDTIMEO, std.mem.asBytes(&tv));
+    }
+
     fn send(ctx: *anyopaque, a: std.mem.Allocator, req: Request) anyerror!Response {
         const self: *Http = @ptrCast(@alignCast(ctx));
-        const url = if (req.url) |u| u else try std.fmt.allocPrint(a, "https://api.github.com/{s}", .{req.path});
-        if (!fetch.urlAllowed(url, false)) return error.UrlNotAllowed;
+        const url = if (req.url) |u| u else try std.fmt.allocPrint(a, "{s}/{s}", .{ self.base_url, req.path });
+        if (!fetch.urlAllowed(url, self.allow_http_loopback)) return error.UrlNotAllowed;
         var client = std.http.Client{ .allocator = a, .read_buffer_size = 16 * 1024 };
         defer client.deinit();
         const uri = try std.Uri.parse(url);
@@ -126,6 +140,7 @@ pub const Http = struct {
             .extra_headers = &headers,
         });
         defer hreq.deinit();
+        try setDeadlines(hreq.connection.?.stream_reader.getStream().handle, self.timeout_seconds);
         if (req.body) |b| {
             try hreq.sendBodyComplete(try a.dupe(u8, b));
         } else {
@@ -139,11 +154,10 @@ pub const Http = struct {
         }
         var transfer: [64]u8 = undefined;
         const body_reader = response.reader(&transfer);
-        const body = body_reader.allocRemaining(a, .limited(req.max_body)) catch |e| switch (e) {
-            error.StreamTooLong => return error.ResponseTooLarge,
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return response.bodyErr() orelse error.ReadFailed,
-        };
+        // One byte more than the cap: the reader reports "too long" when it reaches its limit, even at the end of the body.
+        const body = body_reader.allocRemaining(a, .limited(req.max_body + 1)) catch |e| return if (e == error.StreamTooLong) error.ResponseTooLarge else if (e == error.OutOfMemory) e else response.bodyErr() orelse error.ReadFailed;
+        // A connection that ends before the length it announced is a failure, not a short answer.
+        if (response.head.content_length) |n| if (n != body.len) return error.TruncatedBody;
         return .{ .status = status, .body = body };
     }
 };
