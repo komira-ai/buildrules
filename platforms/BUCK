@@ -43,6 +43,17 @@ constraint_value(name = "not_implemented", constraint_setting = ":implementation
 # `linux_x86_64_v3` is linux_x86_64 plus `isa_x86_64_v3`. The cpu value of each platform is its level's family, so an x86 level never meets an aarch64 cpu.
 constraint_setting(name = "isa_level", visibility = ["PUBLIC"])
 
+# `exec_net` is an EXECUTION constraint too: only the network-egress execution platform carries `exec_net_egress`. A target that must reach a
+# registry (rules/node/npm_dyn.bzl, the fetch actions) lists it in `exec_compatible_with`. The platform exists only when
+# `[buildrules_re] linux_x86_64_net_properties` is set (or in local mode).
+constraint_setting(name = "exec_net", visibility = ["PUBLIC"])
+constraint_value(name = "exec_net_egress", constraint_setting = ":exec_net", visibility = ["PUBLIC"])
+platform(
+    name = "exec_net_linux_x86_64",
+    constraint_values = [":linux", ":x86_64", ":exec_net_egress"],
+    visibility = ["PUBLIC"],
+)
+
 # `exec_isa` is an EXECUTION constraint: only the execution platforms of platforms/exec carry it. A test that needs
 # level vN lists `exec_isa_x86_64_vN` in `exec_compatible_with`, so Buck2 puts its run action on that platform and the farm
 # reports `ISA=x86-64-vN`. The compile actions never list it.

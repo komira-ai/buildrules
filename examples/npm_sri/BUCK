@@ -25,4 +25,19 @@ npm_modules_dyn(
     visibility = ["PUBLIC"],
 )
 
+# The offline lock with ms bumped from 2.1.3 to 2.1.1 (what a Dependabot pull request does): one new fetch, two cache hits.
+npm_modules_dyn(
+    name = "offline_bump",
+    lock = "lock_bump/package-lock.json",
+    allow_data = True,
+    visibility = ["PUBLIC"],
+)
+
+# A lock entry that names a lookalike host: refused when the lock is read, before any action exists (must be RED).
+npm_modules_dyn(
+    name = "modules_evil_host",
+    lock = "lock_host/package-lock.json",
+    visibility = ["PUBLIC"],
+)
+
 scrub_files()

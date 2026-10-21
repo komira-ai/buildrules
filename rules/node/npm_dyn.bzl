@@ -96,7 +96,7 @@ def locked_packages(lock, allow_hosts, url_map, where, allow_data = False):
         key = name + "@" + version
         if key in out and out[key]["sri"] != sri:
             fail("{}: {} appears with two different integrity strings".format(where, key))
-        out[key] = {"name": name, "version": version, "url": _map_url(url_map, resolved), "sri": sri}
+        out[key] = {"name": name, "version": version, "url": _map_url(url_map, resolved), "resolved": resolved, "sri": sri}
     return out
 
 def _file(sri):
@@ -107,7 +107,9 @@ def _file(sri):
 
 def _tarballs_impl(ctx):
     where = str(ctx.label.raw_target())
-    out = ctx.actions.declare_output("tarballs", dir = True)
+    # A static path (not content-based): the unpack of one package names its tarball as tarballs/<file>.tgz, and that path must not
+    # change when ANOTHER package of the lock does.
+    out = ctx.actions.declare_output("tarballs", dir = True, has_content_based_path = False)
     url_map = [tuple(p.split("=", 1)) for p in ctx.attrs.url_map]
     allow = ctx.attrs.allow_hosts
     fetch = ctx.attrs._fetch[RunInfo]
@@ -123,7 +125,12 @@ def _tarballs_impl(ctx):
                 continue
             tgz = ctx.actions.declare_output("t/" + fname)
             args = cmd_args(fetch, "--url", p["url"], "--sri", p["sri"], "--out", tgz.as_output())
-            for h in allow:
+            hosts = list(allow)
+
+            # The host of a mirror is the machine's choice (buildrules.url_map), not the lockfile's: it is allowed for the mapped URL only.
+            if p["url"] != p["resolved"] and _host_of(p["url"]):
+                hosts.append(_host_of(p["url"]))
+            for h in hosts:
                 args.add("--allow-host", h)
             if ctx.attrs.allow_data:
                 args.add("--allow-data", "true")
@@ -201,6 +208,11 @@ def npm_modules_dyn(name, lock = "package-lock.json", allow_hosts = ["registry.n
             fail("buildrules.url_map: `{}` is not <from-prefix>=<to-prefix>".format(pair))
         pairs.append(pair)
     kwargs.setdefault("exec_compatible_with", LINUX_X86_64)
+
+    # The fetch actions reach a registry, so they run on the network-egress platform (platforms/BUCK). The data: test seam needs no network.
+    fetch_kwargs = dict(kwargs)
+    if not allow_data:
+        fetch_kwargs["exec_compatible_with"] = LINUX_X86_64 + ["buildrules//platforms:exec_net_egress"]
     _npm_tarballs(
         name = name + ".tarballs",
         lock = lock,
@@ -208,7 +220,7 @@ def npm_modules_dyn(name, lock = "package-lock.json", allow_hosts = ["registry.n
         allow_data = allow_data,
         url_map = pairs,
         visibility = visibility,
-        **kwargs
+        **fetch_kwargs
     )
     _npm_modules_dyn(
         name = name,

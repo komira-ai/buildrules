@@ -1,0 +1,16 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/node:npm_dyn.bzl", "npm_modules_dyn")
+load(":synth.bzl", "synthetic_lock")
+
+# PROTOTYPE (not for merge): analysis-time measurement. The fetch actions of these locks all fail at once (the integrity matches no
+# bytes), which is expected; what is measured is the dynamic_output that declares them.
+synthetic_lock(name = "lock_1500", n = 1500)
+
+npm_modules_dyn(
+    name = "modules_1500",
+    lock = ":lock_1500",
+    allow_data = True,
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

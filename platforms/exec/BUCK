@@ -17,6 +17,7 @@ buildrules_execution_platforms(
         "macos-aarch64": "//platforms:macos_aarch64",
     },
     isa_platforms = {ISA_LEVELS[l]["property"]: "//platforms:exec_" + ISA_LEVELS[l]["id"] for l in exec_levels()},
+    net_platform = "//platforms:exec_net_linux_x86_64",
     visibility = ["PUBLIC"],
 )
 
