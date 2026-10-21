@@ -50,34 +50,48 @@ const Lines = struct {
     n: usize = 0,
     diag: *Diag,
 
-    fn next(self: *Lines) Error![]const u8 {
+    fn next(self: *Lines) error{BadNpmBlock}![]const u8 {
         self.n += 1;
-        return self.it.next() orelse {
-            self.diag.add("NPM block: ends in the middle of a row (line {d})", .{self.n});
-            return error.BadNpmBlock;
-        };
+        return self.it.next() orelse self.bad("the block ends in the middle of a row");
     }
 
-    fn bad(self: *Lines, comptime what: []const u8) Error {
-        self.diag.add("NPM block line {d}: " ++ what, .{self.n});
+    fn bad(self: *Lines, what: []const u8) error{BadNpmBlock} {
+        self.diag.add("NPM block line {d}: {s}", .{ self.n, what });
         return error.BadNpmBlock;
+    }
+
+    /// Nothing follows the closing line but its newline.
+    fn end(self: *Lines) error{BadNpmBlock}!void {
+        if (!std.mem.eql(u8, try self.next(), "") or self.it.next() != null) return self.bad("text after the NPM block");
     }
 };
 
-/// The value of a line `<indent>"<name>": "<value>",`.
-fn strField(l: *Lines, line: []const u8, comptime name: []const u8) Error![]const u8 {
-    const pre = "        \"" ++ name ++ "\": \"";
-    if (!std.mem.startsWith(u8, line, pre) or !std.mem.endsWith(u8, line, "\",")) return l.bad("expected the field " ++ name);
-    const v = line[pre.len .. line.len - 2];
-    for (v) |c| if (c == '"' or c == '\\' or c < 0x20 or c > 0x7e) return l.bad("a value with a quote, a backslash or a control byte in " ++ name);
+/// The characters a value or a key of a row may be made of.
+fn plainText(s: []const u8) bool {
+    for (s) |c| if (c == '"' or c == '\\' or c < 0x20 or c > 0x7e) return false;
+    return true;
+}
+
+/// The value of a line `        "<name>": "<value>",`.
+fn strField(l: *Lines, line: []const u8, name: []const u8) error{BadNpmBlock}![]const u8 {
+    const head = "        \"";
+    const mid = "\": \"";
+    const ok = std.mem.startsWith(u8, line, head) and std.mem.startsWith(u8, line[head.len..], name) and
+        std.mem.startsWith(u8, line[head.len + name.len ..], mid) and std.mem.endsWith(u8, line, "\",") and line.len >= head.len + name.len + mid.len + 2;
+    if (!ok) return l.bad("a field is missing or out of order");
+    const v = line[head.len + name.len + mid.len .. line.len - 2];
+    if (!plainText(v)) return l.bad("a value with a quote, a backslash or a control byte");
     return v;
 }
 
-fn listField(a: std.mem.Allocator, l: *Lines, line: []const u8, comptime name: []const u8) Error!?[]const []const u8 {
-    const pre = "        \"" ++ name ++ "\": [";
-    if (!std.mem.startsWith(u8, line, pre)) return null;
-    if (!std.mem.endsWith(u8, line, "],")) return l.bad("a list that does not end in `],`");
-    const inner = line[pre.len .. line.len - 2];
+/// The list of a line `        "<name>": ["a", "b"],`, or null when the line is not that field.
+fn listField(a: std.mem.Allocator, l: *Lines, line: []const u8, name: []const u8) Error!?[]const []const u8 {
+    const head = "        \"";
+    const mid = "\": [";
+    const matches = std.mem.startsWith(u8, line, head) and std.mem.startsWith(u8, line[head.len..], name) and std.mem.startsWith(u8, line[head.len + name.len ..], mid);
+    if (!matches) return null;
+    if (!std.mem.endsWith(u8, line, "],") or line.len < head.len + name.len + mid.len + 2) return l.bad("a list that does not end in `],`");
+    const inner = line[head.len + name.len + mid.len .. line.len - 2];
     if (inner.len == 0) return l.bad("an empty list");
     var out = std.ArrayList([]const u8).empty;
     var it = std.mem.splitSequence(u8, inner, ", ");
@@ -90,16 +104,22 @@ fn listField(a: std.mem.Allocator, l: *Lines, line: []const u8, comptime name: [
     return out.items;
 }
 
-fn parseSize(l: *Lines, line: []const u8) Error!u64 {
+fn parseSize(l: *Lines, line: []const u8) error{BadNpmBlock}!u64 {
     const pre = "        \"size\": ";
-    if (!std.mem.startsWith(u8, line, pre) or !std.mem.endsWith(u8, line, ",")) return l.bad("expected the field size");
+    if (!std.mem.startsWith(u8, line, pre) or !std.mem.endsWith(u8, line, ",") or line.len < pre.len + 1) return l.bad("the size field is missing or out of order");
     const digits = line[pre.len .. line.len - 1];
     if (digits.len == 0 or digits.len > 12 or (digits.len > 1 and digits[0] == '0')) return l.bad("a size that is not a plain decimal");
-    for (digits) |c| if (c < '0' or c > '9') return l.bad("a size that is not a plain decimal");
-    const n = std.fmt.parseInt(u64, digits, 10) catch return l.bad("a size that is not a number");
+    var n: u64 = 0;
+    for (digits) |c| {
+        if (c < '0' or c > '9') return l.bad("a size that is not a plain decimal");
+        n = n * 10 + (c - '0');
+    }
     if (n > max_size) return l.bad("a size over the cap");
     return n;
 }
+
+const field_names = [_][]const u8{ "name", "version", "url", "sri512", "sha256" };
+const list_names = [_][]const u8{ "os", "cpu", "libc" };
 
 /// The rows of the NPM block `npm` (from `NPM = {` to the end of the file). Problems go to `diag`; any problem is
 /// `error.BadNpmBlock`.
@@ -107,48 +127,39 @@ pub fn parseRows(a: std.mem.Allocator, npm: []const u8, kind: sets_mod.Kind, dia
     var l = Lines{ .it = std.mem.splitScalar(u8, npm, '\n'), .diag = diag };
     const first = try l.next();
     if (std.mem.eql(u8, first, "NPM = {}")) {
-        if (!std.mem.eql(u8, try l.next(), "") or l.it.next() != null) return l.bad("text after the NPM block");
+        try l.end();
         return &.{};
     }
-    if (!std.mem.eql(u8, first, "NPM = {")) return l.bad("the block does not open with `NPM = {{`");
+    if (!std.mem.eql(u8, first, "NPM = {")) return l.bad("the block does not open with `NPM = {`");
     var rows = std.ArrayList(Row).empty;
     while (true) {
         const head = try l.next();
         if (std.mem.eql(u8, head, "}")) {
-            if (!std.mem.eql(u8, try l.next(), "") or l.it.next() != null) return l.bad("text after the NPM block");
+            try l.end();
             break;
         }
         if (rows.items.len >= max_rows) return l.bad("more rows than the cap");
-        if (head.len < 10) return l.bad("a line too short to be a row header");
-        if (!std.mem.startsWith(u8, head, "    \"") or !std.mem.endsWith(u8, head, "\": {")) return l.bad("expected a row `    \"name@version\": {{`");
+        if (head.len < 10 or !std.mem.startsWith(u8, head, "    \"") or !std.mem.endsWith(u8, head, "\": {")) return l.bad("a row does not open with a header line");
         const key = head[5 .. head.len - 4];
-        for (key) |c| if (c == '"' or c == '\\' or c < 0x20 or c > 0x7e) return l.bad("a key with a quote, a backslash or a control byte");
-        const name = try strField(&l, try l.next(), "name");
-        const version = try strField(&l, try l.next(), "version");
-        const url = try strField(&l, try l.next(), "url");
-        const sri = try strField(&l, try l.next(), "sri512");
-        const sha = try strField(&l, try l.next(), "sha256");
+        if (!plainText(key)) return l.bad("a key with a quote, a backslash or a control byte");
+        var values: [field_names.len][]const u8 = undefined;
+        for (field_names, 0..) |name, i| values[i] = try strField(&l, try l.next(), name);
         const size = try parseSize(&l, try l.next());
-        var row = Row{ .key = key, .name = name, .version = version, .url = url, .sri512 = sri, .sha256 = sha, .size = size };
+        var row = Row{ .key = key, .name = values[0], .version = values[1], .url = values[2], .sri512 = values[3], .sha256 = values[4], .size = size };
         var line = try l.next();
         if (kind == .buildrules_lock) {
-            if (try listField(a, &l, line, "os")) |v| {
-                row.os = v;
-                line = try l.next();
-            }
-            if (try listField(a, &l, line, "cpu")) |v| {
-                row.cpu = v;
-                line = try l.next();
-            }
-            if (try listField(a, &l, line, "libc")) |v| {
-                row.libc = v;
-                line = try l.next();
+            const lists = [_]*?[]const []const u8{ &row.os, &row.cpu, &row.libc };
+            for (list_names, lists) |name, slot| {
+                if (try listField(a, &l, line, name)) |v| {
+                    slot.* = v;
+                    line = try l.next();
+                }
             }
         }
-        if (!std.mem.eql(u8, line, "    },")) return l.bad("expected the end of the row `    }},` (an extra or reordered field?)");
-        if (!lock_mod.isNpmName(name) or !lock_mod.isStrictSemver(version)) return l.bad("a name or version outside the registry's sets");
-        if (!valid.isUrl(url) or !valid.isSri512(sri) or !valid.isSha256(sha)) return l.bad("a url, sri512 or sha256 outside its set");
-        const want_key = try std.fmt.allocPrint(a, "{s}@{s}", .{ name, version });
+        if (!std.mem.eql(u8, line, "    },")) return l.bad("a row does not end where its fields end (an extra or reordered field?)");
+        if (!lock_mod.isNpmName(row.name) or !lock_mod.isStrictSemver(row.version)) return l.bad("a name or version outside the registry's sets");
+        if (!valid.isUrl(row.url) or !valid.isSri512(row.sri512) or !valid.isSha256(row.sha256)) return l.bad("a url, sri512 or sha256 outside its set");
+        const want_key = try std.fmt.allocPrint(a, "{s}@{s}", .{ row.name, row.version });
         if (!std.mem.eql(u8, key, want_key)) return l.bad("a key that is not name@version");
         if (rows.items.len > 0 and !std.mem.lessThan(u8, rows.items[rows.items.len - 1].key, key)) return l.bad("rows not sorted by key, or a key twice");
         try rows.append(a, row);
