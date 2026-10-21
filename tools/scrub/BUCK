@@ -101,6 +101,7 @@ scrub_test(
     "//tools/deploy:scrub_files",
     "//tools/harness:scrub_files",
     "//tools/held:scrub_files",
+    "//tools/bootstrap:scrub_files",
     "//tools/install:scrub_files",
     "//tools/release:scrub_files",
     "//tools/scrub:scrub_files",

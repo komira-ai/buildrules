@@ -54,6 +54,23 @@ node, conda-forge and the Rust distribution servers have mirrors only as the pre
 found or checked for `static.rust-lang.org` (CloudFront) or `registry.npmjs.org`. Moving one of them to a release asset of its own is the same three steps as busybox: a held
 upload script, the pin's URL, and the allow-list line removed.
 
+## unpack (the program that unpacks the rest)
+
+Every action that unpacks an archive needs a program that can do it before anything else has been unpacked, and Buck2 has none of its own (`download_file` does not extract; the prelude's
+unarchive shells out to the host's `tar`). `tools/bootstrap` is that program: tar, tar.gz, tar.xz and zip, `--strip-components`, the archive's sha256 and size checked before anything is
+read, symbolic links and permission bits kept, and every entry that would leave the destination refused (`tools/bootstrap/README.md` lists the rules and the test that holds each).
+It is built by the pinned zig 0.15.2 for the three hosts and published as the assets `unpack-linux-x86_64`, `unpack-linux-aarch64` and `unpack-macos-aarch64` of a release of this
+repository whose tag is `UNPACK_TAG` in `rules/pins/bootstrap.bzl`; the rows there pin each asset by sha256 and size, as every other download here is.
+
+The rows are the bytes the source makes. The build is reproducible, so `//tools/bootstrap:pin_check_unit` (in `//ci:all`) builds the program for each host from the tree and requires
+the sha256 and size of the row to be its: a source change without new rows is red, and the red text names the values to write. A release asset is never replaced; the new programs go under
+the next tag (`unpack-2`, ...) and `UNPACK_TAG` and the rows change together. `tools/held/publish_unpack.zig` builds the three, checks them against the rows, and uploads them: a dry run
+unless `--apply --work DIR`, which only the repository owner runs. Until the assets exist the rows cannot be fetched on a machine whose cache lacks them, so no default target uses them
+(`//rules/pins:bootstrap_unpack_<host>`), and no rule runs `unpack` yet: moving the zig, Rust and Node unpacking onto it is the next work.
+
+macOS cannot be built or run on the farm. The `unpack_macos` job of `ci.yml` (GitHub's `macos-14` runner) builds the program with the pinned zig for macOS, runs its unit tests natively,
+unpacks the real darwin zig 0.12.0 tarball of `hosts.bzl` into a tree equal to the system tar's, and runs the zig it made; `ci/unpack_macos_check.zig` holds that job to the table.
+
 ## Other hosts (linux-aarch64, macos-aarch64)
 
 `rules/pins/hosts.bzl` holds the downloads the two other hosts need from the same upstream releases: zig 0.12.0 and 0.15.2, node 24.21.0 and rustc 1.95.0 and 1.85.0 with

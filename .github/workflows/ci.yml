@@ -136,3 +136,55 @@ jobs:
       - name: Stop buck2
         if: always()
         run: ./buck2 kill
+
+  # The unpack program on macOS (tools/bootstrap, docs/pins.md "unpack"). The farm cannot run a macOS binary, so this job is the proof that the macOS build is a working program:
+  # on GitHub's macos-14 runner (aarch64) the pinned zig 0.15.2 for macOS builds it from the tree, the unit tests run natively, and it unpacks the REAL darwin zig 0.12.0
+  # tarball (the pinned download of rules/pins/hosts.bzl: its sha256 and size are checked by unpack itself) into a tree equal to the one the system's tar makes, whose
+  # zig then runs and says its version. ci/unpack_macos_check.zig holds the urls and digests below to the table in hosts.bzl. No rule of buildrules runs on macOS yet.
+  unpack_macos:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The machine is aarch64 macOS
+        run: test "$(uname -s)-$(uname -m)" = Darwin-arm64
+
+      - name: Fetch the pinned zig 0.15.2 for macOS
+        run: |
+          curl --fail --silent --show-error --location --retry 3 --output zig-next.tar.xz https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz
+          echo "3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b  zig-next.tar.xz" | shasum -a 256 -c -
+          mkdir zig-next
+          tar -xJf zig-next.tar.xz -C zig-next --strip-components 1
+          ./zig-next/zig version
+
+      - name: Build unpack for macOS
+        run: ./zig-next/zig build-exe -OReleaseSafe -fstrip tools/bootstrap/src/unpack.zig -femit-bin=unpack
+
+      - name: The unit tests, natively
+        run: |
+          for name in paths inflate tar extract zip xz main pins oom; do
+            ./zig-next/zig test "tools/bootstrap/src/${name}_test.zig"
+          done
+
+      - name: Fetch the real darwin zig 0.12.0 tarball
+        run: curl --fail --silent --show-error --location --retry 3 --output zig-darwin.tar.xz https://ziglang.org/download/0.12.0/zig-macos-aarch64-0.12.0.tar.xz
+
+      - name: Unpack it, checking its sha256 and size
+        run: ./unpack --strip-components 1 --sha256 294e224c14fd0822cfb15a35cf39aa14bd9967867999bf8bdfe3db7ddec2a27f --size 43447724 zig-darwin.tar.xz zig-from-unpack
+
+      - name: The tree equals the system tar's
+        run: |
+          mkdir zig-from-tar
+          tar -xJf zig-darwin.tar.xz -C zig-from-tar --strip-components 1
+          diff -r zig-from-tar zig-from-unpack
+
+      - name: The unpacked zig runs and is 0.12.0
+        run: test "$(./zig-from-unpack/zig version)" = 0.12.0
+
+      - name: A cut-off tarball is refused
+        run: |
+          head -c 1000000 zig-darwin.tar.xz > zig-cut.tar.xz
+          if ./unpack --check zig-cut.tar.xz; then echo "a cut-off tarball was accepted"; exit 1; fi

@@ -231,7 +231,7 @@ zig_test(
     },
 )
 
-group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":pin_mirrors_check", "//ci/negative:negative_check"])
+group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":pin_mirrors_check", ":unpack_macos_check", ":unpack_pin_check", "//ci/negative:negative_check"])
 
 # The coverage of every package with Zig unit tests (rules/coverage/README.md, "Zig coverage"), each held to its floor (`coverage_floor.txt` beside its
 # BUCK file) both ways: a fall fails, and so does a rise the floor has not been raised to. Building this builds the tests again under kcov and with block
@@ -247,6 +247,7 @@ group(name = "floors", deps = [
     "//rules/node:coverage_floor",
     "//rules/rust:coverage_floor",
     "//rules/rust:coverage_crate_patch_floor",
+    "//tools/bootstrap:coverage_floor",
     "//tools/channels:coverage_floor",
     "//tools/deploy:coverage_floor",
     "//tools/release:coverage_floor",
@@ -280,6 +281,16 @@ group(name = "all", deps = [
     "//infra/site:test",
     "//infra/site:typecheck",
     "//tools/scrub:scrub",
+    "//tools/bootstrap:unpack",
+    "//tools/bootstrap:unpack_linux_x86_64",
+    "//tools/bootstrap:unpack_linux_aarch64",
+    "//tools/bootstrap:unpack_macos_aarch64",
+    "//tools/bootstrap:linux_x86_64_is_x86_64_linux_musl",
+    "//tools/bootstrap:linux_aarch64_is_aarch64_linux_musl",
+    "//tools/bootstrap:macos_aarch64_is_aarch64_macos",
+    "//tools/bootstrap:real_unit",
+    "//tools/bootstrap:xz_speed_unit",
+    "//tools/held:publish_unpack",
     "//tools/release:release",
     "//tools/stage:stage",
     "//tools/channels:channels",
@@ -341,5 +352,21 @@ zig_coverage(
     test_targets = [":workflow_check", ":release_check", ":stages_check"],
     expect = ["ci/workflow_check.zig", "ci/release_check.zig", "ci/stages_check.zig"],
 )
+
+# The `unpack_macos` job of ci.yml (tools/bootstrap): GitHub's macos-14 runner builds the program, runs its tests and unpacks the real darwin zig tarball; ci/unpack_macos_check.zig
+# holds the job's urls and digests to rules/pins/hosts.bzl and every step of it to its text, and plants a defect for each.
+zig_test(
+    name = "unpack_macos_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "unpack_macos_check.zig",
+    data = {
+        ".github/workflows/ci.yml": "//:ci.yml",
+        "rules/pins/hosts.bzl": "//rules/pins:hosts.bzl",
+    },
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+# The pins of the unpack program are the programs this tree builds (tools/bootstrap:pin_check_unit): a source change without new rows, and a new release tag, is red.
+group(name = "unpack_pin_check", deps = ["//tools/bootstrap:pin_check_unit"])
 
 scrub_files()
