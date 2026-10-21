@@ -508,14 +508,27 @@ test "table: a statement whose middle reads as a row key, over a complete row bo
     try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", "    (left-pad@1.3.0)xyz\n", body, "}\n" }), .pins_lock);
 }
 
-test "npm names: an optional scope and one segment, nothing npm never makes" {
+test "npm names: an optional scope and one segment are accepted" {
     const good = [_][]const u8{ "left-pad", "@scope/pkg", "a", "A_b.c", "a.b", "x~y", "-x", "@s/n", "a-b_c.d-1" };
     for (good) |n| try t.expect(lock.isNpmName(n));
-    const bad = [_][]const u8{ "", "a/./b", "a/b/c", "a/b", "@", "@s", "@s/", "@/n", "@s/n/m", "a@b", "a+b", "_x", ".x", "@_s/n", "@s/.n", "a/-/b", "a b", "a\"b", "a..b/c", "x" ** 215 };
-    for (bad) |n| {
-        if (lock.isNpmName(n)) std.debug.print("accepted name {s}\n", .{n});
-        try t.expect(!lock.isNpmName(n));
-    }
+}
+
+test "npm names: a name may not start with . or _ (nor the scope, nor the name after it)" {
+    for ([_][]const u8{ "_x", ".x", "@_s/n", "@s/.n", "@s/_n" }) |n| try t.expect(!lock.isNpmName(n));
+}
+
+test "npm names: the scope is a segment of its own, and a bare @ or @scope is no name" {
+    for ([_][]const u8{ "@", "@s", "@s/", "@/n", "@s s/n", "@s\"/n" }) |n| try t.expect(!lock.isNpmName(n));
+}
+
+test "npm names: at most 214 bytes, and not empty" {
+    try t.expect(lock.isNpmName("x" ** 214));
+    try t.expect(!lock.isNpmName("x" ** 215));
+    try t.expect(!lock.isNpmName(""));
+}
+
+test "npm names: no further slash, no plus, no at-sign in the middle, no quote or space" {
+    for ([_][]const u8{ "a/./b", "a/b/c", "a/b", "@s/n/m", "a@b", "a+b", "a/-/b", "a b", "a\"b", "a..b/c" }) |n| try t.expect(!lock.isNpmName(n));
 }
 
 test "lock: a path whose package name is not an npm name is refused" {
