@@ -5,6 +5,7 @@
 //!
 //!   - every toolchain of the rules is `exec_compatible_with` linux x86_64 (rules/core/platform.bzl), and the local-mode execution platform of these
 //!     hosts is `platforms:linux_aarch64` / `platforms:macos_aarch64`, so a build finds no execution platform for any action;
+//!   - the `platforms/BUCK` that `init` writes passes no platform for these hosts, so Buck2 does not load it there in local mode (rules/platforms.bzl);
 //!   - and nothing could unpack the pinned downloads there anyway: every unpack action runs under the pinned busybox, and there is none for these
 //!     hosts (docs/pins.md, "Other hosts").
 //!
@@ -137,7 +138,12 @@ pub fn run(a: std.mem.Allocator, io: Io, o: Options) !Result {
         io_mod.say("native {s}: the same files in two directories, sha256 {s}\n", .{ leg.lang, first_digest });
 
         // Buck2 reads the candidate as the external cell and the hello-world BUCK file against it: the targets it names exist.
-        const tg = try io.run(a, leg.work, &.{ leg.buck2, "targets", "-c", "buildrules_re.mode=local", "//..." });
+        // Only the targets the leg names, not `//...`: the `platforms/BUCK` that `init` writes passes no platform for these hosts, so Buck2 refuses to load it in local mode
+        // there (rules/platforms.bzl: "buildrules knows linux-x86_64 and no other host"), which is another reason nothing builds.
+        var targets_argv = std.ArrayList([]const u8).empty;
+        try targets_argv.appendSlice(a, &.{ leg.buck2, "targets", "-c", "buildrules_re.mode=local" });
+        try targets_argv.appendSlice(a, pre.targets);
+        const tg = try io.run(a, leg.work, targets_argv.items);
         _ = try io.run(a, leg.work, &.{ leg.buck2, "kill" });
         if (tg.code != 0) {
             std.debug.print("native {s}: `{s} targets //...` exited {d}\n{s}\n{s}\n", .{ leg.lang, leg.buck2, tg.code, io_mod.tail(tg.stderr, 40), io_mod.tail(tg.stdout, 20) });
@@ -257,7 +263,7 @@ test "a native leg: the version, the same files in two directories, and the targ
     // BUCK.beta and main.c, copied; `init` ran once in each of two directories, and nothing built
     try t.expectEqual(@as(usize, 2), r.files);
     try t.expectEqual(@as(usize, 2), fake.count("/bin/buildrules init . --git https://example.invalid/r --commit " ++ "c" ** 40));
-    try t.expectEqual(@as(usize, 1), fake.count("/bin/buck2 targets -c buildrules_re.mode=local //..."));
+    try t.expectEqual(@as(usize, 1), fake.count("/bin/buck2 targets -c buildrules_re.mode=local //:hello_unit //:hello"));
     try t.expectEqual(@as(usize, 0), fake.count("buck2 build"));
     try t.expectEqual(@as(usize, 1), fake.count("/bin/buck2 kill"));
     // the second directory is another path

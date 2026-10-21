@@ -116,10 +116,11 @@ and the buck2 that `tools/buck2` pins for each host (url and sha256, checked bef
 
 1. `buildrules --version` prints `buildrules <the version the x86_64 command line prints>` (`tools` reports it as an output); the machine must be the host the job names.
 2. The repository is made twice, in two directories, by the steps of `STEPS` up to the first `build`, and the two have the same bytes (a hash of every file).
-3. `buck2 targets` in the first one loads the candidate commit as the external cell (a git fetch of it) and the `BUCK` file of the hello-world repository, and lists the targets the STEPS file builds.
+3. `buck2 targets` of the targets the STEPS file builds, in the first one, loads the candidate commit as the external cell (a git fetch of it) and the `BUCK` file of the hello-world repository, and lists them.
 
 **What they do not do is build, and why.** Every toolchain of the rules is `exec_compatible_with` linux x86_64 (`rules/core/platform.bzl`), and the execution platform that local mode registers on these hosts is
-`platforms:linux_aarch64` or `platforms:macos_aarch64` (`rules/platforms.bzl`), so a build has no execution platform for any action. Behind that, every unpack action runs under the pinned busybox,
+`platforms:linux_aarch64` or `platforms:macos_aarch64` (`rules/platforms.bzl`), so a build has no execution platform for any action. The `platforms/BUCK` that `buildrules init` writes passes no platform for these hosts, so Buck2 refuses to load it there in local mode
+(`rules/platforms.bzl`: "buildrules knows linux-x86_64 and no other host"); `stage native` therefore names the leg's targets and does not load `//...`. Behind that, every unpack action runs under the pinned busybox,
 and none exists for these hosts (`docs/pins.md`, "Other hosts"): the zig, node and rust downloads for them are pinned and verified (`//rules/pins:host_downloads`, the `host_arm` job of `ci.yml`) and nothing unpacks them.
 So on these hosts: rust (`cargo new` builds the pinned cargo), cxx and zig builds, node, mixed and Mojo (Linux x86_64 only, by the Mojo toolchain) do not build, and the legs say "no build yet" in their names. A leg turns into
 a build leg when the busybox for the host exists and the toolchains list the host in `exec_compatible_with`. `release tested --targets` stays `linux-x86_64`: a tarball is attested as walked by a user beta only when its binary
