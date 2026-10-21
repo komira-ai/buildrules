@@ -56,7 +56,7 @@ describe('CLI page against the command line', () => {
     const mopmFlags = ['--locked', '--unit-graph'];
     const flags = new Set(sources.flatMap((s) => [...s.matchAll(/--[a-z][a-z0-9-]*/g)].map((m) => m[0])).filter((f) => !mopmFlags.includes(f)));
     expect([...flags].sort()).toEqual(
-      ['--accept-changed', '--buck2', '--cargo', '--cell', '--check', '--commit', '--dir', '--event', '--git', '--lib', '--mopm', '--out', '--path', '--pins', '--rust-version', '--rustc', '--seed', '--set', '--vcs'].sort(),
+      ['--accept-changed', '--app-login', '--author-email', '--author-name', '--buck2', '--cargo', '--cell', '--check', '--commit', '--dir', '--event', '--git', '--github-output', '--lib', '--mopm', '--out', '--path', '--pins', '--plan', '--rust-version', '--rustc', '--seed', '--set', '--vcs'].sort(),
     );
     for (const f of flags) expect({ flag: f, documented: cliText.includes(f) }).toEqual({ flag: f, documented: true });
   });
