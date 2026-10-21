@@ -297,7 +297,12 @@ pub fn checkCaller(a: std.mem.Allocator, raw: []const u8, dotslash: []const u8, 
         "./buck2 build --console simple -c buildrules_re.mode=local --show-full-output //site:test //site:dist > ",
         "name: site-dist",
         "if-no-files-found: error",
+        "cp -rL --no-preserve=mode \"$dist\" site-out/tree",
+        "test -z \"$(find site-out -type l)\"",
+        "test -f site-out/tree/index.html",
     });
+    // Buck2 prints a relative symlink for a directory output; copied as a link it dangles from site-out/ and upload-artifact leaves it out.
+    if (has(build, "cp -r ") or has(build, "cp -R ") or has(build, "cp -a ") or has(build, "cp -P")) try add(a, &f, "{s}: a `cp` in the build job does not follow symlinks (Buck2's directory output is a relative symlink: copied as a link it dangles and upload-artifact omits it; use `cp -rL`)", .{file});
     if (count(build, "actions/checkout@") != count(build, "persist-credentials: false")) try add(a, &f, "{s}: a checkout keeps its credentials (`persist-credentials: false` is missing)", .{file});
     const builds = try wc.localMode(a, &f, wf);
     if (builds == 0) try add(a, &f, "{s}: no `./buck2 build` found (the site is not built, or this parser is blind)", .{file});
@@ -638,6 +643,11 @@ test "site.yml: the build" {
     try expectCaller(a, r, try mutate(a, r.caller, "//site:test //site:dist >", "//site:dist >"), "//site:test");
     try expectCaller(a, r, try mutate(a, r.caller, "echo \"1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst\"", "echo \"0000  buck2.zst\""), "sha256");
     try expectCaller(a, r, try mutate(a, r.caller, "if-no-files-found: error", "if-no-files-found: ignore"), "if-no-files-found: error");
+    // The defect of site.yml run 39617458648: the plain copy of Buck2's relative-symlink output dangles and upload-artifact finds no file.
+    try expectCaller(a, r, try mutate(a, r.caller, "cp -rL --no-preserve=mode", "cp -r --no-preserve=mode"), "does not follow symlinks");
+    try expectCaller(a, r, try mutate(a, r.caller, "cp -rL --no-preserve=mode", "cp -a --no-preserve=mode"), "does not follow symlinks");
+    try expectCaller(a, r, try mutate(a, r.caller, "          test -z \"$(find site-out -type l)\"\n", ""), "find site-out -type l");
+    try expectCaller(a, r, try mutate(a, r.caller, "          test -f site-out/tree/index.html\n", ""), "site-out/tree/index.html");
     try expectCaller(a, r, try mutate(a, r.caller, "  group: site\n  cancel-in-progress: false", "  group: site\n  cancel-in-progress: true"), "concurrency");
     try expectCaller(a, r, try mutate(a, r.caller, "      - name: Stop buck2\n        if: always()\n        run: ./buck2 kill", "      - name: Stop buck2\n        if: always()\n        continue-on-error: true\n        run: ./buck2 kill"), "continue-on-error");
     try expectCaller(a, r, try mutate(a, r.caller, "run: ./buck2 kill", "run: echo ${{ github.event.workflow_run.head_branch }}"), "expands `github.event.`");
