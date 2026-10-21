@@ -7,12 +7,17 @@ mirror). The sha256 and size of every download are still checked, so a mirror ca
 are fetched from, and nothing in an action key.
 """
 
-def mapped_url(url):
-    m = read_config("buildrules", "url_map", "")
+def map_url(m, url, refuse = fail):
+    """`url` through the map `m` (the value of `buildrules.url_map`); a pair that is not `<from-prefix>=<to-prefix>` is refused (`refuse` is `fail`
+    in a rule; a test passes a recorder, rules/rust/refusal.bzl) and skipped."""
     for pair in m.split():
         if "=" not in pair:
-            fail("buildrules.url_map: `{}` is not <from-prefix>=<to-prefix>".format(pair))
+            refuse("buildrules.url_map: `{}` is not <from-prefix>=<to-prefix>".format(pair))
+            continue
         src, dst = pair.split("=", 1)
         if url.startswith(src):
             return dst + url[len(src):]
     return url
+
+def mapped_url(url):
+    return map_url(read_config("buildrules", "url_map", ""), url)
