@@ -22,11 +22,11 @@ xz variants (not used): rustc 80351960 / 8426a3d1...dfc15; rust-std 29573972 / 0
 `rustc --version` must start with `rustc 1.95.0 (` and `cargo --version` with `cargo 1.95.0 (`; an action refuses the toolchain otherwise.
 Host floor: a Linux x86_64 kernel, glibc >= 2.34, and `libgcc_s.so.1` (rustc's driver needs it; it is not pinned yet).
 
-## mopm 0.0.1
+## mopm 0.0.15
 
-mopm 0.0.1 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.1, pinned in `rules/mopm/pins.bzl`. Its linux-x86_64 asset
-`mopm-0.0.1-linux-x86_64.tar.gz` is 980653 bytes with sha256 `80ac2ed492f0a9ab809d763fc9cf39cbb97d507dd69bd7a61be248a85d5b23dc`, the digest in the release's
-`SHA256SUMS` (downloaded and compared, 2026-10-20); it unpacks into `mopm-0.0.1-linux-x86_64/` holding `mopm` and `LICENSE`.
+mopm 0.0.15 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.15, pinned in `rules/mopm/pins.bzl`. Its linux-x86_64 asset
+`mopm-0.0.15-linux-x86_64.tar.gz` is 980650 bytes with sha256 `5f021430b118cc217124ebb2dd43146614204a1835730b2597d4bbdff1d62b50`, the digest in the release's
+`SHA256SUMS` (downloaded and compared, 2026-10-21; the sigstore bundles of the tarball and of `SHA256SUMS` carry the same two digests); it unpacks into `mopm-0.0.15-linux-x86_64/` holding `mopm` and `LICENSE`.
 
 ## Mirrors
 
