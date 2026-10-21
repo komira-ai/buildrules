@@ -6,6 +6,12 @@
 //! usage: zig_launch test --busybox <busybox> --zig <zig_dir> --out <file>
 //!            --stamp <text> [--data <manifest>] [--tools <manifest>]
 //!            -- <zig arguments...>
+//!        zig_launch run  --busybox <busybox> --exec <program> --out <file>
+//!            --stamp <text> [--data <manifest>] [--tools <manifest>]
+//!            -- <program arguments...>
+//!
+//! `run` is `test` with a program of the action's own in place of zig: the same scratch directory, the same environment (a coverage run
+//! builds the test and runs it under kcov, rules/coverage/tools/zig_cover.zig), the same data and tools, the same stamp.
 //!
 //! It does what the busybox script of the rule did, without a shell:
 //!
@@ -24,7 +30,7 @@
 //!      entry is then writable by its owner; executable bits are kept. Each
 //!      line of the `--tools` manifest is `<NAME>\t<path>`: `NAME` is set to
 //!      the path made absolute.
-//!   5. `<zig_dir>/zig <zig arguments>`, with the action's stdin, stdout and
+//!   5. `<zig_dir>/zig <zig arguments>` (`run`: `<program> <arguments>`), with the action's stdin, stdout and
 //!      stderr. When it fails the launcher exits with its status (128 + N
 //!      for signal N) and writes nothing.
 //!   6. On success: the `--stamp` text is written to `--out` and the scratch
@@ -36,7 +42,10 @@ const std = @import("std");
 
 pub const Plan = struct {
     busybox: []const u8,
-    zig_dir: []const u8,
+    /// The directory holding `zig` (`test`); null for `run`.
+    zig_dir: ?[]const u8,
+    /// The program `run` runs; null for `test`.
+    exec: ?[]const u8,
     out: []const u8,
     stamp: []const u8,
     data: ?[]const u8,
@@ -49,19 +58,21 @@ pub const Plan = struct {
     }
 };
 
-const usage = "usage: zig_launch test --busybox <busybox> --zig <zig_dir> --out <file> --stamp <text> [--data <manifest>] [--tools <manifest>] -- <zig arguments...>";
+const usage = "usage: zig_launch test --busybox <busybox> --zig <zig_dir> --out <file> --stamp <text> [--data <manifest>] [--tools <manifest>] -- <zig arguments...>\n       zig_launch run --busybox <busybox> --exec <program> --out <file> --stamp <text> [--data <manifest>] [--tools <manifest>] -- <program arguments...>";
 
 pub const ParseError = error{Usage};
 
 /// The plan an argument vector (without the program name) states. On
 /// `error.Usage`, `diag` says what is wrong.
 pub fn parse(args: []const []const u8, diag: *[]const u8) ParseError!Plan {
-    if (args.len < 1 or !std.mem.eql(u8, args[0], "test")) {
-        diag.* = "the subcommand is `test`";
+    if (args.len < 1 or !(std.mem.eql(u8, args[0], "test") or std.mem.eql(u8, args[0], "run"))) {
+        diag.* = "the subcommand is `test` or `run`";
         return error.Usage;
     }
+    const is_run = std.mem.eql(u8, args[0], "run");
     var busybox: ?[]const u8 = null;
     var zig_dir: ?[]const u8 = null;
+    var exec: ?[]const u8 = null;
     var out: ?[]const u8 = null;
     var stamp: ?[]const u8 = null;
     var data: ?[]const u8 = null;
@@ -76,8 +87,10 @@ pub fn parse(args: []const []const u8, diag: *[]const u8) ParseError!Plan {
         }
         const slot: *?[]const u8 = if (std.mem.eql(u8, arg, "--busybox"))
             &busybox
-        else if (std.mem.eql(u8, arg, "--zig"))
+        else if (!is_run and std.mem.eql(u8, arg, "--zig"))
             &zig_dir
+        else if (is_run and std.mem.eql(u8, arg, "--exec"))
+            &exec
         else if (std.mem.eql(u8, arg, "--out"))
             &out
         else if (std.mem.eql(u8, arg, "--stamp"))
@@ -101,19 +114,24 @@ pub fn parse(args: []const []const u8, diag: *[]const u8) ParseError!Plan {
         }
         slot.* = args[i];
     }
-    if (busybox == null or zig_dir == null or out == null or stamp == null) {
+    if (is_run) {
+        if (busybox == null or exec == null or out == null or stamp == null) {
+            diag.* = "--busybox, --exec, --out and --stamp are required";
+            return error.Usage;
+        }
+    } else if (busybox == null or zig_dir == null or out == null or stamp == null) {
         diag.* = "--busybox, --zig, --out and --stamp are required";
         return error.Usage;
     }
     const rest = zig_args orelse {
-        diag.* = "the zig arguments follow `--`";
+        diag.* = if (is_run) "the program's arguments follow `--`" else "the zig arguments follow `--`";
         return error.Usage;
     };
-    if (rest.len == 0) {
+    if (rest.len == 0 and !is_run) {
         diag.* = "no zig arguments after `--`";
         return error.Usage;
     }
-    return .{ .busybox = busybox.?, .zig_dir = zig_dir.?, .out = out.?, .stamp = stamp.?, .data = data, .tools = tools, .zig_args = rest };
+    return .{ .busybox = busybox.?, .zig_dir = zig_dir, .exec = exec, .out = out.?, .stamp = stamp.?, .data = data, .tools = tools, .zig_args = rest };
 }
 
 /// The scratch directory of the action: where buck2 says (`buck_scratch`, its
@@ -262,7 +280,8 @@ pub fn main() !void {
         }
     }.of;
     const busybox = try abs(a, cwd, plan.busybox);
-    const zig_exe = try std.fs.path.join(a, &.{ plan.zig_dir, "zig" });
+    // `test` runs zig, `run` the program of the action.
+    const zig_exe = if (plan.exec) |e| try abs(a, cwd, e) else try std.fs.path.join(a, &.{ plan.zig_dir.?, "zig" });
 
     var env = try std.process.getEnvMap(a);
     const t = try scratchRoot(a, cwd, env.get("BUCK_SCRATCH_PATH"));

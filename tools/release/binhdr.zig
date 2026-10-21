@@ -1,10 +1,10 @@
 //! What a command-line binary of the release must be, read from its file header: an ELF of the machine the target names (static, with no
 //! interpreter), or a 64-bit Mach-O executable of the cpu the target names. Used by `release package` (it refuses a binary labelled for a
-//! target it was not built for) and by cli/header_test.zig (it checks the four built binaries). The module is `binhdr`.
+//! target it was not built for) and by cli/header_test.zig (it checks the three built binaries). The module is `binhdr`.
 const std = @import("std");
 
 /// The release targets, as the asset names spell them (`buildrules-cli-<V>-<target>.tar.gz`).
-pub const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64" };
+pub const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" };
 
 const Want = struct { elf_machine: u16 = 0, macho_cputype: u32 = 0 };
 
@@ -12,7 +12,6 @@ fn want(target: []const u8) ?Want {
     if (std.mem.eql(u8, target, "linux-x86_64")) return .{ .elf_machine = 62 }; // EM_X86_64
     if (std.mem.eql(u8, target, "linux-aarch64")) return .{ .elf_machine = 183 }; // EM_AARCH64
     if (std.mem.eql(u8, target, "macos-arm64")) return .{ .macho_cputype = 0x0100000c }; // CPU_TYPE_ARM64
-    if (std.mem.eql(u8, target, "macos-x86_64")) return .{ .macho_cputype = 0x01000007 }; // CPU_TYPE_X86_64
     return null;
 }
 
@@ -60,6 +59,22 @@ pub fn problem(bytes: []const u8, target: []const u8) ?[]const u8 {
     return "neither an ELF nor a 64-bit little-endian Mach-O file";
 }
 
+/// Whether `bin` holds the version `v` as a string of its own, exactly: the text with a NUL right after it (the terminator of the string literal that
+/// `--version` prints after `buildrules `) and a NUL right before it, or the start of the file. A longer string that merely ends or begins with it
+/// (`0.0.7` in `10.0.7`, `0.0.70`, `x0.0.7`, `0.0.7-dev`) is not the version. The program prints `buildrules ` and its version as two strings, so
+/// `buildrules <V>` is not contiguous in the file.
+pub fn holdsVersion(bin: []const u8, v: []const u8) bool {
+    if (v.len == 0) return false;
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, bin, from, v)) |at| : (from = at + 1) {
+        const end = at + v.len;
+        if (end >= bin.len or bin[end] != 0) continue;
+        if (at != 0 and bin[at - 1] != 0) continue;
+        return true;
+    }
+    return false;
+}
+
 // ---- tests ----------------------------------------------------------------------------------------------------------------------------
 
 const t = std.testing;
@@ -93,7 +108,6 @@ test "each target accepts its own header and refuses every other target's" {
         .{ .target = "linux-x86_64", .bytes = &elf(62, 1) },
         .{ .target = "linux-aarch64", .bytes = &elf(183, 1) },
         .{ .target = "macos-arm64", .bytes = &macho(0x0100000c, 2) },
-        .{ .target = "macos-x86_64", .bytes = &macho(0x01000007, 2) },
     };
     for (files) |f| {
         for (targets) |tgt| {
@@ -134,10 +148,29 @@ test "a header that is not an executable of the right class is refused" {
 test "an ELF is not a macOS binary, nor a Mach-O a Linux one" {
     try t.expect(problem(&elf(183, 1), "macos-arm64") != null);
     try t.expect(problem(&macho(0x0100000c, 2), "linux-aarch64") != null);
+    // An Intel Mach-O (cputype x86_64) is no release binary: refused under the one macOS target, whose cpu is arm64.
+    try t.expect(problem(&macho(0x01000007, 2), "macos-arm64") != null);
 }
 
 test "a program header table past the end of the file is refused, not read" {
     var b = elf(62, 1);
     std.mem.writeInt(u64, b[32..40], 1 << 40, .little);
     try t.expect(problem(&b, "linux-x86_64") != null);
+}
+
+test "holdsVersion: the version is a string of its own, not part of a longer one" {
+    // The defect: a substring test, so a binary stamped 10.0.7 or 0.0.70 or x0.0.7 passes as 0.0.7.
+    try t.expect(holdsVersion("\x00buildrules \x000.0.7\x00rest", "0.0.7"));
+    try t.expect(holdsVersion("0.0.7\x00", "0.0.7")); // at the start of the file
+    try t.expect(!holdsVersion("\x0010.0.7\x00", "0.0.7")); // a longer version before it
+    try t.expect(!holdsVersion("\x000.0.70\x00", "0.0.7")); // a longer version after it
+    try t.expect(!holdsVersion("\x00x0.0.7\x00", "0.0.7")); // text before it
+    try t.expect(!holdsVersion("\x00v0.0.7\x00", "0.0.7"));
+    try t.expect(!holdsVersion("\x000.0.7-dev\x00", "0.0.7"));
+    try t.expect(!holdsVersion("\x000.0.7", "0.0.7")); // no terminator: the end of the file is not the end of a string
+    try t.expect(!holdsVersion("\x00 0.0.7\x00", "0.0.7")); // a space before it
+    try t.expect(!holdsVersion("", "0.0.7"));
+    try t.expect(!holdsVersion("anything", ""));
+    // found at the second place when the first is part of a longer string
+    try t.expect(holdsVersion("\x0010.0.7\x00\x000.0.7\x00", "0.0.7"));
 }

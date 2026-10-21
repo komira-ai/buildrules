@@ -12,7 +12,7 @@ export const home: Page = {
   blocks: [
     info(
       'buildrules is a v0 proof of concept. It builds for Linux x86_64 only. Actions run on a remote execution farm by default, or on your own machine if you opt in. The ' +
-        'Rust, Node, Zig, C/C++ and Mojo rules exist; Python, macOS and Windows are planned. A release is a tagged source archive, made automatically from `main`. Every page says which parts are built and which are not.',
+        'Rust, Node, Zig, C/C++ and Mojo rules exist; Python, macOS and Windows are planned. A release is a tagged source archive and the command line for three platforms, made automatically from `main`. Every page says which parts are built and which are not.',
     ),
     h2('What it gives you'),
     ul(

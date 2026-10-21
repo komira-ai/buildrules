@@ -14,7 +14,64 @@ the line tables and rewrites the action's directories out of them, run under kco
 Every tool is built behind its unit tests; the process cases of `cov_zig`, `debug_relocate` and `cov_normalize` are `zig_test`s that run the executable
 and are validations of the public target.
 
-Not included: kcov's own check suite (`kcov_check`, `loader_closure_check`, the identity and reproducibility checks), branch coverage (LLVM profile counters), `covcheck` (policy,
-floors, holds, the census, the PR check run). kcov is GPL-2.0 and build-only: it runs in actions and is never packaged.
+Not included: kcov's own check suite (`kcov_check`, `loader_closure_check`, the identity and reproducibility checks), branch coverage of Mojo (LLVM profile counters), `covcheck` (policy,
+holds, the census, the PR check run). The floors of the Zig and Node packages are below. kcov is GPL-2.0 and build-only: it runs in actions and is never packaged.
 
 **No ASLR patch.** kcov disables address randomization with `personality(ADDR_NO_RANDOMIZE)` and stops when it fails. buildrules once let the run go on after a refusal (a farm sandbox answered ENOSYS); every farm node now allows the call, so kcov's own handling is kept. `kcov_build_test` fails if any patch touches that code.
+
+## Zig coverage
+
+Every package with Zig unit tests has a `zig_coverage(test_targets = [...], expect = [...])` and a `coverage_floor.txt` beside its BUCK file
+(`zig_cover.bzl`). For each `zig_test` named it runs the same compile and the same environment again (the test's root, target, data and tools), but
+built with LLVM's code generator and block counters, run under kcov, in one action (`zig_cover`, under `zig_launch run`); `:coverage` is the text of
+`cov_summary` over all of them: lines hit and recorded per file, then the same for branches, then the totals over `expect`, the package's own sources.
+`:coverage_floor` holds that text to the floor file (`cov_floor`), and `//ci:floors` groups every package's, so `//ci:all` builds them.
+
+| target | what |
+|---|---|
+| `:zig_cover` | builds one test with `-fllvm -ffuzz` and `zig_cov_runner.zig` as its test runner, runs it under kcov, writes the Cobertura report (cov_normalize) and the block report |
+| `zig_cov_runner.zig` | zig's own runner (every test, a fresh allocator each, a leak, a logged error or a failure fails the run), then writes one row per instrumented block |
+| `:cov_summary` | with `--blocks`, the branch listing after the line listing; a block counts as hit when any test hit it |
+| `:cov_floor` | the floor check; also `--jest-summary` for a jest `coverage-summary.json` (`jest_cover.bzl`) |
+
+**Lines** are kcov's. They need `-fllvm`: with zig's own x86_64 backend kcov finds no line of the sources. The executable's debug information names the sources by
+absolute path, so the build and the run are one action. kcov is told the directories of the included files, not the files: it refuses an option of more than a fixed
+length ("Too long string!"), and a package of thirty files under a hosted runner's long working directory is longer. The report lists the files of those directories that the
+executable holds code of; the summary counts only `expect`.
+
+**Branches.** kcov records none for a Zig executable: its report has no `branch` attribute (a farm run of `cov_summary_test.zig` gave `grep -c 'branch="true"'`
+= 0), the line table has no branch information. The figure comes from the compiler instead: `-ffuzz` has LLVM insert a counter in every basic block (sanitizer
+coverage's inline 8-bit counters) and list the address of each; the runner resolves each address to a source position with the debug information of its own
+executable and writes `<file> <line> <column> <blocks there that ran> <blocks there>` per position. A branch figure is blocks that ran over blocks there are.
+What a block is: the entry of a function, each arm of an `if` or `switch`, the join after them, and the error return of every call made with `try` (that arm
+is a block, as the `Err` arm of a Rust `?` is a branch in llvm-cov). Several blocks can share a position (both arms of a condition, or one block per
+instantiation of a generic function); each is counted, so an arm that never ran is not hidden behind the arm that did. Blocks of the `test` blocks themselves
+are left out (a passing test never runs the error exit of its assertions). zig 0.12 has no `-ffuzz`: the packages whose tests it builds (`ci`, and
+`crate_patch` in `rules/rust`) have lines only, and their floor files have no `branches` line.
+
+What both figures leave out:
+
+- **Code the compiler emitted none for.** Zig analyses what is referenced, so a function no test reaches has no lines and no blocks, and the percentage is an
+  upper bound. `expect` names a package's own sources; a file in it that no test compiled fails the summary (`... is in no report`), and the files a package
+  leaves out of `expect` (an entry point no test imports, a file of constants) say why in its BUCK file.
+- **Code that runs in another process.** The counters are the test executable's own: a child it forks or executes keeps its own copy, written nowhere. kcov follows
+  a fork, so the line figure has it; the branch figure does not. `rules/gate`'s tests run the code under test in forked children, so its branch figure is a floor far below the truth.
+- **The process tests.** A test that runs a built executable (`*_exe_test`, `env_tools`) measures the executable's behaviour, not the sources it was built from; they are not in
+  `test_targets`.
+- The runner defines the callbacks instrumented code calls for a comparison, a switch and an indirect call as functions that do nothing: zig's own belong to its fuzzer,
+  and a test that starts a thread crashed in them.
+
+**The floor.** `coverage_floor.txt` holds `lines NN.NN` and `branches NN.NN` (hit over recorded, rounded down to a hundredth). A figure below its floor fails, naming the
+fall; a figure above it fails too, naming the number to write, so the floor is always what the tests reach. A figure the file has and the measurement lacks, or the other way,
+fails. A figure that the tests do not reproduce (`rules/gate`'s tests race a clock and signals: the lines they reach differ by a few between machines) says so with
+`lines 95.51 slack 1.00`: it holds anywhere from the floor to the floor plus the slack, and a fall below the floor still fails. A pin bump of zig or kcov can move the numbers: raise or lower the floor in the same change and say why. The success output of `:coverage_floor` says how many more
+hits the 99% target needs.
+
+To add a package: `zig_coverage(test_targets = [":a_unit", ...], expect = ["pkg/a.zig", ...])` after its `zig_test` targets, a `coverage_floor.txt` with today's figures
+(build `:coverage` and read its totals), and the package's `:coverage_floor` in `//ci:floors` (`ci/BUCK`; `ci/completeness.bxl` fails until it is).
+
+## Jest coverage
+
+`jest_test(coverage = True)` runs `jest --coverage` and its target is the `coverage` directory (the `coverage-summary.json` of the run, a text table on the log), which
+exists only if the tests passed. The package's `jest.config.js` names its own code in `collectCoverageFrom`. `jest_coverage_floor()` (`jest_cover.bzl`) holds the `total`
+lines and branches (istanbul's) to `coverage_floor.txt`, with the same check as above.

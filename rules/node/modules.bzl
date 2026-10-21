@@ -181,11 +181,18 @@ def _tsc_build(name, modules, srcs, data = {}, project = "tsconfig.build.json", 
     """`tsc -p <project>`; the target is `out_dir`, which the project writes."""
     _tree_macro(name, "node_modules/.bin/tsc", modules = modules, srcs = srcs, data = data, args = ["-p", project], out_dir = out_dir, **kwargs)
 
-def _jest_test(name, modules, srcs, data = {}, config = "jest.config.js", max_workers = 2, **kwargs):
-    """`jest --ci --maxWorkers=<max_workers>` with its cache in the action's scratch copy and no watchman."""
+def _jest_test(name, modules, srcs, data = {}, config = "jest.config.js", max_workers = 2, coverage = False, **kwargs):
+    """`jest --ci --maxWorkers=<max_workers>` with its cache in the action's scratch copy and no watchman.
+
+    With `coverage`, `--coverage`: the config's `collectCoverageFrom` names the package's own code, and the target is the `coverage` directory the run
+    writes (a text table on the log, `coverage-summary.json` in the directory), which exists only if the tests passed. `jest_coverage_floor`
+    (rules/coverage/jest_cover.bzl) holds its lines and branches to the package's floor."""
     if max_workers < 1:
         fail("jest_test {}: max_workers must be at least 1".format(name))
     args = ["--ci", "--maxWorkers={}".format(max_workers), "--cacheDirectory=.jest-cache", "--watchman=false", "--config", config]
+    if coverage:
+        args += ["--coverage", "--coverageDirectory=coverage", "--coverageReporters=json-summary", "--coverageReporters=text"]
+        kwargs["out_dir"] = "coverage"
     _tree_macro(name, "node_modules/.bin/jest", modules = modules, srcs = srcs, data = data, args = args, **kwargs)
 
 def _cdk_synth(name, modules, srcs, app, data = {}, context = {}, env = {}, **kwargs):

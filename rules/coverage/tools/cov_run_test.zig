@@ -56,6 +56,23 @@ test "kcov's command line measures exactly the included paths under the tree, wi
     try t.expectEqualStrings("/b/t", k[6]);
 }
 
+test "kcov's command line passes the test binary its arguments, after the binary" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var d: []const u8 = "";
+    var r = try C.parse(a, try args(a, &.{}), &d);
+    r.binary_args = &.{ "--cov-out=/w/blocks", "--x" };
+    const k = try C.kcovArgv(a, r, "/real/share", "/work");
+    try t.expectEqual(@as(usize, 9), k.len);
+    try t.expectEqualStrings("/b/t", k[6]);
+    try t.expectEqualStrings("--cov-out=/w/blocks", k[7]);
+    try t.expectEqualStrings("--x", k[8]);
+    // cov_run's own command line gives the binary none.
+    const plain = try C.kcovArgv(a, try C.parse(a, try args(a, &.{}), &d), "/real/share", "/work");
+    try t.expectEqual(@as(usize, 7), plain.len);
+}
+
 test "cov_normalize's command line maps the tree's absolute names to repository paths and forbids the action's directory" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();

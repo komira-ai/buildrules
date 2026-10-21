@@ -4,6 +4,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # network, no host node or npm. README.md says what each target is.
 
 load("@buildrules//rules/node:modules.bzl", "jest_test", "node_tree_build", "npm_modules", "tsc_build", "tsc_check")
+load("@buildrules//rules/coverage:jest_cover.bzl", "jest_coverage_floor")
 load(":pins.lock.bzl", "NPM")
 load(":preview.bzl", "site_preview")
 
@@ -34,8 +35,10 @@ tsc_check(
 # (the files in `data`) at their paths in the repository.
 jest_test(
     name = "test",
+    coverage = True,
     visibility = ["//ci:"],
     data = {
+        ".github/workflows/ci.yml": "//:ci.yml",
         ".github/workflows/beta.yml": "//:beta.yml",
         ".github/workflows/release.yml": "//:release.yml",
         "beta/check.zig": "//beta:check.zig",
@@ -81,6 +84,7 @@ jest_test(
         "tools/release/cmds.zig": "//tools/release:cmds.zig",
         "tools/release/version.zig": "//tools/release:version.zig",
         "tools/release/page.zig": "//tools/release:page.zig",
+        "tools/release/binhdr.zig": "//tools/release:binhdr.zig",
         "tools/stage/gamma.zig": "//tools/stage:gamma.zig",
         "beta/mojo/STEPS": "//beta:mojo_steps",
         "rules/cxx/archive.bzl": "//rules/cxx:archive.bzl",
@@ -89,6 +93,9 @@ jest_test(
     modules = ":modules",
     srcs = _SRCS,
 )
+
+# The lines and branches of tools/ that the tests above reach (jest --coverage), held to coverage_floor.txt.
+jest_coverage_floor()
 
 # `npm run build`, step 1: `tsc -p tsconfig.tools.json`, the build program.
 tsc_build(

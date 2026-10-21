@@ -1,6 +1,7 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # The path tools of a kcov coverage run, and kcov built from source with the pinned zig (README.md): static executables built
 # with the pinned zig, each gated by its cases, which run as build actions. linux x86_64 only.
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("//rules/core:pinned_file.bzl", "pinned_file")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/pins:pins.bzl", "PINS")
@@ -261,11 +262,119 @@ zig_exe(
     visibility = ["PUBLIC"],
 )
 
+# ---- zig_cover and cov_floor: the coverage of a Zig package's tests, and the floor it is held to (zig_cover.bzl) ----------------------------
+# The test runner of a coverage build: `zig test --test-runner`, run by zig_cover as a source file (it is compiled with each test).
+export_file(
+    name = "zig_cov_runner.zig",
+    src = "tools/zig_cov_runner.zig",
+    visibility = ["PUBLIC"],
+)
+
+zig_test(
+    name = "zig_cover_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = [
+        "tools/zig_cover.zig",
+        "tools/cov_run.zig",
+    ],
+    src = "tools/zig_cover_test.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "zig_cover_exe",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/cov_run.zig"],
+    src = "tools/zig_cover.zig",
+    unit_tests = [":zig_cover_unit", _ZIG_VERSION],
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+# The executable as a process over small packages of known coverage, with the pinned zig, kcov and cov_normalize. A validation of :zig_cover.
+zig_test(
+    name = "zig_cover_exe_test",
+    exec_compatible_with = LINUX_X86_64,
+    env_tools = {
+        "KCOV": ":kcov",
+        "NORMALIZE": ":cov_normalize_exe",
+        "PINNED_ZIG": _ZIG,
+        "PINNED_ZIG_012": "buildrules//rules/pins:zig",
+        "ZIG_COVER": ":zig_cover_exe",
+    },
+    imports = [
+        "tools/fixtures/zig_cover/fail_test.zig",
+        "tools/fixtures/zig_cover/leak_test.zig",
+        "tools/fixtures/zig_cover/log_test.zig",
+        "tools/fixtures/zig_cover/mini.zig",
+        "tools/fixtures/zig_cover/mini_test.zig",
+        "tools/zig_cov_runner.zig",
+    ],
+    src = "tools/zig_cover_exe_test.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+cov_tool(
+    name = "zig_cover",
+    cases = [":zig_cover_exe_test"],
+    exec_compatible_with = LINUX_X86_64,
+    exe = ":zig_cover_exe",
+    visibility = ["PUBLIC"],
+)
+
+zig_test(
+    name = "cov_floor_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/cov_floor.zig"],
+    src = "tools/cov_floor_test.zig",
+    busybox = _BB,
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "cov_floor",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/cov_floor.zig",
+    unit_tests = [":cov_floor_unit", _ZIG_VERSION],
+    busybox = _BB,
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
 # Read by the buildrules.dev site tests (site/BUCK), which check its pages against this file.
 export_file(
     name = "pins.bzl",
     src = "pins.bzl",
     visibility = ["//site:"],
+)
+
+# The coverage of the sources the unit tests compile (README.md, "Zig coverage"), and the floor it is held to. The process tests (`*_exe_test`) run the
+# built executables and add nothing to it; conda_payload.zig and elf_rpath.zig have no unit test, cov_zig_stub.zig is a stand-in program, and
+# zig_cov_runner.zig is compiled into every test it measures, so none of them is measured.
+zig_coverage(
+    test_targets = [
+        ":debug_relocate_unit",
+        ":cov_normalize_unit",
+        ":cov_zig_unit",
+        ":cov_run_unit",
+        ":cov_summary_unit",
+        ":kcov_build_unit",
+        ":zig_cover_unit",
+        ":cov_floor_unit",
+    ],
+    expect = ["rules/coverage/tools/" + f for f in [
+        "debug_relocate.zig",
+        "cov_normalize.zig",
+        "cov_zig.zig",
+        "cov_zig_elf.zig",
+        "cov_run.zig",
+        "cov_summary.zig",
+        "kcov_build.zig",
+        "zig_cover.zig",
+        "cov_floor.zig",
+    ]],
 )
 
 scrub_files()

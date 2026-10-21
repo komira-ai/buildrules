@@ -1,6 +1,7 @@
 # The automatic release's tool (RELEASING.md): the version of a green main commit, the deterministic source archive of a tag, the checks before
 # it is published, and the release. Zig, tested as a build action; `.github/workflows/release.yml` runs it with `buck2 run`, and
 # `//ci:workflow` checks that workflow.
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
@@ -39,8 +40,14 @@ export_file(
     visibility = ["//site:"],
 )
 
+export_file(
+    name = "binhdr.zig",
+    src = "binhdr.zig",
+    visibility = ["//site:"],
+)
+
 # What a release binary's file header must say for its target (an ELF of the right machine, static; a Mach-O of the right cpu). `release package` refuses a
-# binary that is not its target's, and cli/header_test.zig checks the four built binaries with it. Importers wait for its tests.
+# binary that is not its target's, and cli/header_test.zig checks the three built binaries with it. Importers wait for its tests.
 zig_test(
     name = "binhdr_unit",
     exec_compatible_with = LINUX_X86_64,
@@ -76,6 +83,12 @@ zig_exe(
     zig = "buildrules//rules/pins:zig_next",
     unit_tests = [":release_unit", "buildrules//rules/pins:zig_next_version"],
     visibility = ["PUBLIC"],
+)
+
+# The coverage of the sources the tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to.
+zig_coverage(
+    test_targets = [":release_unit", ":binhdr_unit"],
+    expect = ["tools/release/" + f for f in glob(["*.zig"], exclude = ["*_test.zig"])],
 )
 
 scrub_files()

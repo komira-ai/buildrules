@@ -1,6 +1,7 @@
 # The beta and gamma stages of the automatic release (RELEASING.md): a hello-world repository per language that consumes the candidate as a user
 # would (beta/, run here from the STEPS file of each), and our own repositories built with the candidate on the farm (gamma). Zig, tested as a build
 # action; `.github/workflows/beta.yml` and `release.yml` run it from the artifact their tool job builds.
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
@@ -54,6 +55,12 @@ export_file(
     name = "gamma.zig",
     src = "gamma.zig",
     visibility = ["//site:"],
+)
+
+# The coverage of the sources the tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to.
+zig_coverage(
+    test_targets = [":stage_unit"],
+    expect = ["tools/stage/" + f for f in glob(["*.zig"], exclude = ["*_test.zig"])],
 )
 
 scrub_files()

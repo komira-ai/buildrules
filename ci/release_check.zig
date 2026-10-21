@@ -3,19 +3,25 @@
 //! shares with ci.yml (actions pinned by commit, local mode on every buck2 command, the pinned buck2 install) are the ones in
 //! workflow_check.zig; what is here is what only the release has:
 //!
-//!  - the triggers: a push to main and nothing else (no pull request, no dispatch, no schedule, no workflow_run);
+//!  - the triggers: a push to main and nothing else (no pull request, no dispatch, no schedule, no workflow_run): a pull request runs ci.yml alone (build and
+//!    unit tests), and the beta, the gamma, the signing, the attestation and the verification are this workflow's, after the merge; the workflow-level
+//!    concurrency is per commit and never cancels;
 //!  - the token: `permissions: {}` at the top, every job states its own, and a write scope only where it belongs: `contents: write` in the job
-//!    `publish` (and nowhere else; `tag` holds `contents: read` and writes with the release bot's token, minted by one step with exact inputs and used by the tag step alone), `id-token: write` and `attestations: write` in `archive` (and nowhere else), each of
-//!    `tag` and `publish` under its exact `if:`, and every `: write` of the file accounted for by a job's permissions block;
-//!  - the order gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish, with gate a call of ci.yml that nothing can skip, no job before
-//!    the tag waiting for it (a failure before the tag leaves no tag), a release made only when the plan released, and no status function
-//!    (`always()`, `failure()`, `cancelled()`) or `continue-on-error` that would let a job run or pass after a red one;
+//!    `publish` (and nowhere else; `tag` holds `contents: read` and writes with the release bot's token, minted by one step with exact inputs and used by the tag step alone), `id-token: write` and `attestations: write` in `attest` (and `id-token` in `gamma` and in the call of `beta`, for the farm), each of
+//!    `attest`, `verify`, `tag`, `publish` and `bump` under its exact `if:` (a push to main, not a fork, a commit the plan released) so that no pull request signs, attests, tags or publishes, and every `: write` of the file accounted for by a job's permissions block;
+//!  - the order gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish, with no job before the tag waiting for it (a failure
+//!    before the tag leaves no tag behind), a release made only when the plan released, and no status function (`always()`, `failure()`, `cancelled()`) or
+//!    `continue-on-error` that would let a job run or pass after a red one;
+//!  - RELEASE_FREEZE is read in `plan` and nowhere else, and the plan is never a dry run (`--dry false`);
+//!  - the binaries: the stamped build of `//cli:release_binaries` and its three tarballs in `build-cli`, the very file the beta runs handed on as `release-cli-bin`
+//!    and checked against the tarball in `archive`, the second build in `verify` that must give the same tarballs, and `release-dist` as the one set of files
+//!    that `verify`, `publish` and `site` read;
 //!  - `bump`, the last step (the pull request that moves the internal repository's submodule to the release): `contents: read` for its own token, the exact
 //!    `if:` of `tag` and `publish`, a wait for the plan, the tag, the publish and the tool, nothing waiting for it, the release bot's token minted for the internal
 //!    repository alone (a second mint, exact inputs, after a step that refuses an unnamed repository) and used by the bump step alone, and the arguments the
 //!    internal repository's bump guard depends on;
-//!  - the jobs that write run no buck2 and only the checkout and download actions: the tool they run was built before any token existed;
-//!  - the attestation action is in `archive` only, every checkout drops its credentials, `run:` lines are single invocations (the
+//!  - the jobs that write run no buck2 and only the checkout and download actions (`attest` also the upload, cosign and attestation actions): the tool they run was built before any token existed;
+//!  - the attestation action is in `attest` only, every checkout drops its credentials, `run:` lines are single invocations (the
 //!    install of buck2 aside), a cosign bundle is only ever named `<file>.sigstore.json` for `SHA256SUMS`, the source archive or a CLI tarball (the names `release sign` writes), no asset is ever replaced (`--clobber`), no secret is read but the release bot's private key (once, in `tag`).
 const std = @import("std");
 const wc = @import("workflow_check.zig");
@@ -26,7 +32,9 @@ const add = wc.add;
 
 pub const tag_if = "${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}";
 pub const publish_if = tag_if;
-/// archive, verify, tag, publish and site run only for a commit the plan released.
+/// The `if:` of the jobs that run for every commit the plan released.
+pub const released_if = "${{ needs.plan.outputs.released == 'true' }}";
+/// build-cli, beta, gamma, archive, attest, verify, tag, publish and site run only for a commit the plan released.
 const released_clause = "needs.plan.outputs.released == 'true'";
 const ci_call = "./.github/workflows/ci.yml";
 const beta_call = "./.github/workflows/beta.yml";
@@ -35,15 +43,29 @@ const farm_action = "./farm-action/.github/actions/farm-connect";
 const tool_target = "//tools/release:release";
 const stage_target = "//tools/stage:stage";
 
-/// The jobs, and the job each one must wait for (`needs`): gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish (site after tag and verify).
+/// The jobs, and the job each one must wait for (`needs`): gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish
+/// (tool beside gate; site after tag and verify).
 const order = [_][2][]const u8{
-    .{ "beta", "gate" },
+    .{ "plan", "gate" },
+    .{ "plan", "tool" },
+    .{ "build-cli", "plan" },
+    .{ "build-cli", "tool" },
+    .{ "beta", "plan" },
+    .{ "beta", "build-cli" },
+    .{ "gamma", "plan" },
     .{ "gamma", "beta" },
-    .{ "plan", "gamma" },
+    .{ "gamma", "tool" },
     .{ "archive", "plan" },
-    .{ "cli", "plan" },
-    .{ "verify", "cli" },
-    .{ "verify", "archive" },
+    .{ "archive", "build-cli" },
+    .{ "archive", "beta" },
+    .{ "archive", "gamma" },
+    .{ "archive", "tool" },
+    .{ "attest", "plan" },
+    .{ "attest", "archive" },
+    .{ "attest", "tool" },
+    .{ "verify", "plan" },
+    .{ "verify", "attest" },
+    .{ "verify", "tool" },
     .{ "tag", "plan" },
     .{ "tag", "verify" },
     .{ "publish", "plan" },
@@ -53,8 +75,8 @@ const order = [_][2][]const u8{
     .{ "site", "verify" },
 };
 /// The jobs that run before the tag exists: none of them may wait for it, or a failure there could not be told from one after the tag.
-const before_tag = [_][]const u8{ "gate", "beta", "gamma", "plan", "cli", "archive", "verify" };
-const all_jobs = [_][]const u8{ "gate", "beta", "gamma", "tool", "plan", "cli", "archive", "verify", "tag", "site", "publish", "bump" };
+const before_tag = [_][]const u8{ "gate", "tool", "plan", "build-cli", "beta", "gamma", "archive", "attest", "verify" };
+const all_jobs = [_][]const u8{ "gate", "tool", "plan", "build-cli", "beta", "gamma", "archive", "attest", "verify", "tag", "site", "publish", "bump" };
 /// What `bump` waits for: the plan (the tag it opens the pull request for), the tag and the publish (the guard of the internal repository reads the
 /// tag, and the release exists before anything points at it), and the tool. Nothing waits for `bump`.
 const bump_needs = [_][]const u8{ "plan", "tag", "publish", "tool" };
@@ -64,9 +86,15 @@ const tool_runs = [_][2][]const u8{
     .{ "gamma", "tool/stage action-ref " },
     .{ "gamma", "tool/stage gamma " },
     .{ "plan", "tool/release plan " },
-    .{ "tag", "tool/release tag " },
+    .{ "build-cli", "tool/release package-all " },
     .{ "archive", "tool/release archive " },
+    .{ "archive", "tool/release record " },
+    .{ "archive", "tool/release tested " },
+    .{ "archive", "tool/release sums " },
+    .{ "attest", "tool/release sign " },
+    .{ "verify", "tool/release package-all " },
     .{ "verify", "tool/release verify " },
+    .{ "tag", "tool/release tag " },
     .{ "site", "tool/release site " },
     .{ "publish", "tool/release publish " },
     .{ "bump", "tool/release bump-check " },
@@ -74,6 +102,9 @@ const tool_runs = [_][2][]const u8{
 };
 /// The actions a job that writes may use; `tag` also mints the release bot's token.
 const write_job_actions = [_][]const u8{ "actions/checkout", "actions/download-artifact" };
+/// What `attest`, which signs and attests, may use besides the download: the upload of what it signed, the installer of cosign and the attestation. It runs no buck2.
+const attest_actions = [_][]const u8{ "actions/download-artifact", "actions/upload-artifact", "sigstore/cosign-installer", "actions/attest-build-provenance" };
+const cosign_action = "sigstore/cosign-installer";
 const app_token_action = "actions/create-github-app-token";
 /// The environment that holds the release bot's key (restricted to main); declared by the jobs that read `RELEASE_BOT_*` and by no other.
 const release_environment = "release";
@@ -266,19 +297,19 @@ pub fn permLevel(j: *const Job, scope: []const u8) ?[]const u8 {
     return null;
 }
 
-/// Whether a job may hold `scope: write`: `contents` in publish (tag writes with the release bot's token, not its own); `id-token` in archive (the attestation), in gamma (the farm's network) and in
-/// beta (the call of beta.yml, whose farm leg joins the farm's network); `attestations` in archive.
+/// Whether a job may hold `scope: write`: `contents` in publish (tag writes with the release bot's token, not its own); `id-token` in attest (the signature and
+/// the attestation), in gamma (the farm's network) and in beta (the call of beta.yml, whose farm leg joins the farm's network); `attestations` in attest.
 fn writeAllowed(job: []const u8, scope: []const u8) bool {
     if (std.mem.eql(u8, scope, "contents")) return std.mem.eql(u8, job, "publish");
-    if (std.mem.eql(u8, scope, "id-token")) return std.mem.eql(u8, job, "archive") or std.mem.eql(u8, job, "gamma") or std.mem.eql(u8, job, "beta");
-    if (std.mem.eql(u8, scope, "attestations")) return std.mem.eql(u8, job, "archive");
+    if (std.mem.eql(u8, scope, "id-token")) return std.mem.eql(u8, job, "attest") or std.mem.eql(u8, job, "gamma") or std.mem.eql(u8, job, "beta");
+    if (std.mem.eql(u8, scope, "attestations")) return std.mem.eql(u8, job, "attest");
     return false;
 }
 
 fn writeOwners(scope: []const u8) []const u8 {
     if (std.mem.eql(u8, scope, "contents")) return "publish";
-    if (std.mem.eql(u8, scope, "id-token")) return "archive, gamma and beta";
-    if (std.mem.eql(u8, scope, "attestations")) return "archive";
+    if (std.mem.eql(u8, scope, "id-token")) return "attest, gamma and beta";
+    if (std.mem.eql(u8, scope, "attestations")) return "attest";
     return "no job";
 }
 
@@ -307,10 +338,46 @@ pub fn usesRepo(line: []const u8) ?[]const u8 {
     return v[0 .. std.mem.indexOfScalar(u8, v, '@') orelse v.len];
 }
 
-/// The one spelling of a cosign bundle's name: `<file>.sigstore.json`, for `SHA256SUMS`, the source archive `buildrules-<V>.tar.gz` and the CLI tarballs
-/// `buildrules-cli-<V>-<target>.tar.gz` (what `release sign` writes, tools/release/binaries.zig). Every word of the workflow that mentions `sigstore` must
-/// be one of those shapes with the version and target left as a variable or written out, so a bundle a step uploads or verifies by another name (`.sigstore`,
-/// `.bundle`, `.sigstore.json.json`, a glob) is not one `sign` wrote.
+const release_targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" };
+
+/// An expression `${{ ... }}` and nothing else: the variable that stands for a version or a target.
+fn isExpression(s: []const u8) bool {
+    return s.len > 5 and std.mem.startsWith(u8, s, "${{") and std.mem.endsWith(u8, s, "}}") and std.mem.count(u8, s, "${{") == 1 and std.mem.count(u8, s, "}}") == 1;
+}
+
+/// `MAJOR.MINOR.PATCH` written out (digits, no leading zero but `0` itself), or a variable that stands for one.
+fn isVersionWord(s: []const u8) bool {
+    if (isExpression(s)) return true;
+    var parts: usize = 0;
+    var it = std.mem.splitScalar(u8, s, '.');
+    while (it.next()) |p| : (parts += 1) {
+        if (p.len == 0 or p.len > 9 or (p.len > 1 and p[0] == '0')) return false;
+        for (p) |c| {
+            if (c < '0' or c > '9') return false;
+        }
+    }
+    return parts == 3;
+}
+
+/// `<version>-<target>`: the version and the release target (`linux-x86_64`...) each written out or as a variable. The target is the last piece, so a version
+/// that is a variable may hold a hyphen of its own.
+fn isVersionTarget(s: []const u8) bool {
+    for (release_targets) |tg| {
+        if (!std.mem.endsWith(u8, s, tg) or s.len < tg.len + 2 or s[s.len - tg.len - 1] != '-') continue;
+        return isVersionWord(s[0 .. s.len - tg.len - 1]);
+    }
+    // the target is a variable: the last expression, after a hyphen
+    if (!std.mem.endsWith(u8, s, "}}")) return false;
+    const at = std.mem.lastIndexOf(u8, s, "${{") orelse return false;
+    if (at < 2 or s[at - 1] != '-') return false;
+    return isVersionWord(s[0 .. at - 1]);
+}
+
+/// The one spelling of a cosign bundle's name: `<file>.sigstore.json` for exactly the files `release sign` signs (tools/release/binaries.zig): `SHA256SUMS`, the
+/// source archive `buildrules-<V>.tar.gz` and the three tarballs `buildrules-cli-<V>-<target>.tar.gz`, with `V` a version written out or as a variable and `<target>`
+/// one of the three release targets or a variable. Every word of the workflow that mentions `sigstore` (but the install of cosign, which is not a file) must be one
+/// of those shapes, so a bundle a step uploads or verifies by another name (`.sigstore`, `.bundle`, `.sigstore.json.json`, a glob, a stem that is no release file)
+/// is not one `sign` wrote.
 pub fn sigstoreName(word: []const u8) bool {
     const suffix = ".sigstore.json";
     if (!std.mem.endsWith(u8, word, suffix)) return false;
@@ -318,22 +385,51 @@ pub fn sigstoreName(word: []const u8) bool {
     if (std.mem.indexOf(u8, stem, "sigstore") != null) return false;
     const base = if (std.mem.lastIndexOfScalar(u8, stem, '/')) |i| stem[i + 1 ..] else stem;
     if (std.mem.eql(u8, base, "SHA256SUMS")) return true;
-    if (!std.mem.startsWith(u8, base, "buildrules-") or !std.mem.endsWith(u8, base, ".tar.gz") or std.mem.indexOfAny(u8, base, "*?[") != null) return false;
-    if (!std.mem.startsWith(u8, base, "buildrules-cli-")) return true;
-    // A CLI tarball: for a release target, or for a variable that stands for one.
-    if (std.mem.endsWith(u8, base, "}}.tar.gz")) return true;
-    for ([_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64" }) |tg| {
-        if (std.mem.endsWith(u8, base[0 .. base.len - ".tar.gz".len], tg) and base[base.len - ".tar.gz".len - tg.len - 1] == '-') return true;
-    }
+    if (!std.mem.endsWith(u8, base, ".tar.gz") or std.mem.indexOfAny(u8, base, "*?[") != null) return false;
+    const name = base[0 .. base.len - ".tar.gz".len];
+    if (std.mem.startsWith(u8, name, "buildrules-cli-")) return isVersionTarget(name["buildrules-cli-".len..]);
+    if (std.mem.startsWith(u8, name, "buildrules-")) return isVersionWord(name["buildrules-".len..]);
     return false;
 }
 
 fn sigstoreNames(a: std.mem.Allocator, f: *Findings, text: []const u8) !void {
-    var it = std.mem.tokenizeAny(u8, text, " \t\r\n\"'`,()=:;|<>");
-    while (it.next()) |word| {
-        if (std.mem.indexOf(u8, word, "sigstore") == null) continue;
-        if (!sigstoreName(word)) try add(a, f, "`{s}` names a cosign bundle other than `<file>.sigstore.json` of SHA256SUMS, `buildrules-<V>.tar.gz` or a `buildrules-...tar.gz` (what `release sign` writes)", .{word});
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        // the installer of cosign is an action to run, not a bundle: `uses: sigstore/cosign-installer@<commit>` alone is exempt (another sigstore action is not)
+        if (usesRepo(line)) |repo| {
+            if (std.mem.eql(u8, repo, cosign_action)) continue;
+        }
+        var it = std.mem.tokenizeAny(u8, line, " \t\r\n\"'`,()=:;|<>");
+        while (it.next()) |word| {
+            if (std.mem.indexOf(u8, word, "sigstore") == null) continue;
+            if (!sigstoreName(word)) try add(a, f, "`{s}` names a cosign bundle other than `<file>.sigstore.json` of SHA256SUMS, `buildrules-<V>.tar.gz` or `buildrules-cli-<V>-<target>.tar.gz` (what `release sign` writes)", .{word});
+        }
     }
+}
+
+/// The candidate commit: the pushed commit (no pull request runs this workflow). The jobs that test it name it this way, and the jobs that write name `$GITHUB_SHA`.
+const candidate_expr = "${{ github.sha }}";
+const candidate_env = "      CANDIDATE: " ++ candidate_expr ++ "\n";
+const candidate_ref = "          ref: " ++ candidate_expr ++ "\n";
+/// Jobs that check the candidate out and name it.
+const candidate_jobs = [_][]const u8{ "plan", "archive", "verify" };
+
+/// Whether `text` holds `needle` at the end of a line: a command is held to its exact arguments, and one with more after them is another command.
+fn hasLineEnd(text: []const u8, needle: []const u8) bool {
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, text, from, needle)) |at| : (from = at + 1) {
+        const end = at + needle.len;
+        if (end == text.len or text[end] == '\n') return true;
+    }
+    return false;
+}
+
+/// The stamp of the planned version and the build of the three binaries, in `build-cli` (into `cli-bins`) and in the two verifies (into `rebuilt-bins`).
+fn buildBinaries(out_dir: []const u8) []const u8 {
+    return if (std.mem.eql(u8, out_dir, "cli-bins"))
+        "./buck2 build --console simple -c buildrules_re.mode=local -c \"buildrules.release_version=$NUMBER\" --out cli-bins //cli:release_binaries"
+    else
+        "./buck2 build --console simple -c buildrules_re.mode=local -c \"buildrules.release_version=$NUMBER\" --out rebuilt-bins //cli:release_binaries";
 }
 
 /// Everything wrong with `wf` (release.yml), given the dotslash file of the pinned buck2 and ci.yml.
@@ -350,13 +446,19 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     if (std.mem.count(u8, text, "actions/checkout@") != std.mem.count(u8, text, "persist-credentials: false"))
         try add(a, &f, "a checkout keeps the token in the checkout (`persist-credentials: false` is missing)", .{});
 
-    // Triggers: a push to main.
+    // Triggers: a push to main and nothing else. A pull request runs ci.yml alone (build and unit tests); the stages of the release run after the merge.
+    // The concurrency is per commit and nothing cancels a run.
     const on = try triggers(a, text);
-    if (on.len != 1 or !std.mem.eql(u8, on[0], "push") or !wc.hasLine(text, "    branches: [main]"))
-        try add(a, &f, "the workflow is triggered by something other than a push to main (`on:` must be `push: branches: [main]` alone)", .{});
-    for ([_][]const u8{ "pull_request_target", "workflow_run", "workflow_dispatch" }) |bad| {
+    var has_push = false;
+    for (on) |k| {
+        if (std.mem.eql(u8, k, "push")) has_push = true else try add(a, &f, "the workflow is triggered by `{s}`: only a push to main is allowed (a pull request runs build and unit tests in ci.yml; the beta, the gamma and the release run after the merge)", .{k});
+    }
+    if (!has_push or !wc.hasLine(text, "    branches: [main]")) try add(a, &f, "the workflow is not triggered by a push to main (`on: push: branches: [main]`)", .{});
+    for ([_][]const u8{ "pull_request_target", "workflow_run", "workflow_dispatch", "schedule:" }) |bad| {
         if (std.mem.indexOf(u8, text, bad) != null) try add(a, &f, "`{s}` appears in the workflow", .{bad});
     }
+    if (!wc.hasLine(text, "  group: release-${{ github.sha }}") or !wc.hasLine(text, "  cancel-in-progress: false"))
+        try add(a, &f, "the workflow's concurrency is not `group: release-${{{{ github.sha }}}}` with `cancel-in-progress: false`: a run of a release is never cancelled", .{});
     // The one secret: the release bot's private key, read once, by the step of `tag` that mints the token. Any other `secrets.` is refused.
     if (std.mem.count(u8, text, "secrets.") != std.mem.count(u8, text, "secrets.RELEASE_BOT_PRIVATE_KEY }}")) try add(a, &f, "the workflow reads a secret", .{});
     if (std.mem.indexOf(u8, text, "--clobber") != null or std.mem.indexOf(u8, text, "release delete") != null)
@@ -397,6 +499,16 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     }
     // `permission-contents: write` and `permission-pull-requests: write` are inputs of the App-token action, not grants of a job's token: they are counted by their own rules below.
     if (std.mem.count(u8, text, ": write") - std.mem.count(u8, text, "permission-contents: write") - std.mem.count(u8, text, "permission-pull-requests: write") != writes) try add(a, &f, "a `: write` is granted outside a job's `permissions:` block", .{});
+    // Jobs that only read hold `contents: read` alone (verify also reads attestations).
+    for ([_][]const u8{ "archive", "build-cli", "plan" }) |name| {
+        const j = jobNamed(jobs, name) orelse continue;
+        if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read"))
+            try add(a, &f, "the job `{s}` is not `contents: read` alone", .{name});
+    }
+    if (jobNamed(jobs, "verify")) |j| {
+        const ok_perms = j.perms.items.len == 2 and permLevel(j, "contents") != null and std.mem.eql(u8, permLevel(j, "contents").?, "read") and permLevel(j, "attestations") != null and std.mem.eql(u8, permLevel(j, "attestations").?, "read");
+        if (!ok_perms) try add(a, &f, "the job `verify` is not `contents: read` and `attestations: read` alone", .{});
+    }
     if (jobNamed(jobs, "tag")) |j| {
         // The job's own token only reads; the write is the release bot's token, minted by one step with exact inputs and used by one step.
         if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read"))
@@ -449,6 +561,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     for (jobs) |*j| {
         if (hasNeed(j, "bump")) try add(a, &f, "the job `{s}` waits for `bump`: nothing may, a failed bump un-releases nothing", .{j.name});
     }
+    // The jobs that sign, tag, publish or bump run only for a push to main of a commit the plan released, not a fork: a pull request makes none of them.
     if (jobNamed(jobs, "tag")) |j| {
         if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, tag_if)) try add(a, &f, "the job `tag` is not under its exact `if:` ({s})", .{tag_if});
         if (j.group == null or !std.mem.eql(u8, j.group.?, "release") or j.cancel == null or !std.mem.eql(u8, j.cancel.?, "false"))
@@ -459,25 +572,71 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         if (l == null or !std.mem.eql(u8, l.?, "write")) try add(a, &f, "the job `publish` does not hold `contents: write`", .{});
         if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, publish_if)) try add(a, &f, "the job `publish` is not under its exact `if:` ({s})", .{publish_if});
     }
-    if (jobNamed(jobs, "archive")) |j| {
+    for ([_][]const u8{ "attest", "verify" }) |name| {
+        if (jobNamed(jobs, name)) |j| {
+            if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, tag_if)) try add(a, &f, "the job `{s}` is not under its exact `if:` ({s}): it must not run for a pull request", .{ name, tag_if });
+        }
+    }
+    // gate and tool have no `if:`: a skipped job makes the plan, which waits for both, skip too, and a release would then not happen with every check green.
+    for ([_][]const u8{ "gate", "tool" }) |name| {
+        if (jobNamed(jobs, name)) |j| {
+            if (j.if_expr != null) try add(a, &f, "the job `{s}` has an `if:` ({s}): a skipped gate or tool skips the plan and every stage after it, silently", .{ name, j.if_expr.? });
+        }
+    }
+    // attest: the signature and the attestation, the only job with `id-token` and `attestations` write besides the farm's; no buck2, and no action but the few it needs.
+    if (jobNamed(jobs, "attest")) |j| {
         for ([_][]const u8{ "id-token", "attestations" }) |scope| {
             const l = permLevel(j, scope);
-            if (l == null or !std.mem.eql(u8, l.?, "write")) try add(a, &f, "the job `archive` does not hold `{s}: write`, which the attestation needs", .{scope});
+            if (l == null or !std.mem.eql(u8, l.?, "write")) try add(a, &f, "the job `attest` does not hold `{s}: write`, which the signature and the attestation need", .{scope});
         }
         const jt = try j.text(a);
-        if (std.mem.count(u8, jt, "actions/attest-build-provenance@") != 1) try add(a, &f, "the job `archive` does not attest (`actions/attest-build-provenance` once)", .{});
-    }
-    if (std.mem.count(u8, text, "actions/attest-build-provenance@") != 1) try add(a, &f, "`actions/attest-build-provenance` is used other than once, in `archive`", .{});
-
-    // The order: gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish, and a release only for a commit the plan released.
-    for (order) |pair| {
-        if (jobNamed(jobs, pair[0])) |j| {
-            if (!hasNeed(j, pair[1])) try add(a, &f, "the job `{s}` does not wait for `{s}` (order: gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish)", .{ pair[0], pair[1] });
+        if (std.mem.count(u8, jt, "actions/attest-build-provenance@") != 1) try add(a, &f, "the job `attest` does not attest (`actions/attest-build-provenance` once)", .{});
+        if (std.mem.count(u8, jt, cosign_action ++ "@") != 1) try add(a, &f, "the job `attest` does not install cosign (`sigstore/cosign-installer` once, before it signs)", .{});
+        if (std.mem.indexOf(u8, jt, "tool/release sign --dist dist --dry false") == null) try add(a, &f, "the job `attest` does not sign (`tool/release sign --dist dist --dry false`)", .{});
+        if (std.mem.indexOf(u8, jt, "--dry true") != null) try add(a, &f, "the job `attest` runs a dry signing", .{});
+        // the attested files are the archive, the tarballs and SHA256SUMS: the subject glob names them all
+        if (std.mem.indexOf(u8, jt, "subject-path: |\ndist/buildrules-*.tar.gz\ndist/SHA256SUMS\n") == null) try add(a, &f, "the job `attest` does not attest `dist/buildrules-*.tar.gz` (the archive and the three tarballs) and `dist/SHA256SUMS`", .{});
+        // sign comes before the attestation, and both before the upload of what verify and publish read
+        const i_sign = std.mem.indexOf(u8, jt, "tool/release sign ");
+        const i_att = std.mem.indexOf(u8, jt, "actions/attest-build-provenance@");
+        const i_up = std.mem.indexOf(u8, jt, "name: release-dist");
+        if (i_sign == null or i_att == null or i_up == null or i_sign.? > i_att.? or i_att.? > i_up.?) try add(a, &f, "the job `attest` does not sign, then attest, then upload `release-dist` (in that order)", .{});
+        for (j.lines.items) |l| {
+            if (usesRepo(l)) |repo| {
+                var ok = false;
+                for (attest_actions) |w| {
+                    if (std.mem.eql(u8, repo, w)) ok = true;
+                }
+                if (!ok) try add(a, &f, "the job `attest` holds a write scope and uses {s}", .{repo});
+            }
+            if (std.mem.indexOf(u8, l, "buck2") != null) try add(a, &f, "the job `attest` holds a write scope and runs buck2: {s}", .{l});
         }
     }
-    for ([_][]const u8{ "cli", "archive", "verify", "site" }) |name| {
+    if (std.mem.count(u8, text, "actions/attest-build-provenance@") != 1) try add(a, &f, "`actions/attest-build-provenance` is used other than once, in `attest`", .{});
+    // cosign is installed twice: to sign in `attest`, to check the signatures in `verify`.
+    if (std.mem.count(u8, text, cosign_action ++ "@") != 2) try add(a, &f, "`sigstore/cosign-installer` is used other than twice, in `attest` and in `verify`", .{});
+    if (jobNamed(jobs, "verify")) |j| {
+        if (std.mem.count(u8, try j.text(a), cosign_action ++ "@") != 1) try add(a, &f, "the job `verify` does not install cosign, which checks the signatures", .{});
+    }
+    // No dry form of anything remains: the plan, the signing and the verification are each told `--dry false`, and nothing is told `--dry true`.
+    if (std.mem.count(u8, text, "--dry false") != 3 or std.mem.count(u8, text, "--dry true") != 0)
+        try add(a, &f, "the `--dry` flags are not exactly: false in `plan`, `attest` and `verify`, and none true (a pull request does not run this workflow)", .{});
+
+    // The order: gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish, and a release only for a commit the plan released.
+    for (order) |pair| {
+        if (jobNamed(jobs, pair[0])) |j| {
+            if (!hasNeed(j, pair[1])) try add(a, &f, "the job `{s}` does not wait for `{s}` (order: gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish)", .{ pair[0], pair[1] });
+        }
+    }
+    for ([_][]const u8{ "build-cli", "archive", "site" }) |name| {
         if (jobNamed(jobs, name)) |j| {
             if (j.if_expr == null or std.mem.indexOf(u8, j.if_expr.?, released_clause) == null) try add(a, &f, "the job `{s}` runs even when the plan released nothing (its `if:` lacks `{s}`)", .{ name, released_clause });
+        }
+    }
+    // beta and gamma run for a released commit only, with that `if:` alone: once the plan has decided, nothing else skips them.
+    for ([_][]const u8{ "build-cli", "beta", "gamma", "archive" }) |name| {
+        if (jobNamed(jobs, name)) |j| {
+            if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, released_if)) try add(a, &f, "the job `{s}` is not under the `if:` {s} alone: the stage can be skipped for a commit the plan released", .{ name, released_if });
         }
     }
     if (jobNamed(jobs, "publish")) |j| {
@@ -489,36 +648,73 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             if (hasNeed(j, "tag") or hasNeed(j, "publish")) try add(a, &f, "the job `{s}` waits for `tag` or `publish`: the tag is made after the archive is verified, not before", .{name});
         }
     }
-    // The plan only reads: it decides, and creates nothing.
+    // The plan only reads: it decides, and creates nothing; it is the one place RELEASE_FREEZE is read, and it is never a dry run.
     if (jobNamed(jobs, "plan")) |j| {
-        if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read")) try add(a, &f, "the job `plan` is not `contents: read` alone", .{});
         if (j.if_expr != null) try add(a, &f, "the job `plan` has an `if:`", .{});
+        const jt = try j.text(a);
+        if (std.mem.indexOf(u8, jt, "FREEZE: ${{ vars.RELEASE_FREEZE }}") == null or std.mem.indexOf(u8, jt, " --freeze \"$FREEZE\"") == null)
+            try add(a, &f, "the job `plan` does not pass RELEASE_FREEZE to the plan (`FREEZE: ${{{{ vars.RELEASE_FREEZE }}}}` and `--freeze \"$FREEZE\"`)", .{});
+        if (std.mem.indexOf(u8, jt, " --dry false --output") == null or std.mem.indexOf(u8, jt, "DRY") != null)
+            try add(a, &f, "the job `plan` is not told it is a real run (`--dry false`, and no `DRY` variable: a pull request does not run this workflow)", .{});
+        if (std.mem.indexOf(u8, jt, "number: ${{ steps.version.outputs.number }}") == null) try add(a, &f, "the job `plan` does not output the version number (`number: ${{{{ steps.version.outputs.number }}}}`), which `build-cli` stamps", .{});
     }
-    // The archive is of the tested commit, and no step of the jobs before the tag names the tag by a ref.
-    for ([_][]const u8{ "archive", "verify" }) |name| {
+    if (std.mem.count(u8, text, "RELEASE_FREEZE") != 1) try add(a, &f, "RELEASE_FREEZE is read other than once, in `plan`: a freeze is decided in one place", .{});
+    if (std.mem.indexOf(u8, text, "github.event.pull_request") != null or std.mem.indexOf(u8, text, "'pull_request'") != null)
+        try add(a, &f, "the workflow names a pull request (`github.event.pull_request`, `'pull_request'`): only a push to main runs it, and the candidate is `github.sha`", .{});
+    // The commit: the jobs that test it check out and name it (CANDIDATE); the jobs that write name $GITHUB_SHA.
+    for (candidate_jobs) |name| {
+        const j = jobNamed(jobs, name) orelse continue;
+        const jb = jobBlock(text, name);
+        if (std.mem.indexOf(u8, jb, candidate_env) == null) try add(a, &f, "the job `{s}` does not name the commit as `CANDIDATE: {s}`", .{ name, candidate_expr });
+        if (std.mem.indexOf(u8, jb, "actions/checkout@") != null and std.mem.count(u8, jb, "actions/checkout@") != std.mem.count(u8, jb, candidate_ref))
+            try add(a, &f, "the checkout of the job `{s}` is not of `ref: {s}`", .{ name, candidate_expr });
+        _ = j;
+    }
+    for ([_][]const u8{ "tool", "build-cli", "gamma" }) |name| {
+        if (jobNamed(jobs, name) == null) continue;
+        const jb = jobBlock(text, name);
+        // gamma has a second checkout, of the farm-connect action
+        const checkouts = std.mem.count(u8, jb, "actions/checkout@") - (if (std.mem.eql(u8, name, "gamma")) @as(usize, 1) else 0);
+        if (std.mem.count(u8, jb, candidate_ref) != checkouts) try add(a, &f, "the checkout of the job `{s}` is not of `ref: {s}`", .{ name, candidate_expr });
+    }
+    if (jobNamed(jobs, "gamma")) |_| {
+        const jb = jobBlock(text, "gamma");
+        if (std.mem.indexOf(u8, jb, candidate_env) == null or std.mem.indexOf(u8, jb, "--candidate \"$CANDIDATE\"") == null) try add(a, &f, "the job `gamma` does not build the pushed commit as the candidate (`--candidate \"$CANDIDATE\"`)", .{});
+    }
+    for ([_][]const u8{ "tag", "publish", "bump", "site" }) |name| {
+        if (jobNamed(jobs, name) == null) continue;
+        const jb = jobBlock(text, name);
+        if (std.mem.indexOf(u8, jb, "CANDIDATE") != null or std.mem.indexOf(u8, jb, "--sha \"$GITHUB_SHA\"") == null) try add(a, &f, "the job `{s}` must name `--sha \"$GITHUB_SHA\"` and not the candidate variable", .{name});
+    }
+    // The archive and the verifies are of the commit, and no step of the jobs before the tag names the tag by a ref.
+    for ([_][]const u8{ "archive", "verify", "build-cli" }) |name| {
         if (jobNamed(jobs, name)) |j| {
             const jt = try j.text(a);
             if (std.mem.indexOf(u8, jt, "refs/tags/") != null) try add(a, &f, "the job `{s}` reads a tag by ref (`refs/tags/`): the tag does not exist yet, the archive is of the commit", .{name});
-            if (std.mem.indexOf(u8, jt, "--sha \"$GITHUB_SHA\"") == null) try add(a, &f, "the job `{s}` does not pass `--sha \"$GITHUB_SHA\"` (the archive is of the tested commit)", .{name});
+        }
+    }
+    for ([_][]const u8{ "archive", "verify" }) |name| {
+        if (jobNamed(jobs, name)) |j| {
+            const jt = try j.text(a);
+            if (std.mem.indexOf(u8, jt, "--sha \"$CANDIDATE\"") == null) try add(a, &f, "the job `{s}` does not pass `--sha \"$CANDIDATE\"` (the archive is of the tested commit)", .{name});
         }
     }
     if (jobNamed(jobs, "gate")) |j| {
         if (j.uses == null or !std.mem.eql(u8, j.uses.?, ci_call)) try add(a, &f, "the job `gate` does not call {s}", .{ci_call});
-        if (j.if_expr != null) try add(a, &f, "the job `gate` has an `if:`: the stage that gates the release can be skipped", .{});
         if (j.perms.items.len != 1 or !std.mem.eql(u8, j.perms.items[0].scope, "contents") or !std.mem.eql(u8, j.perms.items[0].level, "read"))
             try add(a, &f, "the job `gate` is not `contents: read` alone", .{});
     }
-    // beta: the call of beta.yml, which nothing can skip, with read access and the farm leg's token only.
+    // beta: the call of beta.yml with the command line build-cli built, with read access and the farm leg's token only.
     if (jobNamed(jobs, "beta")) |j| {
         if (j.uses == null or !std.mem.eql(u8, j.uses.?, beta_call)) try add(a, &f, "the job `beta` does not call {s}", .{beta_call});
-        if (j.if_expr != null) try add(a, &f, "the job `beta` has an `if:`: the stage that proves the candidate for a user can be skipped", .{});
         if (j.perms.items.len != 2 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read") or permLevel(j, "id-token") == null or !std.mem.eql(u8, permLevel(j, "id-token").?, "write"))
             try add(a, &f, "the job `beta` is not `contents: read` and `id-token: write` alone", .{});
+        const jt = try j.text(a);
+        if (!std.mem.endsWith(u8, jt, "\nwith:\ncli-artifact: release-cli-bin")) try add(a, &f, "the job `beta` does not run the command line that `build-cli` built (`with: cli-artifact: release-cli-bin`)", .{});
     }
-    // gamma: our own repositories on the farm. It holds the farm's token and no write access to the repository, cannot be skipped, takes the farm-connect
+    // gamma: our own repositories on the farm. It holds the farm's token and no write access to the repository, takes the farm-connect
     // action from the repository and commit that variables name (the checkout is verified before the action runs), and runs no buck2 itself.
     if (jobNamed(jobs, "gamma")) |j| {
-        if (j.if_expr != null) try add(a, &f, "the job `gamma` has an `if:`: the stage that builds our own repositories with the candidate can be skipped", .{});
         if (j.perms.items.len != 2 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read") or permLevel(j, "id-token") == null or !std.mem.eql(u8, permLevel(j, "id-token").?, "write"))
             try add(a, &f, "the job `gamma` is not `contents: read` and `id-token: write` alone", .{});
         if (!hasNeed(j, "tool")) try add(a, &f, "the job `gamma` does not wait for `tool`, which builds the stage tool it runs", .{});
@@ -541,26 +737,58 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
                 try add(a, &f, "the job `gamma` holds the farm's token and runs buck2 itself: {s}", .{l});
         }
     }
-    // cli: the command line, built from the tested commit with the planned version stamped in (`-c buildrules.release_version`, read by cli/BUCK), and
-    // `verify` runs it and compares what it prints with the release. Read-only; it runs the buck2 that `tool` handed on, as the literal `./buck2`.
-    if (jobNamed(jobs, "cli")) |j| {
-        if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read"))
-            try add(a, &f, "the job `cli` is not `contents: read` alone", .{});
-        if (!hasNeed(j, "tool")) try add(a, &f, "the job `cli` does not wait for `tool`, which hands on the buck2 it runs", .{});
+    // build-cli: the three binaries, stamped with the planned version, in one directory, packaged as the three tarballs; the linux-x86_64 binary is handed to the beta as the file it runs.
+    if (jobNamed(jobs, "build-cli")) |j| {
         const jt = try j.text(a);
-        if (std.mem.indexOf(u8, jt, "NUMBER: ${{ needs.plan.outputs.number }}") == null) try add(a, &f, "the job `cli` does not take the planned version from the plan (`NUMBER: ${{{{ needs.plan.outputs.number }}}}`)", .{});
-        if (std.mem.indexOf(u8, jt, "-c \"buildrules.release_version=$NUMBER\"") == null) try add(a, &f, "the job `cli` does not stamp the planned version into the program (`-c \"buildrules.release_version=$NUMBER\"`)", .{});
-        if (std.mem.indexOf(u8, jt, " //cli:buildrules") == null) try add(a, &f, "the job `cli` does not build //cli:buildrules", .{});
-        if (std.mem.indexOf(u8, jt, "name: release-cli") == null) try add(a, &f, "the job `cli` does not upload the artifact `release-cli`", .{});
+        if (!hasNeed(j, "tool")) try add(a, &f, "the job `build-cli` does not wait for `tool`, which hands on the buck2 it runs", .{});
+        if (std.mem.indexOf(u8, jt, "NUMBER: ${{ needs.plan.outputs.number }}") == null) try add(a, &f, "the job `build-cli` does not take the planned version from the plan (`NUMBER: ${{{{ needs.plan.outputs.number }}}}`)", .{});
+        if (!hasLineEnd(jt, buildBinaries("cli-bins"))) try add(a, &f, "the job `build-cli` does not build //cli:release_binaries with the planned version stamped in (`-c \"buildrules.release_version=$NUMBER\"`, `--out cli-bins`)", .{});
+        if (!hasLineEnd(jt, "tool/release package-all --version \"$NUMBER\" --bins cli-bins --license LICENSE --out cli-dist --native linux-x86_64"))
+            try add(a, &f, "the job `build-cli` does not package the three tarballs of the stamped build (`package-all --version \"$NUMBER\" --bins cli-bins`, running only the linux-x86_64 binary)", .{});
+        if (std.mem.indexOf(u8, jt, "name: release-cli-tarballs\npath: cli-dist\n") == null) try add(a, &f, "the job `build-cli` does not upload the three tarballs as the artifact `release-cli-tarballs`", .{});
+        if (std.mem.indexOf(u8, jt, "name: release-cli-bin\npath: cli-bins/linux-x86_64/buildrules\n") == null) try add(a, &f, "the job `build-cli` does not upload the linux-x86_64 binary it packaged as the artifact `release-cli-bin`", .{});
     }
-    if (jobNamed(jobs, "verify")) |j| {
+    // archive: the tarballs the build made, the file the beta ran, and the check that the tarball holds that very file.
+    if (jobNamed(jobs, "archive")) |j| {
         const jt = try j.text(a);
-        if (std.mem.indexOf(u8, jt, "name: release-cli") == null) try add(a, &f, "the job `verify` does not download the artifact `release-cli`", .{});
-        if (std.mem.indexOf(u8, jt, " --cli built-cli/buildrules") == null) try add(a, &f, "the job `verify` does not pass `--cli built-cli/buildrules`, so the program's version is not checked", .{});
+        if (std.mem.indexOf(u8, jt, "name: release-cli-tarballs\npath: dist\n") == null) try add(a, &f, "the job `archive` does not download the tarballs (`release-cli-tarballs`) into `dist`", .{});
+        if (std.mem.indexOf(u8, jt, "name: release-cli-bin\npath: ran\n") == null) try add(a, &f, "the job `archive` does not download the file the beta ran (`release-cli-bin`) into `ran`", .{});
+        if (!hasLineEnd(jt, "tool/release record --tarball \"dist/buildrules-cli-$NUMBER-linux-x86_64.tar.gz\" --ran-binary ran/buildrules --out tested"))
+            try add(a, &f, "the job `archive` does not check that the linux-x86_64 tarball holds the file the beta ran (`record --ran-binary ran/buildrules`)", .{});
+        if (!hasLineEnd(jt, "tool/release tested --dist dist --tested tested --targets linux-x86_64")) try add(a, &f, "the job `archive` does not hold the attested tarballs to the ones the beta ran (`tested --targets linux-x86_64`)", .{});
+        if (std.mem.indexOf(u8, jt, "name: release-unsigned\npath: dist\n") == null) try add(a, &f, "the job `archive` does not upload `dist` as the artifact `release-unsigned`", .{});
+        // the order of its tool: archive, record, tested, sums
+        const markers = [_][]const u8{ "tool/release archive ", "tool/release record ", "tool/release tested ", "tool/release sums " };
+        var at: usize = 0;
+        for (markers) |m| {
+            const i = std.mem.indexOfPos(u8, jt, at, m);
+            if (i == null) {
+                try add(a, &f, "the job `archive` has no `{s}` after the step before it (order: archive, record, tested, sums)", .{m});
+                break;
+            }
+            at = i.?;
+        }
     }
-    if (jobNamed(jobs, "plan")) |j| {
+    // the second build, in both verifies: the same command as build-cli's but into rebuilt-bins, the tarballs again, and the shipped program run.
+    for ([_][]const u8{ "verify" }) |name| {
+        const j = jobNamed(jobs, name) orelse continue;
         const jt = try j.text(a);
-        if (std.mem.indexOf(u8, jt, "number: ${{ steps.version.outputs.number }}") == null) try add(a, &f, "the job `plan` does not output the version number (`number: ${{{{ steps.version.outputs.number }}}}`), which `cli` stamps", .{});
+        if (!hasNeed(j, "tool")) try add(a, &f, "the job `{s}` does not wait for `tool`, which hands on the buck2 it runs", .{name});
+        if (std.mem.indexOf(u8, jt, "NUMBER: ${{ needs.plan.outputs.number }}") == null) try add(a, &f, "the job `{s}` does not take the planned version from the plan (`NUMBER: ${{{{ needs.plan.outputs.number }}}}`)", .{name});
+        if (!hasLineEnd(jt, buildBinaries("rebuilt-bins"))) try add(a, &f, "the job `{s}` does not build the three binaries again with the planned version stamped in (`--out rebuilt-bins //cli:release_binaries`)", .{name});
+        if (!hasLineEnd(jt, "tool/release package-all --version \"$NUMBER\" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64")) try add(a, &f, "the job `{s}` does not package the second build's three tarballs", .{name});
+        if (std.mem.indexOf(u8, jt, " --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry ") == null) try add(a, &f, "the job `{s}` does not pass `--cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist` to verify, so the shipped program's version and the second build are not checked", .{name});
+        if (std.mem.indexOf(u8, jt, "name: release-dist") == null or std.mem.indexOf(u8, jt, "release-unsigned") != null) try add(a, &f, "the job `{s}` does not read `release-dist` (what attest made) alone", .{name});
+    }
+    for ([_][]const u8{ "publish", "site" }) |name| {
+        if (jobNamed(jobs, name)) |j| {
+            const jt = try j.text(a);
+            if (std.mem.indexOf(u8, jt, "name: release-dist\npath: dist\n") == null or std.mem.indexOf(u8, jt, "release-unsigned") != null) try add(a, &f, "the job `{s}` does not read `release-dist` (the files that were signed and verified) alone", .{name});
+        }
+    }
+    if (jobNamed(jobs, "attest")) |j| {
+        const jt = try j.text(a);
+        if (std.mem.indexOf(u8, jt, "name: release-unsigned\npath: dist\n") == null) try add(a, &f, "the job `attest` does not sign what `archive` made (`release-unsigned`)", .{});
     }
     if (jobNamed(jobs, "site")) |j| {
         if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read")) try add(a, &f, "the job `site` is not `contents: read` alone", .{});
@@ -623,6 +851,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     return f;
 }
 
+
 // ---- tests ------------------------------------------------------------------------------------------------------------------------------
 
 fn work(a: std.mem.Allocator, sub: []const u8) ![]u8 {
@@ -654,66 +883,15 @@ const fixture_wf =
     \\
     \\permissions: {}
     \\
+    \\concurrency:
+    \\  group: release-${{ github.sha }}
+    \\  cancel-in-progress: false
+    \\
     \\jobs:
     \\  gate:
     \\    permissions:
     \\      contents: read
     \\    uses: ./.github/workflows/ci.yml
-    \\
-    \\  beta:
-    \\    needs: [gate]
-    \\    permissions:
-    \\      contents: read
-    \\      id-token: write
-    \\    uses: ./.github/workflows/beta.yml
-    \\
-    \\  gamma:
-    \\    needs: [beta, tool]
-    \\    runs-on: ubuntu-latest
-    \\    timeout-minutes: 240
-    \\    permissions:
-    \\      contents: read
-    \\      id-token: write
-    \\    env:
-    \\      CONNECT_REF: ${{ vars.FARM_CONNECT_REF }}
-    \\      CONNECT_REPO: ${{ vars.FARM_CONNECT_REPO }}
-    \\      HAS_ADDRESS: ${{ vars.FARM_ADDRESS != '' }}
-    \\      HAS_INSTANCE: ${{ vars.FARM_INSTANCE != '' }}
-    \\      HAS_PROPERTIES: ${{ vars.FARM_LINUX_X86_64_PROPERTIES != '' }}
-    \\      HAS_TS_CLIENT_ID: ${{ vars.TS_CLIENT_ID != '' }}
-    \\      HAS_TS_AUDIENCE: ${{ vars.TS_AUDIENCE != '' }}
-    \\      GAMMA_REPOS: ${{ vars.GAMMA_REPOS }}
-    \\      GAMMA_TARGETS: ${{ vars.GAMMA_TARGETS || '//...' }}
-    \\    steps:
-    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-    \\        with:
-    \\          persist-credentials: false
-    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-    \\        with:
-    \\          name: stage-tool
-    \\          path: tool
-    \\      - run: chmod +x tool/stage tool/buck2
-    \\      - name: every repository variable gamma needs is set
-    \\        run: tool/stage gamma-vars --farm-address "$HAS_ADDRESS" --farm-instance "$HAS_INSTANCE" --farm-properties "$HAS_PROPERTIES" --ts-client-id "$HAS_TS_CLIENT_ID" --ts-audience "$HAS_TS_AUDIENCE" --connect-repo "$CONNECT_REPO" --connect-ref "$CONNECT_REF" --repos "$GAMMA_REPOS"
-    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-    \\        with:
-    \\          repository: ${{ vars.FARM_CONNECT_REPO }}
-    \\          ref: ${{ vars.FARM_CONNECT_REF }}
-    \\          path: farm-action
-    \\          persist-credentials: false
-    \\      - name: the action that joins the farm is at the commit the variable names
-    \\        run: tool/stage action-ref --dir farm-action --ref "$CONNECT_REF"
-    \\      - name: connect to the farm
-    \\        uses: ./farm-action/.github/actions/farm-connect
-    \\        with:
-    \\          ts-client-id: ${{ vars.TS_CLIENT_ID }}
-    \\          ts-audience: ${{ vars.TS_AUDIENCE }}
-    \\          farm-address: ${{ vars.FARM_ADDRESS }}
-    \\          farm-instance: ${{ vars.FARM_INSTANCE }}
-    \\          farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
-    \\          tls: ${{ vars.FARM_TLS || 'false' }}
-    \\      - name: Build our repositories with the candidate on the farm
-    \\        run: tool/stage gamma --work "$RUNNER_TEMP/gamma" --candidate "$GITHUB_SHA" --repos "$GAMMA_REPOS" --targets "$GAMMA_TARGETS" --buck2 "$GITHUB_WORKSPACE/tool/buck2" --farm-config "$HOME/.buckconfig.d/farm.buckconfig"
     \\
     \\  tool:
     \\    runs-on: ubuntu-latest
@@ -723,6 +901,7 @@ const fixture_wf =
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
+    \\          ref: ${{ github.sha }}
     \\          persist-credentials: false
     \\
     \\      - name: Install buck2
@@ -758,11 +937,14 @@ const fixture_wf =
     \\          if-no-files-found: error
     \\
     \\  plan:
-    \\    needs: [gamma, tool]
+    \\    needs: [gate, tool]
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
     \\    permissions:
     \\      contents: read
+    \\    env:
+    \\      CANDIDATE: ${{ github.sha }}
+    \\      FREEZE: ${{ vars.RELEASE_FREEZE }}
     \\    outputs:
     \\      released: ${{ steps.version.outputs.released }}
     \\      tag: ${{ steps.version.outputs.tag }}
@@ -771,6 +953,7 @@ const fixture_wf =
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
+    \\          ref: ${{ github.sha }}
     \\          fetch-depth: 0
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -780,44 +963,9 @@ const fixture_wf =
     \\      - run: chmod +x tool/release
     \\      - name: The version of this commit, if it is released
     \\        id: version
-    \\        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$GITHUB_SHA" --output "$GITHUB_OUTPUT"
+    \\        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$CANDIDATE" --freeze "$FREEZE" --dry false --output "$GITHUB_OUTPUT"
     \\
-    \\  archive:
-    \\    needs: [plan, tool]
-    \\    if: ${{ needs.plan.outputs.released == 'true' }}
-    \\    runs-on: ubuntu-latest
-    \\    timeout-minutes: 15
-    \\    permissions:
-    \\      contents: read
-    \\      id-token: write
-    \\      attestations: write
-    \\    env:
-    \\      TAG: ${{ needs.plan.outputs.tag }}
-    \\    steps:
-    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-    \\        with:
-    \\          persist-credentials: false
-    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-    \\        with:
-    \\          name: release-tool
-    \\          path: tool
-    \\      - run: chmod +x tool/release
-    \\      - name: The deterministic source archive of the tested commit, and its SHA256SUMS
-    \\        run: tool/release archive --root "$GITHUB_WORKSPACE" --tag "$TAG" --sha "$GITHUB_SHA" --out dist
-    \\      - name: Attest the archive and SHA256SUMS
-    \\        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-    \\        with:
-    \\          subject-path: |
-    \\            dist/buildrules-*.tar.gz
-    \\            dist/SHA256SUMS
-    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-    \\        with:
-    \\          name: release-assets
-    \\          path: dist
-    \\          retention-days: 7
-    \\          if-no-files-found: error
-    \\
-    \\  cli:
+    \\  build-cli:
     \\    needs: [plan, tool]
     \\    if: ${{ needs.plan.outputs.released == 'true' }}
     \\    runs-on: ubuntu-latest
@@ -829,35 +977,110 @@ const fixture_wf =
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
+    \\          ref: ${{ github.sha }}
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
     \\          name: stage-tool
     \\          path: .
-    \\      - run: chmod +x buck2
-    \\      - name: Build the command line with the release version stamped in
-    \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out buildrules //cli:buildrules
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: release-tool
+    \\          path: tool
+    \\      - run: chmod +x buck2 tool/release
+    \\      - name: Build the command line for the three targets with the release version stamped in
+    \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out cli-bins //cli:release_binaries
+    \\      - name: Package the three tarballs
+    \\        run: tool/release package-all --version "$NUMBER" --bins cli-bins --license LICENSE --out cli-dist --native linux-x86_64
     \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
     \\        with:
-    \\          name: release-cli
-    \\          path: buildrules
+    \\          name: release-cli-tarballs
+    \\          path: cli-dist
+    \\          retention-days: 7
+    \\          if-no-files-found: error
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        with:
+    \\          name: release-cli-bin
+    \\          path: cli-bins/linux-x86_64/buildrules
     \\          retention-days: 7
     \\          if-no-files-found: error
     \\
-    \\  verify:
-    \\    needs: [plan, archive, cli, tool]
+    \\  beta:
+    \\    needs: [plan, build-cli]
+    \\    if: ${{ needs.plan.outputs.released == 'true' }}
+    \\    permissions:
+    \\      contents: read
+    \\      id-token: write
+    \\    uses: ./.github/workflows/beta.yml
+    \\    with:
+    \\      cli-artifact: release-cli-bin
+    \\
+    \\  gamma:
+    \\    needs: [plan, beta, tool]
+    \\    if: ${{ needs.plan.outputs.released == 'true' }}
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 240
+    \\    permissions:
+    \\      contents: read
+    \\      id-token: write
+    \\    env:
+    \\      CANDIDATE: ${{ github.sha }}
+    \\      CONNECT_REF: ${{ vars.FARM_CONNECT_REF }}
+    \\      CONNECT_REPO: ${{ vars.FARM_CONNECT_REPO }}
+    \\      HAS_ADDRESS: ${{ vars.FARM_ADDRESS != '' }}
+    \\      HAS_INSTANCE: ${{ vars.FARM_INSTANCE != '' }}
+    \\      HAS_PROPERTIES: ${{ vars.FARM_LINUX_X86_64_PROPERTIES != '' }}
+    \\      HAS_TS_CLIENT_ID: ${{ vars.TS_CLIENT_ID != '' }}
+    \\      HAS_TS_AUDIENCE: ${{ vars.TS_AUDIENCE != '' }}
+    \\      GAMMA_REPOS: ${{ vars.GAMMA_REPOS }}
+    \\      GAMMA_TARGETS: ${{ vars.GAMMA_TARGETS || '//...' }}
+    \\    steps:
+    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    \\        with:
+    \\          ref: ${{ github.sha }}
+    \\          persist-credentials: false
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: stage-tool
+    \\          path: tool
+    \\      - run: chmod +x tool/stage tool/buck2
+    \\      - name: every repository variable gamma needs is set
+    \\        run: tool/stage gamma-vars --farm-address "$HAS_ADDRESS" --farm-instance "$HAS_INSTANCE" --farm-properties "$HAS_PROPERTIES" --ts-client-id "$HAS_TS_CLIENT_ID" --ts-audience "$HAS_TS_AUDIENCE" --connect-repo "$CONNECT_REPO" --connect-ref "$CONNECT_REF" --repos "$GAMMA_REPOS"
+    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    \\        with:
+    \\          repository: ${{ vars.FARM_CONNECT_REPO }}
+    \\          ref: ${{ vars.FARM_CONNECT_REF }}
+    \\          path: farm-action
+    \\          persist-credentials: false
+    \\      - name: the action that joins the farm is at the commit the variable names
+    \\        run: tool/stage action-ref --dir farm-action --ref "$CONNECT_REF"
+    \\      - name: connect to the farm
+    \\        uses: ./farm-action/.github/actions/farm-connect
+    \\        with:
+    \\          ts-client-id: ${{ vars.TS_CLIENT_ID }}
+    \\          ts-audience: ${{ vars.TS_AUDIENCE }}
+    \\          farm-address: ${{ vars.FARM_ADDRESS }}
+    \\          farm-instance: ${{ vars.FARM_INSTANCE }}
+    \\          farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
+    \\          tls: ${{ vars.FARM_TLS || 'false' }}
+    \\      - name: Build our repositories with the candidate on the farm
+    \\        run: tool/stage gamma --work "$RUNNER_TEMP/gamma" --candidate "$CANDIDATE" --repos "$GAMMA_REPOS" --targets "$GAMMA_TARGETS" --buck2 "$GITHUB_WORKSPACE/tool/buck2" --farm-config "$HOME/.buckconfig.d/farm.buckconfig"
+    \\
+    \\  archive:
+    \\    needs: [plan, build-cli, beta, gamma, tool]
     \\    if: ${{ needs.plan.outputs.released == 'true' }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
     \\    permissions:
     \\      contents: read
-    \\      attestations: read
     \\    env:
+    \\      CANDIDATE: ${{ github.sha }}
     \\      TAG: ${{ needs.plan.outputs.tag }}
-    \\      GH_TOKEN: ${{ github.token }}
+    \\      NUMBER: ${{ needs.plan.outputs.number }}
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
+    \\          ref: ${{ github.sha }}
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
@@ -865,15 +1088,101 @@ const fixture_wf =
     \\          path: tool
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
-    \\          name: release-assets
+    \\          name: release-cli-tarballs
     \\          path: dist
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
-    \\          name: release-cli
-    \\          path: built-cli
-    \\      - run: chmod +x tool/release built-cli/buildrules
-    \\      - name: The archive, its sums, attestations, file list and scrub, and the command line's version
-    \\        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --dist dist --workflow .github/workflows/release.yml --cli built-cli/buildrules
+    \\          name: release-cli-bin
+    \\          path: ran
+    \\      - run: chmod +x tool/release
+    \\      - name: The deterministic source archive of the tested commit, and its SHA256SUMS
+    \\        run: tool/release archive --root "$GITHUB_WORKSPACE" --tag "$TAG" --sha "$CANDIDATE" --out dist
+    \\      - name: The tarball to attest holds the file the beta ran
+    \\        run: tool/release record --tarball "dist/buildrules-cli-$NUMBER-linux-x86_64.tar.gz" --ran-binary ran/buildrules --out tested
+    \\      - name: Attest only the tarballs a user beta ran
+    \\        run: tool/release tested --dist dist --tested tested --targets linux-x86_64
+    \\      - name: SHA256SUMS over the archive and the three tarballs
+    \\        run: tool/release sums --dist dist
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        with:
+    \\          name: release-unsigned
+    \\          path: dist
+    \\          retention-days: 7
+    \\          if-no-files-found: error
+    \\
+    \\  attest:
+    \\    needs: [plan, archive, tool]
+    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    permissions:
+    \\      contents: read
+    \\      id-token: write
+    \\      attestations: write
+    \\    steps:
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: release-tool
+    \\          path: tool
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: release-unsigned
+    \\          path: dist
+    \\      - run: chmod +x tool/release
+    \\      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+    \\      - name: Sign the five files, keyless
+    \\        run: tool/release sign --dist dist --dry false
+    \\      - name: Attest the archive, the three tarballs and SHA256SUMS
+    \\        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+    \\        with:
+    \\          subject-path: |
+    \\            dist/buildrules-*.tar.gz
+    \\            dist/SHA256SUMS
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        with:
+    \\          name: release-dist
+    \\          path: dist
+    \\          retention-days: 7
+    \\          if-no-files-found: error
+    \\
+    \\  verify:
+    \\    needs: [plan, attest, tool]
+    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 60
+    \\    permissions:
+    \\      contents: read
+    \\      attestations: read
+    \\    env:
+    \\      CANDIDATE: ${{ github.sha }}
+    \\      TAG: ${{ needs.plan.outputs.tag }}
+    \\      NUMBER: ${{ needs.plan.outputs.number }}
+    \\      GH_TOKEN: ${{ github.token }}
+    \\    steps:
+    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    \\        with:
+    \\          ref: ${{ github.sha }}
+    \\          persist-credentials: false
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: stage-tool
+    \\          path: .
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: release-tool
+    \\          path: tool
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: release-dist
+    \\          path: dist
+    \\      - run: chmod +x buck2 tool/release
+    \\      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+    \\      - name: Build the command line again for the three targets
+    \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
+    \\      - name: Package the three tarballs again
+    \\        run: tool/release package-all --version "$NUMBER" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64
+    \\      - name: The archive and the tarballs, their sums, the second build, file list and scrub, the command line's version, the attestations and the signatures
+    \\        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$CANDIDATE" --dist dist --workflow .github/workflows/release.yml --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry false
     \\
     \\  tag:
     \\    needs: [plan, verify, tool]
@@ -933,7 +1242,7 @@ const fixture_wf =
     \\          path: tool
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
-    \\          name: release-assets
+    \\          name: release-dist
     \\          path: dist
     \\      - run: chmod +x tool/release
     \\      - name: Create the release, or add the file it lacks
@@ -991,7 +1300,7 @@ const fixture_wf =
     \\          path: tool
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
-    \\          name: release-assets
+    \\          name: release-dist
     \\          path: dist
     \\      - run: chmod +x tool/release
     \\      - name: The page of the release
@@ -1002,7 +1311,7 @@ const fixture_wf =
     \\          path: site
     \\          retention-days: 30
     \\          if-no-files-found: error
-    \\
+
 ;
 
 const fixture_ds =
@@ -1012,7 +1321,7 @@ const fixture_ds =
     \\      "digest": "1268fce33fb600000000000000000000000000000000000000000000000000ff",
     \\      "providers": [{"url": "https://example.invalid/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst"}]
     \\    },
-    \\    "macos-x86_64": {}
+    \\    "macos-aarch64": {}
     \\  }
     \\}
     \\
@@ -1039,11 +1348,13 @@ fn mutate(a: std.mem.Allocator, wf: []const u8, from: []const u8, to: []const u8
     return std.mem.concat(a, u8, &.{ wf[0..i], to, wf[i + from.len ..] });
 }
 
-/// As `mutate`, within the job `job` (the first `from` after its header).
+/// As `mutate`, within the job `job` and no further (the first `from` between its header and the next job's). A mutant whose text is not in that job did not
+/// apply: it is an error, and not a quiet change of another job.
 fn mutateIn(a: std.mem.Allocator, wf: []const u8, job: []const u8, from: []const u8, to: []const u8) ![]u8 {
-    const header = try std.fmt.allocPrint(a, "\n  {s}:\n", .{job});
-    const at = std.mem.indexOf(u8, wf, header) orelse return error.MutantDidNotApply;
-    const i = std.mem.indexOfPos(u8, wf, at, from) orelse return error.MutantDidNotApply;
+    const block = jobBlock(wf, job);
+    if (block.len == 0) return error.MutantDidNotApply;
+    const at = @intFromPtr(block.ptr) - @intFromPtr(wf.ptr);
+    const i = std.mem.indexOfPos(u8, wf[0 .. at + block.len], at, from) orelse return error.MutantDidNotApply;
     return std.mem.concat(a, u8, &.{ wf[0..i], to, wf[i + from.len ..] });
 }
 
@@ -1073,7 +1384,7 @@ test "the jobs are parsed as the rules read them" {
     const a = ar.allocator();
     const r = try fx(a);
     const jobs = try parseJobs(a, try body(a, r.wf));
-    try t.expectEqual(@as(usize, 12), jobs.len);
+    try t.expectEqual(@as(usize, 13), jobs.len);
     const bp = jobNamed(jobs, "bump").?;
     try t.expect(hasNeed(bp, "plan") and hasNeed(bp, "tag") and hasNeed(bp, "publish") and hasNeed(bp, "tool"));
     try t.expectEqualStrings(tag_if, bp.if_expr.?);
@@ -1085,10 +1396,13 @@ test "the jobs are parsed as the rules read them" {
     try t.expectEqualStrings("read", permLevel(tg, "contents").?);
     try t.expectEqualStrings("release", tg.group.?);
     try t.expectEqualStrings("false", tg.cancel.?);
-    const ar_job = jobNamed(jobs, "archive").?;
-    try t.expectEqualStrings("write", permLevel(ar_job, "id-token").?);
-    try t.expectEqualStrings("write", permLevel(ar_job, "attestations").?);
-    try t.expectEqualStrings("read", permLevel(ar_job, "contents").?);
+    const at_job = jobNamed(jobs, "attest").?;
+    try t.expectEqualStrings("write", permLevel(at_job, "id-token").?);
+    try t.expectEqualStrings("write", permLevel(at_job, "attestations").?);
+    try t.expectEqualStrings("read", permLevel(at_job, "contents").?);
+    try t.expectEqualStrings(tag_if, at_job.if_expr.?);
+    try t.expect(jobNamed(jobs, "gate").?.if_expr == null);
+    try t.expect(jobNamed(jobs, "tool").?.if_expr == null);
     try t.expectEqualStrings(ci_call, jobNamed(jobs, "gate").?.uses.?);
     try t.expectEqualStrings(publish_if, jobNamed(jobs, "publish").?.if_expr.?);
 }
@@ -1117,18 +1431,24 @@ test "rule: a checkout keeps no credentials" {
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "          persist-credentials: false\n", "          persist-credentials: true\n"), "persist-credentials");
 }
 
-test "rule: only a push to main triggers it" {
+test "rule: only a push to main triggers it, and no pull request does" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try fx(a);
-    const need = "triggered by something other than a push to main";
-    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  push:", "on:\n  pull_request:\n  push:"), need);
-    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  push:", "on:\n  workflow_dispatch:\n  push:"), need);
-    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  push:", "on:\n  schedule:\n  push:"), need);
-    try expectFinding(a, r, try mutate(a, r.wf, "branches: [main]", "branches: [main, dev]"), need);
-    try expectFinding(a, r, try mutate(a, r.wf, "branches: [main]", "branches: [dev]"), need);
-    try expectFinding(a, r, try mutate(a, r.wf, "  push:\n    branches: [main]\n", "  workflow_run:\n    workflows: [ci]\n"), "workflow_run");
+    // anything else is refused by name
+    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  push:", "on:\n  workflow_dispatch:\n  push:"), "triggered by `workflow_dispatch`");
+    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  push:", "on:\n  schedule:\n  push:"), "triggered by `schedule`");
+    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  push:", "on:\n  release:\n  push:"), "triggered by `release`");
+    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  push:", "on:\n  pull_request_target:\n  push:"), "`pull_request_target` appears");
+    try expectFinding(a, r, try mutate(a, r.wf, "    branches: [main]\n\npermissions", "    branches: [main]\n  workflow_run:\n    workflows: [ci]\n\npermissions"), "`workflow_run` appears");
+    // the tiers: a pull request runs build and unit tests (ci.yml) and never this workflow; no release-pipeline dry run
+    try expectFinding(a, r, try mutate(a, r.wf, "    branches: [main]\n\npermissions", "    branches: [main]\n  pull_request:\n\npermissions"), "triggered by `pull_request`");
+    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  push:", "on:\n  pull_request:\n  push:"), "triggered by `pull_request`");
+    // the push is to main alone
+    try expectFinding(a, r, try mutate(a, r.wf, "branches: [main]", "branches: [main, dev]"), "not triggered by a push to main");
+    try expectFinding(a, r, try mutate(a, r.wf, "branches: [main]", "branches: [dev]"), "not triggered by a push to main");
+    try expectFinding(a, r, try mutate(a, r.wf, "  push:\n    branches: [main]\n", ""), "not triggered by a push to main");
 }
 
 test "rule: write scopes only where they belong" {
@@ -1136,13 +1456,16 @@ test "rule: write scopes only where they belong" {
     defer ar.deinit();
     const a = ar.allocator();
     const r = try fx(a);
-    // contents: write only in tag and publish
+    // contents: write only in publish
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      contents: read\n", "      contents: write\n"), "job `archive` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      contents: read\n", "      contents: write\n"), "job `verify` holds `contents: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "      contents: read\n", "      contents: write\n"), "job `attest` holds `contents: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "      contents: read\n", "      contents: write\n"), "job `build-cli` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tool", "      contents: read\n", "      contents: write\n"), "job `tool` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "gate", "      contents: read\n", "      contents: write\n"), "job `gate` holds `contents: write`");
-    // id-token and attestations write only in archive
+    // id-token and attestations write only in attest (and id-token in gamma and the call of beta)
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `tag` holds `id-token: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `archive` holds `id-token: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      contents: write\n", "      contents: write\n      attestations: write\n"), "job `publish` holds `attestations: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      attestations: read\n", "      attestations: write\n"), "job `verify` holds `attestations: write`");
     // any other scope
@@ -1153,14 +1476,18 @@ test "rule: write scopes only where they belong" {
     try expectFinding(a, r, try mutate(a, r.wf, "permissions: {}", "permissions:\n  contents: write"), "permissions: {}");
     try expectFinding(a, r, try mutate(a, r.wf, "permissions: {}", "permissions:\n  contents: write"), "outside a job's");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      contents: read\n", "      contents: read-all\n      x: write-all\n"), "write-all");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "    timeout-minutes: 15\n", "    timeout-minutes: 15\n    env:\n      P: contents: write\n"), "outside a job's");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "    timeout-minutes: 60\n", "    timeout-minutes: 60\n    env:\n      P: contents: write\n"), "outside a job's");
     // a job with no permissions of its own would inherit the top
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "    permissions:\n      contents: read\n      attestations: read\n", ""), "states no `permissions:`");
+    // the jobs that read hold nothing more: verify reads attestations, no job but attest holds the signing scopes
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      attestations: read\n", ""), "`verify` is not `contents: read` and `attestations: read` alone");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      attestations: read\n", "      attestations: read\n      packages: read\n"), "`verify` is not `contents: read` and `attestations: read` alone");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      contents: read\n", "      contents: read\n      packages: read\n"), "`archive` is not `contents: read` alone");
     // the jobs that need their scope have it
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      contents: read\n", "      contents: write\n"), "job `tag` holds `contents: write`, which only publish may");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      contents: write\n", "      contents: read\n"), "`publish` does not hold `contents: write`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      id-token: write\n", "      id-token: read\n"), "`archive` does not hold `id-token: write`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      attestations: write\n", ""), "`archive` does not hold `attestations: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "      id-token: write\n", "      id-token: read\n"), "`attest` does not hold `id-token: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "      attestations: write\n", ""), "`attest` does not hold `attestations: write`");
 }
 
 test "rule: exactly the jobs that read the release bot's key declare the environment release, and no other job declares one" {
@@ -1178,7 +1505,7 @@ test "rule: exactly the jobs that read the release bot's key declare the environ
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", env, "    environment: prod\n"), "the job `bump` " ++ reads);
     // mutant: the environment on a job that does not read the key
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "    timeout-minutes: 15\n", "    timeout-minutes: 15\n" ++ env), "the job `publish` declares `environment: release`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "    timeout-minutes: 15\n", "    timeout-minutes: 15\n" ++ env), "the job `verify` declares `environment: release`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "    timeout-minutes: 60\n", "    timeout-minutes: 60\n" ++ env), "the job `verify` declares `environment: release`");
 }
 
 test "rule: the tag is made with the release bot's token, minted by `tag` alone with exact inputs, and used by the tag step alone" {
@@ -1214,7 +1541,7 @@ test "rule: the tag is made with the release bot's token, minted by `tag` alone 
     // nor is the key read, or the token minted, in any other job
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}"), "appears other than in `tag` and `bump`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than twice, in `tag` and in `bump`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x tool/release\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than twice, in `tag` and in `bump`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than twice, in `tag` and in `bump`");
     // and publish still holds the job token's write, which creates no tag
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      contents: write\n", "      contents: read\n"), "`publish` does not hold `contents: write`");
 }
@@ -1316,61 +1643,75 @@ test "rule: tag and publish run under their exact if" {
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}\n", ""), exact_pub);
 }
 
-test "rule: the order gate -> beta -> gamma -> plan -> archive -> verify -> tag -> publish, and nothing before the tag waits for it" {
+test "rule: the order gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish, and nothing before the tag waits for it" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try fx(a);
-    // gamma waits for beta, and beta for gate
-    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "needs: [beta, tool]", "needs: [tool]"), "`gamma` does not wait for `beta`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "needs: [beta, tool]", "needs: [beta]"), "`gamma` does not wait for `tool`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    needs: [gate]\n", ""), "`beta` does not wait for `gate`");
-    // the chain after the stages: plan after gamma, archive after plan, verify after archive, tag after verify, publish after tag
-    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "needs: [gamma, tool]", "needs: [tool]"), "`plan` does not wait for `gamma`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "needs: [plan, tool]", "needs: [tool]"), "`archive` does not wait for `plan`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [plan, archive, cli, tool]", "needs: [plan, tool]"), "`verify` does not wait for `archive`");
+    // plan after the gate and the tool; the stages after the plan, each after the one before it
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "needs: [gate, tool]", "needs: [tool]"), "`plan` does not wait for `gate`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "needs: [gate, tool]", "needs: [gate]"), "`plan` does not wait for `tool`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "needs: [plan, tool]", "needs: [tool]"), "`build-cli` does not wait for `plan`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "needs: [plan, tool]", "needs: [plan]"), "`build-cli` does not wait for `tool`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "needs: [plan, build-cli]", "needs: [plan]"), "`beta` does not wait for `build-cli`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "needs: [plan, build-cli]", "needs: [build-cli]"), "`beta` does not wait for `plan`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "needs: [plan, beta, tool]", "needs: [plan, tool]"), "`gamma` does not wait for `beta`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "needs: [plan, beta, tool]", "needs: [plan, beta]"), "`gamma` does not wait for `tool`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "needs: [plan, beta, tool]", "needs: [beta, tool]"), "`gamma` does not wait for `plan`");
+    const archive_needs = [_][]const u8{ "plan", "build-cli", "beta", "gamma", "tool" };
+    for (archive_needs) |dep| {
+        var list = std.ArrayList(u8).init(a);
+        try list.appendSlice("needs: [");
+        var first = true;
+        for (archive_needs) |other| {
+            if (std.mem.eql(u8, other, dep)) continue;
+            if (!first) try list.appendSlice(", ");
+            first = false;
+            try list.appendSlice(other);
+        }
+        try list.appendSlice("]");
+        const want = try std.fmt.allocPrint(a, "`archive` does not wait for `{s}`", .{dep});
+        try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "needs: [plan, build-cli, beta, gamma, tool]", list.items), want);
+    }
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "needs: [plan, archive, tool]", "needs: [plan, tool]"), "`attest` does not wait for `archive`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [plan, attest, tool]", "needs: [plan, tool]"), "`verify` does not wait for `attest`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "needs: [plan, verify, tool]", "needs: [plan, tool]"), "`tag` does not wait for `verify`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "needs: [plan, verify, tool]", "needs: [verify, tool]"), "`tag` does not wait for `plan`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs: [plan, tag, verify, tool]", "needs: [plan, verify, tool]"), "`publish` does not wait for `tag`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs: [plan, tag, verify, tool]", "needs: [plan, tag, tool]"), "`publish` does not wait for `verify`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "site", "needs: [plan, tag, verify, tool]", "needs: [plan, tag, tool]"), "`site` does not wait for `verify`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "site", "needs: [plan, tag, verify, tool]", "needs: [plan, verify, tool]"), "`site` does not wait for `tag`");
-    // nothing before the tag waits for it: a failure there must leave no tag (the old order, archive after tag, is red)
+    // nothing before the tag waits for it: a failure there must leave no tag
     const waits = "waits for `tag` or `publish`";
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "needs: [plan, tool]", "needs: [plan, tag, tool]"), waits);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [plan, archive, cli, tool]", "needs: [plan, archive, cli, tag, tool]"), waits);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "needs: [gamma, tool]", "needs: [gamma, tag, tool]"), waits);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "needs: [beta, tool]", "needs: [beta, tool, tag]"), waits);
+    for ([_][]const u8{ "plan", "build-cli", "beta", "gamma", "archive", "attest", "verify" }) |name| {
+        const header = try std.fmt.allocPrint(a, "\n  {s}:\n    needs: [", .{name});
+        const at = std.mem.indexOf(u8, r.wf, header) orelse return error.MutantDidNotApply;
+        const inner = at + header.len;
+        const wf = try std.mem.concat(a, u8, &.{ r.wf[0..inner], "tag, ", r.wf[inner..] });
+        try expectFinding(a, r, wf, waits);
+    }
     // the plan only reads and cannot be skipped
     try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "      contents: read\n", "      contents: write\n"), "job `plan` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "    timeout-minutes: 15\n", "    timeout-minutes: 15\n    if: ${{ vars.X == '' }}\n"), "`plan` has an `if:`");
-    // the archive and verify are of the commit: no ref of a tag (it does not exist yet), and the sha is passed
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          ref: refs/tags/${{ needs.plan.outputs.tag }}\n"), "reads a tag by ref");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "--sha \"$GITHUB_SHA\" ", ""), "`verify` does not pass `--sha");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "--sha \"$GITHUB_SHA\" ", ""), "`archive` does not pass `--sha");
-    // the command line is stamped with the planned version and verify runs it: each link of that chain is held
-    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", " -c \"buildrules.release_version=$NUMBER\"", ""), "`cli` does not stamp the planned version");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "needs.plan.outputs.number", "needs.plan.outputs.tag"), "`cli` does not take the planned version from the plan");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", " //cli:buildrules", " //tools/release:release"), "`cli` does not build //cli:buildrules");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "name: release-cli", "name: other"), "`cli` does not upload the artifact `release-cli`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", " -c buildrules_re.mode=local", ""), "does not pass `-c buildrules_re.mode=local`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "      contents: read\n", "      contents: write\n"), "job `cli` holds `contents: write`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "needs: [plan, tool]", "needs: [plan]"), "`cli` does not wait for `tool`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "needs: [plan, tool]", "needs: [tool]"), "`cli` does not wait for `plan`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "needs: [plan, tool]", "needs: [plan, tag, tool]"), "`cli` waits for `tag` or `publish`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "cli", "    if: ${{ needs.plan.outputs.released == 'true' }}\n", ""), "`cli` runs even when the plan released nothing");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs: [plan, archive, cli, tool]", "needs: [plan, archive, tool]"), "`verify` does not wait for `cli`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", " --cli built-cli/buildrules", ""), "`verify` does not pass `--cli");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "name: release-cli", "name: other"), "`verify` does not download the artifact `release-cli`");
-    try expectFinding(a, r, try mutate(a, r.wf, "      number: ${{ steps.version.outputs.number }}\n", ""), "`plan` does not output the version number");
-    // gate is a call of ci.yml that cannot be skipped, with read access only
+    // the archive and the verifies are of the commit: no ref of a tag (it does not exist yet), and the sha is passed
+    const checkout = "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n";
+    for ([_][]const u8{ "archive", "verify", "build-cli" }) |name| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, checkout, checkout ++ "          ref: refs/tags/${{ needs.plan.outputs.tag }}\n"), "reads a tag by ref");
+    }
+    for ([_][]const u8{ "archive", "verify" }) |name| {
+        const want = try std.fmt.allocPrint(a, "`{s}` does not pass `--sha", .{name});
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "--sha \"$CANDIDATE\" ", ""), want);
+    }
+    // gate is a call of ci.yml, with read access only
     try expectFinding(a, r, try mutate(a, r.wf, "    uses: ./.github/workflows/ci.yml\n", "    runs-on: ubuntu-latest\n"), "`gate` does not call");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "gate", "    permissions:\n", "    if: ${{ github.event_name == 'push' }}\n    permissions:\n"), "`gate` has an `if:`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "gate", "      contents: read\n", "      contents: read\n      packages: read\n"), "`gate` is not `contents: read` alone");
+    // gate and tool are never skipped (a skipped need skips the plan, and a release would silently not happen)
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gate", "    permissions:\n", "    if: ${{ github.event_name == 'push' }}\n    permissions:\n"), "`gate` has an `if:`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tool", "    runs-on: ubuntu-latest\n", "    if: ${{ vars.SKIP != 'true' }}\n    runs-on: ubuntu-latest\n"), "`tool` has an `if:`");
     // ci.yml must be callable
     try expectFinding(a, .{ .wf = r.wf, .ds = r.ds, .ci = "on:\n  pull_request:\n" }, r.wf, "no `workflow_call:` trigger");
     // a missing job
-    for ([_][]const u8{ "publish", "verify", "beta", "gamma", "site", "plan", "tag", "bump" }) |name| {
+    for (all_jobs) |name| {
         const from = try std.fmt.allocPrint(a, "\n  {s}:\n", .{name});
         const to = try std.fmt.allocPrint(a, "\n  {s}_x:\n", .{name});
         const want = try std.fmt.allocPrint(a, "the job `{s}` is missing", .{name});
@@ -1378,21 +1719,29 @@ test "rule: the order gate -> beta -> gamma -> plan -> archive -> verify -> tag 
     }
 }
 
-test "rule: beta is a call of beta.yml that cannot be skipped, with the farm leg's token and nothing else" {
+
+test "rule: beta is a call of beta.yml with the command line build-cli built, the farm leg's token and nothing else, for a released commit only" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try fx(a);
     try expectFinding(a, r, try mutate(a, r.wf, "    uses: ./.github/workflows/beta.yml\n", "    runs-on: ubuntu-latest\n"), "`beta` does not call");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    needs: [gate]\n", "    needs: [gate]\n    if: ${{ vars.FARM_ADDRESS != '' }}\n"), "`beta` has an `if:`");
+    // for a released commit alone: no other condition, and not the plain `released` clause gone
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    if: " ++ released_if ++ "\n", "    if: ${{ vars.FARM_ADDRESS != '' }}\n"), "`beta` is not under the `if:`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    if: " ++ released_if ++ "\n", ""), "`beta` is not under the `if:`");
+    // the token
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "      id-token: write\n", ""), "`beta` is not `contents: read` and `id-token: write` alone");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "      id-token: write\n", "      id-token: write\n      packages: read\n"), "`beta` is not `contents: read` and `id-token: write` alone");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "      contents: read\n", "      contents: write\n"), "job `beta` holds `contents: write`");
+    // it walks the file build-cli built, not one it builds itself, and the name is the one build-cli uploads
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    with:\n      cli-artifact: release-cli-bin\n", ""), "`beta` does not run the command line that `build-cli` built");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "cli-artifact: release-cli-bin", "cli-artifact: release-cli-tarballs"), "`beta` does not run the command line that `build-cli` built");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "cli-artifact: release-cli-bin", "cli-artifact: \"\""), "`beta` does not run the command line that `build-cli` built");
     // the workflow it calls must be pinned like any other local reference: only these three are allowed
     try expectFinding(a, r, try mutate(a, r.wf, "uses: ./.github/workflows/beta.yml", "uses: ./.github/workflows/beta2.yml"), "not pinned");
 }
 
-test "rule: gamma holds the farm's token and no more, cannot be skipped, and checks the action it uses before it uses it" {
+test "rule: gamma holds the farm's token and no more, runs for a released commit only, and checks the action it uses before it uses it" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -1402,8 +1751,9 @@ test "rule: gamma holds the farm's token and no more, cannot be skipped, and che
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "      contents: read\n      id-token: write\n", "      contents: read\n"), "`gamma` is not `contents: read` and `id-token: write` alone");
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "      id-token: write\n", "      id-token: write\n      attestations: write\n"), "job `gamma` holds `attestations: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tool", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `tool` holds `id-token: write`");
-    // it cannot be skipped
-    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "    timeout-minutes: 240\n", "    timeout-minutes: 240\n    if: ${{ vars.FARM_ADDRESS != '' }}\n"), "`gamma` has an `if:`");
+    // it runs for a released commit and for nothing narrower: a farm variable in the condition would let an unconfigured farm pass
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "    if: " ++ released_if ++ "\n", "    if: ${{ needs.plan.outputs.released == 'true' && vars.FARM_ADDRESS != '' }}\n"), "`gamma` is not under the `if:`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "    if: " ++ released_if ++ "\n", ""), "`gamma` is not under the `if:`");
     // the action comes from the variables, is verified, then used, then the build runs
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "repository: ${{ vars.FARM_CONNECT_REPO }}", "repository: some/where"), "does not check the farm-connect action out");
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "ref: ${{ vars.FARM_CONNECT_REF }}", "ref: main"), "does not check the farm-connect action out");
@@ -1423,6 +1773,8 @@ test "rule: gamma holds the farm's token and no more, cannot be skipped, and che
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "      - run: chmod +x tool/stage tool/buck2\n", "      - run: ./buck2 build -c buildrules_re.mode=local //x:y\n"), "holds the farm's token and runs buck2 itself");
     // a checkout of the action that keeps credentials
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "          path: farm-action\n          persist-credentials: false\n", "          path: farm-action\n"), "persist-credentials");
+    // it builds the pushed commit as the candidate
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "--candidate \"$CANDIDATE\"", "--candidate \"$GITHUB_SHA\""), "does not build the pushed commit as the candidate");
     // the stage tool is built by the workflow
     try expectFinding(a, r, try mutate(a, r.wf, "--out stage //tools/stage:stage", "--out stage //tools/other:stage"), "does not build //tools/stage:stage");
 }
@@ -1444,11 +1796,107 @@ test "rule: a release is made only for a commit the plan released, and no job ru
     defer ar.deinit();
     const a = ar.allocator();
     const r = try fx(a);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "    if: ${{ needs.plan.outputs.released == 'true' }}\n", ""), "`archive` runs even when the plan released nothing");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "needs.plan.outputs.released == 'true'", "true"), "`verify` runs even when the plan released nothing");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ always() && needs.plan.outputs.released == 'true' }}"), "`always()`");
+    for ([_][]const u8{ "build-cli", "archive", "site" }) |name| {
+        const want = try std.fmt.allocPrint(a, "`{s}` runs even when the plan released nothing", .{name});
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "needs.plan.outputs.released == 'true'", "true"), want);
+    }
+    for ([_][]const u8{ "attest", "verify", "tag", "publish", "bump" }) |name| {
+        const want = try std.fmt.allocPrint(a, "`{s}` is not under its exact `if:`", .{name});
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "needs.plan.outputs.released == 'true' && ", ""), want);
+    }
+    // no status function lets a job run after a red one
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ always() && needs.plan.outputs.released == 'true' }}"), "`always()`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "if: ${{ needs.plan.outputs.released", "if: ${{ !failure() && needs.plan.outputs.released"), "`failure()`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "if: ${{ needs.plan.outputs.released", "if: ${{ failure() || needs.plan.outputs.released"), "`failure()`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ cancelled() || needs.plan.outputs.released == 'true' }}"), "`cancelled()`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ cancelled() || needs.plan.outputs.released == 'true' }}"), "`cancelled()`");
+}
+
+test "rule: no job that writes or signs runs for anything but a push to main, and no dry form remains" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    // each job that writes or signs is under a push to main of this repository, whichever part of the condition goes
+    for ([_][]const u8{ "attest", "verify", "tag", "publish", "bump" }) |name| {
+        const want = try std.fmt.allocPrint(a, "the job `{s}` is not under its exact `if:`", .{name});
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, " && github.event_name == 'push'", ""), want);
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "github.event_name == 'push'", "github.event_name != 'pull_request'"), want);
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, " && github.ref == 'refs/heads/main'", ""), want);
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, " && !github.event.repository.fork", ""), want);
+    }
+    // the event is tested nowhere else: a job that behaves differently on a pull request would be a stage the release does not have
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "    if: " ++ released_if ++ "\n", "    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'pull_request' }}\n"), "the workflow names a pull request");
+    // the dry forms are gone: nothing is told `--dry true`, and the plan is a real run
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "--dry false", "--dry true"), "the `--dry` flags are not exactly");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "--dry false", "--dry \"$DRY\""), "the `--dry` flags are not exactly");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "    env:\n", "    env:\n      DRY: ${{ vars.DRY_RUN }}\n"), "not told it is a real run");
+    // attest signs for real, and never dry
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "tool/release sign --dist dist --dry false", "tool/release sign --dist dist --dry true"), "`attest` does not sign");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "tool/release sign --dist dist --dry false", "tool/release sign --dist dist"), "`attest` does not sign");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "--dry false", "--dry true"), "the `--dry` flags are not exactly");
+    // verify installs cosign to check the signatures; the dry twin has none to check
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "does not install cosign");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "used other than twice");
+}
+
+test "rule: RELEASE_FREEZE is read in the plan and nowhere else, and the plan is never a dry run" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    // read elsewhere (a freeze that some stages honour and others do not), or not read at all
+    try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "    env:\n", "    env:\n      FROZEN: ${{ vars.RELEASE_FREEZE }}\n"), "RELEASE_FREEZE is read other than once");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "    env:\n", "    env:\n      FROZEN: ${{ vars.RELEASE_FREEZE }}\n"), "RELEASE_FREEZE is read other than once");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ needs.plan.outputs.released == 'true' && vars.RELEASE_FREEZE != 'true' }}"), "RELEASE_FREEZE is read other than once");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "      FREEZE: ${{ vars.RELEASE_FREEZE }}\n", ""), "RELEASE_FREEZE is read other than once");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "      FREEZE: ${{ vars.RELEASE_FREEZE }}\n", ""), "does not pass RELEASE_FREEZE to the plan");
+    // read but not passed, or passed a constant
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", " --freeze \"$FREEZE\"", ""), "does not pass RELEASE_FREEZE to the plan");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "FREEZE: ${{ vars.RELEASE_FREEZE }}", "FREEZE: false"), "does not pass RELEASE_FREEZE to the plan");
+    // the plan is a real run: the flag is the constant `false`, not a variable and not the event
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", " --dry false", " --dry true"), "not told it is a real run");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", " --dry false", ""), "not told it is a real run");
+}
+
+test "rule: the workflow's concurrency is per commit and never cancels" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const need = "the workflow's concurrency is not";
+    // a push to main that cancels the one before it would stop a release between its stages
+    try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: false", "cancel-in-progress: true"), need);
+    try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: false", "cancel-in-progress: ${{ github.event_name == 'push' }}"), need);
+    try expectFinding(a, r, try mutate(a, r.wf, "group: release-${{ github.sha }}", "group: release"), need);
+    try expectFinding(a, r, try mutate(a, r.wf, "group: release-${{ github.sha }}", "group: release-${{ github.ref }}"), need);
+    try expectFinding(a, r, try mutate(a, r.wf, "\nconcurrency:\n  group: release-${{ github.sha }}\n  cancel-in-progress: false\n", "\n"), need);
+}
+
+test "rule: the jobs that test the commit name the pushed commit, and the jobs that write name GITHUB_SHA" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    for ([_][]const u8{ "plan", "archive", "verify" }) |name| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "      CANDIDATE: ${{ github.sha }}\n", "      CANDIDATE: ${{ github.ref }}\n"), "does not name the commit as `CANDIDATE:");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "          ref: ${{ github.sha }}\n", ""), "is not of `ref:");
+    }
+    for ([_][]const u8{ "archive", "verify" }) |name| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "--sha \"$CANDIDATE\"", "--sha \"$GITHUB_SHA\""), "does not pass `--sha");
+    }
+    for ([_][]const u8{ "tool", "build-cli", "gamma" }) |name| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "          ref: ${{ github.sha }}\n", ""), "is not of `ref:");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "          ref: ${{ github.sha }}\n", "          ref: ${{ github.ref }}\n"), "is not of `ref:");
+    }
+    // a pull request's head is named nowhere: no pull request runs this workflow
+    for ([_][]const u8{ "plan", "archive", "verify", "tool", "build-cli", "gamma" }) |name| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "          ref: ${{ github.sha }}\n", "          ref: ${{ github.event.pull_request.head.sha || github.sha }}\n"), "the workflow names a pull request");
+    }
+    // a job of the push alone names the pushed commit
+    for ([_][]const u8{ "tag", "publish", "bump", "site" }) |name| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "--sha \"$GITHUB_SHA\"", "--sha \"$TAG\""), "must name `--sha \"$GITHUB_SHA\"`");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "    env:\n", "    env:\n      CANDIDATE: ${{ github.sha }}\n"), "must name `--sha \"$GITHUB_SHA\"`");
+    }
 }
 
 test "rule: the tag job is in the release concurrency group and none is cancelled" {
@@ -1462,15 +1910,88 @@ test "rule: the tag job is in the release concurrency group and none is cancelle
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "    concurrency:\n      group: release\n      cancel-in-progress: false\n", ""), need);
 }
 
-test "rule: the attestation is made in archive, once" {
+test "rule: the signature and the attestation are made in attest, once, in that order, by a job that runs no buck2" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try fx(a);
     try expectFinding(a, r, try mutate(a, r.wf, "actions/attest-build-provenance@", "actions/attest-sbom@"), "does not attest");
     // a second attestation elsewhere
-    const second = "      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2\n        with:\n          subject-path: x\n      - run: chmod +x tool/release\n";
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x tool/release\n", second), "used other than once");
+    const second = "      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2\n        with:\n          subject-path: x\n      - run: chmod +x buck2 tool/release\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release\n", second), "used other than once");
+    // the subject: the archive, the three tarballs (one glob) and SHA256SUMS; a narrower subject leaves files unattested
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "            dist/buildrules-*.tar.gz\n", "            dist/buildrules-0.0.1.tar.gz\n"), "does not attest `dist/buildrules-*.tar.gz`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "            dist/SHA256SUMS\n", ""), "does not attest `dist/buildrules-*.tar.gz`");
+    // cosign is installed in attest, and sign comes before the attestation, and both before the upload
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "does not install cosign");
+    {
+        const sign_step = "      - name: Sign the five files, keyless\n        run: tool/release sign --dist dist --dry false\n";
+        const moved = try mutateIn(a, r.wf, "attest", sign_step, "");
+        const after = try mutateIn(a, moved, "attest", "      - uses: actions/upload-artifact@", sign_step ++ "      - uses: actions/upload-artifact@");
+        try expectFinding(a, r, after, "does not sign, then attest, then upload `release-dist`");
+    }
+    // attest signs what archive made and nothing else
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "name: release-unsigned", "name: release-cli-tarballs"), "does not sign what `archive` made");
+    // it runs no buck2 and uses no action but the five it needs
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "      - run: chmod +x tool/release\n", "      - run: ./buck2 build -c buildrules_re.mode=local //x:y\n"), "job `attest` holds a write scope and runs buck2");
+    const cache = "      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n        with:\n          path: x\n          key: x\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "      - run: chmod +x tool/release\n", cache), "job `attest` holds a write scope and uses actions/cache");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "      - run: chmod +x tool/release\n", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n"), "job `attest` holds a write scope and uses actions/checkout");
+}
+
+test "rule: the binaries are built stamped, packaged, run by the beta, checked against their tarball, built again and compared" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    // build-cli: the planned number, the stamp, the one target that builds all three, the packaging, the two artifacts
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", " -c \"buildrules.release_version=$NUMBER\"", ""), "`build-cli` does not build //cli:release_binaries with the planned version stamped in");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "needs.plan.outputs.number", "needs.plan.outputs.tag"), "`build-cli` does not take the planned version from the plan");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "//cli:release_binaries", "//cli:buildrules"), "`build-cli` does not build //cli:release_binaries");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "--out cli-bins //cli", "--out other //cli"), "`build-cli` does not build //cli:release_binaries");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", " -c buildrules_re.mode=local", ""), "does not pass `-c buildrules_re.mode=local`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "tool/release package-all --version \"$NUMBER\"", "tool/release package-all --version \"$TAG\""), "`build-cli` does not package the three tarballs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", " --native linux-x86_64", " --native linux-x86_64,macos-arm64"), "`build-cli` does not package the three tarballs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", " --native linux-x86_64", ""), "`build-cli` does not package the three tarballs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-tarballs", "name: other"), "`build-cli` does not upload the three tarballs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-bin", "name: other"), "`build-cli` does not upload the linux-x86_64 binary");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "path: cli-bins/linux-x86_64/buildrules", "path: cli-bins/macos-arm64/buildrules"), "`build-cli` does not upload the linux-x86_64 binary");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "needs: [plan, tool]", "needs: [plan]"), "`build-cli` does not wait for `tool`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "tool/release package-all ", "echo package-all "), "`build-cli` does not run `tool/release package-all");
+    // archive: the tarballs and the file the beta ran, the check that the tarball holds that file, only those tested attested, in this order
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "name: release-cli-tarballs\n          path: dist", "name: release-cli-tarballs\n          path: elsewhere"), "does not download the tarballs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "name: release-cli-bin\n          path: ran", "name: release-cli-tarballs\n          path: ran"), "does not download the file the beta ran");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", " --ran-binary ran/buildrules", ""), "does not check that the linux-x86_64 tarball holds the file the beta ran");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "tool/release record ", "echo record "), "does not check that the linux-x86_64 tarball holds the file the beta ran");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", " --targets linux-x86_64", ""), "does not hold the attested tarballs to the ones the beta ran");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "tool/release tested ", "echo tested "), "does not run `tool/release tested");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "tool/release sums ", "echo sums "), "does not run `tool/release sums");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "name: release-unsigned", "name: release-dist"), "does not upload `dist` as the artifact `release-unsigned`");
+    {
+        // sums before tested: the order of the tool is archive, record, tested, sums
+        const sums = "      - name: SHA256SUMS over the archive and the three tarballs\n        run: tool/release sums --dist dist\n";
+        const moved = try mutateIn(a, r.wf, "archive", sums, "");
+        const before = try mutateIn(a, moved, "archive", "      - name: The tarball to attest holds the file the beta ran\n", sums ++ "      - name: The tarball to attest holds the file the beta ran\n");
+        try expectFinding(a, r, before, "has no `tool/release sums ` after the step before it");
+    }
+    for ([_][]const u8{ "verify" }) |name| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, " -c \"buildrules.release_version=$NUMBER\"", ""), "does not build the three binaries again with the planned version stamped in");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "--out rebuilt-bins //cli:release_binaries", "--out rebuilt-bins //cli:buildrules"), "does not build the three binaries again");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "--bins rebuilt-bins ", "--bins cli-bins "), "does not package the second build's three tarballs");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, " --rebuilt rebuilt-dist", ""), "does not pass `--cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist`");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, " --cli rebuilt-bins/linux-x86_64/buildrules", " --cli built-cli/buildrules"), "does not pass `--cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist`");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "name: release-dist", "name: release-unsigned"), "does not read `release-dist` (what attest made) alone");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "needs.plan.outputs.number", "needs.plan.outputs.tag"), "does not take the planned version from the plan");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "needs: [plan, ", "needs: ["), "does not wait for `plan`");
+        const want = try std.fmt.allocPrint(a, "`{s}` does not run `tool/release verify", .{name});
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "tool/release verify ", "echo verify "), want);
+    }
+    // publish and site read the files that were signed and verified, not those before the signing
+    for ([_][]const u8{ "publish", "site" }) |name| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "name: release-dist", "name: release-unsigned"), "does not read `release-dist`");
+    }
+    // the number comes from the plan
+    try expectFinding(a, r, try mutate(a, r.wf, "      number: ${{ steps.version.outputs.number }}\n", ""), "`plan` does not output the version number");
 }
 
 test "rule: the jobs that write run no buck2 and use no action but the checkout and download" {
@@ -1497,12 +2018,13 @@ test "rule: each step runs its command of the tool, and run lines are single inv
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "tool/release verify ", "echo verify "), "`verify` does not run `tool/release verify");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "tool/release publish ", "echo publish "), "`publish` does not run `tool/release publish");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "tool/release archive ", "echo archive "), "`archive` does not run");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "tool/release sign ", "echo sign "), "`attest` does not run");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "tool/release tag ", "echo tag "), "`tag` does not run");
     try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "tool/release plan ", "echo plan "), "`plan` does not run");
     // one invocation per run line: no chain, no pipe, no block
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", "      - run: chmod +x tool/release && echo hi\n"), "more than one invocation");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      - run: chmod +x tool/release\n", "      - run: echo a; echo b\n"), "more than one invocation");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x tool/release\n", "      - run: cat x | wc -l\n"), "more than one invocation");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release\n", "      - run: cat x | wc -l\n"), "more than one invocation");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      - run: chmod +x tool/release\n", "      - run: |\n          echo a\n          echo b\n"), "`run:` block in the job `tag`");
 }
 
@@ -1545,7 +2067,7 @@ test "rule: continue-on-error lets no red stage pass (gamma job E, gamma step F,
     // F: a step of gamma
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "      - run: chmod +x tool/stage tool/buck2\n", "      - run: chmod +x tool/stage tool/buck2\n        continue-on-error: true\n"), rule);
     // B: the job of release.yml that calls beta
-    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    needs: [gate]\n", "    needs: [gate]\n    continue-on-error: true\n"), rule);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    needs: [plan, build-cli]\n", "    needs: [plan, build-cli]\n    continue-on-error: true\n"), rule);
     // an expression, a quoted value and a flow mapping are no better than `true`
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "    timeout-minutes: 240\n", "    timeout-minutes: 240\n    continue-on-error: ${{ vars.X == '' }}\n"), rule);
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "    timeout-minutes: 240\n", "    timeout-minutes: 240\n    continue-on-error: \"true\"\n"), rule);
@@ -1581,18 +2103,20 @@ test "rule: a cosign bundle is named <file>.sigstore.json, for the files release
         "SHA256SUMS.sigstore.json",
         "dist/SHA256SUMS.sigstore.json",
         "dist/buildrules-0.0.7.tar.gz.sigstore.json",
+        "dist/buildrules-${{needs.plan.outputs.number}}.tar.gz.sigstore.json",
         "dist/buildrules-cli-0.0.7-linux-x86_64.tar.gz.sigstore.json",
         "dist/buildrules-cli-0.0.7-linux-aarch64.tar.gz.sigstore.json",
         "dist/buildrules-cli-0.0.7-macos-arm64.tar.gz.sigstore.json",
-        "dist/buildrules-cli-0.0.7-macos-x86_64.tar.gz.sigstore.json",
-        "dist/buildrules-cli-${{needs.plan.outputs.version}}-${{matrix.target}}.tar.gz.sigstore.json",
+        "dist/buildrules-cli-${{needs.plan.outputs.number}}-linux-x86_64.tar.gz.sigstore.json",
+        "dist/buildrules-cli-${{needs.plan.outputs.number}}-${{matrix.target}}.tar.gz.sigstore.json",
+        "dist/buildrules-cli-0.12.345-${{matrix.target}}.tar.gz.sigstore.json",
     }) |good| {
         const wf = try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", try std.fmt.allocPrint(a, step, .{good}));
         const f = try checkRelease(a, wf, r.ds, r.ci);
         for (f.items) |m| std.debug.print("finding: {s}\n", .{m});
         try t.expectEqual(@as(usize, 0), f.items.len);
     }
-    // Any other spelling is a finding (each a mutant of a defect B3 could ship: a name that `sign` never wrote).
+    // Any other spelling is a finding (each a mutant of a defect a release could ship: a name that `sign` never wrote).
     for ([_][]const u8{
         "SHA256SUMS.sigstore",
         "SHA256SUMS.bundle.sigstore.json",
@@ -1605,10 +2129,41 @@ test "rule: a cosign bundle is named <file>.sigstore.json, for the files release
         "dist/buildrules-0.0.7.tar.gz.sigstore",
         "dist/buildrules-cli-0.0.7-linux-x86.tar.gz.sigstore.json",
         "dist/buildrules-cli-0.0.7-windows-x86_64.tar.gz.sigstore.json",
+        // the Intel macOS tarball was dropped from the release: its bundle is no file `release sign` writes
+        "dist/buildrules-cli-0.0.7-macos-x86_64.tar.gz.sigstore.json",
         "dist/cli-0.0.7-linux-x86_64.tar.gz.sigstore.json",
+        // a stem that is no release file: not a version, not a target, a glob, a missing piece
+        "dist/buildrules-foo.tar.gz.sigstore.json",
+        "dist/buildrules-0.0.tar.gz.sigstore.json",
+        "dist/buildrules-0.0.7-rc1.tar.gz.sigstore.json",
+        "dist/buildrules-00.0.7.tar.gz.sigstore.json",
+        "dist/buildrules-v0.0.7.tar.gz.sigstore.json",
+        "dist/buildrules-.tar.gz.sigstore.json",
+        "dist/buildrules-*.tar.gz.sigstore.json",
+        "dist/buildrules-cli-foo-linux-x86_64.tar.gz.sigstore.json",
+        "dist/buildrules-cli-0.0.7-.tar.gz.sigstore.json",
+        "dist/buildrules-cli-0.0.7.tar.gz.sigstore.json",
+        "dist/buildrules-cli--linux-x86_64.tar.gz.sigstore.json",
+        "dist/buildrules-cli-0.0.7-linux-x86_64-extra.tar.gz.sigstore.json",
+        "dist/buildrules-cli-0.0.7-${{matrix.target}}x.tar.gz.sigstore.json",
+        "dist/buildrules-cli-${{a}}${{b}}-linux-x86_64.tar.gz.sigstore.json",
+        "dist/other.tar.gz.sigstore.json",
+        "dist/buildrules-cli-0.0.7-linux-x86_64.zip.sigstore.json",
     }) |bad| {
         try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", try std.fmt.allocPrint(a, step, .{bad})), "names a cosign bundle other than");
     }
     // The same in a job that does not write.
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x tool/release\n", try std.fmt.allocPrint(a, step, .{"dist/SHA256SUMS.sig.sigstore.jsn"})), "names a cosign bundle other than");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release\n", try std.fmt.allocPrint(a, step, .{"dist/SHA256SUMS.sig.sigstore.jsn"})), "names a cosign bundle other than");
+    // The install of cosign names the word `sigstore` without naming a file: that action, pinned, is exempt, and no other sigstore action is.
+    const installer = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n";
+    try t.expect(std.mem.indexOf(u8, r.wf, installer) != null);
+    {
+        const f = try checkRelease(a, r.wf, r.ds, r.ci);
+        for (f.items) |m| try t.expect(std.mem.indexOf(u8, m, "cosign bundle") == null);
+    }
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", installer, "      - uses: sigstore/gh-action-sigstore-python@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n"), "names a cosign bundle other than");
+    // the exemption is for the `uses:` line alone: the same word in a run line or an input is checked
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release\n", "      - run: echo sigstore/cosign-installer\n"), "names a cosign bundle other than");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", installer, installer ++ "        with:\n          cosign-release: sigstore\n"), "names a cosign bundle other than");
 }
+

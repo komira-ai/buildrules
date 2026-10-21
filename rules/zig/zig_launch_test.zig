@@ -20,7 +20,8 @@ fn bad(args: []const []const u8, want: []const u8) !void {
 test "parse: the whole command line of a zig_test" {
     const p = try ok(&.{ "test", "--busybox", "bb", "--zig", "z", "--out", "o", "--stamp", "passed\n", "--", "test", "-target", "x", "a.zig" });
     try t.expectEqualStrings("bb", p.busybox);
-    try t.expectEqualStrings("z", p.zig_dir);
+    try t.expectEqualStrings("z", p.zig_dir.?);
+    try t.expect(p.exec == null);
     try t.expectEqualStrings("o", p.out);
     try t.expectEqualStrings("passed\n", p.stamp);
     try t.expect(!p.isDriver());
@@ -44,14 +45,31 @@ test "parse: arguments after the double dash are zig's, whatever they look like"
 }
 
 test "parse: refusals" {
-    try bad(&.{}, "the subcommand is `test`");
-    try bad(&.{"run"}, "the subcommand is `test`");
+    try bad(&.{}, "the subcommand is `test` or `run`");
+    try bad(&.{"build"}, "the subcommand is `test` or `run`");
     try bad(&.{ "test", "--bogus", "x" }, "unknown argument");
     try bad(&.{ "test", "--out" }, "an option has no value");
     try bad(&.{ "test", "--out", "a", "--out", "b" }, "an option is given twice");
     try bad(&.{ "test", "--busybox", "b", "--zig", "z", "--out", "o", "--", "test" }, "--busybox, --zig, --out and --stamp are required");
     try bad(&.{ "test", "--busybox", "b", "--zig", "z", "--out", "o", "--stamp", "s" }, "the zig arguments follow `--`");
     try bad(&.{ "test", "--busybox", "b", "--zig", "z", "--out", "o", "--stamp", "s", "--" }, "no zig arguments after `--`");
+}
+
+test "parse: `run` takes a program of the action's own, not zig, and may give it no arguments" {
+    const p = try ok(&.{ "run", "--busybox", "bb", "--exec", "tools/cover", "--out", "o", "--stamp", "s", "--data", "d", "--", "--zig", "z" });
+    try t.expectEqualStrings("tools/cover", p.exec.?);
+    try t.expect(p.zig_dir == null);
+    try t.expect(p.isDriver());
+    try t.expectEqual(@as(usize, 2), p.zig_args.len);
+    const q = try ok(&.{ "run", "--busybox", "bb", "--exec", "x", "--out", "o", "--stamp", "s", "--" });
+    try t.expectEqual(@as(usize, 0), q.zig_args.len);
+}
+
+test "parse: `run` and `test` each refuse the other's option and name their own required ones" {
+    try bad(&.{ "run", "--busybox", "b", "--zig", "z", "--exec", "x", "--out", "o", "--stamp", "s", "--", "a" }, "unknown argument");
+    try bad(&.{ "test", "--busybox", "b", "--zig", "z", "--exec", "x", "--out", "o", "--stamp", "s", "--", "a" }, "unknown argument");
+    try bad(&.{ "run", "--busybox", "b", "--out", "o", "--stamp", "s", "--", "a" }, "--busybox, --exec, --out and --stamp are required");
+    try bad(&.{ "run", "--busybox", "b", "--exec", "x", "--out", "o", "--stamp", "s" }, "the program's arguments follow `--`");
 }
 
 test "scratchRoot: where buck2 names, else beside the inputs" {

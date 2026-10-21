@@ -2,10 +2,10 @@
 //! (a synthetic copy of the workflow, so a mutant is red for its own rule) as well as against the real file (the zig_test's `data`). The rules shared with the
 //! other workflows (actions pinned by commit, local mode on every buck2 command, the pinned install) are workflow_check.zig's; the job parser is release_check.zig's.
 //!
-//!  - the triggers: a pull request and a call from the release, nothing else; a token with read access, and `id-token: write` in the farm leg alone;
+//!  - the triggers: a call from the release (`workflow_call`) and nothing else, so no pull request runs the beta: it is the beta stage of the release, after the merge; a token with read access, and `id-token: write` in the farm leg alone;
 //!  - the legs: the tools job, one job per ubuntu x86_64 language (the matrix is exactly the directories of beta/ but Mojo), the Mojo job that runs only when
 //!    the tools job says it is ready, the arm and macos jobs that are declared and skipped with their reason, and the farm job that runs only when FARM_ADDRESS is set;
-//!  - every job that builds from the candidate is skipped for a pull request from a fork (it has no commit the cell can be fetched at);
+//!  - no mention of a pull request in the file (the candidate is `github.sha` of the caller), and a concurrency group per commit that never cancels;
 //!  - local mode on every buck2 command of the workflow, and `--exec local` for every leg but the farm's, which takes the farm's settings and never `--exec local`;
 //!  - the farm job takes the farm-connect action from the repository and commit that variables name, verifies the checkout before the action runs, and runs
 //!    nothing of the repository's before that;
@@ -19,13 +19,10 @@ const Findings = wc.Findings;
 const add = wc.add;
 
 const farm_action = "./farm-action/.github/actions/farm-connect";
-const fork_guard = "github.event.pull_request.head.repo.full_name == github.repository";
 const stage_target = "//tools/stage:stage";
 const cli_target = "//cli:buildrules";
 
 const all_jobs = [_][]const u8{ "tools", "beta", "beta_mojo", "beta_arm", "beta_macos", "beta_farm" };
-/// The jobs that build from the candidate and so are skipped for a fork.
-const fork_jobs = [_][]const u8{ "tools", "beta", "beta_mojo", "beta_farm" };
 
 /// The words of `lang: [a, b, c]` in the job's text.
 fn matrixLangs(a: std.mem.Allocator, job_text: []const u8) ![]const []const u8 {
@@ -79,19 +76,18 @@ pub fn checkBeta(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, dir
 
     // Triggers and the token.
     const on = try rc.triggers(a, text);
-    var has_pr = false;
     var has_call = false;
     for (on) |k| {
-        if (std.mem.eql(u8, k, "pull_request")) has_pr = true else if (std.mem.eql(u8, k, "workflow_call")) has_call = true else try add(a, &f, "the workflow is triggered by `{s}`: only `pull_request` and `workflow_call` are allowed", .{k});
+        if (std.mem.eql(u8, k, "workflow_call")) has_call = true else try add(a, &f, "the workflow is triggered by `{s}`: only `workflow_call` is allowed (no pull request runs the beta; the release calls it after the merge)", .{k});
     }
-    if (!has_pr) try add(a, &f, "`on: pull_request` is missing", .{});
     if (!has_call) try add(a, &f, "`on: workflow_call` is missing (release.yml calls this workflow between the gate and the tag)", .{});
     for ([_][]const u8{ "pull_request_target", "workflow_run", "workflow_dispatch", "secrets.", "write-all", "--no-remote-cache" }) |bad| {
         if (contains(text, bad)) try add(a, &f, "`{s}` appears in the workflow", .{bad});
     }
     if (!wc.hasLine(text, "permissions:") or !wc.hasLine(text, "  contents: read")) try add(a, &f, "top-level `permissions:` with `contents: read` is missing", .{});
-    if (!contains(text, "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}")) try add(a, &f, "`cancel-in-progress` is not `${{{{ github.event_name == 'pull_request' }}}}`: only a pull request may cancel a run", .{});
-    if (!contains(text, "github.event.pull_request.number || github.sha }}")) try add(a, &f, "the concurrency group is not per-commit for events other than a pull request", .{});
+    if (!wc.hasLine(text, "  cancel-in-progress: false")) try add(a, &f, "`cancel-in-progress` is not `false`: nothing cancels a run of the beta", .{});
+    if (!contains(text, "group: beta-${{ github.workflow }}-${{ github.sha }}")) try add(a, &f, "the concurrency group is not per-commit (`beta-${{{{ github.workflow }}}}-${{{{ github.sha }}}}`)", .{});
+    if (contains(text, "github.event.pull_request") or contains(text, "'pull_request'")) try add(a, &f, "the workflow names a pull request (`github.event.pull_request`): a pull request does not run the beta, and the candidate is `github.sha`", .{});
 
     const jobs = try rc.parseJobs(a, text);
     for (all_jobs) |name| {
@@ -111,13 +107,6 @@ pub fn checkBeta(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, dir
         }
     }
     if (std.mem.count(u8, text, ": write") != writes) try add(a, &f, "a `: write` is granted outside a job's `permissions:` block", .{});
-
-    // Forks: no job that builds from the candidate runs for a pull request from a fork.
-    for (fork_jobs) |name| {
-        if (rc.jobNamed(jobs, name)) |j| {
-            if (j.if_expr == null or !contains(j.if_expr.?, fork_guard)) try add(a, &f, "the job `{s}` can run for a pull request from a fork (its `if:` lacks `{s}`)", .{ name, fork_guard });
-        }
-    }
 
     // buck2: local mode on every command, the pinned install, and the two tools are built.
     const builds = try wc.localMode(a, &f, text);
@@ -139,6 +128,19 @@ pub fn checkBeta(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, dir
             try add(a, &f, "the job `tools` does not upload `stage`, `buildrules` and `buck2` as the artifact `beta-tools`", .{});
         if (!contains(jt, "./stage plan --root") or !contains(jt, "mojo: ${{ steps.plan.outputs.mojo }}")) try add(a, &f, "the job `tools` does not run `stage plan` and output `mojo`", .{});
         if (!contains(jt, "if: ${{ vars.FARM_ADDRESS == '' || vars.FARM_CONNECT_REF == '' }}") or !contains(jt, "::notice")) try add(a, &f, "the job `tools` does not say, with a notice, that the farm leg is not run when FARM_ADDRESS or FARM_CONNECT_REF is not set", .{});
+    }
+
+    // The command line the legs run: built from the candidate unless the release names the artifact that holds the one it built (stamped, packaged, and the
+    // file its tarball ships); then that file is downloaded and never built again here, or the legs would test bytes the release does not ship.
+    if (!contains(text, "      cli-artifact:\n        type: string\n        default: \"\"\n")) try add(a, &f, "`on: workflow_call` has no string input `cli-artifact` that defaults to empty", .{});
+    if (rc.jobNamed(jobs, "tools")) |j| {
+        const jt = try j.text(a);
+        if (!contains(jt, "- name: Build the command line\nif: ${{ inputs.cli-artifact == '' }}\nrun: ./buck2 build "))
+            try add(a, &f, "the job `tools` builds the command line even when the release names the one it built (the step `Build the command line` lacks `if: ${{{{ inputs.cli-artifact == '' }}}}`)", .{});
+        if (!contains(jt, "- name: The command line the release built\nif: ${{ inputs.cli-artifact != '' }}\nuses: actions/download-artifact@") or !contains(jt, "\nwith:\nname: ${{ inputs.cli-artifact }}\npath: .\n"))
+            try add(a, &f, "the job `tools` does not download the artifact `inputs.cli-artifact` into `.` when the release names it", .{});
+        if (!contains(jt, "- name: It is executable\nif: ${{ inputs.cli-artifact != '' }}\nrun: chmod +x buildrules\n"))
+            try add(a, &f, "the job `tools` does not make the downloaded command line executable", .{});
     }
 
     // The ubuntu legs: one job per language of beta/ but Mojo, in local mode.
@@ -248,19 +250,21 @@ const fixture_wf =
     \\name: beta
     \\
     \\on:
-    \\  pull_request:
     \\  workflow_call:
+    \\    inputs:
+    \\      cli-artifact:
+    \\        type: string
+    \\        default: ""
     \\
     \\permissions:
     \\  contents: read
     \\
     \\concurrency:
-    \\  group: beta-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
-    \\  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    \\  group: beta-${{ github.workflow }}-${{ github.sha }}
+    \\  cancel-in-progress: false
     \\
     \\jobs:
     \\  tools:
-    \\    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 120
     \\    permissions:
@@ -270,7 +274,7 @@ const fixture_wf =
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
-    \\          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\          ref: ${{ github.sha }}
     \\          persist-credentials: false
     \\
     \\      - name: Install buck2
@@ -287,7 +291,19 @@ const fixture_wf =
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local --out stage //tools/stage:stage
     \\
     \\      - name: Build the command line
+    \\        if: ${{ inputs.cli-artifact == '' }}
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local --out buildrules //cli:buildrules
+    \\
+    \\      - name: The command line the release built
+    \\        if: ${{ inputs.cli-artifact != '' }}
+    \\        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: ${{ inputs.cli-artifact }}
+    \\          path: .
+    \\
+    \\      - name: It is executable
+    \\        if: ${{ inputs.cli-artifact != '' }}
+    \\        run: chmod +x buildrules
     \\
     \\      - name: Which legs are ready, and which are planned
     \\        id: plan
@@ -309,7 +325,6 @@ const fixture_wf =
     \\
     \\  beta:
     \\    needs: [tools]
-    \\    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     \\    name: beta ${{ matrix.lang }} (ubuntu x86_64)
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 120
@@ -322,11 +337,11 @@ const fixture_wf =
     \\    env:
     \\      LANG_DIR: ${{ matrix.lang }}
     \\      ORIGIN: https://github.com/${{ github.repository }}
-    \\      COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\      COMMIT: ${{ github.sha }}
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
-    \\          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\          ref: ${{ github.sha }}
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
@@ -338,7 +353,7 @@ const fixture_wf =
     \\
     \\  beta_mojo:
     \\    needs: [tools]
-    \\    if: ${{ needs.tools.outputs.mojo == 'ready' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    \\    if: ${{ needs.tools.outputs.mojo == 'ready' }}
     \\    name: beta mojo (ubuntu x86_64)
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 120
@@ -346,11 +361,11 @@ const fixture_wf =
     \\      contents: read
     \\    env:
     \\      ORIGIN: https://github.com/${{ github.repository }}
-    \\      COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\      COMMIT: ${{ github.sha }}
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
-    \\          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\          ref: ${{ github.sha }}
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
@@ -380,7 +395,7 @@ const fixture_wf =
     \\
     \\  beta_farm:
     \\    needs: [tools]
-    \\    if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_CONNECT_REF != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    \\    if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_CONNECT_REF != '' }}
     \\    name: beta ${{ matrix.lang }} (farm)
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 120
@@ -394,12 +409,12 @@ const fixture_wf =
     \\    env:
     \\      LANG_DIR: ${{ matrix.lang }}
     \\      ORIGIN: https://github.com/${{ github.repository }}
-    \\      COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\      COMMIT: ${{ github.sha }}
     \\      CONNECT_REF: ${{ vars.FARM_CONNECT_REF }}
     \\    steps:
     \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     \\        with:
-    \\          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    \\          ref: ${{ github.sha }}
     \\          persist-credentials: false
     \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     \\        with:
@@ -435,7 +450,7 @@ const fixture_ds =
     \\      "digest": "1268fce33fb600000000000000000000000000000000000000000000000000ff",
     \\      "providers": [{"url": "https://example.invalid/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst"}]
     \\    },
-    \\    "macos-x86_64": {}
+    \\    "macos-aarch64": {}
     \\  }
     \\}
     \\
@@ -507,11 +522,12 @@ test "rule: triggers, token and the cancel group" {
     defer ar.deinit();
     const a = ar.allocator();
     const r = fx();
-    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  pull_request:\n", "on:\n  push:\n  pull_request:\n"), "triggered by `push`");
-    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  pull_request:\n", "on:\n  workflow_dispatch:\n  pull_request:\n"), "triggered by `workflow_dispatch`");
-    try expectFinding(a, r, try mutate(a, r.wf, "  pull_request:\n  workflow_call:\n", "  workflow_call:\n"), "`on: pull_request` is missing");
-    try expectFinding(a, r, try mutate(a, r.wf, "  pull_request:\n  workflow_call:\n", "  pull_request:\n"), "`on: workflow_call` is missing");
-    try expectFinding(a, r, try mutate(a, r.wf, "  pull_request:\n", "  pull_request_target:\n"), "pull_request_target");
+    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  workflow_call:\n", "on:\n  push:\n  workflow_call:\n"), "triggered by `push`");
+    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  workflow_call:\n", "on:\n  workflow_dispatch:\n  workflow_call:\n"), "triggered by `workflow_dispatch`");
+    // the tiers: a pull request runs build and unit tests, never the beta
+    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  workflow_call:\n", "on:\n  pull_request:\n  workflow_call:\n"), "triggered by `pull_request`");
+    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  workflow_call:\n", "on:\n  pull_request:\n"), "`on: workflow_call` is missing");
+    try expectFinding(a, r, try mutate(a, r.wf, "on:\n  workflow_call:\n", "on:\n  pull_request_target:\n  workflow_call:\n"), "pull_request_target");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "      contents: read\n", "      contents: write\n"), "job `beta` holds `contents: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `tools` holds `id-token: write`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "      id-token: write\n", "      id-token: write\n      packages: write\n"), "job `beta_farm` holds `packages: write`");
@@ -519,24 +535,12 @@ test "rule: triggers, token and the cancel group" {
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    permissions:\n      contents: read\n", ""), "states no `permissions:`");
     try expectFinding(a, r, try mutate(a, r.wf, "permissions:\n  contents: read\n\nconcurrency", "permissions:\n  contents: write\n\nconcurrency"), "outside a job's");
     try expectFinding(a, r, try mutate(a, r.wf, "persist-credentials: false", "persist-credentials: true"), "persist-credentials");
-    try expectFinding(a, r, try mutate(a, r.wf, "COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}", "COMMIT: ${{ secrets.X }}"), "`secrets.`");
-    try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: true"), "only a pull request may cancel");
-    try expectFinding(a, r, try mutate(a, r.wf, "github.event.pull_request.number || github.sha }}", "github.event.pull_request.number || github.ref }}"), "not per-commit");
-}
-
-test "rule: a job that builds from the candidate is skipped for a fork" {
-    var ar = std.heap.ArenaAllocator.init(t.allocator);
-    defer ar.deinit();
-    const a = ar.allocator();
-    const r = fx();
-    for (fork_jobs) |name| {
-        const header = try std.fmt.allocPrint(a, "\n  {s}:\n", .{name});
-        const at = std.mem.indexOf(u8, r.wf, header).?;
-        const i = std.mem.indexOfPos(u8, r.wf, at, fork_guard).?;
-        const wf = try std.mem.concat(a, u8, &.{ r.wf[0..i], "true", r.wf[i + fork_guard.len ..] });
-        const want = try std.fmt.allocPrint(a, "`{s}` can run for a pull request from a fork", .{name});
-        try expectFinding(a, r, wf, want);
-    }
+    try expectFinding(a, r, try mutate(a, r.wf, "COMMIT: ${{ github.sha }}", "COMMIT: ${{ secrets.X }}"), "`secrets.`");
+    try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: false", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"), "nothing cancels a run");
+    try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: false", "cancel-in-progress: true"), "nothing cancels a run");
+    try expectFinding(a, r, try mutate(a, r.wf, "${{ github.workflow }}-${{ github.sha }}", "${{ github.workflow }}-${{ github.ref }}"), "not per-commit");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "ref: ${{ github.sha }}", "ref: ${{ github.event.pull_request.head.sha || github.sha }}"), "names a pull request");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "runs-on: ubuntu-latest\n", "runs-on: ubuntu-latest\n    if: ${{ github.event_name != 'pull_request' }}\n"), "names a pull request");
 }
 
 test "rule: buck2 runs in local mode, as the literal ./buck2, from the pinned release, and both tools are built" {
@@ -582,7 +586,7 @@ test "rule: the mojo leg runs only when the tools job says it is ready" {
     defer ar.deinit();
     const a = ar.allocator();
     const r = fx();
-    try expectFinding(a, r, try mutateIn(a, r.wf, "beta_mojo", "needs.tools.outputs.mojo == 'ready' && ", ""), "does not run only when the tools job says mojo is ready");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta_mojo", "needs.tools.outputs.mojo == 'ready'", "needs.tools.outputs.mojo != 'x'"), "does not run only when the tools job says mojo is ready");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_mojo", "needs.tools.outputs.mojo == 'ready'", "true"), "does not run only when the tools job says mojo is ready");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_mojo", "--lang mojo", "--lang zig"), "does not run the mojo leg");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "mojo: ${{ steps.plan.outputs.mojo }}", ""), "does not run `stage plan` and output `mojo`");
@@ -616,7 +620,7 @@ test "rule: the farm leg runs only with a farm, joins it through a verified acti
     const a = ar.allocator();
     const r = fx();
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "vars.FARM_ADDRESS != '' && ", ""), "runs when FARM_ADDRESS is not set");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "vars.FARM_CONNECT_REF != '' && ", ""), "runs when FARM_CONNECT_REF is not set");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", " && vars.FARM_CONNECT_REF != ''", ""), "runs when FARM_CONNECT_REF is not set");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "    needs: [tools]\n", ""), "`beta_farm` does not wait for `tools`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "repository: ${{ vars.FARM_CONNECT_REPO }}", "repository: some/where"), "does not check the farm-connect action out");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "ref: ${{ vars.FARM_CONNECT_REF }}", "ref: main"), "does not check the farm-connect action out");
@@ -653,4 +657,25 @@ test "rule: continue-on-error lets no red leg pass (G: the beta job), and nothin
     // the farm job
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta_farm", "    timeout-minutes: 120\n", "    timeout-minutes: 120\n    continue-on-error: ${{ true }}\n"), rule);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "        run: ./stage plan --root \"$GITHUB_WORKSPACE\" --output \"$GITHUB_OUTPUT\"\n", "        run: ./stage plan --root \"${{ github.event.pull_request.title }}\"\n"), "expands `github.event.` inline");
+}
+
+test "rule: the legs run the command line the release built when it names one, and build it only when it does not" {
+    // The defects: the legs rebuild the command line even in the release (they test bytes that are not the ones the release ships), the named artifact is
+    // never downloaded, the downloaded file is not executable, or the input that carries the name is gone.
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = fx();
+    // always built: the guard of the build step is gone, or says the opposite
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "        if: ${{ inputs.cli-artifact == '' }}\n", ""), "builds the command line even when the release names the one it built");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "inputs.cli-artifact == ''", "inputs.cli-artifact != ''"), "builds the command line even when the release names the one it built");
+    // never downloaded: the guard says the opposite, the step is gone, another artifact, another path
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "        if: ${{ inputs.cli-artifact != '' }}\n        uses: actions/download-artifact", "        if: ${{ inputs.cli-artifact == '' }}\n        uses: actions/download-artifact"), "does not download the artifact `inputs.cli-artifact`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "          name: ${{ inputs.cli-artifact }}\n", "          name: release-cli-tarballs\n"), "does not download the artifact `inputs.cli-artifact`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "          name: ${{ inputs.cli-artifact }}\n          path: .\n", "          name: ${{ inputs.cli-artifact }}\n          path: cli\n"), "does not download the artifact `inputs.cli-artifact`");
+    // not executable
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "        run: chmod +x buildrules\n", "        run: echo not executable\n"), "does not make the downloaded command line executable");
+    // the input is gone, or no longer an empty string by default
+    try expectFinding(a, r, try mutate(a, r.wf, "    inputs:\n      cli-artifact:\n        type: string\n        default: \"\"\n", ""), "no string input `cli-artifact`");
+    try expectFinding(a, r, try mutate(a, r.wf, "        default: \"\"\n", "        default: release-cli-bin\n"), "no string input `cli-artifact`");
 }

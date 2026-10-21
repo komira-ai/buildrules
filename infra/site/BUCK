@@ -5,6 +5,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # (held/, README.md) are run by a person with their own credentials.
 
 load("@buildrules//rules/node:modules.bzl", "jest_test", "npm_modules", "tsc_check")
+load("@buildrules//rules/coverage:jest_cover.bzl", "jest_coverage_floor")
 load(":pins.lock.bzl", "NPM")
 
 _SRCS = glob(["bin/**", "held/**", "lib/**", "test/**"]) + [
@@ -29,10 +30,14 @@ tsc_check(
 
 jest_test(
     name = "test",
+    coverage = True,
     visibility = ["//ci:"],
     modules = ":modules",
     srcs = _SRCS,
 )
+
+# The lines and branches of lib/ and bin/ that the tests reach (jest --coverage), held to coverage_floor.txt.
+jest_coverage_floor()
 
 # Read by the site workflow check (ci/site_check.zig): the environment and the workflow file the role trusts.
 export_file(

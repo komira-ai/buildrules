@@ -3,6 +3,7 @@
 # project this one grew out of. It runs on the farm, over every package's files (`scrub_files()`, the last line of every BUCK file).
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load(":defs.bzl", "scrub_files", "scrub_test")
 
 zig_test(
@@ -12,6 +13,12 @@ zig_test(
     imports = ["scrub.zig"],
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
+)
+
+# The package's coverage (rules/coverage/README.md, "Zig coverage") and the floor it is held to.
+zig_coverage(
+    test_targets = [":scrub_unit"],
+    expect = ["tools/scrub/scrub.zig"],
 )
 
 # The scrub as a module, for the release tool: the archive it publishes is scanned by the very rules the repository is.

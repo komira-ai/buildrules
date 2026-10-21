@@ -1,11 +1,11 @@
 # The files of the repository root (README, LICENSE, .buckconfig, prelude.bzl, tools/buck2, ...), for the scrub (tools/scrub/README.md).
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 
-# Read by the CI workflow check (ci/BUCK).
+# Read by the CI workflow check (ci/BUCK) and by the buildrules.dev site tests (site/BUCK).
 export_file(
     name = "ci.yml",
     src = ".github/workflows/ci.yml",
-    visibility = ["//ci:"],
+    visibility = ["//ci:", "//site:"],
 )
 
 export_file(

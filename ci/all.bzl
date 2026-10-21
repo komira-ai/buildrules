@@ -10,7 +10,8 @@ EXCLUDED = {
     "//examples/mojo/registry/cnative:coverage": "refusal fixture: a package with no test has no coverage to measure, and the rule refuses",
     "crates//crates/zdemo:coverage": "refusal: Rust coverage is not implemented, so the target is incompatible with every platform; a wildcard build skips it, and a target that depends on it is refused",
     "deps(//rules/pins:host_downloads, 2)": "about 1.1 GB of pinned downloads for the linux-aarch64 and macos-aarch64 hosts (rules/pins/hosts.bzl): the host_arm job of ci.yml builds them on an aarch64 runner, and a run on the farm checks every sha256 and size; the x86 runner does not fetch them on every pull request",
-    "//ci/negative/... - //ci/negative:scrub_files": "planted defect, red by design on the one platform it is compatible with; a wildcard build skips it as incompatible",
+    "//ci/negative:v3_test_without_isa_property + //ci/negative:v3_test_with_isa_property": "the planted defect, red by design on the one platform it is compatible with, and its control, which is valid there; a wildcard build skips both as incompatible. //ci:completeness.bxl:check analyses them (ci/negative.bzl), and //ci/negative:negative_check, which //ci:all builds, holds their files to each other",
+    "//ci/negative:cross_exe_with_other_tests": "the planted defect of the cross-built program that waits for other tests than its original (comment in ci/negative/BUCK), red by design in analysis on the one platform it is compatible with; a wildcard build skips it as incompatible",
 }
 
 # Built by //ci:mojo and not by //ci:all: the public runner has no mirror for the Mojo packages (docs/contract.md, section 14). Their
