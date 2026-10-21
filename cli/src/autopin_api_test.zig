@@ -49,36 +49,54 @@ test "download: follows the 302 by hand, once, and the second request carries no
     try t.expectEqual(@as(usize, 1024), f.log.items[1].max_body);
 }
 
-test "download: a Location off the allow-list is refused and never requested" {
+fn expectNeverRequested(locations: []const []const u8) !void {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    const evil = [_][]const u8{
-        "https://evil.example/x",
-        "https://evilblob.core.windows.net/x",
-        "https://blob.core.windows.net/x",
-        "https://.blob.core.windows.net/x",
-        "https://a..blob.core.windows.net/x",
-        "https://x.blob.core.windows.net.evil.example/x",
-        "https://x.actions.githubusercontent.com@evil.example/x",
-        "https://x.blob.core.windows.net:8443/x",
-        "https://X.blob.core.windows.net/x",
-        "http://x.blob.core.windows.net/x",
-        "https://x.blob.core.windows.net/x#frag",
-        "http://xy.blob.core.windows.net/x",
-        "https://x.blob.core.windows.net\\@evil.example/x",
-        "https://githubusercontent.com/x",
-        "https://api.github.com/x",
-        "//x.blob.core.windows.net/x",
-        "/relative",
-        "",
-    };
-    for (evil) |loc| {
+    for (locations) |loc| {
         const answers = [_]api_mod.Response{ .{ .status = 302, .location = loc }, .{ .status = 200, .body = "x" } };
         var f = Fake{ .a = a, .answers = &answers };
         try t.expectError(error.RedirectNotAllowed, api_mod.download(a, f.api(), "p", 1024));
         try t.expectEqual(@as(usize, 1), f.log.items.len);
     }
+}
+
+test "download: a Location on a host that is not on the allow-list is refused and never requested" {
+    try expectNeverRequested(&.{
+        "https://evil.example/x",
+        "https://x.blob.core.windows.net.evil.example/x",
+        "https://githubusercontent.com/x",
+        "https://api.github.com/x",
+        "https://X.blob.core.windows.net/x",
+    });
+}
+
+test "download: a host that merely ends in the suffix, or is the bare apex, is refused (label boundary)" {
+    try expectNeverRequested(&.{
+        "https://evilblob.core.windows.net/x",
+        "https://blob.core.windows.net/x",
+        "https://.blob.core.windows.net/x",
+        "https://a..blob.core.windows.net/x",
+    });
+}
+
+test "download: a Location with user info, a port, a fragment or a backslash is refused and never requested" {
+    try expectNeverRequested(&.{
+        "https://x.actions.githubusercontent.com@evil.example/x",
+        "https://x.blob.core.windows.net:8443/x",
+        "https://x.blob.core.windows.net/x#frag",
+        "https://x.blob.core.windows.net\\@evil.example/x",
+    });
+}
+
+test "download: a Location that is not https is refused and never requested" {
+    try expectNeverRequested(&.{
+        "http://x.blob.core.windows.net/x",
+        "http://xy.blob.core.windows.net/x",
+        "//x.blob.core.windows.net/x",
+        "/relative",
+        "",
+    });
 }
 
 test "download: both literal suffixes are accepted, on a label boundary" {
