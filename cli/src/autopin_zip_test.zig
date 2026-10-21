@@ -622,9 +622,67 @@ test "data that runs past the central directory is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    const z = try build(a, &.{.{ .name = "a.txt" }});
+    const z = try build(a, &.{.{ .name = "a.txt", .method = 0, .descriptor = false }});
     put32(z.bytes, z.cd[0] + 20, 5000);
+    put32(z.bytes, z.lfh[0] + 18, 5000);
     try t.expectError(error.DataOutOfRange, readIt(a, z));
+}
+
+test "a data descriptor that does not fit before the central directory is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try build(a, &.{.{ .name = "a.txt" }});
+    // The data now ends five bytes before the central directory: it fits, its descriptor does not.
+    put32(z.bytes, z.cd[0] + 20, @intCast(z.cd_off - z.data[0] - 5));
+    try t.expectError(error.DataOutOfRange, readIt(a, z));
+}
+
+test "a local header whose name and extra field run past the central directory is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try build(a, &.{.{ .name = "a.txt" }});
+    put16(z.bytes, z.lfh[0] + 28, 5000);
+    try t.expectError(error.DataOutOfRange, readIt(a, z));
+}
+
+test "bytes between the last entry and the central directory are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try two(a);
+    const padded = try std.mem.concat(a, u8, &.{ z.bytes[0..z.cd_off], "junk", z.bytes[z.cd_off..] });
+    // The central directory moved four bytes later; so did its offset in the end record, and the entries are where they were.
+    put32(padded, z.eocd + 4 + 16, @intCast(z.cd_off + 4));
+    try t.expectError(error.GapBetweenEntries, zip.read(a, padded, &names, .{}));
+}
+
+test "a central directory that claims more entries than it holds is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try two(a);
+    put16(z.bytes, z.eocd + 8, 3);
+    put16(z.bytes, z.eocd + 10, 3);
+    try t.expectError(error.CentralDirectoryTruncated, readIt(a, z));
+}
+
+test "a central entry whose name runs past the central directory is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try two(a);
+    put16(z.bytes, z.cd[1] + 28, 4000);
+    try t.expectError(error.CentralDirectoryTruncated, readIt(a, z));
+}
+
+test "an extra field shorter than its own header is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const extra = [_]u8{ 0x55, 0x54, 0x01 };
+    const z = try build(ar.allocator(), &.{.{ .name = "a.txt", .cd_extra = &extra }});
+    try t.expectError(error.BadExtra, readIt(ar.allocator(), z));
 }
 
 test "a local header at the central directory is refused" {
