@@ -231,22 +231,52 @@ test "push: a plan with the same file twice is refused" {
     try expectPlanRefused(&env, "{\"repo\":\"" ++ fx.repo ++ "\",\"pr\":7,\"head_sha\":\"" ++ fx.head ++ "\",\"branch\":\"" ++ fx.branch ++ "\",\"files\":[\"site/buildrules.lock.bzl\",\"site/buildrules.lock.bzl\"]}");
 }
 
-test "push: a plan with a branch that is not a Dependabot npm branch, or another repository's shape, is refused" {
+
+test "push: a plan with a branch that is not a Dependabot npm branch is refused" {
     var env = try setup();
     defer finish(&env);
     try expectPlanRefused(&env, "{\"repo\":\"" ++ fx.repo ++ "\",\"pr\":7,\"head_sha\":\"" ++ fx.head ++ "\",\"branch\":\"main\",\"files\":[]}");
     try expectPlanRefused(&env, "{\"repo\":\"" ++ fx.repo ++ "\",\"pr\":7,\"head_sha\":\"" ++ fx.head ++ "\",\"branch\":\"dependabot/npm_and_yarn/../../main\",\"files\":[]}");
+}
+
+test "push: a plan whose repository is not a plain owner/name is refused" {
+    var env = try setup();
+    defer finish(&env);
     try expectPlanRefused(&env, "{\"repo\":\"not a repo\",\"pr\":7,\"head_sha\":\"" ++ fx.head ++ "\",\"branch\":\"" ++ fx.branch ++ "\",\"files\":[]}");
 }
 
-test "push: a plan with a head sha that is not 40 hex digits, a pr that is not an integer, or an unknown key is refused" {
+test "push: a plan whose head sha is not 40 hex digits is refused" {
     var env = try setup();
     defer finish(&env);
     try expectPlanRefused(&env, "{\"repo\":\"" ++ fx.repo ++ "\",\"pr\":7,\"head_sha\":\"abc\",\"branch\":\"" ++ fx.branch ++ "\",\"files\":[]}");
+}
+
+test "push: a plan whose pr is not an integer in range is refused" {
+    var env = try setup();
+    defer finish(&env);
     try expectPlanRefused(&env, "{\"repo\":\"" ++ fx.repo ++ "\",\"pr\":\"7\",\"head_sha\":\"" ++ fx.head ++ "\",\"branch\":\"" ++ fx.branch ++ "\",\"files\":[]}");
+    try expectPlanRefused(&env, "{\"repo\":\"" ++ fx.repo ++ "\",\"pr\":0,\"head_sha\":\"" ++ fx.head ++ "\",\"branch\":\"" ++ fx.branch ++ "\",\"files\":[]}");
+}
+
+test "push: a plan with a key it does not know is refused" {
+    var env = try setup();
+    defer finish(&env);
     try expectPlanRefused(&env, "{\"repo\":\"" ++ fx.repo ++ "\",\"pr\":7,\"head_sha\":\"" ++ fx.head ++ "\",\"branch\":\"" ++ fx.branch ++ "\",\"files\":[],\"force\":true}");
+}
+
+test "push: a plan with a key twice, or that is not JSON, is refused" {
+    var env = try setup();
+    defer finish(&env);
     try expectPlanRefused(&env, "{\"repo\":\"" ++ fx.repo ++ "\",\"pr\":7,\"pr\":8,\"head_sha\":\"" ++ fx.head ++ "\",\"branch\":\"" ++ fx.branch ++ "\",\"files\":[]}");
     try expectPlanRefused(&env, "not json at all");
+}
+
+test "push: a plan with more than eleven files is refused" {
+    var env = try setup();
+    defer finish(&env);
+    var list = std.ArrayList(u8).empty;
+    for (0..12) |i| try list.print(env.h.a(), "{s}\"site/f{d}\"", .{ if (i == 0) "" else ",", i });
+    try expectPlanRefused(&env, try std.fmt.allocPrint(env.h.a(), "{{\"repo\":\"{s}\",\"pr\":7,\"head_sha\":\"{s}\",\"branch\":\"{s}\",\"files\":[{s}]}}", .{ fx.repo, fx.head, fx.branch, list.items }));
 }
 
 test "push: a table file that is missing, empty or over the size cap fails before any write" {
