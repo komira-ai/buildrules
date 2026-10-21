@@ -118,7 +118,7 @@ jobs:
           # The path Buck2 prints for a directory is a relative symlink into buck-out (buck-out/v2/art/... -> ../../../site/__dist__/<hash>/dist). A plain `cp -r` copies
           # the link, which dangles from site-out/, and upload-artifact omits a dangling link: no files, a red run (or, with a release page beside it, an upload without the site).
           # -L copies what the link points at; the two tests below fail the step, not the upload, if a link or an empty tree is left.
-          cp -r --no-preserve=mode "$dist" site-out/tree
+          cp -rL --no-preserve=mode "$dist" site-out/tree
           test -z "$(find site-out -type l)"
           test -f site-out/tree/index.html
 
