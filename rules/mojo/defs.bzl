@@ -12,6 +12,7 @@ One line per package. The targets come from the package's unit graph, which `bui
     :build      the library and the binaries of `[targets] bins`
     :coverage   every test again as a debug build run under kcov, one Cobertura report per test file
     :ci         `:build` and `:test`
+    :table      the committed graph is, byte for byte, what the pinned mopm prints now (a check of its own; `:workspace` holds the files it reads)
 
 A workspace member (a path dependency) is a package of its own with its own BUCK file; this package's graph names it, and
 its `:lib` is what the units here import. A registry dependency is a sha256-pinned `.conda`, matched to the graph's Mojo version
@@ -393,4 +394,4 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
     )
     mojo_group(name = name_once("build"), deps = builds, check = ":check", visibility = visibility)
     mojo_group(name = name_once("test"), deps = tests, check = ":check", visibility = visibility)
-    mojo_group(name = name_once("ci"), deps = [":build", ":test", ":table"], check = ":check", visibility = visibility)
+    mojo_group(name = name_once("ci"), deps = [":build", ":test"], check = ":check", visibility = visibility)

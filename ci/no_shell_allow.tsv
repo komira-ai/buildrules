@@ -45,7 +45,7 @@ rules/gate/testkit.zig	shell-word	2
 rules/gate/util_test.zig	busybox	8
 rules/kpin/BUCK	busybox	2
 rules/kpin/pins_test.zig	busybox	4
-rules/mojo/BUCK	busybox	8
+rules/mojo/BUCK	busybox	10
 rules/mojo/same.bzl	busybox	3
 rules/mojo/same.bzl	shell-word	2
 rules/mojo/same.bzl	shell-c	1

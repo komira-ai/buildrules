@@ -6,7 +6,7 @@ toolchains/mojo_pins.bzl. A change to any of them without a sync leaves a table 
 (`:lib`, `:test`, `:build`, `:coverage`, the binaries, `:ci`) carries this target as a validation, so such a build is red:
 
     the files     an action (rules/mojo/tools/files_check.zig) hashes each file and compares it with the table's value
-    the graph     `:table`, a target of its own (in `:ci`, and in //ci:all for every example): an action (rules/mojo/tools/table_check.zig) runs the pinned mopm's
+    the graph     `:table`, a target of its own (in //ci:all for every example): an action (rules/mojo/tools/table_check.zig) runs the pinned mopm's
                   `plan --unit-graph --locked` over the package and its members and requires the table's graph to be that output, byte for byte (the keys,
                   the order of units, natives and dependencies, every sha256), so a table that was edited, or left behind by a change, is red
     the pins      at analysis: the toolchain the package builds with (`toolchains//:mojo_<v>`, declared from mojo_pins.bzl) must hold exactly

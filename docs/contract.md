@@ -419,6 +419,7 @@ Each package is a mopm project: its own `mopm.toml`, `mopm.lock` and graph (`mop
 | `:<stem>__cov_bin`, `:<stem>__cov` | the same test as a debug build, and its run under kcov: a Cobertura report in repository paths |
 | `:coverage` | the package's line coverage from those reports (`coverage.txt`); red if a source of the library is in no report |
 | `:ci` | `:build` and `:test` |
+| `:table` | the committed graph is what the pinned mopm's `plan --unit-graph --locked` prints for the package and its members now, byte for byte (an action; not part of `:ci`, but of `//ci:all` for every example). `:workspace` is the files it reads |
 | `:check` | the validation every step above carries: the files the table was made from still hash to what it recorded, and `toolchains/mojo_pins.bzl` still holds the table's toolchain (12.6) |
 | `:mopm.toml`, `:mopm.lock` | the package's own manifest and lock as targets, so a package that imports it as a member can name them in its `:check` |
 
