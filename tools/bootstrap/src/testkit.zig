@@ -242,7 +242,7 @@ fn blockFixed(b: *Bits, toks: []const Tok, final: bool) !void {
     try fixedSym(b, 256);
 }
 
-fn fixedSym(b: *Bits, s: u32) !void {
+pub fn fixedSym(b: *Bits, s: u32) !void {
     if (s < 144) return b.code(0x30 + s, 8);
     if (s < 256) return b.code(0x190 + (s - 144), 9);
     if (s < 280) return b.code(s - 256, 7);
@@ -272,10 +272,11 @@ pub fn dynamicHeader(b: *Bits, lit_lens: []const u8, dist_lens: []const u8) !voi
     try b.put(@intCast(lit_lens.len - 257), 5);
     try b.put(@intCast(dist_lens.len - 1), 5);
     try b.put(15, 4); // all 19 code-length code lengths
-    // The code-length alphabet: every symbol has the length 5.
+    // The code-length alphabet: a complete code, 13 symbols of length 4 and 6 of length 5.
     const order = [19]u8{ 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 };
-    for (order) |_| try b.put(5, 3);
-    const clens = [_]u8{5} ** 19;
+    var clens: [19]u8 = undefined;
+    for (&clens, 0..) |*c, i| c.* = if (i < 13) 4 else 5;
+    for (order) |o| try b.put(clens[o], 3);
     const ccodes = try canonical(&clens);
     defer a.free(ccodes);
     var all = std.ArrayList(u8).empty;
@@ -289,21 +290,21 @@ pub fn dynamicHeader(b: *Bits, lit_lens: []const u8, dist_lens: []const u8) !voi
         while (i + run < all.items.len and all.items[i + run] == v) run += 1;
         if (v == 0 and run >= 11) {
             const n = @min(run, 138);
-            try b.code(ccodes[18], 5);
+            try b.code(ccodes[18], @intCast(clens[18]));
             try b.put(@intCast(n - 11), 7);
             i += n;
         } else if (v == 0 and run >= 3) {
             const n = @min(run, 10);
-            try b.code(ccodes[17], 5);
+            try b.code(ccodes[17], @intCast(clens[17]));
             try b.put(@intCast(n - 3), 3);
             i += n;
         } else if (i > 0 and all.items[i - 1] == v and run >= 3) {
             const n = @min(run, 6);
-            try b.code(ccodes[16], 5);
+            try b.code(ccodes[16], @intCast(clens[16]));
             try b.put(@intCast(n - 3), 2);
             i += n;
         } else {
-            try b.code(ccodes[v], 5);
+            try b.code(ccodes[v], @intCast(clens[v]));
             i += 1;
         }
     }
@@ -570,6 +571,15 @@ pub const Dest = struct {
     pub fn unpack(self: *Dest, bytes: []const u8, format: archive.Format, strip: usize) !extract.Stats {
         var ex = extract.Extractor.init(a, self.tmp.dir, strip);
         defer ex.deinit();
+        try archive.extractBytes(a, bytes, format, &ex);
+        return ex.stats;
+    }
+
+    /// The same with a limit on the decompressed bytes.
+    pub fn unpackMax(self: *Dest, bytes: []const u8, format: archive.Format, max: u64) !extract.Stats {
+        var ex = extract.Extractor.init(a, self.tmp.dir, 0);
+        defer ex.deinit();
+        ex.max_output = max;
         try archive.extractBytes(a, bytes, format, &ex);
         return ex.stats;
     }

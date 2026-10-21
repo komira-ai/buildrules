@@ -226,3 +226,42 @@ test "explainError: each refusal has a sentence, and an unknown error has none" 
         for (main.explainErrors()[0..i]) |y| try t.expect(!std.mem.eql(u8, x.text, y.text));
     }
 }
+
+test "parse: --max-output" {
+    const o = try parseOk(&.{ "--max-output", "1048576", "in.tar", "out" });
+    try t.expectEqual(@as(?u64, 1048576), o.max_output);
+    try parseBad(&.{ "--max-output", "lots", "a", "b" }, "--max-output takes a number of bytes");
+}
+
+test "run: --max-output refuses an archive that holds more, before writing the rest" {
+    var d = kit.Dest.init();
+    defer d.deinit();
+    const gz = try sampleTarGz();
+    defer a.free(gz);
+    const archive = try put(&d, "in.tar.gz", gz);
+    defer a.free(archive);
+    const dest = try where(&d, "out");
+    defer a.free(dest);
+    var entry = main.Entry{};
+    try t.expectError(error.OutputTooLarge, main.run(a, .{ .archive = archive, .dest = dest, .max_output = 100 }, &entry));
+    _ = try main.run(a, .{ .archive = archive, .dest = dest, .max_output = 1 << 20 }, &entry);
+}
+
+test "run: an archive that is a directory, and a destination under a file, are the file system's refusals" {
+    var d = kit.Dest.init();
+    defer d.deinit();
+    try d.tmp.dir.makeDir("adir");
+    const dir_path = try where(&d, "adir");
+    defer a.free(dir_path);
+    var entry = main.Entry{};
+    try t.expectError(error.IsDir, main.run(a, .{ .archive = dir_path, .dest = null }, &entry));
+    const gz = try sampleTarGz();
+    defer a.free(gz);
+    const archive = try put(&d, "in.tar.gz", gz);
+    defer a.free(archive);
+    const file = try put(&d, "plain", "a file");
+    defer a.free(file);
+    const under = try std.fs.path.join(a, &.{ file, "dest" });
+    defer a.free(under);
+    try t.expectError(error.NotDir, main.run(a, .{ .archive = archive, .dest = under }, &entry));
+}

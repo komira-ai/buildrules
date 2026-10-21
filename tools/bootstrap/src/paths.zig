@@ -18,8 +18,7 @@ pub const Error = error{
     LinkEscapes,
 };
 
-/// The path of `name` below the destination after dropping its first `strip` components, written to `buf` with `/` between components: empty components and `.`
-/// are dropped. `null` when nothing is left (the entry is the stripped directory itself, or has fewer components than are stripped): the entry is skipped.
+/// The path of `name` below the destination after dropping its first `strip` components, written to `buf` with `/` between components: empty components are not counted, and a `.` is counted like any other component but is never kept (so `./a/b` under strip 1 is `a/b`, as GNU tar and busybox have it). `null` when nothing is left (the entry is the stripped directory itself, or has fewer components than are stripped): the entry is skipped.
 /// A name with a `..` component, a leading `/` or a NUL byte is an error, whatever `strip` drops of it.
 pub fn clean(name: []const u8, strip: usize, buf: []u8) Error!?[]const u8 {
     if (name.len == 0) return error.EmptyName;
@@ -33,9 +32,10 @@ pub fn clean(name: []const u8, strip: usize, buf: []u8) Error!?[]const u8 {
     var seen: usize = 0;
     var n: usize = 0;
     while (it.next()) |c| {
-        if (std.mem.eql(u8, c, ".")) continue;
+        // a `.` is a component like any other when counting what `strip` drops (GNU tar and busybox do the same: `./a/b` under strip 1 is `a/b`); what is left of it is not kept
         seen += 1;
         if (seen <= strip) continue;
+        if (std.mem.eql(u8, c, ".")) continue;
         const need = c.len + @intFromBool(n > 0);
         if (n + need > buf.len or n + need > max_path) return error.NameTooLong;
         if (n > 0) {

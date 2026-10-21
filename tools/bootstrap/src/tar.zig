@@ -72,6 +72,7 @@ pub const Parser = struct {
 
     /// The next bytes of the archive.
     pub fn write(self: *Parser, bytes_in: []const u8) !void {
+        try self.ex.account(bytes_in.len);
         var bytes = bytes_in;
         while (bytes.len > 0) {
             switch (self.state) {

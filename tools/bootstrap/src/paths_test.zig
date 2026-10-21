@@ -14,13 +14,22 @@ test "a plain relative path is kept" {
     try t.expectEqualStrings("a/b/c", (try clean("a/b/c", 0)).?);
 }
 
-test "empty components and . are dropped" {
+test "empty components are not counted and . is not kept" {
     try t.expectEqualStrings("a/b", (try clean("./a//b/./", 0)).?);
+}
+
+test "a . counts as a component under strip, as in GNU tar" {
+    try t.expectEqualStrings("a/b", (try clean("./a/b", 1)).?);
+    try t.expectEqualStrings("b", (try clean("./a/b", 2)).?);
+    try t.expectEqualStrings("b", (try clean("a/./b", 2)).?);
+    try t.expectEqualStrings("a/b", (try clean("a//b", 0)).?);
+    try t.expect((try clean("./a", 2)) == null);
+    try t.expect((try clean("./", 1)) == null);
 }
 
 test "strip drops leading components; nothing left is null" {
     try t.expectEqualStrings("b/c", (try clean("a/b/c", 1)).?);
-    try t.expectEqualStrings("c", (try clean("./a/b/c", 2)).?);
+    try t.expectEqualStrings("b/c", (try clean("./a/b/c", 2)).?);
     try t.expect((try clean("a/b", 2)) == null);
     try t.expect((try clean("a/", 1)) == null);
     try t.expect((try clean("./", 0)) == null);

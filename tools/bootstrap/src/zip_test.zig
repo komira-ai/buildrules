@@ -314,3 +314,60 @@ test "check mode reads every member and writes nothing" {
     defer a.free(bad);
     try t.expectError(error.EntryCorrupt, kit.Dest.check(bad, .zip, 0));
 }
+
+test "--max-output: the sizes a zip declares count, and a member cannot hold more than it declared" {
+    const file = try build(&.{
+        .{ .name = "a", .data = "x" ** 600 },
+        .{ .name = "b", .data = "y" ** 600 },
+    }, false);
+    defer a.free(file);
+    var d = kit.Dest.init();
+    defer d.deinit();
+    _ = try d.unpackMax(file, .zip, 1200);
+    var d2 = kit.Dest.init();
+    defer d2.deinit();
+    try t.expectError(error.OutputTooLarge, d2.unpackMax(file, .zip, 1199));
+    // a deflate stream that holds more than the header says is corrupt, whatever the limit
+    const text = "twenty bytes of text";
+    const body = try kit.deflateText(text);
+    defer a.free(body);
+    const lying = try build(&.{.{ .name = "f", .data = text, .body = body, .usize_ = 5 }}, false);
+    defer a.free(lying);
+    var d3 = kit.Dest.init();
+    defer d3.deinit();
+    try t.expectError(error.EntryCorrupt, d3.unpackMax(lying, .zip, 1 << 30));
+}
+
+test "zip64 extra fields: values are read in order for the fields that are all ones, and a short field is refused" {
+    // only the offset is all ones: the extra field holds one value
+    var z = kit.Zip{};
+    defer z.deinit();
+    try z.add(.{ .name = "a", .data = "first" });
+    try z.add(.{ .name = "b", .data = "second member" });
+    const plain = try z.finish(false);
+    defer a.free(plain);
+    var d = kit.Dest.init();
+    defer d.deinit();
+    _ = try d.unpack(plain, .zip, 0);
+    // an extra field of another id is skipped, and a zip64 one after it is found
+    const odd = try build(&.{.{ .name = "f", .data = "content", .zip64 = true }}, true);
+    defer a.free(odd);
+    var d2 = kit.Dest.init();
+    defer d2.deinit();
+    _ = try d2.unpack(odd, .zip, 0);
+    // an extra field whose length runs past the extra data
+    const cut = try a.dupe(u8, odd);
+    defer a.free(cut);
+    const at = std.mem.indexOf(u8, cut, "\x01\x00\x18\x00").?;
+    cut[at + 2] = 0xff;
+    var d3 = kit.Dest.init();
+    defer d3.deinit();
+    try t.expectError(error.BadZip, d3.unpack(cut, .zip, 0));
+    // an extra field of another id in front of the zip64 one
+    const other = try a.dupe(u8, odd);
+    defer a.free(other);
+    other[at] = 0x07; // id 0x0007: not zip64, 24 bytes of nothing; the sizes stay all ones and nothing supplies them
+    var d4 = kit.Dest.init();
+    defer d4.deinit();
+    try t.expectError(error.BadZip, d4.unpack(other, .zip, 0));
+}

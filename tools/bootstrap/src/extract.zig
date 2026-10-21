@@ -39,6 +39,9 @@ pub const Extractor = struct {
     stats: Stats = .{},
     /// Entries seen, extracted or skipped.
     entries: u64 = 0,
+    /// The most decompressed bytes the archive may hold (the tar stream, or the sizes of the zip's members), and how many have been seen.
+    max_output: ?u64 = null,
+    out_total: u64 = 0,
     /// The name of the entry being handled, for the message of a refusal.
     last: [200]u8 = undefined,
     last_len: usize = 0,
@@ -51,6 +54,14 @@ pub const Extractor = struct {
 
     pub fn deinit(self: *Extractor) void {
         self.arena.deinit();
+    }
+
+    /// Counts `n` decompressed bytes against the limit.
+    pub fn account(self: *Extractor, n: u64) !void {
+        self.out_total += n;
+        if (self.max_output) |m| {
+            if (self.out_total > m) return error.OutputTooLarge;
+        }
     }
 
     /// Counts the entry and remembers its name.

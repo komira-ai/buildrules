@@ -155,14 +155,18 @@ pub fn extractAll(a: std.mem.Allocator, b: []const u8, ex: *extract.Extractor) !
 
 /// One member's content into `sink`, checked against the CRC-32 and the length of its header.
 fn member(a: std.mem.Allocator, method: u16, body: []const u8, crc: u32, size: u64, sink: stream.Sink, ex: *extract.Extractor) !void {
+    // the size the header declares is what counts against the limit, and what the member may not exceed whatever it holds
+    try ex.account(size);
+    var bounded = Bounded{ .inner = sink, .left = size };
+    const out = stream.sinkOf(Bounded, &bounded);
     var got_crc: u32 = undefined;
     var got_len: u64 = undefined;
     if (method == 0) {
-        try sink.write(body);
+        try out.write(body);
         got_crc = std.hash.Crc32.hash(body);
         got_len = body.len;
     } else {
-        const r = try inflate.inflate(a, body, sink);
+        const r = try inflate.inflate(a, body, out);
         got_crc = r.crc;
         got_len = r.len;
     }
@@ -178,5 +182,17 @@ const Collect = struct {
     pub fn write(self: *Collect, bytes: []const u8) !void {
         if (self.list.items.len + bytes.len > paths.max_path) return error.NameTooLong;
         try self.list.appendSlice(self.a, bytes);
+    }
+};
+
+/// A member's output, held to the size its header declares: a deflate stream that says more than it declared is corrupt, not a way past `--max-output`.
+const Bounded = struct {
+    inner: stream.Sink,
+    left: u64,
+
+    pub fn write(self: *Bounded, bytes: []const u8) !void {
+        if (bytes.len > self.left) return error.EntryCorrupt;
+        self.left -= bytes.len;
+        try self.inner.write(bytes);
     }
 };

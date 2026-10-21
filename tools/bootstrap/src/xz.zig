@@ -1,5 +1,7 @@
 //! An xz file decoded into a `Sink`: the standard library's decoder (LZMA2, and the container's block, index and footer checks), over the file in memory. The
 //! errors are this tool's: `Truncated` for a stream that ends early, `Corrupt` for any other defect, `TrailingData` for bytes after the stream.
+//! Memory: the standard library's decoder decodes a whole xz block before it returns any of it, so the memory is about the size of the largest block (an archive that is
+//! one block, as `xz -9` makes of a tarball, is held decompressed whole) on top of the archive itself; tools/bootstrap/README.md has the figures measured on real archives.
 const std = @import("std");
 const Sink = @import("stream.zig").Sink;
 

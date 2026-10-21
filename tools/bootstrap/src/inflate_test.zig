@@ -80,10 +80,10 @@ fn randomTokens(seed: u64, size: usize, expected: *std.ArrayList(u8)) ![]kit.Tok
 
 const full_lit = blk: {
     var l: [286]u8 = undefined;
-    for (&l, 0..) |*x, i| x.* = if (i < 144) 8 else if (i < 256) 9 else if (i < 280) 7 else 8;
+    for (&l, 0..) |*x, i| x.* = if (i < 144) 8 else if (i < 256) 9 else if (i < 280) 7 else if (i < 284) 8 else 7;
     break :blk l;
 };
-const full_dist = [_]u8{5} ** 30;
+const full_dist = [_]u8{ 4, 4 } ++ [_]u8{5} ** 28;
 
 test "fixed and dynamic blocks decode to what the tokens say, across the 64 KiB buffer and the 32 KiB window" {
     for ([_]u64{ 1, 2, 3 }) |seed| {
@@ -149,7 +149,7 @@ test "dynamic blocks with sparse codes: runs of zero lengths (symbols 17 and 18)
     lit['b'] = 2;
     lit['h'] = 3; // five zero lengths before it: symbol 17
     lit[256] = 3;
-    lit[257] = 3; // length 3
+    lit[257] = 2; // length 3: with the others, a complete code (3 x 1/4 + 2 x 1/8)
     var dist = [_]u8{0} ** 30;
     dist[0] = 1;
     const body = try kit.deflateDynamic(&.{ .{ .lit = 'a' }, .{ .lit = 'b' }, .{ .lit = 'h' }, .{ .match = .{ .len = 3, .dist = 1 } } }, &lit, &dist);
@@ -382,13 +382,13 @@ fn clOversubscribed(b: *kit.Bits) anyerror!void {
 }
 
 fn clRepeatFirst(b: *kit.Bits) anyerror!void {
-    try dynamicStart(b, .{ 1, 0, 0 });
+    try dynamicStart(b, .{ 1, 2, 2 });
     try b.put(0, 1); // symbol 16 with nothing before it
     try b.put(0, 2);
 }
 
 fn clRepeatOverflow(b: *kit.Bits) anyerror!void {
-    try dynamicStart(b, .{ 0, 0, 1 });
+    try dynamicStart(b, .{ 2, 2, 1 });
     try b.put(0, 1); // symbol 18
     try b.put(127, 7); // 138 zeros
     try b.put(0, 1);
@@ -396,7 +396,7 @@ fn clRepeatOverflow(b: *kit.Bits) anyerror!void {
 }
 
 fn clNoEndOfBlock(b: *kit.Bits) anyerror!void {
-    try dynamicStart(b, .{ 0, 0, 1 });
+    try dynamicStart(b, .{ 2, 2, 1 });
     try b.put(0, 1);
     try b.put(127, 7);
     try b.put(0, 1);
@@ -404,14 +404,17 @@ fn clNoEndOfBlock(b: *kit.Bits) anyerror!void {
 }
 
 fn unassignedCode(b: *kit.Bits) anyerror!void {
+    // a literal code that is complete (a: 0, end of block: 10, symbol 257: 11) and a distance code of one symbol of length 1: the bit `1` is no distance
     var lit = [_]u8{0} ** 286;
-    lit['a'] = 2;
-    lit['b'] = 2;
-    lit[256] = 2; // three codes of length 2: `11` is none
+    lit['a'] = 1;
+    lit[256] = 2;
+    lit[257] = 2;
     var dist = [_]u8{0} ** 30;
     dist[0] = 1;
     try kit.dynamicHeader(b, &lit, &dist);
-    try b.put(3, 2);
+    try b.code(0, 1); // a
+    try b.code(3, 2); // 257: a match of length 3
+    try b.put(1, 1); // its distance: the bit no code starts with
     try b.put(0, 16);
 }
 
@@ -481,4 +484,123 @@ test "an error of the sink is the decoder's error when the buffer fills, too" {
     defer a.free(gz);
     var f = Failing{ .left = 70_000 };
     try t.expectError(error.DiskFull, inflate.gunzip(a, gz, stream.sinkOf(Failing, &f)));
+}
+
+fn lens(comptime n: usize, comptime spec: []const [2]usize) [n]u8 {
+    var l = [_]u8{0} ** n;
+    for (spec) |s| l[s[0]] = @intCast(s[1]);
+    return l;
+}
+
+test "Table.build: a complete code is built; one symbol too many is not, at the very boundary" {
+    var tab: inflate.Table = .{};
+    try tab.build(&[_]u8{ 1, 2, 2 }, false);
+    try tab.build(&[_]u8{ 2, 2, 2, 2 }, false);
+    try tab.build(&[_]u8{ 1, 2, 3, 3 }, false);
+    // over-subscribed by exactly one code of the longest length, and by a whole level
+    try t.expectError(error.Corrupt, tab.build(&[_]u8{ 1, 2, 2, 2 }, true));
+    try t.expectError(error.Corrupt, tab.build(&[_]u8{ 2, 2, 2, 2, 2 }, true));
+    try t.expectError(error.Corrupt, tab.build(&[_]u8{ 1, 1, 1 }, true));
+    try t.expectError(error.Corrupt, tab.build(&([_]u8{15} ** 32769), true));
+    try t.expectError(error.Corrupt, tab.build(&[_]u8{ 1, 2, 3, 3, 15 }, true));
+}
+
+test "Table.build: an incomplete code is refused, but a single code of length 1 or none at all may be allowed" {
+    var tab: inflate.Table = .{};
+    try t.expectError(error.Corrupt, tab.build(&[_]u8{ 2, 2, 2 }, true));
+    try t.expectError(error.Corrupt, tab.build(&[_]u8{ 2, 2, 2 }, false));
+    try t.expectError(error.Corrupt, tab.build(&[_]u8{ 1, 2 }, true));
+    try t.expectError(error.Corrupt, tab.build(&[_]u8{2}, true));
+    try t.expectError(error.Corrupt, tab.build(&[_]u8{0}, false));
+    try tab.build(&[_]u8{ 0, 1, 0 }, true);
+    try tab.build(&[_]u8{ 0, 0, 0 }, true);
+    try t.expectError(error.Corrupt, tab.build(&[_]u8{ 0, 1, 0 }, false));
+}
+
+/// A raw DEFLATE stream of one dynamic block with the given lengths, followed by the bits of `tail`.
+fn dynamicWith(lit: []const u8, dist: []const u8, toks: []const kit.Tok) ![]u8 {
+    return kit.deflateDynamic(toks, lit, dist);
+}
+
+test "a literal, distance or code-length code that is over-subscribed or incomplete is refused even when the data would decode" {
+    // over-subscribed distance code, in a block that never uses a distance
+    var lit = lens(286, &.{ .{ 'a', 1 }, .{ 256, 2 }, .{ 257, 2 } });
+    var dist = lens(30, &.{ .{ 0, 1 }, .{ 1, 1 }, .{ 2, 1 } });
+    const bad_dist = try dynamicWith(&lit, &dist, &.{.{ .lit = 'a' }});
+    defer a.free(bad_dist);
+    try t.expectError(error.Corrupt, rawInflate(bad_dist));
+    // the same block with a sound distance code decodes
+    dist = lens(30, &.{ .{ 0, 1 } });
+    const good = try dynamicWith(&lit, &dist, &.{.{ .lit = 'a' }});
+    defer a.free(good);
+    try t.expectEqual(@as(u64, 1), (try rawInflate(good)).len);
+    // over-subscribed literal code whose first symbols are all the block uses
+    var big = lens(286, &.{ .{ 'a', 1 }, .{ 256, 1 }, .{ 257, 1 } });
+    dist = lens(30, &.{ .{ 0, 1 } });
+    const bad_lit = try dynamicWith(&big, &dist, &.{.{ .lit = 'a' }});
+    defer a.free(bad_lit);
+    try t.expectError(error.Corrupt, rawInflate(bad_lit));
+    // an incomplete literal code
+    big = lens(286, &.{ .{ 'a', 2 }, .{ 'b', 2 }, .{ 256, 2 } });
+    const incomplete_lit = try dynamicWith(&big, &dist, &.{.{ .lit = 'a' }});
+    defer a.free(incomplete_lit);
+    try t.expectError(error.Corrupt, rawInflate(incomplete_lit));
+    // an incomplete distance code of two symbols
+    dist = lens(30, &.{ .{ 0, 2 }, .{ 1, 2 } });
+    const incomplete_dist = try dynamicWith(&lit, &dist, &.{.{ .lit = 'a' }});
+    defer a.free(incomplete_dist);
+    try t.expectError(error.Corrupt, rawInflate(incomplete_dist));
+}
+
+test "a block with no distance code at all is a literal-only block, and decodes" {
+    const lit = lens(286, &.{ .{ 'a', 1 }, .{ 'b', 2 }, .{ 256, 2 } });
+    const dist = lens(30, &.{});
+    const body = try dynamicWith(&lit, &dist, &.{ .{ .lit = 'a' }, .{ .lit = 'b' } });
+    defer a.free(body);
+    try t.expectEqual(@as(u64, 2), (try rawInflate(body)).len);
+}
+
+test "the code-length code must be complete: a single code is refused there" {
+    // symbol 18 alone with length 1: incomplete
+    const body = struct {
+        fn f(b: *kit.Bits) anyerror!void {
+            try dynamicStart(b, .{ 0, 0, 1 });
+            try b.put(0, 1);
+            try b.put(127, 7);
+        }
+    }.f;
+    try rawBits(&body);
+}
+
+test "a stored block after output that fills the buffer flushes through the window" {
+    var b = kit.Bits{};
+    // a non-final fixed block of 40000 literals, then a final stored block of 50000 bytes
+    try b.put(0, 1);
+    try b.put(1, 2);
+    var expected = std.ArrayList(u8).empty;
+    defer expected.deinit(a);
+    var i: usize = 0;
+    while (i < 40000) : (i += 1) {
+        const c: u8 = @truncate(i *% 7);
+        try kit.fixedSym(&b, c);
+        try expected.append(a, c);
+    }
+    try kit.fixedSym(&b, 256);
+    try b.put(1, 1);
+    try b.put(0, 2);
+    const pad: u6 = @intCast((8 - (b.n % 8)) % 8);
+    try b.put(0, pad);
+    try b.put(50000, 16);
+    try b.put(@as(u32, ~@as(u16, 50000)), 16);
+    i = 0;
+    while (i < 50000) : (i += 1) {
+        const c: u8 = @truncate(i *% 13 +% 5);
+        try b.put(c, 8);
+        try expected.append(a, c);
+    }
+    const body = try b.finish();
+    defer a.free(body);
+    const gz = try kit.gzipOf(body, expected.items);
+    defer a.free(gz);
+    try expectDecodes(gz, expected.items);
 }

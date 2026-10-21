@@ -16,17 +16,17 @@ UNPACK_TAG = "unpack-1"
 UNPACK_PINS = {
     "linux-x86_64": {
         "url": "https://github.com/komira-ai/buildrules/releases/download/unpack-1/unpack-linux-x86_64",
-        "sha256": "34918575b510f72891731f1da2e9e9326c8fd1dbab5438d0593561371fcd654b",
-        "size": 143112,
+        "sha256": "c819784619143191262380b13da9eff51dd2429697b5053e174ceb86627d2da1",
+        "size": 143560,
     },
     "linux-aarch64": {
         "url": "https://github.com/komira-ai/buildrules/releases/download/unpack-1/unpack-linux-aarch64",
-        "sha256": "18a3f7f94b14a4bfdefc0098ff43ec5d08ae792305e2e780a257638f417191b7",
-        "size": 129192,
+        "sha256": "2a04e44b005fd3efb97f3378d01e1222940731f2f70a496b5958f72af522e8f1",
+        "size": 129944,
     },
     "macos-aarch64": {
         "url": "https://github.com/komira-ai/buildrules/releases/download/unpack-1/unpack-macos-aarch64",
-        "sha256": "f9d256553b0cf1e2d2e5169164402192ad480f5d9dadd776ef5e9b95662e5df4",
-        "size": 163320,
+        "sha256": "e8be0f022d4e40bc61e0325130d7645b24b96d5b5123c8b601dbea996ef41052",
+        "size": 163480,
     },
 }

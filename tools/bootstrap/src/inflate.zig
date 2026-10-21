@@ -67,11 +67,14 @@ const Bits = struct {
 };
 
 /// A canonical Huffman code as a lookup table indexed by the next `bits` bits of input: each entry is `(symbol << 4) | length`, 0 where no code lives.
-const Table = struct {
+pub const Table = struct {
     entries: [1 << table_bits]u16 = undefined,
     bits: u5 = 0,
 
-    fn build(self: *Table, lengths: []const u8) error{Corrupt}!void {
+    /// Builds the table for the code lengths. An over-subscribed code is refused, and so is an incomplete one (some bit string that no code starts), except, with
+    /// `allow_single`, a code of one symbol of length 1 or of none (an encoder writes them for a block with a single distance, or with no match): the rule of zlib's
+    /// `puff.c`, so that this decoder and the stricter readers elsewhere in the tree accept the same streams.
+    pub fn build(self: *Table, lengths: []const u8, allow_single: bool) error{Corrupt}!void {
         var count = [_]u16{0} ** 16;
         for (lengths) |l| count[l] += 1;
         count[0] = 0;
@@ -81,6 +84,11 @@ const Table = struct {
             if (count[l] != 0) maxbits = @intCast(l);
             left = (left << 1) - count[l];
             if (left < 0) return error.Corrupt; // more codes of a length than there are bit strings
+        }
+        if (left > 0) {
+            var used: u32 = 0;
+            for (1..16) |l| used += count[l];
+            if (!allow_single or used != count[1]) return error.Corrupt;
         }
         var next = [_]u16{0} ** 17;
         var code: u16 = 0;
@@ -187,8 +195,8 @@ const State = struct {
         @memset(lens[144..256], 9);
         @memset(lens[256..280], 7);
         @memset(lens[280..288], 8);
-        try self.lit.build(&lens);
-        try self.dist.build(&([_]u8{5} ** 32));
+        try self.lit.build(&lens, true);
+        try self.dist.build(&([_]u8{5} ** 32), true);
     }
 
     fn dynamic(self: *State) !void {
@@ -199,7 +207,7 @@ const State = struct {
         var clens = [_]u8{0} ** 19;
         for (clen_order[0..hclen]) |o| clens[o] = @intCast(try self.bits.take(3));
         var clt: Table = .{};
-        try clt.build(&clens);
+        try clt.build(&clens, false);
         var lens = [_]u8{0} ** (286 + 30);
         const want = hlit + hdist;
         var i: usize = 0;
@@ -226,8 +234,8 @@ const State = struct {
             i += rep;
         }
         if (lens[256] == 0) return error.Corrupt; // no end of block
-        try self.lit.build(lens[0..hlit]);
-        try self.dist.build(lens[hlit..want]);
+        try self.lit.build(lens[0..hlit], true);
+        try self.dist.build(lens[hlit..want], true);
     }
 
     fn codes(self: *State) !void {

@@ -500,6 +500,17 @@ test "a header whose checksum is wrong, or whose number is not one, is refused" 
     try t.expectError(error.BadNumber, d3.unpack(&big, .tar, 0));
 }
 
+test "a mode that is not a number is refused too" {
+    var h = try kit.Tar.header(.{ .name = "f", .data = "x" });
+    h[100] = 'z';
+    var sum: u32 = 0;
+    for (&h, 0..) |c, i| sum += if (i >= 148 and i < 156) ' ' else c;
+    _ = try std.fmt.bufPrint(h[148..155], "{o:0>6}", .{sum});
+    var d = kit.Dest.init();
+    defer d.deinit();
+    try t.expectError(error.BadNumber, d.unpack(&h, .tar, 0));
+}
+
 test "numbers: octal, padded with spaces or NULs, and refused when anything else follows" {
     var b = kit.Tar{};
     defer b.deinit();
@@ -700,4 +711,61 @@ test "a refusal names the entry that caused it" {
     defer p.deinit();
     try t.expectError(error.ParentComponent, p.write(b.bytes()));
     try t.expectEqualStrings("pkg/../../evil", ex.lastName());
+}
+
+test "--max-output: a tar that holds more decompressed bytes than the limit is refused, one that holds exactly the limit is not" {
+    var b = kit.Tar{};
+    defer b.deinit();
+    try b.file("f", 0o644, "x" ** 1000);
+    try b.end();
+    const total = b.bytes().len;
+    var d = kit.Dest.init();
+    defer d.deinit();
+    _ = try d.unpackMax(b.bytes(), .tar, total);
+    var d2 = kit.Dest.init();
+    defer d2.deinit();
+    try t.expectError(error.OutputTooLarge, d2.unpackMax(b.bytes(), .tar, total - 1));
+    // through gzip and xz: the limit counts what the decoder produced
+    const gz = try kit.gzipStored(b.bytes());
+    defer a.free(gz);
+    var d3 = kit.Dest.init();
+    defer d3.deinit();
+    try t.expectError(error.OutputTooLarge, d3.unpackMax(gz, .tar_gz, 1024));
+    _ = try d3.unpackMax(gz, .tar_gz, total);
+    const xz = try kit.xzOf(b.bytes(), .crc32);
+    defer a.free(xz);
+    var d4 = kit.Dest.init();
+    defer d4.deinit();
+    try t.expectError(error.OutputTooLarge, d4.unpackMax(xz, .tar_xz, 1024));
+    _ = try d4.unpackMax(xz, .tar_xz, total);
+}
+
+test "--max-output: a gzip bomb stops at the limit, long before its end" {
+    // 20 MiB of zeros as a tar entry's data, deflated by matches: a few hundred bytes of input
+    var toks = std.ArrayList(kit.Tok).empty;
+    defer toks.deinit(a);
+    var plain = std.ArrayList(u8).empty;
+    defer plain.deinit(a);
+    const header = try kit.Tar.header(.{ .name = "zeros", .size = 20 << 20, .data = "" });
+    try plain.appendSlice(a, &header);
+    for (header) |c| try toks.append(a, .{ .lit = c });
+    try toks.append(a, .{ .lit = 0 });
+    try plain.append(a, 0);
+    var left: usize = (20 << 20) - 1;
+    while (left > 0) {
+        const n: u16 = @intCast(@min(left, 258));
+        try toks.append(a, .{ .match = .{ .len = if (n < 3) 3 else n, .dist = 1 } });
+        left -= n;
+        if (n < 3) break;
+    }
+    const body = try kit.deflateFixed(toks.items);
+    defer a.free(body);
+    var gz = std.ArrayList(u8).empty;
+    defer gz.deinit(a);
+    try gz.appendSlice(a, &.{ 0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3 });
+    try gz.appendSlice(a, body);
+    try gz.appendNTimes(a, 0, 8);
+    var d = kit.Dest.init();
+    defer d.deinit();
+    try t.expectError(error.OutputTooLarge, d.unpackMax(gz.items, .tar_gz, 1 << 20));
 }

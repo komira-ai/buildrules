@@ -1,10 +1,12 @@
 //! unpack: extract a tar, tar.gz, tar.xz or zip archive, checking it first.
 //!
-//!     unpack [--strip-components N] [--sha256 HEX] [--size BYTES] [--format F] <archive> <dest>
-//!     unpack --check [--strip-components N] [--sha256 HEX] [--size BYTES] [--format F] <archive>
+//!     unpack [--strip-components N] [--sha256 HEX] [--size BYTES] [--format F] [--max-output BYTES] <archive> <dest>
+//!     unpack --check [--strip-components N] [--sha256 HEX] [--size BYTES] [--format F] [--max-output BYTES] <archive>
 //!
 //! The archive's size and sha256 are checked before anything is read (a wrong one writes nothing). The format is told by the file's magic, or given as `tar`,
-//! `tar.gz`, `tar.xz` or `zip`. `--strip-components N` drops the first N components of every path, as GNU tar's does. `--check` reads the archive to the
+//! `tar.gz`, `tar.xz` or `zip`. `--strip-components N` drops the first N components of every path, counting a leading `./` as one, as GNU tar's does. `--max-output N` refuses an archive that holds
+//! more than N decompressed bytes (the tar stream, or the sizes the zip declares; the tar.xz decoder decodes a whole xz block before it hands any of it on, so for it the limit
+//! stops the writing and not the memory). A failed extraction leaves a partly written destination, which the caller discards. `--check` reads the archive to the
 //! end, checking every header, checksum and length, and writes nothing. Entries that would leave the destination, a cut-off or corrupt archive and every
 //! other refusal are exit status 2 and a message naming the archive and the entry; nothing here asks the host for a tool.
 //! The rules of what is written, and what is refused, are in extract.zig, tar.zig and zip.zig.
@@ -27,10 +29,12 @@ pub const Options = struct {
     sha256: ?[32]u8 = null,
     size: ?u64 = null,
     format: ?archive.Format = null,
+    /// The most decompressed bytes the archive may hold; null for no limit.
+    max_output: ?u64 = null,
 };
 
 pub const usage_text =
-    "usage: unpack [--strip-components N] [--sha256 HEX] [--size BYTES] [--format tar|tar.gz|tar.xz|zip] <archive> <dest>\n" ++
+    "usage: unpack [--strip-components N] [--sha256 HEX] [--size BYTES] [--format tar|tar.gz|tar.xz|zip] [--max-output BYTES] <archive> <dest>\n" ++
     "       unpack --check [options] <archive>\n";
 
 /// Parses the command line (without the program name). On `error.Usage`, `diag` says what is wrong.
@@ -52,6 +56,8 @@ pub fn parse(args: []const []const u8, diag: *[]const u8) !Options {
                 o.strip = std.fmt.parseInt(usize, v, 10) catch return fail(diag, "--strip-components takes a number");
             } else if (std.mem.eql(u8, arg, "--size")) {
                 o.size = std.fmt.parseInt(u64, v, 10) catch return fail(diag, "--size takes a number of bytes");
+            } else if (std.mem.eql(u8, arg, "--max-output")) {
+                o.max_output = std.fmt.parseInt(u64, v, 10) catch return fail(diag, "--max-output takes a number of bytes");
             } else if (std.mem.eql(u8, arg, "--sha256")) {
                 var d: [32]u8 = undefined;
                 if (v.len != 64 or !isLowerHex(v)) return fail(diag, "--sha256 takes 64 lower-case hex digits");
@@ -95,6 +101,7 @@ fn isLowerHex(s: []const u8) bool {
 
 pub const Error = error{
     ArchiveTooLarge,
+    OutputTooLarge,
     SizeMismatch,
     Sha256Mismatch,
     UnknownFormat,
@@ -105,6 +112,7 @@ pub const Explained = struct { err: anyerror, text: []const u8 };
 
 const explain = [_]Explained{
     .{ .err = error.ArchiveTooLarge, .text = "the archive is over 1 GiB" },
+    .{ .err = error.OutputTooLarge, .text = "the archive holds more decompressed bytes than --max-output allows" },
     .{ .err = error.SizeMismatch, .text = "the archive's size is not the one given with --size" },
     .{ .err = error.Sha256Mismatch, .text = "the archive's sha256 is not the one given with --sha256" },
     .{ .err = error.UnknownFormat, .text = "not a tar, tar.gz, tar.xz or zip file (--format names one)" },
@@ -188,6 +196,7 @@ pub fn run(a: std.mem.Allocator, o: Options, entry: *Entry) !Summary {
     }
     var ex = extract.Extractor.init(a, dir, o.strip);
     defer ex.deinit();
+    ex.max_output = o.max_output;
     archive.extractBytes(a, bytes, format, &ex) catch |e| {
         entry.len = ex.lastName().len;
         @memcpy(entry.buf[0..entry.len], ex.lastName());

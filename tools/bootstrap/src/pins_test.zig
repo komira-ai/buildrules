@@ -133,3 +133,36 @@ test "a malformed table is found" {
     defer a.free(nosize);
     try expectFinding(nosize, &built(), "the size of linux-aarch64 is not a positive number");
 }
+
+test "reading the table: comments, blank lines, a key with no value, a host name too long to look up, a last row with no closing line" {
+    try t.expect(pins.row(table, "x" ** 100) == null);
+    try t.expect(pins.tag("# UNPACK_TAG = \"unpack-1\"\n\nUNPACK_TAG = unpack-1\n") == null);
+    try t.expectEqualStrings("unpack-2", pins.tag("\n\n  # UNPACK_TAG = \"unpack-1\"\nUNPACK_TAG = \"unpack-2\"\n").?);
+    const open = "UNPACK_PINS = {\n    \"linux-x86_64\": {\n        \"url\": \"u\",\n        \"sha256\": \"s\",\n        \"size\": 7";
+    const r = pins.row(open, "linux-x86_64").?;
+    try t.expectEqualStrings("7", r.size);
+    try t.expectEqualStrings("u", r.url);
+    // a row with no url, sha256 or size line reads as empty values
+    const bare = pins.row("    \"linux-x86_64\": {\n    },\n", "linux-x86_64").?;
+    try t.expectEqualStrings("", bare.url);
+    try t.expectEqualStrings("", bare.sha256);
+    try t.expectEqualStrings("", bare.size);
+    // a quoted key with an opening quote and no closing one has no value
+    try t.expect(pins.row("    \"linux-x86_64\": {\n        \"url\": \"unterminated,\n    },\n", "linux-x86_64").?.url.len == 0);
+}
+
+test "a host whose table row is missing is found once, and does not also report a missing program" {
+    const without = try mutate(table, "\"linux-aarch64\": {", "\"linux-arm\": {");
+    defer a.free(without);
+    var f = try pins.check(a, without, &built());
+    defer {
+        for (f.items) |x| a.free(x);
+        f.deinit(a);
+    }
+    var rows: usize = 0;
+    for (f.items) |x| {
+        if (std.mem.indexOf(u8, x, "no row for linux-aarch64") != null) rows += 1;
+        try t.expect(std.mem.indexOf(u8, x, "no program was built") == null);
+    }
+    try t.expectEqual(@as(usize, 1), rows);
+}

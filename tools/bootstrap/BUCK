@@ -2,6 +2,7 @@
 # archive checked first. It is built by the pinned zig behind its tests, and the same program is built for the three hosts the release machine has (linux x86_64,
 # linux aarch64, macOS aarch64). Those three are published as release assets and pinned (rules/pins/bootstrap.bzl), so that an action can run `unpack` before
 # anything else has been unpacked; //ci:unpack_pin_check rebuilds the tree's copy and requires its sha256 to be the pin's.
+load("@buildrules//rules/core:pinned_file.bzl", "pinned_file")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_module", "zig_test")
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
@@ -127,5 +128,40 @@ zig_module(
     unit_tests = [":pins_unit"],
     visibility = ["//tools/held:"],
 )
+
+# How much memory the program takes for the largest real archives (src/mem_test.zig): the zig tarball (xz, one block), rustc 1.95.0 as an xz tarball (the one pin here that no
+# rule uses: it is measured because the standard library's xz decoder holds a whole block) and as the gzip tarball the Rust toolchain unpacks today. Each is a target of its own,
+# because the peak of a process's children is a maximum over all of them.
+pinned_file(
+    name = "rustc_xz_for_memory",
+    url = "https://static.rust-lang.org/dist/rustc-1.95.0-x86_64-unknown-linux-gnu.tar.xz",
+    sha256 = "8426a3d170a5879f5682f5fbdd024a1779b3951e7baba685af2d6dc32a6dfc15",
+    size_bytes = 80351960,
+)
+
+pinned_file(
+    name = "rustc_gz_for_memory",
+    url = "https://static.rust-lang.org/dist/rustc-1.95.0-x86_64-unknown-linux-gnu.tar.gz",
+    sha256 = "fef749c4abb4b4bde5ebf773bec550003ce5b4410579cecd69a365e5c0c5106a",
+    size_bytes = 135179262,
+)
+
+[
+    zig_test(
+        name = "mem_" + name + "_unit",
+        src = "src/mem_test.zig",
+        imports = _SRCS,
+        zig = _ZIG,
+        optimize = "ReleaseSafe",
+        data = {"archive": archive},
+        exec_tools = {"UNPACK": ":unpack"},
+        visibility = ["//ci:"],
+    )
+    for name, archive in {
+        "zig_xz": "buildrules//rules/pins:zig_linux_x86_64.tar.xz",
+        "rustc_xz": ":rustc_xz_for_memory",
+        "rustc_gz": ":rustc_gz_for_memory",
+    }.items()
+]
 
 scrub_files()

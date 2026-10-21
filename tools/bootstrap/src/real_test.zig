@@ -98,3 +98,43 @@ test "a real archive cut short is refused by --check (xz, gzip), and a flipped b
         try std.testing.expectEqual(@as(u8, 2), try real.run(&.{ unpack, "--check", flipped }));
     }
 }
+
+test "--strip-components counts a leading ./ as busybox's tar does" {
+    const kit = @import("testkit.zig");
+    const w = try real.work();
+    defer real.a.free(w);
+    const unpack = try real.envPath("UNPACK");
+    defer real.a.free(unpack);
+    const bb = try real.envPath("BUSYBOX");
+    defer real.a.free(bb);
+    var tb = kit.Tar{};
+    defer tb.deinit();
+    try tb.dir("./");
+    try tb.dir("./a/");
+    try tb.file("./a/b", 0o644, "inner");
+    try tb.file("./a/deep/c", 0o755, "deeper");
+    try tb.file("./top", 0o644, "top");
+    try tb.symlink("./a/l", "b");
+    try tb.end();
+    const tarball = try real.join(&.{ w, "dot.tar" });
+    defer real.a.free(tarball);
+    try std.fs.cwd().writeFile(.{ .sub_path = tarball, .data = tb.bytes() });
+    for ([_]u8{ 0, 1, 2, 3 }) |strip| {
+        const mine = try std.fmt.allocPrint(real.a, "{s}/dot_mine_{d}", .{ w, strip });
+        defer real.a.free(mine);
+        const theirs = try std.fmt.allocPrint(real.a, "{s}/dot_bb_{d}", .{ w, strip });
+        defer real.a.free(theirs);
+        try std.fs.cwd().makePath(theirs);
+        var num: [4]u8 = undefined;
+        const n = try std.fmt.bufPrint(&num, "{d}", .{strip});
+        const flag = try std.fmt.allocPrint(real.a, "--strip-components={d}", .{strip});
+        defer real.a.free(flag);
+        try std.testing.expectEqual(@as(u8, 0), try real.run(&.{ unpack, "--strip-components", n, tarball, mine }));
+        try std.testing.expectEqual(@as(u8, 0), try real.run(&.{ bb, "tar", "-xf", tarball, "-C", theirs, flag }));
+        const m = try real.tree(mine);
+        defer real.a.free(m);
+        const b = try real.tree(theirs);
+        defer real.a.free(b);
+        try std.testing.expectEqualStrings(b, m);
+    }
+}
