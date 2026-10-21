@@ -100,12 +100,19 @@ fn isShellName(base: []const u8) bool {
 }
 
 /// The first word of `s` (up to a blank) is a shell interpreter, or a path ending in one: null when it is not; true when it is all of `s`, false when
-/// a command line follows. A word that starts a shebang is not read here.
+/// a command line follows. A word that starts a shebang is not read here. When the first word is `env`, its options (`-i`, `-S`) and `NAME=value`
+/// assignments are skipped and the next word is the one read: `"/usr/bin/env bash -c x"` runs a shell.
 fn shellFirst(s: []const u8) ?bool {
-    const end = std.mem.indexOfAny(u8, s, " \t\n\\") orelse s.len;
-    if (end == 0 or std.mem.startsWith(u8, s, "#!")) return null;
-    if (!isShellName(std.fs.path.basename(s[0..end]))) return null;
-    return end == s.len;
+    if (std.mem.startsWith(u8, s, "#!")) return null;
+    var words = std.mem.tokenizeAny(u8, s, " \t\n\\");
+    const first = words.next() orelse return null;
+    if (isShellName(std.fs.path.basename(first))) return std.mem.indexOfAny(u8, s, " \t\n\\") == null;
+    if (!std.mem.eql(u8, std.fs.path.basename(first), env_word)) return null;
+    while (words.next()) |w| {
+        if (w[0] == '-' or std.mem.indexOfScalar(u8, w, '=') != null) continue;
+        return if (isShellName(std.fs.path.basename(w))) false else null;
+    }
+    return null;
 }
 
 /// `-c`, `-euc`, `-ec`, `-lc`: option letters of a shell, c among them.
@@ -924,6 +931,17 @@ test "MUTANT: a command line in one string is a shell word when its first word i
     try expectShape("a/x.zig", "const c = \"/usr/bin/zs" ++ "h -lc 'x'\";\n", "shell-word@1");
     try expectShape("a/x.zig", "const c = \"tcs" ++ "h\t-f\";\n", "shell-word@1");
     try expectShape("a/x.zig", "const c = \"cs" ++ "h \";\n", "shell-word@1");
+}
+
+test "MUTANT: a command line through env is a shell word: env's options and assignments are skipped" {
+    try expectShape("a/x.bzl", "x = \"/usr/bin/env bas" ++ "h -c x\"\n", "shell-word@1");
+    try expectShape("a/x.bzl", "x = \"env s" ++ "h\"\n", "shell-word@1");
+    try expectShape("a/x.bzl", "x = \"env -i FOO=1 -S /bin/zs" ++ "h -l\"\n", "shell-word@1");
+    try expectShape("a/x.zig", "const c = \"/usr/bin/env\tfis" ++ "h\";\n", "shell-word@1");
+}
+
+test "GREEN control: env that runs another program, or runs nothing, is not a shell word" {
+    try expectShape("a/x.bzl", "x = [\"/usr/bin/env FOO=1 zig build\", \"env -i\", \"env\", \"env A=1\", \"env -u X zig\"]\n", "");
 }
 
 test "GREEN control: a string that merely starts like a shell's name, or has it later, is not a command line" {
