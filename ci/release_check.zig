@@ -863,7 +863,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     if (jobNamed(jobs, "tag")) |j| {
         if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, tag_if)) try add(a, &f, "the job `tag` is not under its exact `if:` ({s})", .{tag_if});
         if (j.group == null or !std.mem.eql(u8, j.group.?, "release") or j.cancel == null or !std.mem.eql(u8, j.cancel.?, "false"))
-            try add(a, &f, "the job `tag` is not in the concurrency group `release` with `cancel-in-progress: false`", .{});
+            try add(a, &f, "the job `tag` is not in the concurrency group `release` with `cancel-in-progress: false` (exactly `release`, never the workflow's own group `release-push`: a job in its run's group waits for itself and the run deadlocks)", .{});
     }
     if (jobNamed(jobs, "publish")) |j| {
         const l = permLevel(j, "contents");
@@ -2809,6 +2809,9 @@ test "rule: the tag job is in the release concurrency group and none is cancelle
     const need = "concurrency group `release` with `cancel-in-progress: false`";
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "cancel-in-progress: false", "cancel-in-progress: true"), need);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "group: release", "group: release-${{ github.sha }}"), need);
+    // the workflow's own group on the tag job: it would wait on its own run
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "group: release", "group: release-push"), need);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "group: release", "group: release-${{ github.event_name == 'push' && 'push' || github.run_id }}"), need);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "    concurrency:\n      group: release\n      cancel-in-progress: false\n", ""), need);
 }
 

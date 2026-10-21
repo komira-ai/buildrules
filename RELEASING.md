@@ -533,7 +533,7 @@ upstream host that drops a request from blocking a release, and none of them can
 
 The workflow runs one push at a time. Its concurrency is one group for every push (`release-push`; any other event would get a group of its own, its run id)
 with `cancel-in-progress: false`: a run that is publishing is never stopped, GitHub keeps at most one pending run, and a newer pending run replaces an older
-pending one, which ends **cancelled** (not red) and releases nothing. So when several pull requests merge within minutes, the runs go one after the other, the
+pending one, which ends **cancelled** (not red) and releases nothing. `site.yml` runs only when a release run ended green (success only), so a cancelled run starts no deploy of the site. So when several pull requests merge within minutes, the runs go one after the other, the
 plan of each reads the tags only after the run before it (tag included) has finished, and the race below cannot happen; the newest push is the one that
 releases, and it carries the changes of the commits it replaced. What follows is the second line of defence, for a race that serialization does not cover (a
 re-run of an old run, say). `ci/release_check.zig` refuses a workflow-level group per commit and a `cancel-in-progress` other than `false`.
