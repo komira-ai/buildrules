@@ -94,6 +94,26 @@ zig_exe(
     visibility = ["PUBLIC"],
 )
 
+# The comparison of a committed table's graph with what the pinned mopm prints now (`:table`, rules/mojo/check.bzl).
+zig_test(
+    name = "table_check_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/table_check_test.zig",
+    imports = ["tools/table_check.zig"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+zig_exe(
+    name = "table_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/table_check.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    unit_tests = [":table_check_unit", "buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
+)
+
 # Read by the buildrules.dev site tests (site/BUCK), which check its pages against this file.
 export_file(
     name = "defs.bzl",
@@ -110,8 +130,8 @@ export_file(
 # The coverage of the sources the tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. mojo_compile.zig and
 # conda_unpack.zig have no unit test and are not measured.
 zig_coverage(
-    test_targets = [":mojo_launch_unit", ":prebuilt_unpack_unit", ":files_check_unit"],
-    expect = ["rules/mojo/tools/" + f for f in ["mojo_launch.zig", "prebuilt_unpack.zig", "files_check.zig"]],
+    test_targets = [":mojo_launch_unit", ":prebuilt_unpack_unit", ":files_check_unit", ":table_check_unit"],
+    expect = ["rules/mojo/tools/" + f for f in ["mojo_launch.zig", "prebuilt_unpack.zig", "files_check.zig", "table_check.zig"]],
 )
 
 scrub_files()

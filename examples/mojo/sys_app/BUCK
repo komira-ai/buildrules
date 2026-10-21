@@ -1,7 +1,7 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load(":buildrules.mojo.bzl", "mojo_package")
 
-# A consumer of registry packages that ship static native libraries (natives design, PR 1b). probe_sys and base_sys are `.conda` files the lock pins by
+# A consumer of registry packages that ship static native libraries (static archives, taken out of the `.conda` files). probe_sys and base_sys are `.conda` files the lock pins by
 # sha256 (the stand-in registry is the two `:conda` targets of examples/mojo/registry/probe_sys); each holds its archive, and the lock pins the archive's
 # sha256 too. No `natives = {...}` here: the archives come out of the `.conda` files and are linked in the graph's order.
 mojo_package(path = ".")

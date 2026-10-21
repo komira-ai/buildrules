@@ -363,6 +363,20 @@ group(name = "floors", deps = [
     "//infra/site:coverage_floor",
 ])
 
+# The committed Mojo tables against the pinned mopm (rules/mojo/check.bzl, `:table`): each example's graph must be, byte for byte, what
+# `mopm plan --unit-graph --locked` prints for it now. Needs no package channel (mopm reads the lock, offline), so the public runner builds them,
+# unlike the rest of the Mojo examples (//ci:mojo).
+group(name = "mojo_tables", deps = [
+    "//examples/mojo/copy_of_base:table",
+    "//examples/mojo/registry/cnative:table",
+    "//examples/mojo/registry/probe_sys:table",
+    "//examples/mojo/registry/probe_sys/base_sys:table",
+    "//examples/mojo/sys_app:table",
+    "//examples/mojo/ws:table",
+    "//examples/mojo/ws/util:table",
+    "//examples/mojo/ws/util/base:table",
+])
+
 # Everything the public runner can build: the public CI builds this one target. It names what the other groups do not reach: the C/C++ rules and
 # aws-lc, the gate and kpin tools, the Node toolchain, the type checks of the sites, the cargo units outside the matrix. ci/completeness.bxl
 # (`buck2 bxl //ci:completeness.bxl:check`) fails when a target of the tree is in neither this closure, //ci:mojo's, nor EXCLUDED in ci/all.bzl.
@@ -370,6 +384,7 @@ group(name = "all", deps = [
     ":matrix",
     "//ci/mojo_gate:consumer_of_green",
     ":workflow",
+    ":mojo_tables",
     ":floors",
     "//cli:buildrules",
     "//cli:buildrules_linux_x86_64",

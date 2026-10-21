@@ -5,23 +5,26 @@
 //! A registry package is a `.conda` holding `lib/mojo/<name>.mojoc` (and `lib/mojo/<name>.mopm.json`), written by
 //! `mopm pack` (spec/package-metadata.schema.json). The zip walk and the zstd/tar reading are those of
 //! conda_unpack.zig (the compiler closure's unpacker), which cannot be used here: it insists on the compiler's
-//! members and on `info/paths.json`, which a mopm package does not carry. Only the named members are written.
-//! The `.conda`'s own sha256 was checked when it was downloaded (pinned_file), so for the `.mojoc` only its shape is
-//! checked here: a regular file that is not empty.
+//! members and on `info/paths.json`, which a mopm package does not carry. Only the named members are written. A `.conda`
+//! with more than one `pkg-*.tar.zst` is refused.
 //!
-//! A static native library is the member `lib/<soname>` of the same file (`lib/lib<stem>.a`, F3 of the natives design: one
-//! `.conda` per subdir). Each `--native` is one the package's lock entry pins (`soname`, `sha256`, from mopm's unit graph),
-//! and the member's bytes are hashed against that value: nothing in the `.conda` itself is a trust anchor, since the archive
-//! is opaque code that is linked into the consumer's program. A soname that is not `lib<stem>.a`, a member that is missing,
-//! duplicated, empty, not a regular file (a symlink, a hard link, a directory) or too large, and a hash that differs are all
-//! refused, and when any one is, nothing at all is written (the `.mojoc` included). The natives are written flat, by
-//! soname, into `<out-dir>`, which is the layout of `mopm unit build --natives`.
+//! What is pinned. The `.mojoc` is NOT hashed against anything here: the lock pins the `.conda` as a whole, its sha256 and
+//! size were checked when it was downloaded (pinned_file), and that is the only guard of the `.mojoc`; here only its shape
+//! is checked (a regular file that is not empty). The native libraries are pinned one by one: each `--native` is one the
+//! package's lock entry records (`soname`, `sha256`, from mopm's unit graph), and the member's bytes are hashed against that
+//! value before anything is written.
+//!
+//! A static native library is the member `lib/<soname>` of the same file (`lib/lib<stem>.a`; mopm packs one `.conda` per
+//! subdir). A soname that is not `lib<stem>.a`, a member that is missing, duplicated, empty, not a regular file (a symlink, a
+//! hard link, a directory) or whose declared size is over 512 MiB (the bound is on each member, not on the file, and on the size
+//! the tar header declares), and a hash that differs are all refused, and when any one is, no output file is written at all.
+//! The natives are written flat, by soname, into `<out-dir>`, which is the layout of `mopm unit build --natives`.
 
 const std = @import("std");
 
 const window_len: u32 = 1 << 27;
 
-/// The largest member taken: the registry's bound on a whole unpacked package (512 MB).
+/// The largest member taken: 512 MiB, per member and on the size its tar header declares (the registry bounds a whole unpacked package at 512 MB).
 pub const max_member: u64 = 512 << 20;
 
 fn le16(b: []const u8, at: usize) u16 {
@@ -73,7 +76,11 @@ pub fn payload(data: []const u8) Error![]const u8 {
         if (start + csize > data.len) return error.BadZip;
         const body = data[start .. start + @as(usize, @intCast(csize))];
         off = start + @as(usize, @intCast(csize));
-        if (std.mem.startsWith(u8, name, "pkg-") and std.mem.endsWith(u8, name, ".tar.zst")) pkg = body;
+        if (std.mem.startsWith(u8, name, "pkg-") and std.mem.endsWith(u8, name, ".tar.zst")) {
+            // A `.conda` has one; with two, which one an unpacker takes is its own business, so there is no right answer.
+            if (pkg != null) return error.DuplicatePayload;
+            pkg = body;
+        }
     }
     return pkg orelse error.NoPayload;
 }

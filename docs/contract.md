@@ -491,7 +491,7 @@ every declared input, then executes `T/mojo_compile` with an empty environment).
 
 A registry dependency is a `pinned_file` (URL, sha256, size of the `.conda` the graph names for this Mojo version) unpacked by `prebuilt_unpack`, never compiled. The same program takes the package's static native libraries out of the same file, `lib/<soname>` for each `--native <soname>=<sha256>` that the
 rule passes from the graph (the lock's value): the member is hashed first, and a hash that differs, a member that is missing, doubled, empty, a link or too large, or a soname that is not `lib<stem>.a`
-is refused, with nothing written. Nothing in the `.conda` is trusted but its bytes' agreement with the lock.
+is refused, with no output written. What is pinned: the `.conda` as a whole (its sha256 and size, checked at the download) guards the `.mojoc`, which is not hashed again; each native library is also hashed against the lock's value for it. A `.conda` with two `pkg-*.tar.zst` is refused; the size bound (512 MiB) is on each member, as its tar header declares it.
 `-c buildrules.url_map="<from>=<to> ..."` in the `.buckconfig.local` of the cell that declares the download (the toolchain downloads are in the `toolchains` cell, whose
 `.buckconfig.local` is its own) changes where a download is fetched from and nothing else: the sha256 is still checked.
 

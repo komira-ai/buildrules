@@ -34,7 +34,7 @@ load("//rules/core:pinned_file.bzl", "pinned_file")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/mopm:pins.bzl", "vname")
-load(":check.bzl", "mojo_check_rule")
+load(":check.bzl", "mojo_check_rule", "mojo_table_rule", "mojo_workspace_rule")
 load(":unit.bzl", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_gated_lib_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
 
 SCHEMA = 1
@@ -193,6 +193,32 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
         visibility = visibility,
     )
 
+    # :table, the check that the committed graph is what the pinned mopm prints now (rules/mojo/check.bzl). mopm reads the whole workspace, so `:workspace`
+    # lays out this package's files with its members' (each member's own `:workspace`, for the outermost members: a member holds its members).
+    member_dirs = {}
+    for mu in graph["units"]:
+        if mu["kind"] == "lib" and mu["package"] != root:
+            suffix = "src/" + mu["package"]
+            if mu["root"] != suffix and not mu["root"].endswith("/" + suffix):
+                fail("{}: {} lives in {}, not <dir>/{}: a workspace member's library must be its package directory's src/<name>".format(here, mu["id"], mu["root"], suffix))
+            member_dirs[mu["root"][:-len(suffix)].rstrip("/")] = True
+    outermost = {m: "//" + _join(here, project, m) + ":workspace" for m in sorted(member_dirs.keys()) if not [o for o in member_dirs.keys() if m.startswith(o + "/")]}
+    mojo_workspace_rule(
+        name = name_once("workspace"),
+        files = glob(["**/*"], exclude = ["BUCK", "buildrules.mojo.bzl", "buildrules.mojo.lock.bzl"]),
+        members = outermost,
+        project = project,
+        visibility = ["PUBLIC"],
+    )
+    mojo_table_rule(
+        name = name_once("table"),
+        mojo = mojo,
+        mopm = mopm,
+        table = _join(project, "buildrules.mojo.lock.bzl"),
+        workspace = ":workspace",
+        exec_compatible_with = LINUX_X86_64,
+        visibility = visibility,
+    )
 
     def label_of(uid, own = ":lib"):
         # `own` is the target of this package's own library: `:lib`, the one behind the tests, for everything but the tests, which
@@ -367,4 +393,4 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
     )
     mojo_group(name = name_once("build"), deps = builds, check = ":check", visibility = visibility)
     mojo_group(name = name_once("test"), deps = tests, check = ":check", visibility = visibility)
-    mojo_group(name = name_once("ci"), deps = [":build", ":test"], check = ":check", visibility = visibility)
+    mojo_group(name = name_once("ci"), deps = [":build", ":test", ":table"], check = ":check", visibility = visibility)

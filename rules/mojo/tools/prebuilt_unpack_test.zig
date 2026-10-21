@@ -178,6 +178,10 @@ test "payload: a data descriptor, a compressed member, and sizes that run past t
     try t.expectError(error.BadZip, U.payload(try zipEntry(a, pkg_name, "", .{ .name_len = 60000 })));
     // the compressed size is more than the file holds
     try t.expectError(error.BadZip, U.payload(try zipEntry(a, pkg_name, body, .{ .csize = 4000 })));
+    // two payloads: neither wins (the second used to)
+    const p1 = try zipStored(a, pkg_name, body);
+    const p2 = try zipStored(a, "pkg-mojo-p-1.0.0-mojo1.0.0_1.tar.zst", "OTHER");
+    try t.expectError(error.DuplicatePayload, U.payload(try std.mem.concat(a, u8, &.{ p1, p2 })));
     // a good entry of another name before the payload is skipped
     const first = try zipStored(a, "info-x.tar.zst", "abc");
     const second = try zipStored(a, pkg_name, body);
@@ -288,6 +292,12 @@ test "a member that is a symlink, a directory, a hard link, doubled, or too larg
     // The header claims two gigabytes (the most its field holds is eight); the archive does not hold them. The size is refused before anything is read or allocated for it.
     const huge = try conda(a, &.{.{ .name = "lib/libx.a", .body = "x", .claim = 1 << 31 }});
     try t.expectError(error.TooLarge, U.members(a, try U.payload(huge), &want, &bad));
+    // The bound is on one member's declared size: one byte over is refused; exactly the bound is not (the archive does not hold that many bytes,
+    // so it fails reading them, with anything but TooLarge).
+    const over = try conda(a, &.{.{ .name = "lib/libx.a", .body = "x", .claim = U.max_member + 1 }});
+    try t.expectError(error.TooLarge, U.members(a, try U.payload(over), &want, &bad));
+    const exact = try conda(a, &.{.{ .name = "lib/libx.a", .body = "x", .claim = U.max_member }});
+    if (U.members(a, try U.payload(exact), &want, &bad)) |_| return error.ShouldHaveFailed else |e| try t.expect(e != error.TooLarge);
 }
 
 test "a member whose name only looks like the wanted one is not it" {
