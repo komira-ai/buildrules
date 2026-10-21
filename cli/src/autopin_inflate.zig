@@ -36,13 +36,14 @@ const Bits = struct {
     }
 };
 
-const Huffman = struct {
+/// A canonical Huffman code (public for its test).
+pub const Huffman = struct {
     count: [max_bits + 1]u16 = [_]u16{0} ** (max_bits + 1),
     symbol: [320]u16 = [_]u16{0} ** 320,
 
     /// A canonical code from the code lengths of the symbols (0 = unused). Over-subscribed codes are refused;
     /// an incomplete code is accepted (a symbol that is not in it is refused when it is read).
-    fn build(h: *Huffman, lengths: []const u8) Error!void {
+    pub fn build(h: *Huffman, lengths: []const u8) Error!void {
         h.count = [_]u16{0} ** (max_bits + 1);
         for (lengths) |l| h.count[l] += 1;
         var left: i32 = 1;

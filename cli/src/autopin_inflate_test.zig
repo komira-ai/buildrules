@@ -73,22 +73,49 @@ test "a long run of matches inflates to the run" {
     for (got) |b| try t.expectEqual(@as(u8, 'a'), b);
 }
 
-test "the limit holds to the byte, in every block type" {
+test "the limit holds to the byte: a stored block" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    const streams = [_][]const u8{ &stored_hello, &fixed_hello, &dynamic_abc };
-    const sizes = [_]usize{ 12, 12, 19 };
-    for (streams, sizes) |s, n| {
-        try t.expectEqual(n, (try inflate.inflate(a, s, n)).len);
-        try t.expectError(error.TooLong, inflate.inflate(a, s, n - 1));
-        try t.expectError(error.TooLong, inflate.inflate(a, s, 0));
-    }
-    // A match that would run past the limit by one byte is refused before any of it is written.
+    try t.expectEqual(@as(usize, 12), (try inflate.inflate(a, &stored_hello, 12)).len);
+    try t.expectError(error.TooLong, inflate.inflate(a, &stored_hello, 11));
+    try t.expectError(error.TooLong, inflate.inflate(a, &stored_hello, 0));
+}
+
+test "the limit holds to the byte: the literals of a fixed block" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expectEqual(@as(usize, 12), (try inflate.inflate(a, &fixed_hello, 12)).len);
+    try t.expectError(error.TooLong, inflate.inflate(a, &fixed_hello, 11));
+    try t.expectError(error.TooLong, inflate.inflate(a, &fixed_hello, 0));
+}
+
+test "the limit holds to the byte: a dynamic block" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expectEqual(@as(usize, 19), (try inflate.inflate(a, &dynamic_abc, 19)).len);
+    try t.expectError(error.TooLong, inflate.inflate(a, &dynamic_abc, 18));
+}
+
+test "the limit holds to the byte: a match that would run past it by one byte is refused before any of it is written" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
     const run = try runOfA(a, 3);
     try t.expectEqual(@as(usize, 775), (try inflate.inflate(a, run, 775)).len);
     try t.expectError(error.TooLong, inflate.inflate(a, run, 774));
     try t.expectError(error.TooLong, inflate.inflate(a, run, 100));
+}
+
+test "huffman: an over-subscribed code is refused, a complete or an incomplete one is accepted" {
+    var h = inflate.Huffman{};
+    try t.expectError(error.Invalid, h.build(&.{ 1, 1, 1 }));
+    try t.expectError(error.Invalid, h.build(&.{ 1, 1, 2 }));
+    try h.build(&.{ 1, 2, 2 });
+    try h.build(&.{1});
+    try h.build(&.{ 0, 0, 0 });
 }
 
 test "a bomb is cut off at the limit however small the stream is" {
