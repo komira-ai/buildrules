@@ -441,19 +441,19 @@ live there; the targets above are fixed and `mojo_package` takes policy as argum
 
 ```toml
 [toolchain]
-mopm = "0.0.15"     # an exact release: a version of rules/mopm/pins.bzl, or one buildrules-pins.toml gives a URL, sha256 and size for
+mopm = "0.0.20"     # an exact release: a version of rules/mopm/pins.bzl, or one buildrules-pins.toml gives a URL, sha256 and size for
 mojo = "1.0.0"     # an exact release mopm pins a toolchain for; the graph is made for it
 ```
 
 **It is required**, like `rust-toolchain.toml`, and there is no implicit default: without it `mojo sync`, `mojo check` and the analysis of every
-package stop, name `mopm-toolchain.toml`, and print a minimal example (`[toolchain]`, `mopm = "0.0.15"`, `mojo = "1.0.0"`). Required was chosen because
+package stop, name `mopm-toolchain.toml`, and print a minimal example (`[toolchain]`, `mopm = "0.0.20"`, `mojo = "1.0.0"`). Required was chosen because
 the Rust side is, and one rule is easier to teach; the other choice, a default in `sync`, would pick a compiler for a repository that never named one.
 
 ### 12.3 The table: `buildrules.mojo.lock.bzl`, schema 1
 
 ```python
 SCHEMA = 1
-MOPM = {"version": "0.0.15", "origin": "builtin"}          # origin: "builtin" or "buildrules-pins.toml"
+MOPM = {"version": "0.0.20", "origin": "builtin"}          # origin: "builtin" or "buildrules-pins.toml"
 MOJO = "1.0.0"
 CLOSURE_SHA256 = "<mopm's hash of the toolchain closure>"  # a second copy of the graph's, see 12.6
 MANIFEST_SHA256 = {"mopm.toml": "<sha256>", "mopm.lock": "...", "../../mopm-toolchain.toml": "...", "util/mopm.toml": "..."}
@@ -504,7 +504,7 @@ tables use, and `cov_normalize` maps the report to repository paths. `cov_run` r
 
 ### 12.5 Versions: pinned mopm, the Mojo version
 
-`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.15` is the published mopm release (its linux-x86_64 tarball,
+`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.20` is the published mopm release (its linux-x86_64 tarball,
 sha256 80ac2ed4...23dc, checked against the release's `SHA256SUMS`); a machine that mirrors the download points it at its copy with `url_map`.
 A version not in the table is refused by `mojo sync` (the message names `buildrules-pins.toml` and the table to add) unless `buildrules-pins.toml` has `[mopm."V"]` with `url`, `sha256`, `size`.
 The mopm binary is an input of every unit action: a mopm bump re-keys every unit on purpose. The Mojo version comes from the graph: mopm pins one (`1.0.0`) today, so no package here

@@ -3,7 +3,7 @@
 load("//rules/mojo:defs.bzl", "check_toolchain_file_present", "check_toolchain_file_recorded")
 load("//rules/rust:refusal.bzl", "recording", "refusal_test")
 
-_NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.15\"", "mojo = \"1.0.0\""]
+_NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.20\"", "mojo = \"1.0.0\""]
 
 # A table whose recorded files do not include the toolchain file (made by hand, or before the file was required): refused.
 _r1, _f1 = recording()
