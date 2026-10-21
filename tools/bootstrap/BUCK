@@ -91,6 +91,8 @@ _REAL_DATA = {
         src = "src/" + name + "_test.zig",
         imports = _SRCS,
         zig = _ZIG,
+        # ReleaseSafe: the tests hash a quarter of a gigabyte of extracted files, which a Debug build of sha256 takes minutes over.
+        optimize = "ReleaseSafe",
         data = _REAL_DATA,
         exec_tools = {
             "UNPACK": ":unpack",

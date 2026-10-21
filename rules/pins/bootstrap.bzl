@@ -26,7 +26,7 @@ UNPACK_PINS = {
     },
     "macos-aarch64": {
         "url": "https://github.com/komira-ai/buildrules/releases/download/unpack-1/unpack-macos-aarch64",
-        "sha256": "b0fd4c225ec7cbbc7c649e566a350013cd9c0d00927a799f3566570866101944",
+        "sha256": "f9d256553b0cf1e2d2e5169164402192ad480f5d9dadd776ef5e9b95662e5df4",
         "size": 163320,
     },
 }
