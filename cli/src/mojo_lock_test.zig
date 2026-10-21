@@ -280,6 +280,29 @@ test "renderPins: the toolchain of a graph is written only when every field of i
     try t.expectEqualStrings(lockm.pins_empty, try lockm.renderPins(a, &.{}, &d));
 }
 
+test "renderPins: a toolchain field that is not there at all is the same refusal as one that is wrong" {
+    var e = Env.init();
+    defer e.deinit();
+    const keys = [_]struct { from: []const u8, needle: []const u8 }{
+        .{ .from = "\"subdir\": \"linux-64\",", .needle = "subdir is missing" },
+        .{ .from = "\"cc_target\": \"x86_64-linux-gnu.2.34\",", .needle = "cc_target is missing" },
+        .{ .from = "\"closure_sha256\": \"fd654c4192487587d8f8d9402d060e45e218b79da7b8964503a703710e49b15d\",", .needle = "closure_sha256 is missing" },
+        .{ .from = "\"version\": \"0.12.0\", ", .needle = "zig.version is missing" },
+        .{ .from = "\"url\": \"https://ziglang.org/download/0.12.0/zig-linux-x86_64-0.12.0.tar.xz\", ", .needle = "zig.url is missing" },
+        .{ .from = "\"sha256\": \"c7ae866b8a76a568e2d5cfd31fe89cdb629bdd161fdd5018b29a4a0a17045cad\", ", .needle = "zig.sha256 is missing" },
+        .{ .from = "{\"name\": \"libgcc\", ", .needle = "component name is missing" },
+        .{ .from = "\"version\": \"16.2.0\", \"url\": \"https://conda.anaconda.org/conda-forge/linux-64/libgcc", .needle = "component version is missing" },
+        .{ .from = "\"url\": \"https://conda.anaconda.org/conda-forge/linux-64/libgcc-16.2.0-ha9f2e26_7.conda\", ", .needle = "component url is missing" },
+        .{ .from = "\"sha256\": \"e031634c3a928f9594eba868bc46ef5230d6571a364a0c63215b06c4563bfcea\", ", .needle = "component sha256 is missing" },
+    };
+    for (keys) |k| {
+        const to: []const u8 = if (std.mem.indexOf(u8, k.from, "\"version\": \"16.2.0\"") != null) "\"url\": \"https://conda.anaconda.org/conda-forge/linux-64/libgcc" else "";
+        const text = try std.mem.replaceOwned(u8, e.a(), graph, k.from, if (std.mem.eql(u8, k.needle, "component name is missing")) "{" else to);
+        try t.expect(!std.mem.eql(u8, text, graph));
+        try pinsRefused(&e, try toolchainOf(&e, text), "1.0.0", k.needle);
+    }
+}
+
 const PinsCall = struct {
     tc: std.json.Value,
     pub fn call(self: @This(), a: std.mem.Allocator) !bool {
