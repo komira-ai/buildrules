@@ -125,7 +125,8 @@ const list_names = [_][]const u8{ "os", "cpu", "libc" };
 /// `error.BadNpmBlock`.
 pub fn parseRows(a: std.mem.Allocator, npm: []const u8, kind: sets_mod.Kind, diag: *Diag) Error![]Row {
     var l = Lines{ .it = std.mem.splitScalar(u8, npm, '\n'), .diag = diag };
-    const first = try l.next();
+    // A split always yields a first piece.
+    const first = l.it.next().?;
     if (std.mem.eql(u8, first, "NPM = {}")) {
         try l.end();
         return &.{};

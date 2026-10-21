@@ -295,6 +295,8 @@ test "a name with an empty or dot component, or a control byte, is refused" {
     try expectName("site//a.txt", error.BadName);
     try expectName("./a.txt", error.BadName);
     try expectName("a\x01.txt", error.BadName);
+    try expectName("", error.BadName);
+    try expectName("a" ** 256, error.BadName);
 }
 
 test "two members with one name are refused" {

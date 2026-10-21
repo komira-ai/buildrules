@@ -48,8 +48,13 @@ pub fn resetCounters() void {
     fetched_bytes = 0;
 }
 
-fn httpFetch(a: std.mem.Allocator, url: []const u8) anyerror!fetch.Digest.Result {
-    var http = fetch.HttpFetcher{ .allocator = a, .max_redirects = 0 };
+pub fn httpFetch(a: std.mem.Allocator, url: []const u8) anyerror!fetch.Digest.Result {
+    return fetchWith(a, url, false);
+}
+
+/// `httpFetch`, with plain HTTP to the loopback allowed for the tests that serve a tarball from a socket of their own.
+pub fn fetchWith(a: std.mem.Allocator, url: []const u8, allow_http_loopback: bool) anyerror!fetch.Digest.Result {
+    var http = fetch.HttpFetcher{ .allocator = a, .max_redirects = 0, .allow_http_loopback = allow_http_loopback };
     var d = fetch.Digest{ .max = table_mod.max_size };
     try http.fetcher().get(url, d.sink());
     return d.finish(a);
@@ -251,10 +256,8 @@ fn computeSet(repo: *Ctx, set: sets_mod.Set, diag: *Diag) !?[]const u8 {
     };
 
     // The offline check, with the reader and the binding the commit half uses.
-    const sp = table_mod.split(fresh) orelse {
-        diag.add("the regenerated table has no NPM block", .{});
-        return null;
-    };
+    // SAFETY: `fresh` is what the generator or `freshPins` just wrote: both end in an NPM block.
+    const sp = table_mod.split(fresh).?;
     const rows = try table_mod.parseRows(a, sp.npm, set.kind, diag);
     if (diag.count() > 0) return null;
     try table_mod.bind(a, entries, rows, set.kind, diag);

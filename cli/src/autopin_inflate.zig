@@ -159,14 +159,15 @@ const State = struct {
         var lit = Huffman{};
         try lit.build(&lengths, .complete);
         var dist = Huffman{};
-        try dist.build(&([_]u8{5} ** 30), .any);
+        dist.build(&([_]u8{5} ** 30), .any) catch unreachable;
         try self.codes(&lit, &dist);
     }
 
     fn dynamic(self: *State) Error!void {
-        const nlen = (try self.bits.need(5)) + 257;
-        const ndist = (try self.bits.need(5)) + 1;
-        const ncode = (try self.bits.need(4)) + 4;
+        const head = try self.bits.need(14);
+        const nlen = (head & 31) + 257;
+        const ndist = ((head >> 5) & 31) + 1;
+        const ncode = (head >> 10) + 4;
         if (nlen > 286 or ndist > 30) return error.Invalid;
         var lengths = [_]u8{0} ** 320;
         var idx: usize = 0;
@@ -213,8 +214,9 @@ const State = struct {
 pub fn inflate(a: std.mem.Allocator, src: []const u8, max: usize) Error![]u8 {
     var st = State{ .a = a, .bits = .{ .src = src }, .max = max };
     while (true) {
-        const last = try st.bits.need(1);
-        const kind = try st.bits.need(2);
+        const head = try st.bits.need(3);
+        const last = head & 1;
+        const kind = head >> 1;
         switch (kind) {
             0 => try st.stored(),
             1 => try st.fixed(),

@@ -154,7 +154,7 @@ test "lock: a version that is not strict semver is refused" {
 test "lock: semver, as semver.org writes it" {
     const good = [_][]const u8{ "1.0.0", "0.0.1", "10.20.30", "1.0.0-rc.1", "1.0.0-alpha-1.2", "1.0.0+build.5", "1.2.3-0.3.7+exp.sha.5114f85", "1.0.0-0" };
     for (good) |v| try t.expect(lock.isStrictSemver(v));
-    const bad = [_][]const u8{ "", "1", "1.0", "1.0.0." ++ "0", "01.0.0", "1.00.0", "1.0.0-", "1.0.0-01", "1.0.0-a..b", "1.0.0+", "1.0.0+a..b", "1.0.0-a_b", "v1.0.0", "1.0.0 ", "^1.0.0", "x" ** 65 };
+    const bad = [_][]const u8{ "", "1", "1.0", "1.0.0." ++ "0", "1..0", ".1.0", "1.0.0+a_b", "1.0.0+a b", "01.0.0", "1.00.0", "1.0.0-", "1.0.0-01", "1.0.0-a..b", "1.0.0+", "1.0.0+a..b", "1.0.0-a_b", "v1.0.0", "1.0.0 ", "^1.0.0", "x" ** 65 };
     for (bad) |v| try t.expect(!lock.isStrictSemver(v));
 }
 
@@ -561,6 +561,7 @@ test "lock: a path whose package name is not an npm name is refused" {
     try expectRefused(",\"node_modules/_x\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "_x/-/_x-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/_x");
     try expectRefused(",\"node_modules/a+b\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "a+b/-/a+b-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a+b");
     try expectRefused(",\"node_modules/node_modules/x\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "x/-/x-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/node_modules/x");
+    try expectRefused(",\"node_modules/a+b/node_modules/x\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "x/-/x-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a+b/node_modules/x");
 }
 
 test "lock: a nested node_modules chain of valid names is accepted" {
@@ -697,10 +698,10 @@ test "lock: an integrity of 88 base64 characters that decode to more than 64 byt
     try t.expect(!valid.isSri512("sha512-" ++ "A" ** 88));
     try t.expect(!valid.isSri512("sha512-" ++ "A" ** 87 ++ "="));
     try t.expect(!valid.isSri512("sha512-" ++ "A" ** 40 ++ "==" ++ "A" ** 46));
-}
     try t.expect(valid.isSri512("sha512-" ++ "A" ** 86 ++ "=="));
     const R = "https://registry.npmjs.org/";
     try expectRefused(",\"node_modules/x\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "x/-/x-1.0.0.tgz\",\"integrity\":\"sha512-" ++ "A" ** 88 ++ "\"}", "integrity is not a sha512");
+}
 
 test "table: a block cut at any byte is refused, and a block with any one byte replaced never crashes the reader" {
     var ar = arena();
@@ -733,4 +734,18 @@ test "fresh buildrules table: a diagnostic already raised (by the binding) gives
     var diag = Diag.init(a);
     diag.add("something already wrong", .{});
     try t.expect((try table.freshBuildrules(a, pj, try lockWith(a, ""), p.rows, &diag)) == null);
+}
+
+test "table: a platform list may hold a negated token, and a list of another length than the lock's is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const text = try block(a, &.{try scopeRow(a, "        \"libc\": [\"!musl\", \"glibc\"],\n")});
+    var diag = Diag.init(a);
+    const rows = try table.parseRows(a, text, .buildrules_lock, &diag);
+    try t.expectEqualStrings("!musl", rows[0].libc.?[0]);
+    const p = try entriesAndRows(a, .buildrules_lock, "        \"os\": [\"darwin\"],\n");
+    const longer = try a.dupe(table.Row, p.rows);
+    longer[0].os = &.{ "darwin", "linux" };
+    try expectBound(a, p.entries, longer, .buildrules_lock, "os, cpu or libc");
 }

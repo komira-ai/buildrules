@@ -363,3 +363,24 @@ test "oom: reading a manifest and pairing it with its members fails closed at ev
     }.f;
     try oom.sweep(run, .{ .text = mt });
 }
+
+test "json: get finds a key, and answers null for a missing key and for a value that is not an object" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const v = try json.parse(a, "{\"a\":1,\"b\":\"x\"}");
+    try t.expectEqual(@as(i64, 1), v.get("a").?.int);
+    try t.expectEqualStrings("x", v.get("b").?.string);
+    try t.expect(v.get("c") == null);
+    try t.expect((try json.parse(a, "[1]")).get("a") == null);
+}
+
+test "manifest: two different files parse, in order, and a second file is checked against the first" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const text = "{\"pr\":7,\"head_sha\":\"" ++ head ++ "\",\"base_sha\":\"" ++ base ++ "\",\"files\":[{\"path\":\"site/buildrules.lock.bzl\",\"sha256\":\"" ++ sha_a ++ "\"},{\"path\":\"service/api/pins.lock.bzl\",\"sha256\":\"" ++ sha_a ++ "\"}]}";
+    const m = try parseWith(a, text);
+    try t.expectEqual(@as(usize, 2), m.files.len);
+    try t.expectEqualStrings("service/api/pins.lock.bzl", m.files[1].path);
+}

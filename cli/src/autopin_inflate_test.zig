@@ -332,3 +332,58 @@ fn inf(a: std.mem.Allocator, src: []const u8, max: usize) inflate.Error![]u8 {
     }.f, .{ .src = src, .max = max });
     return inflate.inflate(a, src, max);
 }
+
+test "a dynamic block cut inside the extra bits of a repeat code (16, and 18) is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    // HLIT 0, HDIST 0, HCLEN 0: four code-length lengths in the order 16, 17, 18, 0. Two symbols of length 1 make a complete code:
+    // the lower symbol is "0", the higher "1". The stream stops right after the repeat symbol, inside its extra bits.
+    const s16 = try bitsOf(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 0, 5 }, .{ 0, 5 }, .{ 0, 4 }, .{ 1, 3 }, .{ 0, 3 }, .{ 0, 3 }, .{ 1, 3 }, .{ 0, 1 }, .{ 1, 1 } });
+    try t.expectEqual(@as(usize, 4), s16.len);
+    try failsWith(error.Invalid, inf(a, s16, 100));
+    const s18 = try bitsOf(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 0, 5 }, .{ 0, 5 }, .{ 0, 4 }, .{ 0, 3 }, .{ 0, 3 }, .{ 1, 3 }, .{ 1, 3 }, .{ 1, 1 } });
+    try t.expectEqual(@as(usize, 4), s18.len);
+    try failsWith(error.Invalid, inf(a, s18, 100));
+}
+
+test "a fixed block with a distance that has extra bits is cut at every byte and refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    // Six 'a', then a match of length 3 at a distance of 5 (distance code 4 has one extra bit), then the end of block.
+    var out = std.ArrayList(u8).empty;
+    var cur: u8 = 0;
+    var nbits: u4 = 0;
+    const W = struct {
+        fn bit(o: *std.ArrayList(u8), al: std.mem.Allocator, c: *u8, n: *u4, b: u1) !void {
+            c.* |= @as(u8, b) << @intCast(n.*);
+            n.* += 1;
+            if (n.* == 8) {
+                try o.append(al, c.*);
+                c.* = 0;
+                n.* = 0;
+            }
+        }
+        fn code(o: *std.ArrayList(u8), al: std.mem.Allocator, c: *u8, n: *u4, v: u16, len: u4) !void {
+            var i: u4 = len;
+            while (i > 0) {
+                i -= 1;
+                try bit(o, al, c, n, @intCast((v >> i) & 1));
+            }
+        }
+    };
+    try W.bit(&out, a, &cur, &nbits, 1);
+    try W.bit(&out, a, &cur, &nbits, 1);
+    try W.bit(&out, a, &cur, &nbits, 0);
+    for (0..6) |_| try W.code(&out, a, &cur, &nbits, 0x30 + 'a', 8);
+    try W.code(&out, a, &cur, &nbits, 1, 7);
+    try W.code(&out, a, &cur, &nbits, 4, 5);
+    try W.bit(&out, a, &cur, &nbits, 0);
+    try W.code(&out, a, &cur, &nbits, 0, 7);
+    if (nbits > 0) try out.append(a, cur);
+    const s = out.items;
+    try t.expectEqualStrings("aaaaaaaaa", try inf(a, s, 100));
+    var n: usize = 0;
+    while (n < s.len) : (n += 1) try failsWith(error.Invalid, inf(a, s[0..n], 100));
+}

@@ -554,3 +554,98 @@ test "oom: compute that refuses fails closed at every allocation too (hostile lo
     try h.put("infra/package-lock.json", try std.mem.replaceOwned(u8, h.a(), try lockJson(h.a(), &two_pkgs, ""), sri_a, sri_b));
     try oom.sweepCommand(h, &.{ "autopin", "compute", "--event", "event.json", "--out", "artifact", "--set", "site=buildrules-lock", "--set", "infra=pins-lock" }, &.{"artifact"});
 }
+
+/// A server on loopback that answers each connection with one canned response, for the real download function.
+const OneShot = struct {
+    server: std.net.Server = undefined,
+    port: u16 = 0,
+    response: []const u8,
+    thread: std.Thread = undefined,
+
+    fn start(self: *OneShot) !void {
+        self.server = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{ .reuse_address = true });
+        self.port = self.server.listen_address.getPort();
+        self.thread = try std.Thread.spawn(.{}, serve, .{self});
+    }
+
+    fn serve(self: *OneShot) void {
+        const conn = self.server.accept() catch return;
+        defer conn.stream.close();
+        var buf: [2048]u8 = undefined;
+        var n: usize = 0;
+        while (std.mem.indexOf(u8, buf[0..n], "\r\n\r\n") == null and n < buf.len) {
+            const got = conn.stream.read(buf[n..]) catch return;
+            if (got == 0) return;
+            n += got;
+        }
+        conn.stream.writeAll(self.response) catch {};
+    }
+
+    fn finish(self: *OneShot) void {
+        self.thread.join();
+        self.server.deinit();
+    }
+};
+
+test "download: the real function reads a tarball into its digests, refuses an error status, and refuses plain http to anything but loopback" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    var ok = OneShot{ .response = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\nhello" };
+    try ok.start();
+    const url = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}/x.tgz", .{ok.port});
+    const got = try compute.fetchWith(a, url, true);
+    ok.finish();
+    try t.expectEqual(@as(u64, 5), got.size);
+    try t.expectEqualStrings("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", got.sha256);
+    var missing = OneShot{ .response = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" };
+    try missing.start();
+    const url2 = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}/x.tgz", .{missing.port});
+    try t.expect(std.meta.isError(compute.fetchWith(a, url2, true)));
+    missing.finish();
+    // The production function allows no plain http at all, not even to the loopback.
+    try t.expect(std.meta.isError(compute.httpFetch(a, "http://127.0.0.1:9/x.tgz")));
+}
+
+test "compute: an --out that is a file, not a directory, is an error and writes nothing" {
+    reset();
+    defer teardown();
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    try syncedBuildrules(h, "site", &two_pkgs);
+    try event(h);
+    try h.put("artifact", "a file");
+    const r = runCompute(h, "artifact", &.{"site=buildrules-lock"});
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "NotDir"));
+}
+
+test "compute: --dir names the repository, and a missing one is refused" {
+    reset();
+    defer teardown();
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    try syncedBuildrules(h, "site", &two_pkgs);
+    try event(h);
+    var r = h.run(&.{ "autopin", "compute", "--dir", ".", "--event", "event.json", "--out", "artifact", "--set", "site=buildrules-lock" });
+    try t.expectEqual(@as(u8, 0), r.code);
+    r = h.run(&.{ "autopin", "compute", "--dir", "no-such-dir", "--event", "event.json", "--out", "artifact2", "--set", "site=buildrules-lock" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cannot open no-such-dir"));
+}
+
+test "compute: a pins.lock.bzl directory whose lock has no packages and whose table has no rows changes nothing" {
+    reset();
+    defer teardown();
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    try h.put(".buckconfig", "[cells]\n");
+    try h.put("infra/package.json", pj);
+    try h.put("infra/package-lock.json", try lockJson(h.a(), &.{}, ""));
+    try h.put("infra/pins.lock.bzl", try pinsTable(h.a(), &.{}));
+    try event(h);
+    const r = runCompute(h, "artifact", &.{"infra=pins-lock"});
+    try t.expectEqual(@as(u8, 0), r.code);
+    const m = try readManifest(h, "artifact", &.{"infra=pins-lock"});
+    try t.expectEqual(@as(usize, 0), m.files.len);
+}
