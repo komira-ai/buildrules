@@ -43,7 +43,7 @@ a push to `main`, not a fork, and a commit the plan released; and the workflow i
 artifact actions (`attest` also the cosign installer and the attestation action); `gamma` runs no buck2 itself, the stage tool does. Every action is pinned by commit, but one: the
 farm-connect action is checked out of the repository and commit that two repository variables name, the checkout is verified to be that commit before the action
 runs, and it is then used from the checkout. Two runs never tag at once (concurrency group `release`, nothing cancelled); two pushes that planned the
-same number are settled inside that group (see "Two pushes at once"). The workflow's own concurrency is per commit and cancels nothing. No job of the workflow carries `continue-on-error` (or only `false`), and no `run:` line
+same number are settled inside that group (see "Two pushes at once"). The workflow's own concurrency is one group for every push and cancels nothing (see "Two pushes at once"). No job of the workflow carries `continue-on-error` (or only `false`), and no `run:` line
 expands a repository variable or event field inline: the values go through `env:` (`ci/release_check.zig` and `ci/stages_check.zig` refuse both).
 
 ## The tiers
@@ -530,6 +530,15 @@ upstream host that drops a request from blocking a release, and none of them can
   download it declares.
 
 ## Two pushes at once
+
+The workflow runs one push at a time. Its concurrency is one group for every push (`release-push`; any other event would get a group of its own, its run id)
+with `cancel-in-progress: false`: a run that is publishing is never stopped, GitHub keeps at most one pending run, and a newer pending run replaces an older
+pending one, which ends **cancelled** (not red) and releases nothing. `site.yml` runs only when a release run ended green (success only), so a cancelled run starts no deploy of the site. So when several pull requests merge within minutes, the runs go one after the other, the
+plan of each reads the tags only after the run before it (tag included) has finished, and the race below cannot happen; the newest push is the one that
+releases, and it carries the changes of the commits it replaced. What follows is the second line of defence, for a race that serialization does not cover (a
+re-run of an old run, say). `ci/release_check.zig` refuses a workflow-level group per commit and a `cancel-in-progress` other than `false`.
+
+The rule is one concurrent run of each workflow of the release pipeline: one fixed group per workflow, `cancel-in-progress: false` (`ci/release_check.zig`, `ci/stages_check.zig` and `ci/site_check.zig` pin each). The groups: `release.yml` `release-push` (a push; a run id for any other event), the job `tag` `release`, `beta.yml` `beta` (called by `release.yml`; a different name from the caller's, so neither waits for the other), `site.yml` `site`, `site-publish.yml` none (called by `site.yml`, whose group serializes it; a group of its own with the caller's name would deadlock, and the check refuses any). `ci.yml` is the pull request check and cancels the superseded run of a pull request; it is not part of the release pipeline's serialization.
 
 The plan runs before the build, so two pushes that land within the time of a build (minutes) both plan the same number: with `v0.0.5` the newest tag, both plan
 `v0.0.6`. The binaries, the archive, the sums, the signatures and the attestations of each carry its planned number. The `tag` job is the one place the
