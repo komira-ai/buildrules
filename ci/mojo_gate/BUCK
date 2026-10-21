@@ -37,6 +37,15 @@ mojo_gated_lib_rule(
     exec_compatible_with = LINUX_X86_64,
 )
 
+# The same two tests with the failing one FIRST: a gate that drops the first marker (a slice that starts at 1) is red only here.
+mojo_gated_lib_rule(
+    name = "lib_red_first",
+    lib = ":compiled",
+    test_runs = [":test_fails", ":test_passes"],
+    package = "gated",
+    exec_compatible_with = LINUX_X86_64,
+)
+
 # The consumers: a target that reads the library's `.mojoc` (`mojo_same` compares it with the compiled file, which it must equal byte for byte:
 # the gate adds no change to the bytes).
 mojo_same(
@@ -49,6 +58,12 @@ mojo_same(
 mojo_same(
     name = "consumer_of_red",
     a = ":lib_red",
+    b = ":compiled",
+)
+
+mojo_same(
+    name = "consumer_of_red_first",
+    a = ":lib_red_first",
     b = ":compiled",
 )
 

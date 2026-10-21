@@ -57,14 +57,19 @@ def negative_problems(ctx):
 
 # The gate of a Mojo library (docs/contract.md, 12.8): a library's public `.mojoc` exists only if every test of its package passed. Two things are held.
 #
-#   behaviour  //ci/mojo_gate:consumer_of_red reads a library that waits for a failing test run, and must FAIL to build; the same library behind
+#   behaviour  //ci/mojo_gate:consumer_of_red (and consumer_of_red_first, the failing test listed first) reads a library that waits for a failing test run, and must FAIL to build; the same library behind
 #              a passing run, //ci/mojo_gate:consumer_of_green, must build. The two are one rule (`mojo_gated_lib_rule`) and one consumer; they differ
 #              by the failing test, so the red is that test's. They use a stand-in for the compiler, so this needs no Mojo toolchain.
 #   wiring     the real packages' `:lib` (made by `mojo_package`) has every test run of its package among its dependencies, so the rule above is
 #              what guards a real library and not only the fixture.
 GATE_PLATFORM = "buildrules//platforms:linux_x86_64"
 GATE_GREEN = "//ci/mojo_gate:consumer_of_green"
-GATE_RED = "//ci/mojo_gate:consumer_of_red"
+GATE_REDS = ["//ci/mojo_gate:consumer_of_red", "//ci/mojo_gate:consumer_of_red_first"]  # the failing test last, and first (every marker must be an input)
+# The cross-package edge: a package's `:lib_ungated` reads its dependencies' gated `:lib`, never their `:lib_ungated` (which would bypass their tests).
+GATE_EDGES = [
+    ("//examples/mojo/ws", "//examples/mojo/ws/util"),
+    ("//examples/mojo/ws/util", "//examples/mojo/ws/util/base"),
+]
 GATE_PACKAGES = [
     "//examples/mojo/copy_of_base",
     "//examples/mojo/ws",
@@ -89,9 +94,10 @@ def gate_problems(ctx):
     built, failed = _built(ctx, GATE_GREEN)
     if failed or not built:
         problems.append("{} (the library behind a passing test) must build, and it built {} artifact(s) and failed {}".format(GATE_GREEN, built, failed))
-    built, failed = _built(ctx, GATE_RED)
-    if not failed:
-        problems.append("{} built ({} artifact(s)): a library behind a failing test is usable, the gate is gone".format(GATE_RED, built))
+    for red in GATE_REDS:
+        built, failed = _built(ctx, red)
+        if not failed:
+            problems.append("{} built ({} artifact(s)): a library behind a failing test is usable, the gate is gone".format(red, built))
 
     q = ctx.uquery()
     for package in GATE_PACKAGES:
@@ -107,4 +113,11 @@ def gate_problems(ctx):
         ungated = [str(x.label) for x in q.eval("deps({}:lib_ungated)".format(package))]
         if [t for t in want if t in ungated]:
             problems.append("{}:lib_ungated waits for a test: the tests import it, so that is a cycle in waiting".format(package))
+    for user, dep in GATE_EDGES:
+        direct = [str(x.label).split("//", 1)[-1] for x in q.eval("deps({}:lib_ungated, 1)".format(user))]
+        dep = dep[2:]
+        if dep + ":lib" not in direct:
+            problems.append("{}:lib_ungated does not depend on {}:lib: a dependent must read the gated library".format(user, dep))
+        if dep + ":lib_ungated" in direct:
+            problems.append("{}:lib_ungated depends on {}:lib_ungated: that bypasses the tests of {}".format(user, dep, dep))
     return problems
