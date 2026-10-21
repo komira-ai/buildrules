@@ -213,6 +213,28 @@ test "inflates a real compressed stream (fixed Huffman, a long match)" {
     try t.expectEqualStrings(want, got[0].data);
 }
 
+fn expectName(name: []const u8, err: zip.Error) !void {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expectError(err, readIt(a, try build(a, &.{.{ .name = name }})));
+}
+
+fn expectPatched(comptime which: enum { central, local, eocd, descriptor }, field: usize, value: u32, width: u8, err: zip.Error) !void {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try build(a, &.{.{ .name = "a.txt" }});
+    const base: usize = switch (which) {
+        .central => z.cd[0],
+        .local => z.lfh[0],
+        .eocd => z.eocd,
+        .descriptor => z.desc[0],
+    };
+    if (width == 2) put16(z.bytes, base + field, @intCast(value)) else put32(z.bytes, base + field, value);
+    try t.expectError(err, readIt(a, z));
+}
+
 test "symlink attributes are refused" {
     var ar = arena();
     defer ar.deinit();
@@ -220,41 +242,62 @@ test "symlink attributes are refused" {
     try t.expectError(error.SymlinkOrSpecial, readIt(ar.allocator(), z));
 }
 
-test "a directory entry is refused (by trailing slash and by attribute)" {
+test "a directory entry is refused: a trailing slash" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
     try t.expectError(error.DirectoryEntry, readIt(a, try build(a, &.{.{ .name = "site/", .data = "", .method = 0, .descriptor = false }})));
-    try t.expectError(error.DirectoryEntry, readIt(a, try build(a, &.{.{ .name = "a.txt", .eattr = 0o040755 << 16 }})));
-    try t.expectError(error.DirectoryEntry, readIt(a, try build(a, &.{.{ .name = "a.txt", .made_by = 0, .eattr = 0x10 }})));
 }
 
-test "names: .., backslash, NUL, absolute, drive, empty and dot components are refused" {
+test "a directory entry is refused: the Unix directory attribute" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    const cases = [_]struct { name: []const u8, err: zip.Error }{
-        .{ .name = "../a.txt", .err = error.DotDotName },
-        .{ .name = "site/../../a.txt", .err = error.DotDotName },
-        .{ .name = "site\\a.txt", .err = error.BackslashInName },
-        .{ .name = "a\x00.txt", .err = error.NulInName },
-        .{ .name = "/etc/a.txt", .err = error.AbsoluteName },
-        .{ .name = "C:a.txt", .err = error.AbsoluteName },
-        .{ .name = "site//a.txt", .err = error.BadName },
-        .{ .name = "./a.txt", .err = error.BadName },
-        .{ .name = "a\x01.txt", .err = error.BadName },
-    };
-    for (cases) |c| {
-        const z = try build(a, &.{.{ .name = c.name }});
-        try t.expectError(c.err, readIt(a, z));
-    }
+    try t.expectError(error.DirectoryEntry, readIt(a, try build(a, &.{.{ .name = "a.txt", .eattr = 0o040755 << 16 }})));
 }
 
-test "two members with one name, and two that differ only by case, are refused" {
+test "a directory entry is refused: the DOS directory bit" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expectError(error.DirectoryEntry, readIt(a, try build(a, &.{.{ .name = "a.txt", .made_by = 0, .eattr = 0x10 }})));
+}
+
+test "name with .. is refused" {
+    try expectName("../a.txt", error.DotDotName);
+    try expectName("site/../../a.txt", error.DotDotName);
+}
+
+test "name with a backslash is refused" {
+    try expectName("site\\a.txt", error.BackslashInName);
+}
+
+test "name with a NUL is refused" {
+    try expectName("a\x00.txt", error.NulInName);
+}
+
+test "an absolute name is refused (leading slash, drive colon)" {
+    try expectName("/etc/a.txt", error.AbsoluteName);
+    try expectName("C:a.txt", error.AbsoluteName);
+}
+
+test "a name with an empty or dot component, or a control byte, is refused" {
+    try expectName("site//a.txt", error.BadName);
+    try expectName("./a.txt", error.BadName);
+    try expectName("a\x01.txt", error.BadName);
+}
+
+test "two members with one name are refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
     try t.expectError(error.DuplicateName, readIt(a, try build(a, &.{ .{ .name = "a.txt" }, .{ .name = "a.txt" } })));
+}
+
+test "two members that differ only by case are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
     try t.expectError(error.CaseFoldTwin, readIt(a, try build(a, &.{ .{ .name = "a.txt" }, .{ .name = "A.txt" } })));
 }
 
@@ -308,96 +351,92 @@ test "bytes between two entries are refused (an entry hidden in a gap)" {
     try t.expectError(error.GapBetweenEntries, zip.read(a, bytes, &names, .{}));
 }
 
-test "a local header that disagrees with the central directory is refused (name, flags, method, crc, sizes)" {
+test "a local header whose name differs from the central directory's is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    {
-        const z = try build(a, &.{.{ .name = "a.txt" }});
-        z.bytes[z.lfh[0] + 30] = 'b'; // name
-        try t.expectError(error.LocalHeaderMismatch, readIt(a, z));
-    }
-    {
-        const z = try build(a, &.{.{ .name = "a.txt" }});
-        put16(z.bytes, z.lfh[0] + 6, 0x0808); // flags
-        try t.expectError(error.LocalHeaderMismatch, readIt(a, z));
-    }
-    {
-        const z = try build(a, &.{.{ .name = "a.txt" }});
-        put16(z.bytes, z.lfh[0] + 8, 0); // method
-        try t.expectError(error.LocalHeaderMismatch, readIt(a, z));
-    }
-    {
-        const z = try build(a, &.{.{ .name = "a.txt", .descriptor = false }});
-        put32(z.bytes, z.lfh[0] + 14, 1); // crc
-        try t.expectError(error.LocalHeaderMismatch, readIt(a, z));
-    }
-    {
-        const z = try build(a, &.{.{ .name = "a.txt", .descriptor = false }});
-        put32(z.bytes, z.lfh[0] + 22, 99); // usize
-        try t.expectError(error.LocalHeaderMismatch, readIt(a, z));
-    }
-    {
-        // With the descriptor bit a NON-zero local value must still agree.
-        const z = try build(a, &.{.{ .name = "a.txt" }});
-        put32(z.bytes, z.lfh[0] + 14, 77);
-        try t.expectError(error.LocalHeaderMismatch, readIt(a, z));
-    }
+    const z = try build(a, &.{.{ .name = "a.txt" }});
+    z.bytes[z.lfh[0] + 30] = 'b';
+    try t.expectError(error.LocalHeaderMismatch, readIt(a, z));
 }
 
-test "zip64 is refused: a sentinel in the end record, in a central entry, a locator, a zip64 extra field" {
-    var ar = arena();
-    defer ar.deinit();
-    const a = ar.allocator();
-    {
-        const z = try two(a);
-        put16(z.bytes, z.eocd + 10, 0xFFFF);
-        put16(z.bytes, z.eocd + 8, 0xFFFF);
-        try t.expectError(error.Zip64, readIt(a, z));
-    }
-    {
-        const z = try two(a);
-        put32(z.bytes, z.cd[0] + 20, 0xFFFFFFFF);
-        try t.expectError(error.Zip64, readIt(a, z));
-    }
-    {
-        // A zip64 end-record locator in the 20 bytes before the end record.
-        const z = try two(a);
-        var b = std.ArrayList(u8).empty;
-        try b.appendSlice(a, z.bytes[0..z.eocd]);
-        var loc = [_]u8{0} ** 20;
-        put32(&loc, 0, 0x07064b50);
-        try b.appendSlice(a, &loc);
-        try b.appendSlice(a, z.bytes[z.eocd..]);
-        put32(b.items, z.eocd + 20 + 12, @intCast(z.eocd - z.cd_off + 20));
-        try t.expectError(error.Zip64, zip.read(a, b.items, &names, .{}));
-    }
-    {
-        const extra = [_]u8{ 0x01, 0x00, 0x08, 0x00, 0, 0, 0, 0, 0, 0, 0, 0 };
-        const z = try build(a, &.{.{ .name = "a.txt", .cd_extra = &extra }});
-        try t.expectError(error.Zip64, readIt(a, z));
-    }
+test "a local header whose flags differ from the central directory's are refused" {
+    try expectPatched(.local, 6, 0x0808, 2, error.LocalHeaderMismatch);
 }
 
-test "encryption flags and unknown flag bits are refused" {
+test "a local header whose method differs from the central directory's is refused" {
+    try expectPatched(.local, 8, 0, 2, error.LocalHeaderMismatch);
+}
+
+test "a local header whose crc differs from the central directory's is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    {
-        const z = try build(a, &.{.{ .name = "a.txt" }});
-        put16(z.bytes, z.cd[0] + 8, 0x0009);
-        try t.expectError(error.Encrypted, readIt(a, z));
-    }
-    {
-        const z = try build(a, &.{.{ .name = "a.txt" }});
-        put16(z.bytes, z.cd[0] + 8, 0x0048);
-        try t.expectError(error.Encrypted, readIt(a, z));
-    }
-    {
-        const z = try build(a, &.{.{ .name = "a.txt" }});
-        put16(z.bytes, z.cd[0] + 8, 0x0018);
-        try t.expectError(error.BadFlags, readIt(a, z));
-    }
+    const z = try build(a, &.{.{ .name = "a.txt", .descriptor = false }});
+    put32(z.bytes, z.lfh[0] + 14, 1);
+    try t.expectError(error.LocalHeaderMismatch, readIt(a, z));
+}
+
+test "a local header whose size differs from the central directory's is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try build(a, &.{.{ .name = "a.txt", .descriptor = false }});
+    put32(z.bytes, z.lfh[0] + 22, 99);
+    try t.expectError(error.LocalHeaderMismatch, readIt(a, z));
+}
+
+test "with the descriptor bit a non-zero local value must still agree with the central directory" {
+    try expectPatched(.local, 14, 77, 4, error.LocalHeaderMismatch);
+}
+
+test "zip64: a sentinel in the end record is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try two(a);
+    put16(z.bytes, z.eocd + 10, 0xFFFF);
+    put16(z.bytes, z.eocd + 8, 0xFFFF);
+    try t.expectError(error.Zip64, readIt(a, z));
+}
+
+test "zip64: a sentinel in a central entry is refused" {
+    try expectPatched(.central, 20, 0xFFFFFFFF, 4, error.Zip64);
+}
+
+test "zip64: an end-record locator is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try two(a);
+    var b = std.ArrayList(u8).empty;
+    try b.appendSlice(a, z.bytes[0..z.eocd]);
+    var loc = [_]u8{0} ** 20;
+    put32(&loc, 0, 0x07064b50);
+    try b.appendSlice(a, &loc);
+    try b.appendSlice(a, z.bytes[z.eocd..]);
+    try t.expectError(error.Zip64, zip.read(a, b.items, &names, .{}));
+}
+
+test "zip64: an extra field of the zip64 kind is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const extra = [_]u8{ 0x01, 0x00, 0x08, 0x00, 0, 0, 0, 0, 0, 0, 0, 0 };
+    const z = try build(a, &.{.{ .name = "a.txt", .cd_extra = &extra }});
+    try t.expectError(error.Zip64, readIt(a, z));
+}
+
+test "encryption: the encryption flag is refused" {
+    try expectPatched(.central, 8, 0x0009, 2, error.Encrypted);
+}
+
+test "encryption: the strong-encryption flag is refused" {
+    try expectPatched(.central, 8, 0x0048, 2, error.Encrypted);
+}
+
+test "a flag bit that is not allowed is refused" {
+    try expectPatched(.central, 8, 0x0018, 2, error.BadFlags);
 }
 
 test "a method other than stored and deflate is refused (method 12, bzip2)" {
@@ -409,36 +448,45 @@ test "a method other than stored and deflate is refused (method 12, bzip2)" {
     try t.expectError(error.BadMethod, readIt(ar.allocator(), z));
 }
 
-test "a data descriptor that lies is refused (crc, compressed size, size)" {
+test "a data descriptor that lies about the crc is refused" {
+    try expectPatched(.descriptor, 4, 0x01020304, 4, error.DescriptorMismatch);
+}
+
+test "a data descriptor that lies about the compressed size is refused" {
+    try expectPatched(.descriptor, 8, 7, 4, error.DescriptorMismatch);
+}
+
+test "a data descriptor that lies about the size is refused" {
+    try expectPatched(.descriptor, 12, 1234, 4, error.DescriptorMismatch);
+}
+
+test "a data descriptor without a signature that lies is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    const fields = [_]usize{ 4, 8, 12 };
-    for (fields) |f| {
-        const z = try build(a, &.{.{ .name = "a.txt" }});
-        put32(z.bytes, z.desc[0] + f, get32(z.bytes, z.desc[0] + f) +% 1);
-        try t.expectError(error.DescriptorMismatch, readIt(a, z));
-    }
-    {
-        const z = try build(a, &.{.{ .name = "a.txt", .desc_sig = false }});
-        put32(z.bytes, z.desc[0] + 8, 1234);
-        try t.expectError(error.DescriptorMismatch, readIt(a, z));
-    }
+    const z = try build(a, &.{.{ .name = "a.txt", .desc_sig = false }});
+    put32(z.bytes, z.desc[0] + 8, 1234);
+    try t.expectError(error.DescriptorMismatch, readIt(a, z));
 }
 
-test "bytes after the end record, and a comment, are refused" {
+test "bytes after the end record are refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
     const z = try two(a);
     const longer = try std.mem.concat(a, u8, &.{ z.bytes, "tail" });
     try t.expectError(error.TrailingBytes, zip.read(a, longer, &names, .{}));
-    const z2 = try two(a);
-    put16(z2.bytes, z2.eocd + 20, 4);
-    const commented = try std.mem.concat(a, u8, &.{ z2.bytes, "note" });
+}
+
+test "an archive comment is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try two(a);
+    put16(z.bytes, z.eocd + 20, 4);
+    try t.expectError(error.CommentPresent, readIt(a, z));
+    const commented = try std.mem.concat(a, u8, &.{ z.bytes, "note" });
     try t.expectError(error.TrailingBytes, zip.read(a, commented, &names, .{}));
-    put16(z2.bytes, z2.eocd + 20, 4);
-    try t.expectError(error.CommentPresent, readIt(a, z2));
 }
 
 test "a second end record is refused" {
@@ -475,6 +523,24 @@ test "a member that inflates to less than it declared is refused" {
     try t.expectError(error.SizeMismatch, readIt(a, z));
 }
 
+test "a stored member whose sizes differ is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try build(a, &.{.{ .name = "a.txt", .method = 0, .descriptor = false }});
+    put32(z.bytes, z.cd[0] + 24, 9);
+    put32(z.bytes, z.lfh[0] + 22, 9);
+    try t.expectError(error.SizeMismatch, readIt(a, z));
+}
+
+test "a deflate stream that is broken is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try build(a, &.{.{ .name = "a.txt", .data = "hello\n", .comp = "\x07\x00\x00", .declared_usize = 6 }});
+    try t.expectError(error.InflateFailed, readIt(a, z));
+}
+
 test "more entries than the limit are refused" {
     var ar = arena();
     defer ar.deinit();
@@ -488,9 +554,21 @@ test "more entries than the limit are refused" {
     }
     const z = try build(a, &parts);
     try t.expectError(error.TooManyEntries, zip.read(a, z.bytes, &allowed, .{}));
-    // Twelve are fine.
-    const z12 = try build(a, parts[0..12]);
-    try t.expectEqual(@as(usize, 12), (try zip.read(a, z12.bytes, &allowed, .{})).len);
+}
+
+test "twelve entries are accepted" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var parts: [12]Part = undefined;
+    var allowed: [12][]const u8 = undefined;
+    for (&parts, 0..) |*p, i| {
+        const n = try std.fmt.allocPrint(a, "f{d}.txt", .{i});
+        p.* = .{ .name = n };
+        allowed[i] = n;
+    }
+    const z = try build(a, &parts);
+    try t.expectEqual(@as(usize, 12), (try zip.read(a, z.bytes, &allowed, .{})).len);
 }
 
 test "a wrong crc is refused" {
@@ -502,77 +580,115 @@ test "a wrong crc is refused" {
     try t.expectError(error.CrcMismatch, readIt(ar.allocator(), z));
 }
 
-test "sizes: a member over the file cap, the manifest over its cap, all together over the total, a ratio over 100:1" {
+test "a member over the file cap is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
     const lim = zip.Limits{ .max_file = 64, .max_manifest = 16, .max_total = 100 };
-    const big = "x" ** 65;
-    try t.expectError(error.FileTooLarge, zip.read(a, (try build(a, &.{.{ .name = "a.txt", .data = big, .method = 0, .descriptor = false }})).bytes, &names, lim));
+    try t.expectError(error.FileTooLarge, zip.read(a, (try build(a, &.{.{ .name = "a.txt", .data = "x" ** 65, .method = 0, .descriptor = false }})).bytes, &names, lim));
+}
+
+test "the manifest over its own cap is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const lim = zip.Limits{ .max_file = 64, .max_manifest = 16, .max_total = 100 };
     try t.expectError(error.ManifestTooLarge, zip.read(a, (try build(a, &.{.{ .name = "manifest.json", .data = "y" ** 17, .method = 0, .descriptor = false }})).bytes, &names, lim));
+}
+
+test "members that are each under the cap and together over the total are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const lim = zip.Limits{ .max_file = 64, .max_manifest = 16, .max_total = 100 };
     const sixty = "z" ** 60;
     try t.expectError(error.TotalTooLarge, zip.read(a, (try build(a, &.{
         .{ .name = "a.txt", .data = sixty, .method = 0, .descriptor = false },
         .{ .name = "b.txt", .data = sixty, .method = 0, .descriptor = false },
     })).bytes, &names, lim));
-    // 517 inflated bytes from 6 stored bytes of deflate: over 100:1.
+}
+
+test "a ratio of declared size to stored size over 100:1 is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    // 25801 inflated bytes from 165 stored.
     const comp = try runOfA(a, 100);
     const z = try build(a, &.{.{ .name = "a.txt", .data = "a" ** 25801, .comp = comp }});
     try t.expectError(error.RatioTooHigh, readIt(a, z));
 }
 
-test "a local header or data that runs past the central directory is refused" {
+test "data that runs past the central directory is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    {
-        const z = try build(a, &.{.{ .name = "a.txt" }});
-        put32(z.bytes, z.cd[0] + 20, 5000);
-        put32(z.bytes, z.desc[0] + 8, 5000);
-        try t.expectError(error.DataOutOfRange, readIt(a, z));
-    }
-    {
-        const z = try build(a, &.{.{ .name = "a.txt" }});
-        put32(z.bytes, z.cd[0] + 42, @intCast(z.cd_off));
-        try t.expectError(error.DataOutOfRange, readIt(a, z));
-    }
-    {
-        const z = try build(a, &.{.{ .name = "a.txt" }});
-        put32(z.bytes, z.lfh[0], 0);
-        try t.expectError(error.BadLocalHeader, readIt(a, z));
-    }
+    const z = try build(a, &.{.{ .name = "a.txt" }});
+    put32(z.bytes, z.cd[0] + 20, 5000);
+    try t.expectError(error.DataOutOfRange, readIt(a, z));
 }
 
-test "a broken central directory is refused (signature, truncation, misplaced)" {
+test "a local header at the central directory is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    {
-        const z = try two(a);
-        put32(z.bytes, z.cd[1], 0);
-        try t.expectError(error.BadCentralHeader, readIt(a, z));
-    }
-    {
-        const z = try two(a);
-        put32(z.bytes, z.eocd + 12, 100000);
-        try t.expectError(error.CentralDirectoryTruncated, readIt(a, z));
-    }
-    {
-        const z = try two(a);
-        put32(z.bytes, z.eocd + 12, @intCast(z.eocd - z.cd_off - 5));
-        try t.expectError(error.CentralDirectoryMisplaced, readIt(a, z));
-    }
-    {
-        const z = try two(a);
-        put16(z.bytes, z.eocd + 4, 1);
-        try t.expectError(error.MultiDisk, readIt(a, z));
-    }
-    {
-        const z = try two(a);
-        put16(z.bytes, z.eocd + 8, 0);
-        put16(z.bytes, z.eocd + 10, 0);
-        try t.expectError(error.Empty, readIt(a, z));
-    }
+    const z = try build(a, &.{.{ .name = "a.txt" }});
+    put32(z.bytes, z.cd[0] + 42, @intCast(z.cd_off));
+    try t.expectError(error.DataOutOfRange, readIt(a, z));
+}
+
+test "a local header without its signature is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try build(a, &.{.{ .name = "a.txt" }});
+    put32(z.bytes, z.lfh[0], 0);
+    try t.expectError(error.BadLocalHeader, readIt(a, z));
+}
+
+test "a central entry without its signature is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try two(a);
+    put32(z.bytes, z.cd[1], 0);
+    try t.expectError(error.BadCentralHeader, readIt(a, z));
+}
+
+test "a central directory larger than the file is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try two(a);
+    put32(z.bytes, z.eocd + 12, 100000);
+    try t.expectError(error.CentralDirectoryTruncated, readIt(a, z));
+}
+
+test "bytes between the central directory and the end record are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try two(a);
+    put32(z.bytes, z.eocd + 12, @intCast(z.eocd - z.cd_off - 5));
+    try t.expectError(error.CentralDirectoryMisplaced, readIt(a, z));
+}
+
+test "a multi-disk archive is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try two(a);
+    put16(z.bytes, z.eocd + 4, 1);
+    try t.expectError(error.MultiDisk, readIt(a, z));
+}
+
+test "an archive with no entries is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try two(a);
+    put16(z.bytes, z.eocd + 8, 0);
+    put16(z.bytes, z.eocd + 10, 0);
+    try t.expectError(error.Empty, readIt(a, z));
 }
 
 test "a malformed extra field is refused" {
