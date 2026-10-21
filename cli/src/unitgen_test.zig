@@ -94,6 +94,7 @@ test "toolchain: a compiler nobody pinned is refused at sync, with the known ver
     defer e.deinit();
     var d = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolveToolchain(e.a(), &d, "1.86.0", pins, null));
+    try kit.sweepRefusal(unitgen.resolveToolchain, .{ "1.86.0", pins, null });
     try refusedWith(&d, "does not pin");
     try refusedWith(&d, "it pins 1.95.0, 1.85.0");
     try refusedWith(&d, "[rust.\"1.86.0\".rust-std]");
@@ -125,6 +126,7 @@ test "toolchain: no extra file is no extra versions" {
     defer e.deinit();
     var d = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolveToolchain(e.a(), &d, "1.86.0", pins, null));
+    try kit.sweepRefusal(unitgen.resolveToolchain, .{ "1.86.0", pins, null });
 }
 
 test "toolchain: the block is deterministic text and starts with the version" {
@@ -142,9 +144,11 @@ test "toolchain: a pins file that is not a literal is a refusal, not a crash" {
     defer e.deinit();
     var d = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolveToolchain(e.a(), &d, "1.95.0", "RUST_VERSIONS = {\n\"1.95.0\": oops(),\n}\nRUST_DEFAULT = \"1.95.0\"\n", null));
+    try kit.sweepRefusal(unitgen.resolveToolchain, .{ "1.95.0", "RUST_VERSIONS = {\n\"1.95.0\": oops(),\n}\nRUST_DEFAULT = \"1.95.0\"\n", null });
     try refusedWith(&d, "not a literal");
     var d2 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolveToolchain(e.a(), &d2, "1.95.0", "X = 1\n", null));
+    try kit.sweepRefusal(unitgen.resolveToolchain, .{ "1.95.0", "X = 1\n", null });
     try refusedWith(&d2, "no RUST_VERSIONS");
 }
 
@@ -184,9 +188,11 @@ test "lints: an unknown level and a check-cfg on any other lint are refused at s
     defer e.deinit();
     var d = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.lintFlags(e.a(), &d, try tomlOf(e.a(), "[rust]\nx = \"loud\"\n"), "t"));
+    try kit.sweepRefusal(unitgen.lintFlags, .{ try tomlOf(e.a(), "[rust]\nx = \"loud\"\n"), "t" });
     try refusedWith(&d, "unknown level");
     var d2 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.lintFlags(e.a(), &d2, try tomlOf(e.a(), "[rust]\nx = { level = \"warn\", check-cfg = [\"cfg(y)\"] }\n"), "t"));
+    try kit.sweepRefusal(unitgen.lintFlags, .{ try tomlOf(e.a(), "[rust]\nx = { level = \"warn\", check-cfg = [\"cfg(y)\"] }\n"), "t" });
     try refusedWith(&d2, "check-cfg only belongs");
 }
 
@@ -238,21 +244,27 @@ test "policy: refusals (a typo'd key, an action that shadows a step, a step that
     const none = val.newObject(e.a());
     var d1 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.policyOf(e.a(), &d1, try tomlOf(e.a(), "[buildrules.profile]\n"), "w"));
+    try kit.sweepRefusal(unitgen.policyOf, .{ try tomlOf(e.a(), "[buildrules.profile]\n"), "w" });
     try refusedWith(&d1, "unknown key");
     var d2 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d2, try tomlOf(e.a(), "[actions]\ntest = [\"lint\"]\n"), none, "w"));
+    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[actions]\ntest = [\"lint\"]\n"), none, "w" });
     try refusedWith(&d2, "name of a step");
     var d3 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d3, try tomlOf(e.a(), "[actions]\nci = [\"lint\", \"fmt\"]\n"), none, "w"));
+    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[actions]\nci = [\"lint\", \"fmt\"]\n"), none, "w" });
     try refusedWith(&d3, "non-empty list of steps");
     var d4 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d4, try tomlOf(e.a(), "[actions]\nci = []\n"), none, "w"));
+    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[actions]\nci = []\n"), none, "w" });
     try refusedWith(&d4, "non-empty list of steps");
     var d5 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d5, try tomlOf(e.a(), "default-action = \"nope\"\n"), none, "w"));
+    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "default-action = \"nope\"\n"), none, "w" });
     try refusedWith(&d5, "default-action");
     var d6 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d6, try tomlOf(e.a(), "[lint]\nwarnings-are-fine = true\n"), none, "w"));
+    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[lint]\nwarnings-are-fine = true\n"), none, "w" });
     try refusedWith(&d6, "unknown lint policy key");
 }
 
@@ -835,29 +847,37 @@ test "toolchain: the pin of a version must name all four components with a sha25
     var d = Diag.init(e.a());
     const no_clippy = "EXTRA_RUST_VERSIONS = {\n    \"1.86.0\": {\"rustc\": {\"sha256\": \"" ++ H ++ "\"}, \"rust_std\": {\"sha256\": \"" ++ H ++ "\"}, \"cargo\": {\"sha256\": \"" ++ H ++ "\"}},\n}\n";
     try t.expectError(error.Refused, unitgen.resolveToolchain(e.a(), &d, "1.86.0", pins, no_clippy));
+    try kit.sweepRefusal(unitgen.resolveToolchain, .{ "1.86.0", pins, no_clippy });
     try refusedWith(&d, "the pin of rustc 1.86.0 has no clippy");
     var d2 = Diag.init(e.a());
     const no_sha = "EXTRA_RUST_VERSIONS = {\n    \"1.86.0\": {\"cargo\": {\"size\": 1}},\n}\n";
     try t.expectError(error.Refused, unitgen.resolveToolchain(e.a(), &d2, "1.86.0", pins, no_sha));
+    try kit.sweepRefusal(unitgen.resolveToolchain, .{ "1.86.0", pins, no_sha });
     try refusedWith(&d2, "the pin of rustc 1.86.0: cargo has no sha256");
     var d3 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolveToolchain(e.a(), &d3, "1.86.0", pins, "OTHER = 1\n"));
+    try kit.sweepRefusal(unitgen.resolveToolchain, .{ "1.86.0", pins, "OTHER = 1\n" });
     try refusedWith(&d3, "no EXTRA_RUST_VERSIONS");
     var d4 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolveToolchain(e.a(), &d4, "1.86.0", pins, "EXTRA_RUST_VERSIONS = oops()\n"));
+    try kit.sweepRefusal(unitgen.resolveToolchain, .{ "1.86.0", pins, "EXTRA_RUST_VERSIONS = oops()\n" });
     try refusedWith(&d4, "EXTRA_RUST_VERSIONS is not a literal");
     var d5 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolveToolchain(e.a(), &d5, "1.95.0", "RUST_VERSIONS = {}\n", null));
+    try kit.sweepRefusal(unitgen.resolveToolchain, .{ "1.95.0", "RUST_VERSIONS = {}\n", null });
     try refusedWith(&d5, "no RUST_DEFAULT");
     var d6 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolveToolchain(e.a(), &d6, "1.95.0", "RUST_VERSIONS = {}\nRUST_DEFAULT = oops()\n", null));
+    try kit.sweepRefusal(unitgen.resolveToolchain, .{ "1.95.0", "RUST_VERSIONS = {}\nRUST_DEFAULT = oops()\n", null });
     try refusedWith(&d6, "RUST_DEFAULT is not a literal");
     // A table of no versions says none are known (and a table that is not a table says the same).
     var d7 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolveToolchain(e.a(), &d7, "1.95.0", "RUST_VERSIONS = {}\nRUST_DEFAULT = \"1.95.0\"\n", null));
+    try kit.sweepRefusal(unitgen.resolveToolchain, .{ "1.95.0", "RUST_VERSIONS = {}\nRUST_DEFAULT = \"1.95.0\"\n", null });
     try refusedWith(&d7, "(it pins )");
     var d8 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolveToolchain(e.a(), &d8, "1.95.0", "RUST_VERSIONS = [1]\nRUST_DEFAULT = \"1.95.0\"\n", null));
+    try kit.sweepRefusal(unitgen.resolveToolchain, .{ "1.95.0", "RUST_VERSIONS = [1]\nRUST_DEFAULT = \"1.95.0\"\n", null });
     try refusedWith(&d8, "(it pins )");
     // The record names the default: true for the default version only.
     const default_rec = try unitgen.resolveToolchain(e.a(), &d8, "1.95.0", "RUST_VERSIONS = {\"1.95.0\": {\"cargo\": {\"sha256\": \"a\"}, \"clippy\": {\"sha256\": \"a\"}, \"rust_std\": {\"sha256\": \"a\"}, \"rustc\": {\"sha256\": \"a\"}}}\nRUST_DEFAULT = 7\n", null);
@@ -885,6 +905,7 @@ test "lints: a lint given as a table with a priority, a table without a level, a
     for (cases) |c| {
         var dd = Diag.init(e.a());
         try t.expectError(error.Refused, unitgen.lintFlags(e.a(), &dd, try tomlOf(e.a(), c.text), "t"));
+        try kit.sweepRefusal(unitgen.lintFlags, .{ try tomlOf(e.a(), c.text), "t" });
         try refusedWith(&dd, c.needle);
     }
 }
@@ -926,9 +947,11 @@ test "policy: buildrules metadata that is not a table, several unknown keys in o
     try t.expectEqual(@as(usize, 3), (try unitgen.policyOf(e.a(), &d, try tomlOf(e.a(), "[buildrules]\nactions = {}\ndefault-action = \"ci\"\nlint = {}\n"), "w")).object.count());
     var d1 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.policyOf(e.a(), &d1, try tomlOf(e.a(), "buildrules = 1\n"), "w"));
+    try kit.sweepRefusal(unitgen.policyOf, .{ try tomlOf(e.a(), "buildrules = 1\n"), "w" });
     try refusedWith(&d1, "metadata.buildrules is not a table");
     var d2 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.policyOf(e.a(), &d2, try tomlOf(e.a(), "[buildrules]\nzeta = 1\nalpha = 2\nactions = {}\n"), "w"));
+    try kit.sweepRefusal(unitgen.policyOf, .{ try tomlOf(e.a(), "[buildrules]\nzeta = 1\nalpha = 2\nactions = {}\n"), "w" });
     try refusedWith(&d2, "unknown key(s) ['alpha', 'zeta']");
     const none = val.newObject(e.a());
     const from_ws = try unitgen.resolvePolicy(e.a(), &d, try tomlOf(e.a(), "default-action = \"release\"\n"), none, "w");
@@ -940,12 +963,15 @@ test "policy: buildrules metadata that is not a table, several unknown keys in o
     try t.expect(!val.get(absent, "deny_warnings").?.bool);
     var d3 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d3, try tomlOf(e.a(), "default-action = 3\n"), none, "w"));
+    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "default-action = 3\n"), none, "w" });
     try refusedWith(&d3, "default-action ? is neither");
     var d4 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d4, try tomlOf(e.a(), "[lint]\nzeta = 1\nalpha = 2\n"), none, "w"));
+    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[lint]\nzeta = 1\nalpha = 2\n"), none, "w" });
     try refusedWith(&d4, "unknown lint policy key(s) ['alpha', 'zeta']");
     var d5 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d5, try tomlOf(e.a(), "[actions]\nci = \"lint\"\n"), none, "w"));
+    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[actions]\nci = \"lint\"\n"), none, "w" });
     try refusedWith(&d5, "non-empty list of steps");
 }
 

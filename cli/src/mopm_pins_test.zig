@@ -25,7 +25,10 @@ fn refused(text: []const u8, needle: []const u8) !void {
         std.debug.print("accepted:\n{s}\n", .{text});
         return error.AcceptedABadFile;
     } else |_| {}
-    for (d.msgs.items) |m| if (std.mem.indexOf(u8, m, needle) != null) return;
+    for (d.msgs.items) |m| if (std.mem.indexOf(u8, m, needle) != null) {
+        try kit.sweepRefusalLast(mopm_pins.render, .{text});
+        return;
+    };
     std.debug.print("no message names `{s}`; got:\n", .{needle});
     for (d.msgs.items) |m| std.debug.print("  {s}\n", .{m});
     return error.WrongMessage;

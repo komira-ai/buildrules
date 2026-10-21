@@ -774,3 +774,39 @@ test "out of memory: a failing allocation ends the generation with an error, nev
     try val.put(cc, "profile", try val.parseLiteral(e.a(), "{\"opt_level\": \"3\", \"lto\": \"false\", \"codegen_backend\": None, \"codegen_units\": 16, \"debuginfo\": 0, \"split_debuginfo\": None, \"debug_assertions\": False, \"overflow_checks\": False, \"rpath\": False, \"incremental\": False, \"panic\": \"abort\", \"strip\": {\"resolved\": {\"Named\": \"debuginfo\"}}}"));
     try kit.sweepOom(GenerateAllCall{ .units = units, .overrides = null }, true);
 }
+
+test "generate: a profile field that cargo left out is `None` in the target, one that is a list or a table is an error, and a custom-build unit without links has no links line" {
+    var e = Env.init();
+    defer e.deinit();
+    const a = e.a();
+    const units = try table(&e);
+    const cc = units.object.getPtr(cc_uid).?;
+    var p = val.get(cc.*, "profile").?;
+    for ([_][]const u8{ "opt_level", "debuginfo", "debug_assertions", "overflow_checks", "panic", "strip", "codegen_units", "lto" }) |k| _ = p.object.swapRemove(k);
+    try val.put(cc, "profile", p);
+    var d = Diag.init(a);
+    // lto absent is `None`, which is not "false": refused, as a profile that says anything else is.
+    try t.expectError(error.Refused, buckgen.generate(a, &d, units, try buckgen.parseSizes(a, &d, sizes_text), null, .{}));
+    try t.expect(has(d.msgs.items[0], "lto=None"));
+    var p2 = val.get(cc.*, "profile").?;
+    try val.put(&p2, "lto", val.str("false"));
+    try val.put(cc, "profile", p2);
+    var d2 = Diag.init(a);
+    const out = try buckgen.generate(a, &d2, units, try buckgen.parseSizes(a, &d2, sizes_text), null, .{});
+    const tg = try target(out, "cc-1.0.0_libccccccc", &e);
+    try t.expect(has(tg, "    opt_level = \"None\","));
+    try t.expect(has(tg, "    debuginfo = \"None\","));
+    try t.expect(has(tg, "    debug_assertions = None,"));
+    try t.expect(has(tg, "    panic = \"None\","));
+    for ([_][]const u8{ "[1]", "{\"a\": 1}" }) |bad| {
+        const broken = try withProfile(&e, cc_uid, "opt_level", bad);
+        var d3 = Diag.init(a);
+        try t.expectError(error.NotAScalar, buckgen.generate(a, &d3, broken, try buckgen.parseSizes(a, &d3, sizes_text), null, .{}));
+    }
+    // A run of a script whose entry has no links, and a library whose entry has links, write no links line.
+    var d4 = Diag.init(a);
+    const out4 = try buckgen.generate(a, &d4, try table(&e), try buckgen.parseSizes(a, &d4, sizes_text), null, .{});
+    try t.expect(!has(try target(out4, "other-1.0.0_runbbbbbbb", &e), "    links ="));
+    try t.expect(!has(try target(out4, "sys-1.0.0_libaaaaaaa", &e), "    links ="));
+    try t.expect(has(try target(out4, "sys-1.0.0_runaaaaaaa", &e), "    links = \"sys_links\","));
+}

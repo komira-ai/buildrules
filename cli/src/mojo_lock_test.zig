@@ -95,6 +95,7 @@ test "parse: every problem of a table is a message, and the table is refused" {
             return error.AcceptedABadTable;
         } else |err| try t.expectEqual(error.Invalid, err);
         try expectMsg(&d, c.needle);
+        try kit.sweepRefusalLast(lockm.parse, .{ "l.bzl", text });
     }
 }
 

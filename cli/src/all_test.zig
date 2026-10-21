@@ -9,6 +9,7 @@ test {
     _ = @import("contract_test.zig");
     _ = @import("ctx_test.zig");
     _ = @import("fetch_test.zig");
+    _ = @import("growth_test.zig");
     _ = @import("init_test.zig");
     _ = @import("lockreaders_test.zig");
     _ = @import("mojo_cmd_test.zig");

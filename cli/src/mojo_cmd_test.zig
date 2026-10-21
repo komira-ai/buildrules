@@ -889,3 +889,83 @@ test "mojo_cmd.run itself answers --help and -h (main answers `mojo --help` befo
         try t.expect(kit.contains(h.out.written(), "usage: buildrules mojo sync"));
     }
 }
+
+// ---- the toolchain file, the walk, and the odd texts ---------------------------------------------------------------------
+
+test "mopm-toolchain.toml: the lines that are not `mopm = \"N.N.N\"` are not the line, and the file needs both" {
+    const h = try fresh();
+    defer h.destroy();
+    const cases = [_]struct { text: []const u8, needle: []const u8 }{
+        .{ .text = "[toolchain]\nmojo = \"1.0.0\"\n", .needle = "needs `mopm = \"N.N.N\"`" },
+        .{ .text = "[toolchain]\nmopm-extra = \"0.0.1\"\nmojo = \"1.0.0\"\n", .needle = "needs `mopm = \"N.N.N\"`" },
+        .{ .text = "[toolchain]\nmopm\nmojo = \"1.0.0\"\n", .needle = "needs `mopm = \"N.N.N\"`" },
+        .{ .text = "[toolchain]\nmopm = 0.0.1\nmojo = \"1.0.0\"\n", .needle = "needs `mopm = \"N.N.N\"`" },
+        .{ .text = "[toolchain]\nmopm = \"0.0.1\nmojo = \"1.0.0\"\n", .needle = "needs `mopm = \"N.N.N\"`" },
+        .{ .text = "[toolchain]\nmopm = \"0.0.1\"\nmojo = 1.0.0\n", .needle = "needs `mojo = \"N.N.N\"`" },
+        .{ .text = "[toolchain]\nmopm = \"0.0.1\"\nmojo = \"1.0.0\n", .needle = "needs `mojo = \"N.N.N\"`" },
+        .{ .text = "", .needle = "needs `mopm = \"N.N.N\"`" },
+    };
+    for (cases) |c| {
+        try h.put("mopm-toolchain.toml", c.text);
+        const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+        try t.expectEqual(@as(u8, 1), r.code);
+        if (!kit.contains(r.err, c.needle)) {
+            std.debug.print("expected `{s}`, got: {s}\n", .{ c.needle, r.err });
+            return error.WrongMessage;
+        }
+    }
+    // Blanks around the key and the quotes, and a comment after the value, are fine.
+    try h.put("mopm-toolchain.toml", "  mopm   =   \"0.0.1\"  # the mopm\n\tmojo\t=\t\"1.0.0\"\n");
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
+}
+
+test "mopm's exit codes other than 3 and 4 are reported without advice, and a graph for a package whose name has no version is read" {
+    const h = try fresh();
+    defer h.destroy();
+    plan_code = 5;
+    const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "exited 5\n"));
+    try t.expect(!kit.contains(r.err, "mopm lock"));
+    plan_code = 0;
+    // A package named without a version: the members are the libraries of other packages.
+    const bare = try std.mem.replaceOwned(u8, h.a(), fx.graph, "\"package\": \"base@0.1.0\"", "\"package\": \"base\"");
+    try t.expectEqual(@as(u8, 0), syncWithGraph(h, bare).code);
+}
+
+test "mojo paths: normalize and join resolve ., .. and doubled slashes; a path that leaves the root keeps its .." {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const mc = @import("mojo_cmd.zig");
+    try t.expectEqualStrings("a/b", try mc.normalize(a, "a//./b/"));
+    try t.expectEqualStrings("", try mc.normalize(a, "./"));
+    try t.expectEqualStrings("../a", try mc.normalize(a, "../a"));
+    try t.expectEqualStrings("../../a", try mc.normalize(a, "../b/../../a"));
+    try t.expectEqualStrings("a", try mc.normalize(a, "a/b/.."));
+    try t.expectEqualStrings("", try mc.normalize(a, "a/.."));
+    try t.expectEqualStrings("x/y", try mc.join(a, "", "x/y"));
+    try t.expectEqualStrings("p/x", try mc.join(a, "p", "./x"));
+}
+
+test "check: the toolchain tables that are missing are stale, a glue file that is only the start of what sync writes names the line, and an export appended to an empty BUCK file" {
+    const h = try synced();
+    defer h.destroy();
+    try h.tmp.dir.deleteFile("toolchains/mojo_pins.bzl");
+    try h.tmp.dir.deleteFile("toolchains/mopm_pins.bzl");
+    var r = h.run(&.{ "mojo", "check" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "toolchains/mojo_pins.bzl is not what the unit graphs generate (first difference at line 1)"));
+    try t.expect(kit.contains(r.err, "toolchains/mopm_pins.bzl is not what buildrules-pins.toml generates (first difference at line 1)"));
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
+    try h.put("pkgs/base/buildrules.mojo.bzl", contract.mojo_bzl_text[0 .. contract.mojo_bzl_text.len / 2]);
+    r = h.run(&.{ "mojo", "check" });
+    try t.expect(kit.contains(r.err, "buildrules.mojo.bzl is not what sync writes (first difference at line "));
+    // The directory's BUCK file is there and empty: the export is appended after one blank line at most.
+    const g = try fresh();
+    defer g.destroy();
+    try g.put("BUCK", "");
+    try t.expectEqual(@as(u8, 0), g.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
+    const mc = @import("mojo_cmd.zig");
+    try t.expectEqualStrings("\n" ++ mc.export_snippet, g.read("BUCK"));
+}

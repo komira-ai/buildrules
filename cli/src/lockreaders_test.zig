@@ -94,6 +94,7 @@ test "cargo_lock: every refusal gives its message and the whole read fails" {
             return error.AcceptedABadLock;
         } else |err| try t.expectEqual(error.Invalid, err);
         try expectMsg(&d, c.needle);
+        try kit.sweepRefusalLast(cargo_lock.parse, .{ "Cargo.lock", c.text });
     }
 }
 
@@ -172,6 +173,8 @@ test "lockfile: every missing or malformed line is a message and the read fails"
             return error.AcceptedABadTable;
         } else |err| try t.expectEqual(error.Invalid, err);
         try expectMsg(&d, c.needle);
+        // Not swept for a failing allocation: lockfile.parse trusts `diag.count()` after its checks, and `Diag.add` drops a message it cannot allocate,
+        // so under memory exhaustion it unwraps a key it found missing (lockfile.zig, the final return) and the process aborts. Reported, not pinned.
     }
 }
 

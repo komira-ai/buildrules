@@ -42,7 +42,15 @@ fn refused(e: *Env, text: []const u8, line: usize, needle: []const u8) !void {
     }
     try t.expectEqual(line, p.line);
     try t.expect(p.value == .null);
+    try kit.sweepOom(RefusedCall{ .text = text }, false);
 }
+
+const RefusedCall = struct {
+    text: []const u8,
+    pub fn call(self: @This(), a: std.mem.Allocator) !bool {
+        return toml.parse(a, self.text).msg.len != 0;
+    }
+};
 
 fn str(doc: val.Value, key: []const u8) []const u8 {
     return val.getStr(doc, key).?;

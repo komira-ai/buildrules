@@ -29,6 +29,7 @@ _TESTS = [
     "contract",
     "ctx",
     "fetch",
+    "growth",
     "init",
     "lockreaders",
     "mojo_cmd",

@@ -571,3 +571,39 @@ test "sync: a table whose lines are not the generated layout, or hold a bad hash
     try t.expectEqual(@as(u8, 1), gone.code);
     try t.expect(kit.contains(gone.err, "cannot read --seed missing.bzl"));
 }
+
+test "sync: fields of the lockfile that have the wrong type are the same as fields that are absent; an empty platform list is no list" {
+    const h = try fresh();
+    defer h.destroy();
+    const a = h.a();
+    const r1 = try syncWithLock(h, try entry(a, "node_modules/x", "\"version\":5,\"resolved\":\"https://registry.example/x.tgz\",\"integrity\":\"" ++ sri_a ++ "\""));
+    try t.expectEqual(@as(u8, 1), r1.code);
+    try t.expect(kit.contains(r1.err, "has no version"));
+    const r2 = try syncWithLock(h, try entry(a, "node_modules/x", "\"version\":\"1.0.0\",\"resolved\":7,\"integrity\":\"" ++ sri_a ++ "\""));
+    try t.expectEqual(@as(u8, 1), r2.code);
+    try t.expect(kit.contains(r2.err, "has no `resolved`"));
+    const ok = try syncWithLock(h, try entry(a, "node_modules/x", good_fields ++ ",\"os\":[],\"name\":9"));
+    try t.expectEqual(@as(u8, 0), ok.code);
+    try t.expect(!kit.contains(h.read("pkg/buildrules.lock.bzl"), "\"os\":"));
+    try t.expect(kit.contains(h.read("pkg/buildrules.lock.bzl"), "\"x@1.0.0\": {"));
+}
+
+test "sync: table lines that are quoted wrongly are not read, so the package is fetched again; an empty integrity is read, and is not the lockfile's" {
+    const h = try synced();
+    defer h.destroy();
+    const good_table = h.read("pkg/buildrules.lock.bzl");
+    for ([_][2][]const u8{
+        .{ "        \"sri512\": \"" ++ sri_a ++ "\",", "        \"sri512\": " ++ sri_a ++ "," },
+        .{ "        \"sri512\": \"" ++ sri_a ++ "\",", "        \"sri512\": \"" },
+    }) |c| {
+        try h.put("pkg/buildrules.lock.bzl", try std.mem.replaceOwned(u8, h.a(), good_table, c[0], c[1]));
+        fetches = 0;
+        const r = h.run(&.{ "npm", "sync", "pkg" });
+        try t.expectEqual(@as(u8, 0), r.code);
+        try t.expect(fetches >= 1);
+    }
+    try h.put("pkg/buildrules.lock.bzl", try std.mem.replaceOwned(u8, h.a(), good_table, "        \"sri512\": \"" ++ sri_a ++ "\",", "        \"sri512\": \"\","));
+    const r = h.run(&.{ "npm", "sync", "pkg" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "the same version with other bytes"));
+}

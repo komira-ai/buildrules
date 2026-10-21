@@ -8,6 +8,7 @@
 const std = @import("std");
 const ctxm = @import("ctx.zig");
 const main = @import("main.zig");
+const Diag = @import("diag.zig").Diag;
 const t = std.testing;
 
 /// Set while a command is run as a replay on a copy of the directory: a fake that keeps a record of what it was asked leaves its record alone.
@@ -21,34 +22,49 @@ pub const Run = struct { code: u8, out: []const u8, err: []const u8 };
 
 var seen_scenarios: std.AutoHashMapUnmanaged(u64, void) = .empty;
 
-const max_failure_index: usize = 100_000;
 
-/// A command line, the files it ran on and what it did: two runs with the same key replay the same way.
-fn scenarioKey(argv: []const []const u8, dir: std.fs.Dir, real: Run) u64 {
-    var h = std.hash.Wyhash.init(0);
-    for (argv) |x| {
-        h.update(x);
-        h.update("\x00");
+/// An allocator that passes everything to `backing` and records, for each allocation in order, its size and a hash of the calls it was made from. Two
+/// runs that allocate the same things in the same order have the same `h`, and `sites[i]` says which place of the code the i-th allocation is.
+const SiteRecorder = struct {
+    backing: std.mem.Allocator,
+    h: std.hash.Wyhash = std.hash.Wyhash.init(2),
+    sites: std.ArrayList(u64) = .empty,
+
+    fn allocator(self: *SiteRecorder) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
     }
-    h.update(&.{real.code});
-    h.update(real.out);
-    h.update("\x00");
-    h.update(real.err);
-    var tree: u64 = 0;
-    var w = dir.walk(t.allocator) catch return h.final();
-    defer w.deinit();
-    while (w.next() catch null) |e| {
-        if (e.kind != .file) continue;
-        var f = std.hash.Wyhash.init(1);
-        f.update(e.path);
-        const data = dir.readFileAlloc(t.allocator, e.path, 64 << 20) catch continue;
-        defer t.allocator.free(data);
-        f.update(data);
-        tree +%= f.final();
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self: *SiteRecorder = @ptrCast(@alignCast(ctx));
+        self.h.update(std.mem.asBytes(&len));
+        var addrs: [24]usize = undefined;
+        var frames = std.builtin.StackTrace{ .instruction_addresses = &addrs, .index = 0 };
+        std.debug.captureStackTrace(ra, &frames);
+        var sh = std.hash.Wyhash.init(3);
+        sh.update(std.mem.sliceAsBytes(addrs[0..@min(frames.index, addrs.len)]));
+        self.sites.append(std.heap.page_allocator, sh.final()) catch return null;
+        return self.backing.rawAlloc(len, alignment, ra);
     }
-    h.update(std.mem.asBytes(&tree));
-    return h.final();
-}
+
+    fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) bool {
+        const self: *SiteRecorder = @ptrCast(@alignCast(ctx));
+        self.h.update(std.mem.asBytes(&new_len));
+        return self.backing.rawResize(memory, alignment, new_len, ra);
+    }
+
+    fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
+        const self: *SiteRecorder = @ptrCast(@alignCast(ctx));
+        self.h.update(std.mem.asBytes(&new_len));
+        return self.backing.rawRemap(memory, alignment, new_len, ra);
+    }
+
+    fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ra: usize) void {
+        const self: *SiteRecorder = @ptrCast(@alignCast(ctx));
+        self.backing.rawFree(memory, alignment, ra);
+    }
+};
+
+var seen_sites: std.AutoHashMapUnmanaged(u64, void) = .empty;
 
 /// The first file of `dir` that is a write `ctx.write` began and did not finish (its sibling file is named `.buildrules-tmp`); null when there is none.
 fn firstUnfinishedWrite(a: std.mem.Allocator, dir: std.fs.Dir) ?[]const u8 {
@@ -143,12 +159,44 @@ pub const Harness = struct {
     /// Runs that fail an allocation are not held to an exit code: a command that records its error in a `Diag` loses the record when the allocation of it
     /// fails (diag.zig), and that is how some of them end 0; `trace` lists them.
     fn replays(self: *Harness, argv: []const []const u8, before: std.fs.Dir, real: Run) void {
-        const key = scenarioKey(argv, before, real);
-        if (seen_scenarios.contains(key)) return;
-        seen_scenarios.put(std.heap.page_allocator, key, {}) catch return;
         replaying = true;
         defer replaying = false;
         const t0 = std.time.milliTimestamp();
+        // A run that records the place of every allocation it makes (the same run, so the same allocations, as the ones that fail below).
+        var rec_arena = std.heap.ArenaAllocator.init(t.allocator);
+        defer rec_arena.deinit();
+        var rec = SiteRecorder{ .backing = rec_arena.allocator() };
+        defer rec.sites.deinit(std.heap.page_allocator);
+        {
+            var work = std.testing.tmpDir(.{ .iterate = true });
+            defer work.cleanup();
+            cloneInto(t.allocator, before, work.dir) catch |e| std.debug.panic("replay: cannot copy the directory: {s}", .{@errorName(e)});
+            var out_buf: [64]u8 = undefined;
+            var err_buf: [64]u8 = undefined;
+            var out = std.Io.Writer.Discarding.init(&out_buf);
+            var err = std.Io.Writer.Discarding.init(&err_buf);
+            var c = self.ctx;
+            c.dir = work.dir;
+            c.a = rec.allocator();
+            c.out = &out.writer;
+            c.err = &err.writer;
+            _ = main.run(&c, argv);
+        }
+        // Two runs of one command line that print the same, end the same and allocate the same sizes in the same order take the same paths of the code.
+        var kh = std.hash.Wyhash.init(0);
+        for (argv) |x| {
+            kh.update(x);
+            kh.update("\x00");
+        }
+        kh.update(&.{real.code});
+        kh.update(real.out);
+        kh.update("\x00");
+        kh.update(real.err);
+        const sig = rec.h.final();
+        kh.update(std.mem.asBytes(&sig));
+        const key = kh.final();
+        if (seen_scenarios.contains(key)) return;
+        seen_scenarios.put(std.heap.page_allocator, key, {}) catch return;
         {
             var work = std.testing.tmpDir(.{ .iterate = true });
             defer work.cleanup();
@@ -165,10 +213,13 @@ pub const Harness = struct {
             const code = main.run(&c, argv);
             if (code != real.code) std.debug.panic("`{s}`: exit {d} when the output streams fail, {d} when they work", .{ joined(argv), code, real.code });
         }
+        // Each allocation is failed once per place of the code it is made from: the places are what the error exits are at, and a place that was failed in
+        // another run (or earlier in this one, as a loop makes it again and again) is not failed again.
         var failures: usize = 0;
         var exit_zero: usize = 0;
-        var i: usize = 0;
-        while (i < max_failure_index) : (i += if (i < 300) 1 else 7) {
+        for (rec.sites.items, 0..) |site, i| {
+            if (seen_sites.contains(site)) continue;
+            seen_sites.put(std.heap.page_allocator, site, {}) catch return;
             var work = std.testing.tmpDir(.{ .iterate = true });
             defer work.cleanup();
             cloneInto(t.allocator, before, work.dir) catch |e| std.debug.panic("replay: cannot copy the directory: {s}", .{@errorName(e)});
@@ -185,14 +236,14 @@ pub const Harness = struct {
             c.out = &out.writer;
             c.err = &err.writer;
             const code = main.run(&c, argv);
-            if (!fa.has_induced_failure) break;
+            if (!fa.has_induced_failure) continue;
             failures += 1;
             if (code == 0) exit_zero += 1;
             if (firstUnfinishedWrite(t.allocator, work.dir)) |path| {
                 std.debug.panic("`{s}`: with allocation {d} failing, the run left {s}, a write it began and did not finish", .{ joined(argv), i, path });
             }
         }
-        if (trace) std.debug.print("replay {s}: {d} allocation failures ({d} exit 0), {d} ms\n", .{ joined(argv), failures, exit_zero, std.time.milliTimestamp() - t0 });
+        if (trace) std.debug.print("replay {s}: {d} of {d} allocations failed ({d} exit 0), {d} ms\n", .{ joined(argv), failures, rec.sites.items.len, exit_zero, std.time.milliTimestamp() - t0 });
     }
 
     pub fn put(self: *Harness, path: []const u8, data: []const u8) !void {
@@ -216,6 +267,32 @@ pub const Harness = struct {
 /// would otherwise hand the caller a wrong answer as a right one. Without it, the sweep proves only that each failing allocation ends the call.
 pub fn sweepOom(ctx: anytype, strict: bool) !void {
     return allocSweep(ctx, strict, true);
+}
+
+/// The refusal `f(allocator, &diag, args...)` makes, with the allocator failing at each allocation (see `sweepOomRefusal`): an error or a message, and no crash.
+pub fn sweepRefusal(comptime f: anytype, args: anytype) !void {
+    const Call = struct {
+        args: @TypeOf(args),
+        pub fn call(self: @This(), alloc: std.mem.Allocator) !bool {
+            var d = Diag.init(alloc);
+            _ = @call(.auto, f, .{ alloc, &d } ++ self.args) catch return false;
+            return true;
+        }
+    };
+    try sweepOomRefusal(Call{ .args = args });
+}
+
+/// `sweepRefusal` for a function that takes the diagnostics last: `f(allocator, args..., &diag)`.
+pub fn sweepRefusalLast(comptime f: anytype, args: anytype) !void {
+    const Call = struct {
+        args: @TypeOf(args),
+        pub fn call(self: @This(), alloc: std.mem.Allocator) !bool {
+            var d = Diag.init(alloc);
+            _ = @call(.auto, f, .{alloc} ++ self.args ++ .{&d}) catch return false;
+            return true;
+        }
+    };
+    try sweepOomRefusal(Call{ .args = args });
 }
 
 /// `sweepOom` for a call that is meant to refuse (its answer is false, with a message) and not to succeed: the run that meets no failure may answer either.
