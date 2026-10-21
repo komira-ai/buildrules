@@ -55,7 +55,7 @@ zig_test(
 export_file(
     name = "pins.bzl",
     src = "pins.bzl",
-    visibility = ["//site:"],
+    visibility = ["//site:", "//ci:"],
 )
 
 
