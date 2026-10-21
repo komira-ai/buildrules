@@ -27,6 +27,12 @@ pub const Out = struct {
     }
 };
 
+/// The permission bits a file is given from the mode an archive records: read, write and execute for owner, group and other. Set-uid, set-gid and sticky are dropped, and so
+/// is the file type a zip keeps in the same word.
+pub fn fileMode(mode: u32) u32 {
+    return mode & 0o777;
+}
+
 pub const Extractor = struct {
     dir: ?std.fs.Dir,
     strip: usize,
@@ -110,7 +116,7 @@ pub const Extractor = struct {
         try self.clear(rel);
         const f = try d.createFile(rel, .{ .exclusive = true, .mode = 0o600 });
         errdefer f.close();
-        try f.chmod(@intCast(mode & 0o777));
+        try f.chmod(@intCast(fileMode(mode)));
         self.stats.files += 1;
         return .{ .file = f };
     }

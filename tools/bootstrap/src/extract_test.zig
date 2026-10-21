@@ -84,3 +84,13 @@ test "a component too long for the file system is the file system's refusal" {
     defer ex.deinit();
     try t.expectError(error.NameTooLong, ex.mkdir("x" ** 300));
 }
+
+test "fileMode keeps the nine permission bits and drops set-uid, set-gid, sticky and the file type" {
+    try t.expectEqual(@as(u32, 0o755), extract.fileMode(0o755));
+    try t.expectEqual(@as(u32, 0o755), extract.fileMode(0o4755));
+    try t.expectEqual(@as(u32, 0o755), extract.fileMode(0o2755));
+    try t.expectEqual(@as(u32, 0o777), extract.fileMode(0o1777));
+    try t.expectEqual(@as(u32, 0o644), extract.fileMode(0o100644));
+    try t.expectEqual(@as(u32, 0o700), extract.fileMode(0o7700));
+    try t.expectEqual(@as(u32, 0), extract.fileMode(0o7000));
+}
