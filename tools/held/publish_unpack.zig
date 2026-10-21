@@ -8,9 +8,11 @@
 //!                                the same, then creates the release (if absent), uploads the assets it does not hold, downloads each asset again and checks it
 //!                                against the pin.
 //!
-//! Options: --root DIR (the repository root, default .), --buck2 PATH (default `buck2`), --gh PATH (default `gh`), --work DIR (scratch for --apply: it must exist,
+//! Options: --root DIR (the repository root, default .), --buck2 PATH (default `buck2`), --gh PATH (default `gh`), --git PATH (default `git`), --work DIR (scratch for --apply: it must exist,
 //! and is where the uploaded copies and the downloads go).
 //!
+//! The release is created pointing at the commit the programs were built from (`git rev-parse HEAD` of --root, which must have no uncommitted changes for --apply), and
+//! the downloads of an --apply go to a directory of their own under --work (`verify-<time>`), so a second run never meets the first one's files.
 //! It never replaces an asset and never deletes a release or an asset: an asset that is already there is only verified, a stray asset is reported with the command
 //! that would remove it (which the owner runs), and the flags that replace or force are never passed. If the programs the tree builds are not the pinned ones (the
 //! source changed without new rows, or the rows were typed wrong) nothing is uploaded: the text says which values to write, and the new programs go under the next tag.
@@ -51,7 +53,10 @@ pub const Options = struct {
     root: []const u8 = ".",
     buck2: []const u8 = "buck2",
     gh: []const u8 = "gh",
+    git: []const u8 = "git",
     work: ?[]const u8 = null,
+    /// Names the directory the downloads go to (`<work>/verify-<run_id>`), so each run downloads into a directory that did not exist before it. The program sets it from the clock.
+    run_id: []const u8 = "0",
 };
 
 pub fn parse(args: []const []const u8, diag: *[]const u8) !Options {
@@ -71,10 +76,12 @@ pub fn parse(args: []const []const u8, diag: *[]const u8) !Options {
             o.buck2 = args[i];
         } else if (std.mem.eql(u8, arg, "--gh")) {
             o.gh = args[i];
+        } else if (std.mem.eql(u8, arg, "--git")) {
+            o.git = args[i];
         } else if (std.mem.eql(u8, arg, "--work")) {
             o.work = args[i];
         } else {
-            return fail(diag, "unknown argument (only --apply, --root, --buck2, --gh, --work)");
+            return fail(diag, "unknown argument (only --apply, --root, --buck2, --gh, --git, --work)");
         }
     }
     if (o.apply and o.work == null) return fail(diag, "--apply needs --work DIR (an existing directory for the copies and the downloads)");
@@ -129,6 +136,14 @@ fn hashFile(path: []const u8) !struct { sha256: [64]u8, size: u64 } {
     return .{ .sha256 = std.fmt.bytesToHex(d, .lower), .size = size };
 }
 
+/// Whether `s` is lower-case hexadecimal digits.
+fn isHex(s: []const u8) bool {
+    for (s) |c| {
+        if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) return false;
+    }
+    return true;
+}
+
 /// The asset names the release holds, one per line of `out`.
 fn contains(out: []const u8, name: []const u8) bool {
     var it = std.mem.splitScalar(u8, out, '\n');
@@ -152,6 +167,24 @@ pub fn publish(a: std.mem.Allocator, o: Options, r: Runner, say: Say) !u8 {
         say.say(a, "{s} has no UNPACK_TAG", .{table_path});
         return 2;
     };
+
+    // the commit the programs are built from: the release is created pointing at it, and a tree with changes is not that commit
+    const head = try r.run(a, &.{ o.git, "-C", o.root, "rev-parse", "HEAD" }, o.root);
+    defer a.free(head.out);
+    const sha = std.mem.trim(u8, head.out, " \r\n");
+    if (head.code != 0 or sha.len != 40 or !isHex(sha)) {
+        say.say(a, "cannot read the commit of {s} (git rev-parse HEAD)", .{o.root});
+        return 2;
+    }
+    const dirty = try r.run(a, &.{ o.git, "-C", o.root, "status", "--porcelain" }, o.root);
+    defer a.free(dirty.out);
+    const is_dirty = dirty.code != 0 or std.mem.trim(u8, dirty.out, " \r\n").len > 0;
+    if (is_dirty and o.apply) {
+        say.say(a, "the tree has changes that are not committed: the programs built from it are not those of the commit {s}. Nothing was changed.", .{sha});
+        return 2;
+    }
+    if (is_dirty) say.say(a, "WARNING: the tree has changes that are not committed; --apply would refuse", .{});
+    say.say(a, "0. the commit: {s}", .{sha});
 
     // 1. build
     const host_text = try std.mem.join(a, ", ", &pins.hosts);
@@ -251,7 +284,7 @@ pub fn publish(a: std.mem.Allocator, o: Options, r: Runner, say: Say) !u8 {
         say.say(a, "   creating the release (not marked latest)", .{});
         const notes = try std.fmt.allocPrint(a, "The unpack programs pinned by rules/pins/bootstrap.bzl, one per host. Do not replace an asset: a new program goes under the next tag.", .{});
         defer a.free(notes);
-        const c = try r.run(a, &.{ o.gh, "release", "create", tag, "--repo", repo, "--target", "main", "--latest=false", "--title", "unpack programs", "--notes", notes }, o.root);
+        const c = try r.run(a, &.{ o.gh, "release", "create", tag, "--repo", repo, "--target", sha, "--latest=false", "--title", "unpack programs", "--notes", notes }, o.root);
         defer a.free(c.out);
         if (c.code != 0) {
             say.say(a, "gh release create failed (exit {d}); nothing was uploaded", .{c.code});
@@ -285,7 +318,9 @@ pub fn publish(a: std.mem.Allocator, o: Options, r: Runner, say: Say) !u8 {
     for (pins.hosts, 0..) |h, i| {
         const name = try assetName(a, h);
         defer a.free(name);
-        const dir = try std.fs.path.join(a, &.{ work, "verify", name });
+        const vdir = try std.fmt.allocPrint(a, "verify-{s}", .{o.run_id});
+        defer a.free(vdir);
+        const dir = try std.fs.path.join(a, &.{ work, vdir, name });
         defer a.free(dir);
         std.fs.cwd().makePath(dir) catch {
             say.say(a, "cannot make {s}", .{dir});
@@ -345,9 +380,12 @@ pub fn main() u8 {
         return 2;
     };
     var unused: u8 = 0;
+    var id_buf: [32]u8 = undefined;
+    var o2 = o;
+    o2.run_id = std.fmt.bufPrint(&id_buf, "{d}", .{std.time.milliTimestamp()}) catch "0";
     const runner = Runner{ .ctx = &unused, .runFn = RealRunner.run };
     const say = Say{ .ctx = &unused, .sayFn = Stdout.say };
-    return publish(a, o, runner, say) catch |e| {
+    return publish(a, o2, runner, say) catch |e| {
         std.debug.print("publish_unpack: {s}\n", .{@errorName(e)});
         return 2;
     };

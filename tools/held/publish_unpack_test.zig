@@ -20,6 +20,9 @@ const Fake = struct {
     skip_download_file: bool = false,
     relative_paths: bool = false,
     omit_path_of: ?[]const u8 = null,
+    head: []const u8 = "0123456789abcdef0123456789abcdef01234567\n",
+    head_code: u8 = 0,
+    status: []const u8 = "",
 
     fn deinit(self: *Fake) void {
         for (self.calls.items) |c| a.free(c);
@@ -36,6 +39,10 @@ const Fake = struct {
         const self: *Fake = @ptrCast(@alignCast(ctx));
         try self.calls.append(a, try std.mem.join(a, " ", argv));
         const prog = argv[0];
+        if (std.mem.eql(u8, prog, "fake-git")) {
+            if (std.mem.eql(u8, argv[3], "rev-parse")) return .{ .code = self.head_code, .out = try alloc.dupe(u8, self.head) };
+            return .{ .code = 0, .out = try alloc.dupe(u8, self.status) };
+        }
         if (std.mem.eql(u8, prog, "fake-buck2")) {
             if (self.build_code != 0) return .{ .code = self.build_code, .out = try alloc.dupe(u8, "") };
             var out = std.ArrayList(u8).empty;
@@ -195,7 +202,7 @@ const World = struct {
     }
 
     fn options(self: *World, apply: bool) pub_.Options {
-        return .{ .apply = apply, .root = self.root, .buck2 = "fake-buck2", .gh = "fake-gh", .work = if (apply) self.work else null };
+        return .{ .apply = apply, .root = self.root, .buck2 = "fake-buck2", .gh = "fake-gh", .git = "fake-git", .work = if (apply) self.work else null };
     }
 };
 
@@ -270,7 +277,7 @@ test "--apply creates the release, uploads the three assets, downloads and verif
     var out = Lines{};
     defer out.deinit();
     try t.expectEqual(@as(u8, 0), try pub_.publish(a, w.options(true), f.runner(), out.say()));
-    try t.expectEqual(@as(usize, 1), f.called("release create unpack-4 --repo " ++ pub_.repo ++ " --target main --latest=false"));
+    try t.expectEqual(@as(usize, 1), f.called("release create unpack-4 --repo " ++ pub_.repo ++ " --target 0123456789abcdef0123456789abcdef01234567 --latest=false"));
     try t.expectEqual(@as(usize, 3), f.called("release upload unpack-4"));
     try t.expectEqual(@as(usize, 3), f.called("release download unpack-4"));
     try t.expect(out.has("unpack-linux-x86_64 matches the pin"));
@@ -485,12 +492,13 @@ test "failures of gh while applying are exit 2 (a write failed) or 1 (an asset d
 
 test "parse: the options, and apply needs a work directory" {
     var diag: []const u8 = "";
-    const o = try pub_.parse(&.{ "--apply", "--work", "w", "--root", "r", "--buck2", "b", "--gh", "g" }, &diag);
+    const o = try pub_.parse(&.{ "--apply", "--work", "w", "--root", "r", "--buck2", "b", "--gh", "g", "--git", "gi" }, &diag);
     try t.expect(o.apply);
     try t.expectEqualStrings("w", o.work.?);
     try t.expectEqualStrings("r", o.root);
     try t.expectEqualStrings("b", o.buck2);
     try t.expectEqualStrings("g", o.gh);
+    try t.expectEqualStrings("gi", o.git);
     const d = try pub_.parse(&.{}, &diag);
     try t.expect(!d.apply);
     try t.expectError(error.Usage, pub_.parse(&.{"--apply"}, &diag));
@@ -501,4 +509,85 @@ test "parse: the options, and apply needs a work directory" {
     try t.expect(std.mem.indexOf(u8, diag, "unknown argument") != null);
     // the flags that replace or force are not options at all
     try t.expectError(error.Usage, pub_.parse(&.{ "--clobber", "x" }, &diag));
+}
+
+test "the release points at the commit the programs were built from, and a tree with changes is refused" {
+    {
+        var w = try World.init(null);
+        defer w.deinit();
+        var f = w.fake();
+        defer f.deinit();
+        f.head = "fedcba9876543210fedcba9876543210fedcba98\n";
+        var out = Lines{};
+        defer out.deinit();
+        try t.expectEqual(@as(u8, 0), try pub_.publish(a, w.options(true), f.runner(), out.say()));
+        try t.expectEqual(@as(usize, 1), f.called("--target fedcba9876543210fedcba9876543210fedcba98 --latest=false"));
+        try t.expectEqual(@as(usize, 0), f.called("--target main"));
+        try t.expect(out.has("0. the commit: fedcba9876543210fedcba9876543210fedcba98"));
+    }
+    {
+        var w = try World.init(null);
+        defer w.deinit();
+        var f = w.fake();
+        defer f.deinit();
+        f.status = " M tools/bootstrap/src/tar.zig\n";
+        var out = Lines{};
+        defer out.deinit();
+        try t.expectEqual(@as(u8, 2), try pub_.publish(a, w.options(true), f.runner(), out.say()));
+        try t.expect(out.has("changes that are not committed"));
+        try t.expectEqual(@as(usize, 0), f.called("fake-gh"));
+        try t.expectEqual(@as(usize, 0), f.called("fake-buck2"));
+        // a dry run only warns
+        var f2 = w.fake();
+        defer f2.deinit();
+        f2.status = " M x\n";
+        var out2 = Lines{};
+        defer out2.deinit();
+        try t.expectEqual(@as(u8, 0), try pub_.publish(a, w.options(false), f2.runner(), out2.say()));
+        try t.expect(out2.has("WARNING: the tree has changes"));
+    }
+    for ([_][]const u8{ "", "not a sha\n", "ABCDEF9876543210fedcba9876543210fedcba98\n" }) |bad| {
+        var w = try World.init(null);
+        defer w.deinit();
+        var f = w.fake();
+        defer f.deinit();
+        f.head = bad;
+        var out = Lines{};
+        defer out.deinit();
+        try t.expectEqual(@as(u8, 2), try pub_.publish(a, w.options(false), f.runner(), out.say()));
+        try t.expect(out.has("cannot read the commit"));
+    }
+    {
+        var w = try World.init(null);
+        defer w.deinit();
+        var f = w.fake();
+        defer f.deinit();
+        f.head_code = 128;
+        var out = Lines{};
+        defer out.deinit();
+        try t.expectEqual(@as(u8, 2), try pub_.publish(a, w.options(false), f.runner(), out.say()));
+    }
+}
+
+test "each run downloads into a directory of its own, so a second run meets no file of the first" {
+    var w = try World.init(null);
+    defer w.deinit();
+    var first = w.fake();
+    defer first.deinit();
+    var out = Lines{};
+    defer out.deinit();
+    var o = w.options(true);
+    o.run_id = "100";
+    try t.expectEqual(@as(u8, 0), try pub_.publish(a, o, first.runner(), out.say()));
+    // the second run finds the release and the assets, and downloads again: the first run's files are still there
+    var second = w.fake();
+    defer second.deinit();
+    second.release_exists = true;
+    for (first.assets.items) |n| try second.assets.append(a, try a.dupe(u8, n));
+    o.run_id = "200";
+    try t.expectEqual(@as(u8, 0), try pub_.publish(a, o, second.runner(), out.say()));
+    try w.tmp.dir.access("work/verify-100/unpack-linux-x86_64/unpack-linux-x86_64", .{});
+    try w.tmp.dir.access("work/verify-200/unpack-linux-x86_64/unpack-linux-x86_64", .{});
+    try t.expectEqual(@as(usize, 0), second.called("release upload"));
+    try t.expectEqual(@as(usize, 3), second.called("work/verify-200"));
 }
