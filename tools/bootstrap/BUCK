@@ -1,0 +1,129 @@
+# unpack: the one tool every unpacking action will run (docs/pins.md, "unpack"): tar, tar.gz, tar.xz and zip, with `--strip-components` and the sha256 and size of the
+# archive checked first. It is built by the pinned zig behind its tests, and the same program is built for the three hosts the release machine has (linux x86_64,
+# linux aarch64, macOS aarch64). Those three are published as release assets and pinned (rules/pins/bootstrap.bzl), so that an action can run `unpack` before
+# anything else has been unpacked; //ci:unpack_pin_check rebuilds the tree's copy and requires its sha256 to be the pin's.
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_module", "zig_test")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+# The pinned zig 0.15 (the program uses std.io of 0.15 and its xz decoder), as the other tools do.
+_ZIG = "buildrules//rules/pins:zig_next"
+
+_SRCS = glob(["src/*.zig"])
+
+# Each test file is one target, so a change to one is not a rebuild of the others and the farm runs them in parallel.
+_TESTS = [
+    "paths",
+    "inflate",
+    "tar",
+    "extract",
+    "zip",
+    "xz",
+    "main",
+    "pins",
+    "oom",
+]
+
+[
+    zig_test(
+        name = name + "_unit",
+        src = "src/" + name + "_test.zig",
+        imports = _SRCS,
+        zig = _ZIG,
+    )
+    for name in _TESTS
+]
+
+# The coverage of the sources the unit tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. The test files and the test kit are not counted.
+zig_coverage(
+    test_targets = [":" + name + "_unit" for name in _TESTS],
+    expect = ["tools/bootstrap/" + f for f in glob(["src/*.zig"], exclude = ["src/*_test.zig", "src/testkit.zig", "src/unpack.zig", "src/real.zig"])],
+)
+
+zig_exe(
+    name = "unpack",
+    src = "src/unpack.zig",
+    imports = _SRCS,
+    zig = _ZIG,
+    unit_tests = [":" + name + "_unit" for name in _TESTS] + ["buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
+)
+
+# The same program for each host a release asset is published for. Each is a zig_exe of the same source and tests; only `target` differs. They are built on the
+# linux execution platform (zig cross-compiles a program that needs no SDK). The host names are those of rules/pins/hosts.bzl; the zig triple of each is written
+# out twice on purpose, here and as the `expect` of its zig_exe_target_test, so a change to one alone is red.
+_HOSTS = {
+    "linux-x86_64": "x86_64-linux-musl",
+    "linux-aarch64": "aarch64-linux-musl",
+    "macos-aarch64": "aarch64-macos",
+}
+
+[
+    zig_exe(
+        name = "unpack_" + host.replace("-", "_"),
+        src = "src/unpack.zig",
+        imports = _SRCS,
+        zig = _ZIG,
+        target = triple,
+        unit_tests = [":" + name + "_unit" for name in _TESTS] + ["buildrules//rules/pins:zig_next_version"],
+        visibility = ["PUBLIC"],
+    )
+    for host, triple in _HOSTS.items()
+]
+
+zig_exe_target_test(name = "linux_x86_64_is_x86_64_linux_musl", exe = ":unpack_linux_x86_64", expect = "x86_64-linux-musl", same_tests_as = ":unpack", visibility = ["PUBLIC"])
+
+zig_exe_target_test(name = "linux_aarch64_is_aarch64_linux_musl", exe = ":unpack_linux_aarch64", expect = "aarch64-linux-musl", same_tests_as = ":unpack", visibility = ["PUBLIC"])
+
+zig_exe_target_test(name = "macos_aarch64_is_aarch64_macos", exe = ":unpack_macos_aarch64", expect = "aarch64-macos", same_tests_as = ":unpack", visibility = ["PUBLIC"])
+
+# The built program on the real pinned archives, against busybox's extraction of the same bytes (src/real_test.zig), and how fast it reads the real xz tarball against
+# busybox's (src/xz_speed_test.zig). They run the executable, so they are tests of it and not behind it: the program does not wait for them.
+_REAL_DATA = {
+    "zig.tar.xz": "buildrules//rules/pins:zig_linux_x86_64.tar.xz",
+    "actionlint.tar.gz": "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
+    "libgcc.conda": "buildrules//rules/pins:libgcc_15.3.0_linux-64.conda",
+}
+
+[
+    zig_test(
+        name = name + "_unit",
+        src = "src/" + name + "_test.zig",
+        imports = _SRCS,
+        zig = _ZIG,
+        data = _REAL_DATA,
+        exec_tools = {
+            "UNPACK": ":unpack",
+            "BUSYBOX": "buildrules//rules/pins:busybox",
+            "ZIG_DIST": "buildrules//rules/pins:zig",
+        },
+        visibility = ["//ci:"],
+    )
+    for name in ["real", "xz_speed"]
+]
+
+# The pins of the program are the programs this tree builds, for each host (src/pins.zig, rules/pins/bootstrap.bzl): //ci builds this. A change to the source that does
+# not come with new rows and a new release tag is red here, and the red text names the values to write.
+zig_test(
+    name = "pin_check_unit",
+    src = "src/pin_check_test.zig",
+    imports = _SRCS,
+    zig = _ZIG,
+    data = {"rules/pins/bootstrap.bzl": "buildrules//rules/pins:bootstrap.bzl"},
+    exec_tools = {
+        "UNPACK_LINUX_X86_64": ":unpack_linux_x86_64",
+        "UNPACK_LINUX_AARCH64": ":unpack_linux_aarch64",
+        "UNPACK_MACOS_AARCH64": ":unpack_macos_aarch64",
+    },
+    visibility = ["//ci:"],
+)
+
+# The pin rows and their check, as a module the held publishing tool imports (tools/held), so the tool and the CI check read the table one way. Importers wait for its tests.
+zig_module(
+    name = "bootstrap_pins",
+    src = "src/pins.zig",
+    unit_tests = [":pins_unit"],
+    visibility = ["//tools/held:"],
+)
+
+scrub_files()
