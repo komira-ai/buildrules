@@ -8,7 +8,10 @@ so a hash here is the hash the builds use.
 PINS = {
     "busybox": {
         "name": "busybox",
-        "url": "https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox",
+        # The upstream file is https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox (static, musl); buck2 `download_file` takes one URL and has no fallback, so the pin
+        # fetches the byte-identical copy held as an asset of the release `mirror-busybox-1.35.0` of this repository (tools/held/mirror-busybox.sh
+        # downloads the upstream file, checks the sha256 and size below, and uploads it). The beta stage maps the prefix back to the upstream on a retry (docs/pins.md).
+        "url": "https://github.com/komira-ai/buildrules/releases/download/mirror-busybox-1.35.0/busybox",
         "sha256": "6e123e7f3202a8c1e9b1f94d8941580a25135382b99e8d3e34fb858bba311348",
         "size": 1131168,
         "executable": True,

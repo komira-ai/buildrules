@@ -37,15 +37,22 @@ with the pin's (2026-10-20):
 
 | primary prefix | mirror prefix | pins | identical |
 |---|---|---|---|
-| `https://busybox.net/` | `https://web.archive.org/web/2024id_/https://busybox.net/` | busybox 1.35.0 | yes, 1131168 bytes, `6e123e7f...1348` |
+| `https://github.com/komira-ai/buildrules/releases/download/mirror-busybox-1.35.0/` | `https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/` | busybox 1.35.0 (the pin is the release asset; the map points back at the upstream) | held script checks it: 1131168 bytes, `6e123e7f...1348` |
 | `https://ziglang.org/download/` | `https://zig.linus.dev/zig/` (listed in ziglang.org's community-mirrors.txt) | zig 0.12.0, zig 0.15.2 | yes, both |
 | `https://conda.anaconda.org/conda-forge/` | `https://repo.prefix.dev/conda-forge/` | libgcc, libstdcxx | yes, both |
 | `https://nodejs.org/dist/` | `https://registry.npmmirror.com/-/binary/node/` | node 24 | yes |
 
-busybox.net has no mirror of its own that serves this binary: the byte-identical copy is the Internet Archive's capture of busybox.net, which is a fallback and not a
-host to depend on (no SLA; it can be slow). No mirror was found or checked for `static.rust-lang.org` (CloudFront), `github.com` releases, `registry.npmjs.org`
-or `static.crates.io`; those are fetched from their own hosts. A pin that must not depend on any of these hosts is the repository owner's decision: host the pins as assets of a
-dedicated, immutable buildrules release (the upload is a step only the repository owner can do).
+busybox.net is a single origin and has timed out for hours, so busybox 1.35.0 is pinned to a copy: the asset `busybox` of the release `mirror-busybox-1.35.0` of this repository
+(`rules/pins/pins.bzl` and `rules/rust/pins.bzl`; the same sha256 and size as before). The upstream URL stays in a comment on the row, and the beta stage's retry maps the asset's prefix
+back to busybox.net (first row above). buck2's `download_file` takes one URL, so the fallback is that map and not a second URL on the pin. The asset is uploaded by
+`tools/held/mirror-busybox.sh` (dry run by default; `--apply` is the repository owner's go): it downloads the upstream file, checks sha256 and size against `pins.bzl`, creates the
+release, uploads, downloads the asset again and checks it. **Run it with `--apply` before this change is merged**: until the asset exists, a download of this pin that the remote cache
+does not hold fails with a 404.
+
+Every other pin's host is a single origin too. `ci/pin_mirrors_check.zig` holds the rule for the pin tables: a host other than github.com is listed there with its reason (zig,
+node, conda-forge and the Rust distribution servers have mirrors only as the prefix map above, or none; `registry.npmjs.org` rows carry an integrity hash). No mirror was
+found or checked for `static.rust-lang.org` (CloudFront) or `registry.npmjs.org`. Moving one of them to a release asset of its own is the same three steps as busybox: a held
+upload script, the pin's URL, and the allow-list line removed.
 
 ## Other hosts (linux-aarch64, macos-aarch64)
 

@@ -208,7 +208,30 @@ zig_test(
     },
 )
 
-group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", "//ci/negative:negative_check"])
+# The hosts of the pinned downloads (docs/pins.md, "Mirrors"): ci/pin_mirrors_check.zig requires every pin table's URL to be on github.com (the busybox mirror is a release asset of this
+# repository, uploaded by tools/held/mirror-busybox.sh) or its host to be listed in the check with the reason it has no mirror yet. It reads the text of the tables and the held script and
+# plants a defect for each of its rules.
+zig_test(
+    name = "pin_mirrors_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "pin_mirrors_check.zig",
+    imports = ["workflow_check.zig"],
+    data = {
+        "rules/pins/pins.bzl": "//rules/pins:pins.bzl",
+        "rules/pins/hosts.bzl": "//rules/pins:hosts.bzl",
+        "rules/rust/pins.bzl": "//rules/rust:pins.bzl",
+        "rules/node/pins.bzl": "//rules/node:pins.bzl",
+        "rules/coverage/pins.bzl": "//rules/coverage:pins.bzl",
+        "rules/mopm/pins.bzl": "//rules/mopm:pins.bzl",
+        "tools/held/mirror-busybox.sh": "//tools/held:mirror-busybox.sh",
+        # the tests of workflow_check.zig, which this file imports, run here too
+        ".github/workflows/ci.yml": "//:ci.yml",
+        "tools/buck2": "//:buck2.pin",
+        "ci/BUCK": "BUCK",
+    },
+)
+
+group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":pin_mirrors_check", "//ci/negative:negative_check"])
 
 # The coverage of every package with Zig unit tests (rules/coverage/README.md, "Zig coverage"), each held to its floor (`coverage_floor.txt` beside its
 # BUCK file) both ways: a fall fails, and so does a rise the floor has not been raised to. Building this builds the tests again under kcov and with block
