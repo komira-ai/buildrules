@@ -29,7 +29,7 @@ test "oneLine: a long string is cut at the bound and says so" {
     try t.expectEqualStrings("...", over[safe.max_line..]);
 }
 
-test "jsonDepthOk: the bound is 32 levels, and brackets inside strings do not count" {
+test "jsonDepthOk: 32 levels are fine and 33 are not" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
@@ -40,8 +40,20 @@ test "jsonDepthOk: the bound is 32 levels, and brackets inside strings do not co
     var deep = std.ArrayList(u8).empty;
     try deep.appendNTimes(a, '{', safe.max_json_depth + 1);
     try t.expect(!safe.jsonDepthOk(deep.items));
+}
+
+test "jsonDepthOk: brackets inside a string do not count" {
     try t.expect(safe.jsonDepthOk("{\"a\":\"[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[\"}"));
+}
+
+test "jsonDepthOk: an escaped quote does not end the string" {
     try t.expect(safe.jsonDepthOk("{\"a\":\"\\\"[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[\"}"));
+}
+
+test "jsonDepthOk: a closing bracket lowers the depth, and an unmatched one does not underflow" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
     try t.expect(safe.jsonDepthOk("]]]]][[["));
     var after_close = std.ArrayList(u8).empty;
     try after_close.appendNTimes(a, '[', safe.max_json_depth);
