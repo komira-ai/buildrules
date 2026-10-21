@@ -206,6 +206,24 @@ pub fn check(a: std.mem.Allocator, raw: []const u8, pins: []const u8) !Findings 
 
     // What it scans, and where it reports.
     if (!has(wf, "git ls-files -z -- ':(glob)**/package-lock.json' ':(glob)**/Cargo.lock'")) try add(a, &f, "{s}: the scan does not list every `package-lock.json` and `Cargo.lock` of the tree", .{file});
+    // Test inputs (a fixture directory, the beta templates) are not scanned: an advisory in one could never be fixed by a change here, and the issue would stay open for good.
+    for ([_][]const u8{ "':(exclude,glob)**/fixture/**'", "':(exclude,glob)beta/**'" }) |ex| {
+        if (!has(wf, ex)) try add(a, &f, "{s}: the scan does not exclude test inputs with {s}", .{ file, ex });
+    }
+
+    // The job token is on the report step alone: not at workflow or job level, where the downloaded scanner would run with it.
+    if (count(wf, "GH_TOKEN:") != 1) try add(a, &f, "{s}: `GH_TOKEN:` is set {d} times (exactly once, on the Report step)", .{ file, count(wf, "GH_TOKEN:") });
+    if (std.mem.indexOf(u8, wf, "\n          GH_TOKEN: ${{ github.token }}\n")) |at| {
+        const report = std.mem.indexOf(u8, wf, "      - name: Report\n        env:\n") orelse wf.len;
+        if (at < report or at > report + 40) try add(a, &f, "{s}: `GH_TOKEN` is not in the env of the Report step", .{file});
+    } else try add(a, &f, "{s}: `GH_TOKEN: ${{{{ github.token }}}}` is not set in a step env (10 spaces: step level, not job or workflow level)", .{file});
+
+    // Nothing can switch the job or a step off: a skipped scan is a green run that scanned nothing.
+    var iflines = std.mem.splitScalar(u8, wf, '\n');
+    while (iflines.next()) |raw_line| {
+        const line = std.mem.trimLeft(u8, std.mem.trim(u8, raw_line, " \r"), "- ");
+        if (std.mem.startsWith(u8, line, "if:")) try add(a, &f, "{s}: `{s}`: no `if:` on the job or a step (the scan must always run)", .{ file, line });
+    }
     for ([_][]const u8{
         "title=Advisories",
         "gh issue list --state all",
@@ -325,6 +343,21 @@ test "mutant: a trigger a change can start" {
     try expectMutant(a, r, "\"17 5 * * *\"", "\"17 5 * *\"", "is not daily");
 }
 
+test "mutant: the token is on the report step alone" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try real(a);
+    // GH_TOKEN moved to job level (the original shape), added there, added to the workflow, or put on the scan step.
+    try expectMutant(a, r, "    steps:\n", "    env:\n      GH_TOKEN: ${{ github.token }}\n    steps:\n", "is set 2 times");
+    try expectMutant(a, r, "    steps:\n      - uses", "    env:\n      GH_TOKEN: ${{ github.token }}\n    steps:\n      - uses", "is set 2 times");
+    try expectMutant(a, r, "        env:\n          GH_TOKEN: ${{ github.token }}\n", "", "is not set in a step env");
+    try expectMutant(a, r, "name: advisories\n", "name: advisories\nenv:\n  GH_TOKEN: ${{ github.token }}\n", "is set 2 times");
+    try expectMutant(a, r, "      - name: Scan the lockfiles\n        run: |", "      - name: Scan the lockfiles\n        env:\n          GH_TOKEN: ${{ github.token }}\n        run: |", "is set 2 times");
+    // The token moved wholesale off the report step onto the scan step.
+    try expectMutant(a, r, "      - name: Report\n        env:\n          GH_TOKEN: ${{ github.token }}\n        run: |", "      - name: Report\n        run: |", "is not set in a step env");
+}
+
 test "mutant: a token with more than it needs" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
@@ -339,7 +372,7 @@ test "mutant: a token with more than it needs" {
     try expectMutant(a, r, "      issues: write\n", "      issues: read\n", "job `scan` permissions are not exactly");
     try expectMutant(a, r, "      issues: write\n", "", "job `scan` permissions are not exactly");
     try expectMutant(a, r, "    permissions:\n      contents: read\n      issues: write\n", "", "job `scan` permissions are not exactly");
-    try expectMutant(a, r, "      GH_TOKEN: ${{ github.token }}", "      GH_TOKEN: ${{ secrets.ADVISORIES_TOKEN }}", "reads a secret");
+    try expectMutant(a, r, "          GH_TOKEN: ${{ github.token }}", "          GH_TOKEN: ${{ secrets.ADVISORIES_TOKEN }}", "reads a secret");
     try expectMutant(a, r, "  scan:\n", "  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n  scan:\n", "not exactly one");
 }
 
@@ -395,6 +428,13 @@ test "mutant: a scan that gates" {
     try expectMutant(a, r, "    timeout-minutes: 20\n", "    timeout-minutes: 20\n    continue-on-error: true\n", "`continue-on-error` is set to `true`");
     try expectMutant(a, r, "      - name: Scan the lockfiles\n", "      - name: Scan the lockfiles\n        continue-on-error: true\n", "`continue-on-error` is set to `true`");
     try expectMutant(a, r, "':(glob)**/package-lock.json' ':(glob)**/Cargo.lock'", "':(glob)**/package-lock.json'", "does not list every");
+    try expectMutant(a, r, " ':(exclude,glob)**/fixture/**'", "", "does not exclude test inputs");
+    try expectMutant(a, r, " ':(exclude,glob)beta/**'", "", "does not exclude test inputs");
+    try expectMutant(a, r, "    timeout-minutes: 20\n", "    timeout-minutes: 20\n    continue-on-error: ${{ github.run_attempt }}\n", "`continue-on-error` is set to");
+    try expectMutant(a, r, "    timeout-minutes: 20\n", "    timeout-minutes: 20\n    continue-on-error: 'true'\n", "`continue-on-error` is set to");
+    try expectMutant(a, r, "    timeout-minutes: 20\n", "    timeout-minutes: 20\n    if: github.event_name == 'schedule'\n", "no `if:` on the job");
+    try expectMutant(a, r, "      - name: Scan the lockfiles\n", "      - name: Scan the lockfiles\n        if: false\n", "no `if:` on the job");
+    try expectMutant(a, r, "      - name: Report\n        env:", "      - if: always()\n        name: Report\n        env:", "no `if:` on the job");
 }
 
 test "mutant: a report that is not one issue" {
