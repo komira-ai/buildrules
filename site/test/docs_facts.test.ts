@@ -385,17 +385,19 @@ describe('the release pipeline', () => {
     expect(repoFile('VERSION').trim()).toMatch(/^\d+\.\d+$/);
     expect(whyText).toContain('`MAJOR.MINOR` is the `VERSION` file');
   });
-  test('the beta legs: the languages the page and RELEASING.md list, the Arm and macOS legs declared and skipped', () => {
+  test('the beta legs: the languages the page and RELEASING.md list, the Arm and macOS legs run natively and do not build', () => {
     for (const leg of ['rust', 'cxx', 'zig', 'node', 'mixed']) expect(releasing).toContain(`| \`${leg}\` |`);
     const beta = repoFile('.github/workflows/beta.yml');
     for (const j of ['beta_arm', 'beta_macos']) {
       const start = beta.indexOf(`  ${j}:`);
       expect(start).toBeGreaterThan(0);
-      expect(beta.slice(start, start + 120)).toContain("github.event_name == 'planned'");
+      // not skipped, and the name says what it is not
+      expect(beta.slice(start, start + 200)).not.toContain('if:');
+      expect(beta.slice(start, start + 200)).toContain('native, no build yet');
     }
     expect(beta).toContain('runs-on: ubuntu-24.04-arm');
     expect(beta).toContain('runs-on: macos-14');
-    expect(plannedText(WHY)).toMatch(/Arm and macOS legs and skips them/);
+    expect(plannedText(WHY)).toMatch(/natively on an Arm Linux and a macOS runner, up to the build/);
   });
 });
 

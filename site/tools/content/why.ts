@@ -212,7 +212,7 @@ export const why: Page = {
       'Only one farm has run buildrules. It uses plain REAPI v2 through Buck2, so other farms that implement it should work; that has not been tested.',
     ),
     h2('What is not done'),
-    planned('macOS, Windows and Arm hosts, and execution platforms for the Arm instruction-set levels. `beta.yml` declares the Arm and macOS legs and skips them, with the reason in the job name.'),
+    planned('macOS, Windows and Arm hosts, and execution platforms for the Arm instruction-set levels. `beta.yml` runs the command line of each natively on an Arm Linux and a macOS runner, up to the build (its version, `init`, Buck2 loading the candidate); a build there waits for toolchains that run on those hosts.'),
     planned('Release binaries for the command line, a Homebrew formula, an apt repository and an install script.'),
     planned('Python rules. No design is committed.'),
     planned('Publishing this site at buildrules.dev. The site is built and tested; its hosting stack is a step the repository owner runs.'),

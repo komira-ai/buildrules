@@ -308,31 +308,37 @@ pub fn run(a: std.mem.Allocator, io: Io, o: Options) !Result {
     return error.WorkNotFresh;
 }
 
+/// A `run` step: the command a user types, with `{origin}` and `{commit}` filled in and `buildrules` the candidate's command line, in the work directory.
+pub fn runCommand(a: std.mem.Allocator, io: Io, o: Options, words: []const []const u8) !void {
+    var argv = std.ArrayList([]const u8).empty;
+    for (words) |w| {
+        const s = try steps_mod.substitute(a, w, o.origin, o.commit);
+        try argv.append(a, if (std.mem.eql(u8, s, "buildrules")) o.buildrules else s);
+    }
+    io_mod.say("beta {s}: $ {s}\n", .{ o.lang, try std.mem.join(a, " ", words) });
+    const r = try io.run(a, o.work, argv.items);
+    if (r.code != 0) {
+        std.debug.print("beta {s}: `{s}` exited {d}\n{s}\n{s}\n", .{ o.lang, try std.mem.join(a, " ", words), r.code, io_mod.tail(r.stderr, 40), io_mod.tail(r.stdout, 20) });
+        return error.StepFailed;
+    }
+}
+
+/// The `config` step: `.buckconfig.local` of the work directory says where actions run.
+pub fn writeConfig(a: std.mem.Allocator, o: Options) !void {
+    const text = switch (o.exec) {
+        .local => farm.local_config,
+        .farm => |c| c,
+    };
+    const p = try std.fs.path.join(a, &.{ o.work, ".buckconfig.local" });
+    try std.fs.cwd().writeFile(.{ .sub_path = p, .data = text });
+    io_mod.say("beta {s}: wrote .buckconfig.local ({s})\n", .{ o.lang, if (o.exec == .local) "local mode" else "the farm" });
+}
+
 fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Result {
     var targets = std.ArrayList([]const u8).empty;
     for (spec.steps) |step| switch (step) {
-        .run => |words| {
-            var argv = std.ArrayList([]const u8).empty;
-            for (words) |w| {
-                const s = try steps_mod.substitute(a, w, o.origin, o.commit);
-                try argv.append(a, if (std.mem.eql(u8, s, "buildrules")) o.buildrules else s);
-            }
-            io_mod.say("beta {s}: $ {s}\n", .{ o.lang, try std.mem.join(a, " ", words) });
-            const r = try io.run(a, o.work, argv.items);
-            if (r.code != 0) {
-                std.debug.print("beta {s}: `{s}` exited {d}\n{s}\n{s}\n", .{ o.lang, try std.mem.join(a, " ", words), r.code, io_mod.tail(r.stderr, 40), io_mod.tail(r.stdout, 20) });
-                return error.StepFailed;
-            }
-        },
-        .config => {
-            const text = switch (o.exec) {
-                .local => farm.local_config,
-                .farm => |c| c,
-            };
-            const p = try std.fs.path.join(a, &.{ o.work, ".buckconfig.local" });
-            try std.fs.cwd().writeFile(.{ .sub_path = p, .data = text });
-            io_mod.say("beta {s}: wrote .buckconfig.local ({s})\n", .{ o.lang, if (o.exec == .local) "local mode" else "the farm" });
-        },
+        .run => |words| try runCommand(a, io, o, words),
+        .config => try writeConfig(a, o),
         .build => |ts| {
             io_mod.say("beta {s}: build {s}\n", .{ o.lang, try std.mem.join(a, " ", ts) });
             _ = try build(a, io, o, o.work, ts);

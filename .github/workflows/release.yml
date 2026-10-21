@@ -172,6 +172,13 @@ jobs:
           path: cli-bins/linux-x86_64/buildrules
           retention-days: 7
           if-no-files-found: error
+      # The three binaries in the directory they were built in, for the native beta legs (linux-aarch64 and macos-arm64 run the file their tarball ships).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-cli-bins
+          path: cli-bins
+          retention-days: 7
+          if-no-files-found: error
 
   # Hello-world repositories per language, as a user starts them (beta.yml), with the linux-x86_64 command line that build-cli built. Its farm leg joins the
   # farm's network, so the call may grant `id-token`.
@@ -183,6 +190,7 @@ jobs:
       id-token: write
     uses: ./.github/workflows/beta.yml
     with:
+      cli-bins-artifact: release-cli-bins
       cli-artifact: release-cli-bin
 
   # Our own repositories, built with the candidate on the farm, in the order GAMMA_REPOS names them. With no farm configured this job fails (the

@@ -733,7 +733,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         if (j.perms.items.len != 2 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read") or permLevel(j, "id-token") == null or !std.mem.eql(u8, permLevel(j, "id-token").?, "write"))
             try add(a, &f, "the job `beta` is not `contents: read` and `id-token: write` alone", .{});
         const jt = try j.text(a);
-        if (!std.mem.endsWith(u8, jt, "\nwith:\ncli-artifact: release-cli-bin")) try add(a, &f, "the job `beta` does not run the command line that `build-cli` built (`with: cli-artifact: release-cli-bin`)", .{});
+        if (!std.mem.endsWith(u8, jt, "\nwith:\ncli-bins-artifact: release-cli-bins\ncli-artifact: release-cli-bin")) try add(a, &f, "the job `beta` does not run the command line that `build-cli` built (`with: cli-bins-artifact: release-cli-bins`, `cli-artifact: release-cli-bin`)", .{});
     }
     // gamma: our own repositories on the farm. It holds the farm's token and no write access to the repository, takes the farm-connect
     // action from the repository and commit that variables name (the checkout is verified before the action runs), and runs no buck2 itself.
@@ -770,6 +770,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             try add(a, &f, "the job `build-cli` does not package the three tarballs of the stamped build (`package-all --version \"$NUMBER\" --bins cli-bins`, running only the linux-x86_64 binary)", .{});
         if (std.mem.indexOf(u8, jt, "name: release-cli-tarballs\npath: cli-dist\n") == null) try add(a, &f, "the job `build-cli` does not upload the three tarballs as the artifact `release-cli-tarballs`", .{});
         if (std.mem.indexOf(u8, jt, "name: release-cli-bin\npath: cli-bins/linux-x86_64/buildrules\n") == null) try add(a, &f, "the job `build-cli` does not upload the linux-x86_64 binary it packaged as the artifact `release-cli-bin`", .{});
+        if (std.mem.indexOf(u8, jt, "name: release-cli-bins\npath: cli-bins\n") == null) try add(a, &f, "the job `build-cli` does not upload the directory of the three binaries it packaged as the artifact `release-cli-bins` (the native beta legs run two of them)", .{});
     }
     // archive: the tarballs the build made, the file the beta ran, and the check that the tarball holds that very file.
     if (jobNamed(jobs, "archive")) |j| {
@@ -1027,6 +1028,12 @@ const fixture_wf =
     \\          path: cli-bins/linux-x86_64/buildrules
     \\          retention-days: 7
     \\          if-no-files-found: error
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        with:
+    \\          name: release-cli-bins
+    \\          path: cli-bins
+    \\          retention-days: 7
+    \\          if-no-files-found: error
     \\
     \\  beta:
     \\    needs: [plan, build-cli]
@@ -1036,6 +1043,7 @@ const fixture_wf =
     \\      id-token: write
     \\    uses: ./.github/workflows/beta.yml
     \\    with:
+    \\      cli-bins-artifact: release-cli-bins
     \\      cli-artifact: release-cli-bin
     \\
     \\  gamma:
@@ -1762,7 +1770,11 @@ test "rule: beta is a call of beta.yml with the command line build-cli built, th
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "      id-token: write\n", "      id-token: write\n      packages: read\n"), "`beta` is not `contents: read` and `id-token: write` alone");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "      contents: read\n", "      contents: write\n"), "job `beta` holds `contents: write`");
     // it walks the file build-cli built, not one it builds itself, and the name is the one build-cli uploads
-    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    with:\n      cli-artifact: release-cli-bin\n", ""), "`beta` does not run the command line that `build-cli` built");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    with:\n      cli-bins-artifact: release-cli-bins\n      cli-artifact: release-cli-bin\n", ""), "`beta` does not run the command line that `build-cli` built");
+    // and the two native legs run the files of the other two targets of that same build, not ones the beta builds itself
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "      cli-bins-artifact: release-cli-bins\n", ""), "`beta` does not run the command line that `build-cli` built");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "cli-bins-artifact: release-cli-bins", "cli-bins-artifact: release-cli-bin"), "`beta` does not run the command line that `build-cli` built");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "cli-bins-artifact: release-cli-bins", "cli-bins-artifact: \"\""), "`beta` does not run the command line that `build-cli` built");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "cli-artifact: release-cli-bin", "cli-artifact: release-cli-tarballs"), "`beta` does not run the command line that `build-cli` built");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "cli-artifact: release-cli-bin", "cli-artifact: \"\""), "`beta` does not run the command line that `build-cli` built");
     // the workflow it calls must be pinned like any other local reference: only these three are allowed
@@ -2013,6 +2025,8 @@ test "rule: the binaries are built stamped, packaged, run by the beta, checked a
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", " --native linux-x86_64", ""), "`build-cli` does not package the three tarballs");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-tarballs", "name: other"), "`build-cli` does not upload the three tarballs");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-bin", "name: other"), "`build-cli` does not upload the linux-x86_64 binary");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-bins\n          path: cli-bins\n", "name: release-cli-bins\n          path: cli-bins/linux-x86_64\n"), "`build-cli` does not upload the directory of the three binaries");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-bins", "name: other-bins"), "`build-cli` does not upload the directory of the three binaries");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "path: cli-bins/linux-x86_64/buildrules", "path: cli-bins/macos-arm64/buildrules"), "`build-cli` does not upload the linux-x86_64 binary");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "needs: [plan, tool]", "needs: [plan]"), "`build-cli` does not wait for `tool`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "tool/release package-all ", "echo package-all "), "`build-cli` does not run `tool/release package-all");

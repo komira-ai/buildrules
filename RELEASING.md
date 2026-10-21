@@ -16,8 +16,8 @@ one invocation each. `ci/release_check.zig` and `ci/stages_check.zig` (part of `
 | `gate` | the PR gate: calls `ci.yml`, the whole tree (`//ci:all`) and the completeness check, in local mode on the runner. It is also the whole check of a pull request (`ci.yml` runs there on its own, see "The tiers") | read |
 | `tool` | builds `tools/release` and `tools/stage` with buck2 and hands the binaries to the later jobs, before any job that writes holds a token | read |
 | `plan` | read-only; decides whether this commit is released and which version; creates nothing. It is the one job that reads `RELEASE_FREEZE` (see "The freeze") | read |
-| `build-cli` | builds `//cli:release_binaries` (the command line for the three release targets in one directory) from the tested commit with the planned version stamped in (`-c buildrules.release_version=<version>`), in local mode, and packages the three tarballs (`release package-all`). The linux-x86_64 binary is also uploaded as the file the beta will run | read |
-| `beta` | calls `beta.yml` with that linux-x86_64 binary: hello-world repositories per language consume the candidate commit as a user would and are built twice, the second time in another directory (see "The beta stage") | read, `id-token` for its farm leg |
+| `build-cli` | builds `//cli:release_binaries` (the command line for the three release targets in one directory) from the tested commit with the planned version stamped in (`-c buildrules.release_version=<version>`), in local mode, and packages the three tarballs (`release package-all`). The linux-x86_64 binary is also uploaded as the file the beta will run, and the directory of all three as `release-cli-bins` (the native legs run two of them) | read |
+| `beta` | calls `beta.yml` with that linux-x86_64 binary and the directory of the three: hello-world repositories per language consume the candidate commit as a user would and are built twice, the second time in another directory (see "The beta stage") | read, `id-token` for its farm leg |
 | `gamma` | builds our own repositories with the candidate on the farm; fails the release when the farm is not configured (see "The gamma stage") | read, `id-token` write |
 | `archive` | `git archive` of the tested commit (its sha, not a tag) under `buildrules-<planned version>/`, compressed by the tool's own gzip; checks that the linux-x86_64 tarball holds the very file the beta ran and lets through only the tarballs a user beta ran (`release record`, `release tested`); `SHA256SUMS` over the archive and the three tarballs | read |
 | `attest` | only on a push to `main`: a keyless cosign signature (`<file>.sigstore.json`) of the five files and a build provenance attestation of all five | `id-token`, `attestations` write |
@@ -82,7 +82,7 @@ and then, from nothing, builds again.
 | `node` | a Node package: `npm sync`, `npm check`, test and build scripts, a `dist` directory | ubuntu x86_64 |
 | `mixed` | a Rust package, a C program, a Zig program and a Node package in one repository | ubuntu x86_64 |
 | `mojo` | a Mojo package, built by the pinned mopm 0.0.1 release | ubuntu x86_64 |
-| `ubuntu-24.04-arm`, `macos-14` | the same | **planned**: buildrules v0 targets linux-x86_64 only |
+| `ubuntu-24.04-arm`, `macos-14` (native) | `zig` and `cxx`, with the command line the release ships for `linux-aarch64` and `macos-arm64`, run on that machine: `--version` says the planned version, `init` writes the same bytes in two directories, Buck2 loads the candidate as the external cell and lists the targets. **No build**: see "The native legs" | arm Linux, macOS (Apple silicon) |
 | farm | the ubuntu legs again, built on the farm | only when the repository variables `FARM_ADDRESS` and `FARM_CONNECT_REF` are set |
 
 The runner legs run every action on the runner (`-c buildrules_re.mode=local`; nothing is built anywhere else), and each is built **twice, in two different
@@ -99,13 +99,33 @@ built on a GitHub runner and one built on the farm are the same bytes: no run co
 claim is made only if a beta run shows it.
 A farm leg does not repeat the build, since the farm's cache would answer it; it requires every build to report `local: 0`.
 
-Planned legs are visible, not missing: the arm and macos jobs are in `beta.yml` with `if:` never true and their reason in the job name, so a run's page
-shows them skipped; the Mojo job runs: `beta/mojo/STEPS` no longer carries `planned-until mopm-release`, and `tools/stage plan` reports the leg ready (mopm 0.0.1, the
+The Mojo job runs: `beta/mojo/STEPS` no longer carries `planned-until mopm-release`, and `tools/stage plan` reports the leg ready (mopm 0.0.1, the
 published release, is pinned in `rules/mopm/pins.bzl`).
 The farm leg, when `FARM_ADDRESS` or `FARM_CONNECT_REF` is empty, is skipped and the `tools` job says so with a notice.
 
 `beta/` is not part of this repository's Buck2 graph and is not built by `//ci:all` (`ci/all.bzl`, `OUTSIDE_THE_GRAPH`, says why): a user's `BUCK` file
 is kept as `BUCK.beta`, so that the directories are not packages here. `//beta:beta_check` holds it to that.
+
+### The native legs (`beta_arm`, `beta_macos`)
+
+The release ships a command line for `linux-aarch64` and `macos-arm64`; these legs run that very file, on a runner of that kind (`ubuntu-24.04-arm`, `macos-14`), so a binary
+that does not start, or says another version, is red before the tag. `tools` builds `stage` for both hosts (`//tools/stage:stage_linux_aarch64`, `stage_macos_arm64`, cross-compiled on the
+x86_64 runner like the command line) and takes the files of the release (`release-cli-bins`, the directory `build-cli` packaged the tarballs from; built from the commit when the call names none),
+and the buck2 that `tools/buck2` pins for each host (url and sha256, checked before use). On the host, `stage native` does, for `beta/zig` and `beta/cxx` (the languages whose STEPS need only
+`buildrules init` and `config` before their first `build`; the others run `cargo new`, `npm sync` or `mojo sync` first, each of which builds a pinned tool):
+
+1. `buildrules --version` prints `buildrules <the version the x86_64 command line prints>` (`tools` reports it as an output); the machine must be the host the job names.
+2. The repository is made twice, in two directories, by the steps of `STEPS` up to the first `build`, and the two have the same bytes (a hash of every file).
+3. `buck2 targets` in the first one loads the candidate commit as the external cell (a git fetch of it) and the `BUCK` file of the hello-world repository, and lists the targets the STEPS file builds.
+
+**What they do not do is build, and why.** Every toolchain of the rules is `exec_compatible_with` linux x86_64 (`rules/core/platform.bzl`), and the execution platform that local mode registers on these hosts is
+`platforms:linux_aarch64` or `platforms:macos_aarch64` (`rules/platforms.bzl`), so a build has no execution platform for any action. Behind that, every unpack action runs under the pinned busybox,
+and none exists for these hosts (`docs/pins.md`, "Other hosts"): the zig, node and rust downloads for them are pinned and verified (`//rules/pins:host_downloads`, the `host_arm` job of `ci.yml`) and nothing unpacks them.
+So on these hosts: rust (`cargo new` builds the pinned cargo), cxx and zig builds, node, mixed and Mojo (Linux x86_64 only, by the Mojo toolchain) do not build, and the legs say "no build yet" in their names. A leg turns into
+a build leg when the busybox for the host exists and the toolchains list the host in `exec_compatible_with`. `release tested --targets` stays `linux-x86_64`: a tarball is attested as walked by a user beta only when its binary
+built the hello-world repositories, and the native legs only start it.
+
+The native legs run only after the merge, like every beta leg, and a red one blocks the tag (the beta comes before it).
 
 ## The gamma stage
 
@@ -211,8 +231,8 @@ attribute (no default), and `ci/negative` holds a planted copy of a program with
 - `release record --tarball PATH --out DIR [--ran-binary PATH]` writes the sha256 of a tarball a user-beta leg ran (with `--ran-binary`, only if the tarball's `buildrules` is that very file), and
   `release tested --dist DIR --tested DIR [--targets T,T]` refuses unless the tarballs to attest are, byte for byte, the ones recorded for the targets walked, of one version, and nothing else is recorded. The
   targets that a user beta can walk are `linux-x86_64`, `linux-aarch64` and `macos-arm64`; **the release walks `linux-x86_64` only** (`--targets linux-x86_64`):
-  the beta legs for the Arm Linux and macOS platforms are planned (see "The beta stage"), and until they run, the other two tarballs are attested and verified (header, version, reproduction) but
-  not run by a user beta. The workflow names the targets, so the day a leg is added the list grows with it.
+  the native beta legs for the Arm Linux and macOS platforms only start the binary and load a repository (see "The native legs"; they cannot build yet), so the other two tarballs are attested and verified
+  (header, version, reproduction) and started on their own platform, but not walked by a user beta. The workflow names the targets, so the day a leg builds the list grows with it.
 - `release sums --dist DIR` writes `SHA256SUMS` over the source archive and the three tarballs in name order (four lines) and reads it back; it refuses a missing, stray or other-version tarball.
 - `release sign --dist DIR [--cosign PATH] [--dry true|false]` runs keyless `cosign sign-blob` on those four files and `SHA256SUMS`, and refuses a bundle that is missing, empty or already there. With `--dry true` it makes every check and the list of files it would sign, and runs no `cosign`; `release.yml` always passes `--dry false`, as it passes it to `plan` and `verify`, since no pull request runs it (the dry form stays in the tool and its tests, and nothing in the workflow uses it).
 
