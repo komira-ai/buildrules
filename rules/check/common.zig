@@ -18,13 +18,17 @@ pub const Io = struct {
     /// One message line on stderr, `check <subcommand>: <parts>`; the parts are written one after another. A failed write of a message is
     /// not reported anywhere. (Parts rather than a format: one function, whatever the message.)
     pub fn say(io: Io, sub: []const u8, parts: []const []const u8) void {
+        sayOrFail(io, sub, parts) catch {};
+    }
+
+    fn sayOrFail(io: Io, sub: []const u8, parts: []const []const u8) Oom!void {
         var line = Buf{ .a = io.a };
-        line.add("check ");
-        line.add(sub);
-        line.add(": ");
-        for (parts) |part| line.add(part);
-        line.byte('\n');
-        io.err.writeAll(line.list.items) catch {};
+        try line.add("check ");
+        try line.add(sub);
+        try line.add(": ");
+        for (parts) |part| try line.add(part);
+        try line.byte(0x0a);
+        io.err.writeAll(line.items) catch {};
     }
 
     /// The value of `name` in the process's environment, the first of that name; null when there is none.
@@ -38,65 +42,70 @@ pub const Io = struct {
     }
 };
 
-pub fn oom() noreturn {
-    std.debug.print("check: out of memory\n", .{});
-    std.process.exit(1);
-}
+/// The one way a command can fail by itself: an allocation that failed. The command ends, the program says so and exits 1.
+pub const Oom = error{OutOfMemory};
 
-/// A growing byte buffer whose one allocation failure is the process's end.
+/// A byte buffer that grows by a new allocation at every addition: the sizes here are small, and every addition is a place an allocation can
+/// fail, which the tests fail one at a time.
 pub const Buf = struct {
-    list: std.ArrayList(u8) = .empty,
+    items: []const u8 = "",
     a: Alloc,
 
-    pub fn add(b: *Buf, bytes: []const u8) void {
-        b.list.appendSlice(b.a, bytes) catch oom();
+    pub fn add(b: *Buf, bytes: []const u8) Oom!void {
+        const grown = try b.a.alloc(u8, b.items.len + bytes.len);
+        @memcpy(grown[0..b.items.len], b.items);
+        @memcpy(grown[b.items.len..], bytes);
+        b.items = grown;
     }
 
-    pub fn byte(b: *Buf, c: u8) void {
-        b.add(&.{c});
+    pub fn byte(b: *Buf, c: u8) Oom!void {
+        try b.add(&.{c});
     }
 };
 
-/// A growing list of strings, the same.
+/// A list of strings, the same.
 pub const Strings = struct {
-    list: std.ArrayList([]const u8) = .empty,
+    items: [][]const u8 = &.{},
     a: Alloc,
 
-    pub fn add(s: *Strings, item: []const u8) void {
-        s.list.append(s.a, item) catch oom();
+    pub fn add(s: *Strings, item: []const u8) Oom!void {
+        const grown = try s.a.alloc([]const u8, s.items.len + 1);
+        @memcpy(grown[0..s.items.len], s.items);
+        grown[s.items.len] = item;
+        s.items = grown;
     }
 };
 
 /// The path made of `parts`, joined by `/`.
-pub fn join(a: Alloc, parts: []const []const u8) []const u8 {
-    return std.fs.path.join(a, parts) catch oom();
+pub fn join(a: Alloc, parts: []const []const u8) Oom![]const u8 {
+    return std.fs.path.join(a, parts);
 }
 
 /// The parts, one after another.
-pub fn concat(a: Alloc, parts: []const []const u8) []const u8 {
-    return std.mem.concat(a, u8, parts) catch oom();
+pub fn concat(a: Alloc, parts: []const []const u8) Oom![]const u8 {
+    return std.mem.concat(a, u8, parts);
 }
 
 /// The path of `p` made absolute against `base` (itself absolute): `p` when it starts with `/`, else `base/p`.
-pub fn absolute(a: Alloc, base: []const u8, p: []const u8) []const u8 {
+pub fn absolute(a: Alloc, base: []const u8, p: []const u8) Oom![]const u8 {
     if (p.len > 0 and p[0] == '/') return p;
     return join(a, &.{ base, p });
 }
 
 /// `n` in decimal.
-pub fn num(a: Alloc, n: u64) []const u8 {
-    return std.fmt.allocPrint(a, "{d}", .{n}) catch oom();
+pub fn num(a: Alloc, n: u64) Oom![]const u8 {
+    return std.fmt.allocPrint(a, "{d}", .{n});
 }
 
 /// The bytes as lowercase hexadecimal.
-pub fn hex(a: Alloc, bytes: []const u8) []const u8 {
+pub fn hex(a: Alloc, bytes: []const u8) Oom![]const u8 {
     const digits = "0123456789abcdef";
     var out = Buf{ .a = a };
     for (bytes) |b| {
-        out.byte(digits[b >> 4]);
-        out.byte(digits[b & 15]);
+        try out.byte(digits[b >> 4]);
+        try out.byte(digits[b & 15]);
     }
-    return out.list.items;
+    return out.items;
 }
 
 /// Writes `bytes` as the whole of the file `path` (relative to the working directory) through a temporary file in its directory, renamed over

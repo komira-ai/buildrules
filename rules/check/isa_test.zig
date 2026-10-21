@@ -16,10 +16,10 @@ const SAMPLE =
     "  40100d:\tvpaddd\t%xmm0, %xmm1, %xmm2\n" ++
     "  401011:\tvpaddd\t%xmm0, %xmm1, %xmm2 # then ymm\n";
 
-fn counted(c: *kit.Case, pieces: []const []const u8) isa.Counts {
+fn counted(c: *kit.Case, pieces: []const []const u8) !isa.Counts {
     var counts = isa.Counts{};
-    for (pieces) |p| counts.feed(c.alloc(), p);
-    counts.finish(c.alloc());
+    for (pieces) |p| try counts.feed(c.alloc(), p);
+    try counts.finish(c.alloc());
     return counts;
 }
 
@@ -39,7 +39,7 @@ fn expectSample(counts: isa.Counts) !void {
 test "Counts: instructions, ymm, xmm and vpaddd-on-ymm lines of a disassembly" {
     var c = try kit.Case.init();
     defer c.deinit();
-    try expectSample(counted(&c, &.{SAMPLE}));
+    try expectSample(try counted(&c, &.{SAMPLE}));
 }
 
 test "Counts: the same wherever the text is cut, a cut in the middle of a line or exactly at a newline included; a last line without its newline is counted" {
@@ -47,18 +47,18 @@ test "Counts: the same wherever the text is cut, a cut in the middle of a line o
     defer c.deinit();
     var cut: usize = 0;
     while (cut <= SAMPLE.len) : (cut += 1) {
-        try expectSample(counted(&c, &.{ SAMPLE[0..cut], SAMPLE[cut..] }));
+        try expectSample(try counted(&c, &.{ SAMPLE[0..cut], SAMPLE[cut..] }));
     }
     // three pieces, and a piece of a single byte
-    try expectSample(counted(&c, &.{ SAMPLE[0..30], SAMPLE[30..31], SAMPLE[31..] }));
+    try expectSample(try counted(&c, &.{ SAMPLE[0..30], SAMPLE[30..31], SAMPLE[31..] }));
     // no final newline
     const trimmed = SAMPLE[0 .. SAMPLE.len - 1];
-    try expectSample(counted(&c, &.{trimmed}));
-    try expectSample(counted(&c, &.{ trimmed[0..10], trimmed[10..] }));
+    try expectSample(try counted(&c, &.{trimmed}));
+    try expectSample(try counted(&c, &.{ trimmed[0..10], trimmed[10..] }));
     // nothing at all
-    const none = counted(&c, &.{});
+    const none = try counted(&c, &.{});
     try t.expectEqual(@as(u64, 0), none.instructions + none.ymm + none.xmm + none.vpaddd_ymm);
-    const empty_pieces = counted(&c, &.{ "", "" });
+    const empty_pieces = try counted(&c, &.{ "", "" });
     try t.expectEqual(@as(u64, 0), empty_pieces.instructions);
 }
 
@@ -68,14 +68,14 @@ test "Counts: a line is an instruction when spaces, lowercase hex digits (maybe 
     const yes = [_][]const u8{ "  401000: nop", "401000:", ":", "  :", "a:", "   deadbeef:\tnop", "0: x" };
     const no = [_][]const u8{ "", "   ", "  401000", " 4A: nop", "main:", "0000000000401000 <main>:", "\tnop:", "g1:", "x 1:" };
     for (yes) |line| {
-        const n = counted(&c, &.{ line, "\n" });
+        const n = try counted(&c, &.{ line, "\n" });
         if (n.instructions != 1) {
             std.debug.print("'{s}' should be an instruction\n", .{line});
             return error.TestUnexpectedResult;
         }
     }
     for (no) |line| {
-        const n = counted(&c, &.{ line, "\n" });
+        const n = try counted(&c, &.{ line, "\n" });
         if (n.instructions != 0) {
             std.debug.print("'{s}' should not be an instruction\n", .{line});
             return error.TestUnexpectedResult;
@@ -86,7 +86,7 @@ test "Counts: a line is an instruction when spaces, lowercase hex digits (maybe 
 test "Counts: ymm, xmm and vpaddd are counted wherever on a line they are, once a line; vpaddd counts only when ymm comes after it" {
     var c = try kit.Case.init();
     defer c.deinit();
-    const n = counted(&c, &.{
+    const n = try counted(&c, &.{
         "ymm ymm ymm\n", // one ymm line, three mentions
         "xmm\n",
         "ymm xmm\n", // both
@@ -103,7 +103,7 @@ test "Counts: ymm, xmm and vpaddd are counted wherever on a line they are, once 
 test "Counts: only the first five lines that name ymm are kept, whole, in order" {
     var c = try kit.Case.init();
     defer c.deinit();
-    const n = counted(&c, &.{ "a ymm\nb\nc ymm\nd ymm\ne ymm\nf ymm\ng ymm\nh ymm\n", "i ymm\n" });
+    const n = try counted(&c, &.{ "a ymm\nb\nc ymm\nd ymm\ne ymm\nf ymm\ng ymm\nh ymm\n", "i ymm\n" });
     try t.expectEqual(@as(u64, 8), n.ymm);
     try t.expectEqual(@as(usize, 5), n.first_ymm_count);
     for ([_][]const u8{ "a ymm", "c ymm", "d ymm", "e ymm", "f ymm" }, 0..) |want, i| try t.expectEqualStrings(want, n.first_ymm[i]);
@@ -112,7 +112,7 @@ test "Counts: only the first five lines that name ymm are kept, whole, in order"
 test "report: the counts and the first ymm lines, in the form isa_audit wrote them" {
     var c = try kit.Case.init();
     defer c.deinit();
-    const n = counted(&c, &.{SAMPLE});
+    const n = try counted(&c, &.{SAMPLE});
     const want =
         "target: //x:y\n" ++
         "expect: avx2\n" ++
@@ -124,9 +124,9 @@ test "report: the counts and the first ymm lines, in the form isa_audit wrote th
         "  401001:\tvpaddd\t%ymm0, %ymm1, %ymm2\n" ++
         "  401009:\tvmovdqa\t%ymm3, %xmm4\n" ++
         "  401011:\tvpaddd\t%xmm0, %xmm1, %xmm2 # then ymm\n";
-    try t.expectEqualStrings(want, isa.report(c.alloc(), "//x:y", "avx2", n));
+    try t.expectEqualStrings(want, try isa.report(c.alloc(), "//x:y", "avx2", n));
     const zero = isa.Counts{};
-    try t.expectEqualStrings("target: t\nexpect: none\ninstructions: 0\ninstructions naming ymm (AVX2 width): 0\ninstructions naming xmm (SSE width): 0\nvpaddd on ymm (the vectorized sum, AVX2-only): 0\nfirst ymm lines:\n", isa.report(c.alloc(), "t", "none", zero));
+    try t.expectEqualStrings("target: t\nexpect: none\ninstructions: 0\ninstructions naming ymm (AVX2 width): 0\ninstructions naming xmm (SSE width): 0\nvpaddd on ymm (the vectorized sum, AVX2-only): 0\nfirst ymm lines:\n", try isa.report(c.alloc(), "t", "none", zero));
 }
 
 // ---- check isa --------------------------------------------------------------------------------------------------
@@ -215,4 +215,64 @@ test "isa: every option is required, each has a value, and no other is known" {
     try kit.expectResult(try c.run(&.{ "isa", "--objdump", "p", "--binary", "b", "--expect", "none", "--label", "l", "--out" }), 2, "", usage);
     try kit.expectResult(try c.run(&.{ "isa", "--objdump", "p", "--binary", "b", "--expect", "none", "--label", "l", "--out", "o", "extra" }), 2, "", usage);
     try kit.expectResult(try c.run(&.{ "isa", "--bogus", "x" }), 2, "", "check isa: unknown option --bogus\n");
+}
+
+test "Counts: an allocation that fails while a line is joined from two chunks, or kept, is an error and never a count" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    var i: usize = 0;
+    var failed: usize = 0;
+    while (i < 40) : (i += 1) {
+        var fa = std.testing.FailingAllocator.init(c.alloc(), .{ .fail_index = i });
+        var counts = isa.Counts{};
+        const ok = blk: {
+            counts.feed(fa.allocator(), "  401000:\tvpaddd %ym") catch break :blk false;
+            counts.feed(fa.allocator(), "m1\n  401004:\tnop\n  40") catch break :blk false;
+            counts.feed(fa.allocator(), "1008:\tnop") catch break :blk false;
+            counts.finish(fa.allocator()) catch break :blk false;
+            break :blk true;
+        };
+        if (fa.has_induced_failure) {
+            failed += 1;
+            try t.expect(!ok);
+        } else {
+            try t.expect(ok);
+            try t.expectEqual(@as(u64, 3), counts.instructions);
+            try t.expectEqual(@as(u64, 1), counts.ymm);
+        }
+    }
+    try t.expect(failed > 3);
+}
+
+test "Counts.finish: an allocation that fails while the last line, which has no newline, is kept, is an error" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    var i: usize = 0;
+    var failed: usize = 0;
+    while (i < 20) : (i += 1) {
+        var fa = std.testing.FailingAllocator.init(c.alloc(), .{ .fail_index = i });
+        var counts = isa.Counts{};
+        const ok = blk: {
+            counts.feed(fa.allocator(), "  401000:\tvpaddd %ymm1") catch break :blk false;
+            counts.finish(fa.allocator()) catch break :blk false;
+            break :blk true;
+        };
+        if (fa.has_induced_failure) {
+            failed += 1;
+            try t.expect(!ok);
+        } else {
+            try t.expect(ok);
+            try t.expectEqual(@as(u64, 1), counts.ymm);
+        }
+    }
+    try t.expect(failed >= 2);
+}
+
+test "isa: the failure of a binary that has ymm instructions where none are allowed is the same when stderr cannot be written" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    c.stderr_closed = true;
+    try kit.expectResult(try isaRun(&c, WITH_YMM, "none"), 1, "", "");
+    try kit.expectResult(try isaRun(&c, WITHOUT_YMM, "avx2"), 1, "", "");
+    try kit.expectResult(try isaRun(&c, WITH_YMM, "sse"), 2, "", "");
 }

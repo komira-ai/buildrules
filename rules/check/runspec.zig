@@ -20,6 +20,7 @@ const std = @import("std");
 const common = @import("common.zig");
 const Io = common.Io;
 const Alloc = common.Alloc;
+const Oom = common.Oom;
 
 pub const Kind = enum { run, marker, expect };
 
@@ -96,7 +97,7 @@ fn takesValue(opt: Options) bool {
 }
 
 /// Reads the options of `kind` and the program after `--`. Null, with the reason said, when the command line is wrong.
-pub fn parse(io: Io, sub: []const u8, kind: Kind, args: []const []const u8) ?Spec {
+pub fn parse(io: Io, sub: []const u8, kind: Kind, args: []const []const u8) Oom!?Spec {
     var spec = Spec{};
     var sets = common.Strings{ .a = io.a };
     var dirs = common.Strings{ .a = io.a };
@@ -134,11 +135,11 @@ pub fn parse(io: Io, sub: []const u8, kind: Kind, args: []const []const u8) ?Spe
             .@"--ld-library-path" => spec.ld_library_path = value,
             .@"--cwd" => spec.cwd = value,
             .@"--cwd-env" => spec.cwd_env = value,
-            .@"--env" => sets.add(value),
-            .@"--dir" => dirs.add(value),
-            .@"--abs" => abs.add(value),
-            .@"--abs-prefix" => abs_prefix.add(value),
-            .@"--mkdir-env" => mkdir_env.add(value),
+            .@"--env" => try sets.add(value),
+            .@"--dir" => try dirs.add(value),
+            .@"--abs" => try abs.add(value),
+            .@"--abs-prefix" => try abs_prefix.add(value),
+            .@"--mkdir-env" => try mkdir_env.add(value),
             .@"--out" => spec.out = value,
             .@"--capture" => spec.capture = true,
             .@"--stamp" => spec.stamp = value,
@@ -148,11 +149,11 @@ pub fn parse(io: Io, sub: []const u8, kind: Kind, args: []const []const u8) ?Spe
             .@"--name" => spec.name = value,
         }
     }
-    spec.sets = sets.list.items;
-    spec.dirs = dirs.list.items;
-    spec.abs = abs.list.items;
-    spec.abs_prefix = abs_prefix.list.items;
-    spec.mkdir_env = mkdir_env.list.items;
+    spec.sets = sets.items;
+    spec.dirs = dirs.items;
+    spec.abs = abs.items;
+    spec.abs_prefix = abs_prefix.items;
+    spec.mkdir_env = mkdir_env.items;
     return spec;
 }
 
@@ -175,11 +176,11 @@ fn split(entry: []const u8) ?[2][]const u8 {
     return .{ entry[0..eq], entry[eq + 1 ..] };
 }
 
-fn putEnv(env: *std.process.EnvMap, name: []const u8, value: []const u8) void {
-    env.put(name, value) catch common.oom();
+fn putEnv(env: *std.process.EnvMap, name: []const u8, value: []const u8) Oom!void {
+    try env.put(name, value);
 }
 
-pub fn prepare(io: Io, sub: []const u8, spec: Spec) Preparation {
+pub fn prepare(io: Io, sub: []const u8, spec: Spec) Oom!Preparation {
     const a = io.a;
     if (spec.argv.len == 0) {
         io.say(sub, &.{"no program: it follows `--`"});
@@ -196,7 +197,7 @@ pub fn prepare(io: Io, sub: []const u8, spec: Spec) Preparation {
     var env = std.process.EnvMap.init(a);
     if (!spec.clear_env) {
         for (io.environ) |entry| {
-            if (split(entry)) |kv| putEnv(&env, kv[0], kv[1]);
+            if (split(entry)) |kv| try putEnv(&env, kv[0], kv[1]);
         }
     }
     for (spec.sets) |entry| {
@@ -204,16 +205,16 @@ pub fn prepare(io: Io, sub: []const u8, spec: Spec) Preparation {
             io.say(sub, &.{ "--env ", entry, ": expected NAME=VALUE" });
             return .{ .fail = 2 };
         };
-        putEnv(&env, kv[0], kv[1]);
+        try putEnv(&env, kv[0], kv[1]);
     }
 
     var scratch: ?[]const u8 = null;
     if (spec.scratch) |name| {
         const bs = io.getenv("BUCK_SCRATCH_PATH") orelse "";
         const dir = if (bs.len == 0)
-            common.join(a, &.{ here, common.concat(a, &.{ ".buildrules_", name }) })
+            try common.join(a, &.{ here, try common.concat(a, &.{ ".buildrules_", name }) })
         else
-            common.join(a, &.{ common.absolute(a, here, bs), name });
+            try common.join(a, &.{ try common.absolute(a, here, bs), name });
         io.cwd.deleteTree(dir) catch {};
         io.cwd.makePath(dir) catch |err| {
             io.say(sub, &.{ "cannot make the scratch directory ", dir, ": ", @errorName(err) });
@@ -222,7 +223,10 @@ pub fn prepare(io: Io, sub: []const u8, spec: Spec) Preparation {
         scratch = dir;
     }
     var prepared = Prepared{ .argv = &.{}, .env = env, .cwd = here, .scratch = scratch };
-    const failed = fill(io, sub, spec, here, &prepared);
+    const failed = fill(io, sub, spec, here, &prepared) catch |e| {
+        cleanup(io, prepared);
+        return e;
+    };
     if (failed != 0) {
         cleanup(io, prepared);
         return .{ .fail = failed };
@@ -232,7 +236,7 @@ pub fn prepare(io: Io, sub: []const u8, spec: Spec) Preparation {
 
 /// The steps after the scratch directory: --dir, --tmpdir, --ld-library-path, the absolute variables, --mkdir-env, the working directory and
 /// the program. Returns 0, or the status to end with.
-fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) u8 {
+fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom!u8 {
     const a = io.a;
     for (spec.dirs) |entry| {
         const kv = split(entry) orelse {
@@ -243,31 +247,31 @@ fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) u8 
             io.say(sub, &.{ "--dir ", entry, " needs --scratch" });
             return 2;
         };
-        const dir = if (std.mem.eql(u8, kv[1], ".")) root else common.join(a, &.{ root, kv[1] });
+        const dir = if (std.mem.eql(u8, kv[1], ".")) root else try common.join(a, &.{ root, kv[1] });
         io.cwd.makePath(dir) catch |err| {
             io.say(sub, &.{ "cannot make ", dir, ": ", @errorName(err) });
             return 1;
         };
-        putEnv(&p.env, kv[0], dir);
+        try putEnv(&p.env, kv[0], dir);
     }
     if (spec.tmpdir) {
         const bs = io.getenv("BUCK_SCRATCH_PATH") orelse "";
         const have = p.env.get("TMPDIR") orelse "";
         if (bs.len > 0) {
-            putEnv(&p.env, "TMPDIR", common.absolute(a, here, bs));
+            try putEnv(&p.env, "TMPDIR", try common.absolute(a, here, bs));
         } else if (have.len == 0) {
-            putEnv(&p.env, "TMPDIR", "/tmp");
+            try putEnv(&p.env, "TMPDIR", "/tmp");
         }
     }
-    if (spec.ld_library_path) |dir| putEnv(&p.env, "LD_LIBRARY_PATH", common.absolute(a, here, dir));
-    for (spec.abs) |name| makeAbsolute(a, &p.env, here, name);
+    if (spec.ld_library_path) |dir| try putEnv(&p.env, "LD_LIBRARY_PATH", try common.absolute(a, here, dir));
+    for (spec.abs) |name| try makeAbsolute(a, &p.env, here, name);
     for (spec.abs_prefix) |prefix| {
         var names = common.Strings{ .a = a };
         var it = p.env.iterator();
         while (it.next()) |kv| {
-            if (std.mem.startsWith(u8, kv.key_ptr.*, prefix)) names.add(kv.key_ptr.*);
+            if (std.mem.startsWith(u8, kv.key_ptr.*, prefix)) try names.add(kv.key_ptr.*);
         }
-        for (names.list.items) |name| makeAbsolute(a, &p.env, here, name);
+        for (names.items) |name| try makeAbsolute(a, &p.env, here, name);
     }
     for (spec.mkdir_env) |name| {
         const dir = p.env.get(name) orelse "";
@@ -278,27 +282,27 @@ fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) u8 
         };
     }
     p.cwd = here;
-    if (spec.cwd) |dir| p.cwd = common.absolute(a, here, dir);
+    if (spec.cwd) |dir| p.cwd = try common.absolute(a, here, dir);
     if (spec.cwd_env) |name| {
         const dir = p.env.get(name) orelse "";
         if (dir.len == 0) {
             io.say(sub, &.{ "--cwd-env ", name, ": the variable is not set" });
             return 2;
         }
-        p.cwd = common.absolute(a, here, dir);
+        p.cwd = try common.absolute(a, here, dir);
     }
     var argv = common.Strings{ .a = a };
-    argv.add(common.absolute(a, here, spec.argv[0]));
-    for (spec.argv[1..]) |arg| argv.add(arg);
-    p.argv = argv.list.items;
+    try argv.add(try common.absolute(a, here, spec.argv[0]));
+    for (spec.argv[1..]) |arg| try argv.add(arg);
+    p.argv = argv.items;
     return 0;
 }
 
 /// A variable that is set to a relative path becomes absolute; one that is not set or is empty is left as it is.
-fn makeAbsolute(a: Alloc, env: *std.process.EnvMap, here: []const u8, name: []const u8) void {
+fn makeAbsolute(a: Alloc, env: *std.process.EnvMap, here: []const u8, name: []const u8) Oom!void {
     const value = env.get(name) orelse return;
     if (value.len == 0 or value[0] == '/') return;
-    putEnv(env, name, common.absolute(a, here, value));
+    try putEnv(env, name, try common.absolute(a, here, value));
 }
 
 /// What a started program did: its exit status, and what it wrote when that was captured.

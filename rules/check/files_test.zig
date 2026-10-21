@@ -310,3 +310,20 @@ test "digest: with no --out nothing is written; --stamp is what is; an unwritabl
     try t.expectEqualStrings("{\"status\": \"success\"}", try c.read("o"));
     try kit.expectFailure(try c.run(&.{ "digest", "--out", "no-dir/o", "sha256:" ++ SHA256_ABC, "abc", "n" }), 1, "check digest: cannot write no-dir/o: temporary file: FileNotFound");
 }
+
+test "same: a second file that cannot be read after the first could is status 2" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    try c.put("a", "1");
+    try c.tmp.dir.makePath("d");
+    try kit.expectResult(try c.run(&.{ "same", "--out", "o", "a", "d" }), 2, "", "check same: cannot compare a and d: IsDir\n");
+}
+
+test "digest: an integrity string that is not base64 of the right shape is status 2" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    try c.put("abc", "abc");
+    for ([_][]const u8{ "sha256-A", "sha256-" ++ "!" ** 43 ++ "=", "sha512-" ++ "!" ** 86 ++ "==" }) |want| {
+        try kit.expectFailure(try c.run(&.{ "digest", want, "abc", "n" }), 2, "is not sha256:<hex>");
+    }
+}

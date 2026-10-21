@@ -4,6 +4,7 @@ const std = @import("std");
 const common = @import("common.zig");
 const Io = common.Io;
 const Alloc = common.Alloc;
+const Oom = common.Oom;
 
 /// The options `same` and `digest` share, which come first: where the success stamp goes and what it says.
 const Stamped = struct {
@@ -50,7 +51,7 @@ const same_usage = "usage: check same --out FILE [--stamp TEXT] A B";
 
 /// `check same --out FILE [--stamp TEXT] A B`: the two files are the same bytes. Then FILE is written (`same` and a newline, or TEXT) and the
 /// status is 0; otherwise the first difference is said, FILE is not written and the status is 1 (2 when a file cannot be read).
-pub fn same(_: Alloc, io: Io, args: []const []const u8) u8 {
+pub fn same(_: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     const s = stamped(io, "same", args, "same\n") orelse return 2;
     const out = s.out orelse {
         io.say("same", &.{same_usage});
@@ -71,9 +72,9 @@ pub fn same(_: Alloc, io: Io, args: []const []const u8) u8 {
     };
     if (diff) |d| {
         const where = switch (d) {
-            .byte => |at| common.concat(io.a, &.{ "differ at byte ", common.num(io.a, at) }),
-            .first_ends => |n| endsAfter(io, names[0], n),
-            .second_ends => |n| endsAfter(io, names[1], n),
+            .byte => |at| try common.concat(io.a, &.{ "differ at byte ", try common.num(io.a, at) }),
+            .first_ends => |n| try endsAfter(io, names[0], n),
+            .second_ends => |n| try endsAfter(io, names[1], n),
         };
         io.say("same", &.{ names[0], " and ", names[1], " ", where });
         return 1;
@@ -81,8 +82,8 @@ pub fn same(_: Alloc, io: Io, args: []const []const u8) u8 {
     return if (common.writeFile(io, "same", out, s.stamp)) 0 else 1;
 }
 
-fn endsAfter(io: Io, shorter: []const u8, n: u64) []const u8 {
-    return common.concat(io.a, &.{ "differ: ", shorter, " ends after ", common.num(io.a, n), " bytes and the other goes on" });
+fn endsAfter(io: Io, shorter: []const u8, n: u64) Oom![]const u8 {
+    return try common.concat(io.a, &.{ "differ: ", shorter, " ends after ", try common.num(io.a, n), " bytes and the other goes on" });
 }
 
 fn unreadable(io: Io, path: []const u8, err: anyerror) u8 {
@@ -121,7 +122,7 @@ fn readFull(file: std.fs.File, buf: []u8) !usize {
 
 /// `check copy SOURCE DESTINATION`: DESTINATION becomes a copy of the file SOURCE, its bytes and its permission bits. It is there whole or
 /// not at all, and one that was there is replaced. A source that is missing, or is not a file, is status 1 and nothing is written.
-pub fn copy(_: Alloc, io: Io, args: []const []const u8) u8 {
+pub fn copy(_: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     if (args.len != 2) {
         io.say("copy", &.{"usage: check copy SOURCE DESTINATION"});
         return 2;
@@ -182,7 +183,7 @@ fn hashInto(comptime H: type, file: std.fs.File, raw: *[64]u8) !void {
 /// or an integrity string `sha512-<base64>`). Every mismatch is said, by NAME, with the digest the file has, and the status is 1, as it is for a
 /// file that cannot be read; an EXPECTED that is none of those forms is status 2. When all match, FILE is written if given (`ok` and a
 /// newline, or TEXT).
-pub fn digest(_: Alloc, io: Io, args: []const []const u8) u8 {
+pub fn digest(_: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     const s = stamped(io, "digest", args, "ok\n") orelse return 2;
     if (s.rest.len == 0 or s.rest.len % 3 != 0) {
         io.say("digest", &.{"usage: check digest [--out FILE] [--stamp TEXT] (EXPECTED FILE NAME)..."});
@@ -191,7 +192,7 @@ pub fn digest(_: Alloc, io: Io, args: []const []const u8) u8 {
     var status: u8 = 0;
     var row: usize = 0;
     while (row < s.rest.len) : (row += 3) {
-        status = @max(status, verify(io, s.rest[row], s.rest[row + 1], s.rest[row + 2]));
+        status = @max(status, try verify(io, s.rest[row], s.rest[row + 1], s.rest[row + 2]));
     }
     if (status != 0) return status;
     const out = s.out orelse return 0;
@@ -199,7 +200,7 @@ pub fn digest(_: Alloc, io: Io, args: []const []const u8) u8 {
 }
 
 /// One file against one expected digest: 0 when they match, 1 when they do not or the file cannot be read, 2 when EXPECTED is not a digest.
-fn verify(io: Io, expected: []const u8, path: []const u8, name: []const u8) u8 {
+fn verify(io: Io, expected: []const u8, path: []const u8, name: []const u8) Oom!u8 {
     const want = parseWant(expected) orelse {
         io.say("digest", &.{ name, ": '", expected, "' is not sha256:<hex>, sha512:<hex>, sha256-<base64> or sha512-<base64>" });
         return 2;
@@ -213,7 +214,7 @@ fn verify(io: Io, expected: []const u8, path: []const u8, name: []const u8) u8 {
     };
     hashed catch |err| return cannotRead(io, name, path, err);
     if (std.mem.eql(u8, raw[0..want.len], want.bytes[0..want.len])) return 0;
-    io.say("digest", &.{ name, ": the ", @tagName(want.algorithm), " of ", path, " is ", common.hex(io.a, raw[0..want.len]), "; expected ", common.hex(io.a, want.bytes[0..want.len]) });
+    io.say("digest", &.{ name, ": the ", @tagName(want.algorithm), " of ", path, " is ", try common.hex(io.a, raw[0..want.len]), "; expected ", try common.hex(io.a, want.bytes[0..want.len]) });
     return 1;
 }
 

@@ -31,12 +31,16 @@ pub const Io = struct {
     /// One message line on stderr, `<applet>: <parts>`; the parts are written one after another. A failed write of a message is not
     /// reported anywhere. (Parts rather than a format: one function, whatever the message.)
     pub fn say(io: Io, applet: []const u8, parts: []const []const u8) void {
+        sayOrFail(io, applet, parts) catch {};
+    }
+
+    fn sayOrFail(io: Io, applet: []const u8, parts: []const []const u8) Oom!void {
         var line = Buf{ .a = io.a };
-        line.add(applet);
-        line.add(": ");
-        for (parts) |part| line.add(part);
-        line.byte('\n');
-        io.err.writeAll(line.list.items) catch {};
+        try line.add(applet);
+        try line.add(": ");
+        for (parts) |part| try line.add(part);
+        try line.byte(0x0a);
+        io.err.writeAll(line.items) catch {};
     }
 };
 
@@ -63,36 +67,41 @@ pub fn statusOf(term: std.process.Child.Term) u8 {
     };
 }
 
-pub fn oom() noreturn {
-    std.debug.print("toolbox: out of memory\n", .{});
-    std.process.exit(1);
-}
+/// The one way an applet can fail by itself: an allocation that failed. The applet ends, the program says so and exits 1.
+pub const Oom = error{OutOfMemory};
 
-/// A growing byte buffer whose one allocation failure is the process's end: every applet builds its output in one.
+/// A byte buffer that grows by a new allocation at every addition: the sizes here are small, and every addition is a place an allocation can
+/// fail, which the tests fail one at a time.
 pub const Buf = struct {
-    list: std.ArrayList(u8) = .empty,
+    items: []const u8 = "",
     a: Alloc,
 
-    pub fn add(b: *Buf, bytes: []const u8) void {
-        b.list.appendSlice(b.a, bytes) catch oom();
+    pub fn add(b: *Buf, bytes: []const u8) Oom!void {
+        const grown = try b.a.alloc(u8, b.items.len + bytes.len);
+        @memcpy(grown[0..b.items.len], b.items);
+        @memcpy(grown[b.items.len..], bytes);
+        b.items = grown;
     }
 
-    pub fn byte(b: *Buf, c: u8) void {
-        b.add(&.{c});
+    pub fn byte(b: *Buf, c: u8) Oom!void {
+        try b.add(&.{c});
     }
 };
 
-/// A growing list of strings, the same.
+/// A list of strings, the same.
 pub const Strings = struct {
-    list: std.ArrayList([]const u8) = .empty,
+    items: [][]const u8 = &.{},
     a: Alloc,
 
-    pub fn add(s: *Strings, item: []const u8) void {
-        s.list.append(s.a, item) catch oom();
+    pub fn add(s: *Strings, item: []const u8) Oom!void {
+        const grown = try s.a.alloc([]const u8, s.items.len + 1);
+        @memcpy(grown[0..s.items.len], s.items);
+        grown[s.items.len] = item;
+        s.items = grown;
     }
 };
 
 /// The path made of `parts`, joined by `/`.
-pub fn join(a: Alloc, parts: []const []const u8) []const u8 {
-    return std.fs.path.join(a, parts) catch oom();
+pub fn join(a: Alloc, parts: []const []const u8) Oom![]const u8 {
+    return std.fs.path.join(a, parts);
 }

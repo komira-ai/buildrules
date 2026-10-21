@@ -7,6 +7,7 @@ const t = std.testing;
 const tk = @import("testkit.zig");
 const io_mod = @import("io.zig");
 const text = @import("text.zig");
+const toolbox = @import("toolbox.zig");
 
 const Args = []const []const u8;
 
@@ -555,4 +556,107 @@ test "a message that cannot be written changes nothing: the status is the same" 
     try expectRun(&c, &.{ "rm", "nope" }, 1, "", "");
     try expectRun(&c, &.{ "sleep", "x" }, 1, "", "");
     try expectRun(&c, &.{"nosuch"}, 127, "", "");
+}
+
+// ---- an allocation that fails -----------------------------------------------------------------------------------
+
+test "every applet, with the allocator failing at each allocation in turn, fails closed: no wrong success, nothing half written" {
+    var c = tk.Case.init();
+    defer c.deinit();
+    c.environ = &.{ "A=1", "B=2", "PATH=/nonexistent" };
+    try c.put("f", "file\n");
+    try c.tmp.dir.makePath("bin");
+    {
+        var f = try c.tmp.dir.createFile("bin/tool", .{ .mode = 0o755 });
+        f.close();
+    }
+    const path_entry = try std.fmt.allocPrint(c.alloc(), "PATH={s}/bin", .{try c.path(".")});
+    const lines = [_][]const []const u8{
+        &.{"true"},
+        &.{"false"},
+        &.{ "toolbox", "--list" },
+        &.{"toolbox"},
+        &.{"nosuch"},
+        &.{ "echo", "hello", "world" },
+        &.{ "echo", "-n" },
+        &.{ "echo", "-e", "a\\x41\\0101\\n\\\\z\\c", "dropped" },
+        &.{ "echo", "-e", "\\x", "\\xg", "\\q", "tail\\", "\\0" },
+        &.{ "cat", "f", "missing" },
+        &.{ "sleep", "0.5" },
+        &.{ "sleep", "x" },
+        &.{ "rm", "-f", "missing" },
+        &.{ "rm", "missing" },
+        &.{ "rm", "-x" },
+        &.{ "rm", ".." },
+        &.{ "mkdir", "-p", "bin" },
+        &.{ "mkdir", "bin" },
+        &.{ "mkdir", "-m" },
+        &.{"printenv"},
+        &.{ "printenv", "A", "NOPE", "B" },
+        &.{"env"},
+        &.{ "env", "-i", "X=1" },
+        &.{ "env", "-u", "A", "B=3" },
+        &.{ "env", "-x" },
+        &.{ "env", "C=3", "/bin/prog", "arg" },
+        &.{ "env", path_entry, "tool", "arg" },
+        &.{ "env", "nosuchtool" },
+    };
+    for (lines) |line| try tk.sweep(&c, line);
+}
+
+// ---- main -------------------------------------------------------------------------------------------------------
+
+/// Runs `toolbox.run` as main does, on files of the directory: stdin from `in`, stdout to `out`, stderr to `err`. `out_mode` is how stdout is opened.
+fn viaFiles(c: *tk.Case, argv: []const []const u8, in: []const u8, out_mode: std.fs.File.OpenMode) !struct { status: u8, out: []u8, err: []u8 } {
+    try c.put("in", in);
+    try c.put("out", "");
+    try c.put("err", "");
+    var fin = try c.tmp.dir.openFile("in", .{});
+    defer fin.close();
+    var fout = try c.tmp.dir.openFile("out", .{ .mode = out_mode });
+    defer fout.close();
+    var ferr = try c.tmp.dir.openFile("err", .{ .mode = .read_write });
+    defer ferr.close();
+    const status = toolbox.run(c.alloc(), argv, c.environ, fin, fout, ferr);
+    return .{ .status = status, .out = try c.read("out"), .err = try c.read("err") };
+}
+
+test "run (main without the process): the arguments, the environment and the three streams it is given" {
+    var c = tk.Case.init();
+    defer c.deinit();
+    c.environ = &.{"K=v"};
+    const echo = try viaFiles(&c, &.{ "/x/echo", "to", "stdout" }, "", .read_write);
+    try t.expectEqual(@as(u8, 0), echo.status);
+    try t.expectEqualStrings("to stdout\n", echo.out);
+    const cat = try viaFiles(&c, &.{"cat"}, "typed in", .read_write);
+    try t.expectEqualStrings("typed in", cat.out);
+    const pe = try viaFiles(&c, &.{ "printenv", "K" }, "", .read_write);
+    try t.expectEqualStrings("v\n", pe.out);
+    const bad = try viaFiles(&c, &.{"nosuch"}, "", .read_write);
+    try t.expectEqual(@as(u8, 127), bad.status);
+    try t.expectEqualStrings("toolbox: applet not found: nosuch\n", bad.err);
+    // the real clock, and the real start of a program that is not there
+    try t.expectEqual(@as(u8, 0), (try viaFiles(&c, &.{ "sleep", "0.001" }, "", .read_write)).status);
+    const nope = try viaFiles(&c, &.{ "env", "/no/such/program" }, "", .read_write);
+    try t.expectEqual(@as(u8, 127), nope.status);
+    try t.expectEqualStrings("env: can't execute '/no/such/program': No such file or directory\n", nope.err);
+}
+
+test "run: a stdout that cannot be flushed makes a success a failure, and does not hide a failure" {
+    var c = tk.Case.init();
+    defer c.deinit();
+    try t.expectEqual(@as(u8, 1), (try viaFiles(&c, &.{ "echo", "lost" }, "", .read_only)).status);
+    try t.expectEqual(@as(u8, 127), (try viaFiles(&c, &.{"nosuch"}, "", .read_only)).status);
+}
+
+test "rm -r of a name the file system refuses is an error with the reason, and an environment entry without `=` is carried through env" {
+    var c = tk.Case.init();
+    defer c.deinit();
+    const long = "a" ** 300;
+    try expectRun(&c, &.{ "rm", "-r", long }, 1, "", "rm: cannot remove '" ++ long ++ "': NameTooLong\n");
+    c.environ = &.{ "NOEQ", "A=1" };
+    try expectRun(&c, &.{ "env", "-u", "A" }, 0, "NOEQ\n", "");
+    try expectRun(&c, &.{ "env", "/bin/prog" }, 0, "", "");
+    try t.expectEqual(@as(usize, 1), tk.ran_env.len);
+    try t.expectEqualStrings("A=1", tk.ran_env[0]);
 }

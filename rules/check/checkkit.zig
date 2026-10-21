@@ -19,6 +19,8 @@ pub const Case = struct {
     toolbox: []const u8,
     /// When set, every write to stdout fails (a closed pipe).
     stdout_closed: bool = false,
+    /// When set, every write to stderr fails.
+    stderr_closed: bool = false,
 
     pub fn init() !Case {
         var c = Case{
@@ -67,15 +69,27 @@ pub const Case = struct {
 
     /// Runs `check` as main does, with `args` (after the program's name), in the directory.
     pub fn run(self: *Case, args: Args) !Result {
+        return self.runWith(self.alloc(), args);
+    }
+
+    /// The same, the command allocating from `command_alloc`.
+    pub fn runWith(self: *Case, command_alloc: std.mem.Allocator, args: Args) !Result {
         const a = self.alloc();
         var out = std.Io.Writer.Allocating.init(a);
         var err = std.Io.Writer.Allocating.init(a);
         var shut: [0]u8 = undefined;
         var closed = std.Io.Writer.fixed(&shut);
-        const io = common.Io{ .a = a, .out = if (self.stdout_closed) &closed else &out.writer, .err = &err.writer, .cwd = self.tmp.dir, .environ = self.environ };
-        const status = check.entry(a, io, args);
+        const io = common.Io{
+            .a = command_alloc,
+            .out = if (self.stdout_closed) &closed else &out.writer,
+            .err = if (self.stderr_closed) &closed else &err.writer,
+            .cwd = self.tmp.dir,
+            .environ = self.environ,
+        };
+        const status = check.entry(command_alloc, io, args);
         return .{ .status = status, .out = out.written(), .err = err.written() };
     }
+
 
     /// `before`, then `--`, the toolbox, and `program`: the command line of a command that starts a toolbox applet.
     pub fn line(self: *Case, before: Args, program: Args) !Args {
@@ -145,4 +159,31 @@ pub fn valueOf(c: *Case, before: Args, name: []const u8) !?[]const u8 {
     const text = try c.read("valueof.out");
     try std.testing.expect(text.len > 0 and text[text.len - 1] == '\n');
     return text[0 .. text.len - 1];
+}
+
+/// Runs `args` with the allocator failing at its 1st, 2nd, ... allocation in turn, until a run meets no failure. The files in `outputs` are removed
+/// before each run. A run in which an allocation failed must not be a success when the plain run is, and must not have written an output file
+/// (a command writes it only when it succeeded); the run that meets no failure must end as the plain run did.
+pub fn sweep(c: *Case, args: Args, outputs: []const []const u8) !void {
+    const plain = try c.run(args);
+    var i: usize = 0;
+    while (i < 10_000) : (i += 1) {
+        for (outputs) |o| c.tmp.dir.deleteFile(o) catch {};
+        var fa = std.testing.FailingAllocator.init(c.alloc(), .{ .fail_index = i });
+        const r = try c.runWith(fa.allocator(), args);
+        if (!fa.has_induced_failure) {
+            try std.testing.expectEqual(plain.status, r.status);
+            return;
+        }
+        if (plain.status != 0) continue;
+        if (r.status == 0) {
+            std.debug.print("`{s}`: with allocation {d} failing the run still succeeded\n", .{ args[0], i });
+            return error.SwallowedOutOfMemory;
+        }
+        for (outputs) |o| if (c.exists(o)) {
+            std.debug.print("`{s}`: with allocation {d} failing the run left {s}\n", .{ args[0], i, o });
+            return error.OutputOfAFailedRun;
+        };
+    }
+    return error.SweepDidNotEnd;
 }

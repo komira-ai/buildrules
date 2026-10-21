@@ -23,7 +23,7 @@ _SRCS = [
 # true/false are what the environment, the working directory and the exit status of a started program are read back with.
 _SUPPORT = ["checkkit.zig"]
 
-_TESTS = ["check", "cmds", "files", "isa", "runspec"]
+_TESTS = ["check", "cmds", "files", "isa", "oom", "runspec"]
 
 [
     zig_test(
@@ -35,6 +35,16 @@ _TESTS = ["check", "cmds", "files", "isa", "runspec"]
     )
     for name in _TESTS
 ]
+
+# All the cases in one test program. The coverage is measured on this one: the blocks that ran in it, so a block that one part's cases run and
+# another's do not is counted once.
+zig_test(
+    name = "all_unit",
+    src = "all_test.zig",
+    imports = _SRCS + _SUPPORT + [name + "_test.zig" for name in _TESTS],
+    env_tools = {"TOOLBOX": _TOOLBOX},
+    zig = _ZIG,
+)
 
 # The executable, built only when the unit tests passed.
 zig_exe(
@@ -83,7 +93,7 @@ zig_test(
 # The coverage of the sources the unit tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. `main` is compiled into
 # no unit test (the process test runs it), so it has neither lines nor blocks there.
 zig_coverage(
-    test_targets = [":" + name + "_unit" for name in _TESTS],
+    test_targets = [":all_unit"],
     expect = ["rules/check/" + f for f in _SRCS],
 )
 

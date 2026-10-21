@@ -12,6 +12,7 @@ const std = @import("std");
 const common = @import("common.zig");
 const Io = common.Io;
 const Alloc = common.Alloc;
+const Oom = common.Oom;
 
 /// The first lines that name ymm are kept, to show.
 const shown = 5;
@@ -22,40 +23,39 @@ pub const Counts = struct {
     ymm: u64 = 0,
     xmm: u64 = 0,
     vpaddd_ymm: u64 = 0,
-    /// The first lines that name ymm (at most `shown`), each cut at the length of the line buffer.
+    /// The first lines that name ymm (at most `shown`).
     first_ymm: [shown][]const u8 = undefined,
     first_ymm_count: usize = 0,
-    /// The line being read: its start, when a chunk ended in the middle of it.
-    pending: std.ArrayList(u8) = .empty,
+    /// The start of the line being read, when a chunk ended in the middle of it.
+    pending: []const u8 = "",
 
     /// Counts the lines of `chunk`, and keeps what follows its last newline for the next.
-    pub fn feed(self: *Counts, a: Alloc, chunk: []const u8) void {
+    pub fn feed(self: *Counts, a: Alloc, chunk: []const u8) Oom!void {
         var rest = chunk;
         while (std.mem.indexOfScalar(u8, rest, '\n')) |nl| {
-            if (self.pending.items.len == 0) {
-                self.line(a, rest[0..nl]);
+            if (self.pending.len == 0) {
+                try self.line(a, rest[0..nl]);
             } else {
-                self.pending.appendSlice(a, rest[0..nl]) catch common.oom();
-                self.line(a, self.pending.items);
-                self.pending.clearRetainingCapacity();
+                try self.line(a, try common.concat(a, &.{ self.pending, rest[0..nl] }));
+                self.pending = "";
             }
             rest = rest[nl + 1 ..];
         }
-        self.pending.appendSlice(a, rest) catch common.oom();
+        if (rest.len > 0) self.pending = try common.concat(a, &.{ self.pending, rest });
     }
 
     /// The last line, when the output did not end with a newline.
-    pub fn finish(self: *Counts, a: Alloc) void {
-        if (self.pending.items.len > 0) self.line(a, self.pending.items);
-        self.pending.clearRetainingCapacity();
+    pub fn finish(self: *Counts, a: Alloc) Oom!void {
+        if (self.pending.len > 0) try self.line(a, self.pending);
+        self.pending = "";
     }
 
-    fn line(self: *Counts, a: Alloc, text: []const u8) void {
+    fn line(self: *Counts, a: Alloc, text: []const u8) Oom!void {
         if (isInstruction(text)) self.instructions += 1;
         if (std.mem.indexOf(u8, text, "ymm") != null) {
             self.ymm += 1;
             if (self.first_ymm_count < shown) {
-                self.first_ymm[self.first_ymm_count] = a.dupe(u8, text) catch common.oom();
+                self.first_ymm[self.first_ymm_count] = try a.dupe(u8, text);
                 self.first_ymm_count += 1;
             }
             if (std.mem.indexOf(u8, text, "vpaddd")) |at| {
@@ -76,7 +76,7 @@ fn isInstruction(text: []const u8) bool {
 
 const usage = "usage: check isa --objdump PROGRAM --binary FILE --expect avx2|none --label TEXT --out REPORT";
 
-pub fn run(a: Alloc, io: Io, args: []const []const u8) u8 {
+pub fn run(a: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     var objdump: ?[]const u8 = null;
     var binary: ?[]const u8 = null;
     var expect: ?[]const u8 = null;
@@ -96,48 +96,48 @@ pub fn run(a: Alloc, io: Io, args: []const []const u8) u8 {
     }
     const want_avx2 = std.mem.eql(u8, expect.?, "avx2");
     if (!want_avx2 and !std.mem.eql(u8, expect.?, "none")) {
-        return complain(io, 2, &.{ "isa_audit: expect must be avx2 or none, got '", expect.?, "'\n" });
+        return try complain(io, 2, &.{ "isa_audit: expect must be avx2 or none, got '", expect.?, "'\n" });
     }
     var counts = Counts{};
-    if (!disassemble(a, io, objdump.?, binary.?, &counts)) return 1;
+    if (!try disassemble(a, io, objdump.?, binary.?, &counts)) return 1;
     const lbl = label.?;
     if (want_avx2 and counts.ymm == 0) {
-        return complain(io, 1, &.{ "isa_audit: ", lbl, " was built for a level with AVX2 but its machine code has no ymm instruction: the ISA flags never reached the compiler\n" });
+        return try complain(io, 1, &.{ "isa_audit: ", lbl, " was built for a level with AVX2 but its machine code has no ymm instruction: the ISA flags never reached the compiler\n" });
     }
     if (!want_avx2 and counts.ymm != 0) {
-        const shown_lines = common.concat(a, &.{ "isa_audit: ", lbl, " was built for a level without AVX2 but ", common.num(a, counts.ymm), " instructions name ymm: it would die with SIGILL on a baseline worker\n" });
+        const shown_lines = try common.concat(a, &.{ "isa_audit: ", lbl, " was built for a level without AVX2 but ", try common.num(a, counts.ymm), " instructions name ymm: it would die with SIGILL on a baseline worker\n" });
         io.err.writeAll(shown_lines) catch {};
-        for (counts.first_ymm[0..counts.first_ymm_count]) |l| io.err.writeAll(common.concat(a, &.{ l, "\n" })) catch {};
+        for (counts.first_ymm[0..counts.first_ymm_count]) |l| io.err.writeAll(try common.concat(a, &.{ l, "\n" })) catch {};
         return 1;
     }
-    return if (common.writeFile(io, "isa", out.?, report(a, lbl, expect.?, counts))) 0 else 1;
+    return if (common.writeFile(io, "isa", out.?, try report(a, lbl, expect.?, counts))) 0 else 1;
 }
 
 /// Says the message (its parts, newline included) on stderr; returns `status`.
-fn complain(io: Io, status: u8, parts: []const []const u8) u8 {
-    io.err.writeAll(common.concat(io.a, parts)) catch {};
+fn complain(io: Io, status: u8, parts: []const []const u8) Oom!u8 {
+    io.err.writeAll(try common.concat(io.a, parts)) catch {};
     return status;
 }
 
 
 /// The text of the report: the counts, and the first lines that name ymm.
-pub fn report(a: Alloc, label: []const u8, expect: []const u8, c: Counts) []const u8 {
+pub fn report(a: Alloc, label: []const u8, expect: []const u8, c: Counts) Oom![]const u8 {
     var text = common.Buf{ .a = a };
-    text.add(common.concat(a, &.{ "target: ", label, "\nexpect: ", expect, "\ninstructions: ", common.num(a, c.instructions), "\n" }));
-    text.add(common.concat(a, &.{ "instructions naming ymm (AVX2 width): ", common.num(a, c.ymm), "\n" }));
-    text.add(common.concat(a, &.{ "instructions naming xmm (SSE width): ", common.num(a, c.xmm), "\n" }));
-    text.add(common.concat(a, &.{ "vpaddd on ymm (the vectorized sum, AVX2-only): ", common.num(a, c.vpaddd_ymm), "\nfirst ymm lines:\n" }));
-    for (c.first_ymm[0..c.first_ymm_count]) |l| text.add(common.concat(a, &.{ l, "\n" }));
-    return text.list.items;
+    try text.add(try common.concat(a, &.{ "target: ", label, "\nexpect: ", expect, "\ninstructions: ", try common.num(a, c.instructions), "\n" }));
+    try text.add(try common.concat(a, &.{ "instructions naming ymm (AVX2 width): ", try common.num(a, c.ymm), "\n" }));
+    try text.add(try common.concat(a, &.{ "instructions naming xmm (SSE width): ", try common.num(a, c.xmm), "\n" }));
+    try text.add(try common.concat(a, &.{ "vpaddd on ymm (the vectorized sum, AVX2-only): ", try common.num(a, c.vpaddd_ymm), "\nfirst ymm lines:\n" }));
+    for (c.first_ymm[0..c.first_ymm_count]) |l| try text.add(try common.concat(a, &.{ l, "\n" }));
+    return text.items;
 }
 
 /// Runs the disassembler on the binary and counts its output as it arrives. False, with the reason said, when it cannot be run or fails.
-fn disassemble(a: Alloc, io: Io, objdump: []const u8, binary: []const u8, counts: *Counts) bool {
+fn disassemble(a: Alloc, io: Io, objdump: []const u8, binary: []const u8, counts: *Counts) Oom!bool {
     const here = io.cwd.realpathAlloc(a, ".") catch |err| {
         io.say("isa", &.{ "cannot find the working directory: ", @errorName(err) });
         return false;
     };
-    var child = std.process.Child.init(&.{ common.absolute(a, here, objdump), "-d", "--no-show-raw-insn", binary }, a);
+    var child = std.process.Child.init(&.{ try common.absolute(a, here, objdump), "-d", "--no-show-raw-insn", binary }, a);
     child.stdout_behavior = .Pipe;
     child.stdin_behavior = .Ignore;
     child.cwd = here;
@@ -150,13 +150,13 @@ fn disassemble(a: Alloc, io: Io, objdump: []const u8, binary: []const u8, counts
             return false;
         };
         if (n == 0) break;
-        counts.feed(a, buf[0..n]);
+        try counts.feed(a, buf[0..n]);
     }
-    counts.finish(a);
+    try counts.finish(a);
     const term = child.wait() catch |err| return cannotRun(io, objdump, err);
     const status = common.statusOf(term);
     if (status != 0) {
-        io.say("isa", &.{ objdump, " failed with status ", common.num(a, status) });
+        io.say("isa", &.{ objdump, " failed with status ", try common.num(a, status) });
         return false;
     }
     return true;

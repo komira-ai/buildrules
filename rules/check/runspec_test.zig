@@ -12,7 +12,7 @@ const rs = @import("runspec.zig");
 
 fn parseOk(c: *kit.Case, kind: rs.Kind, args: kit.Args) !rs.Spec {
     var s = kit.Streams.init(c.alloc());
-    return rs.parse(s.io(c), "x", kind, args) orelse {
+    return (rs.parse(s.io(c), "x", kind, args) catch return error.OutOfMemory) orelse {
         std.debug.print("refused: {s}\n", .{s.err.written()});
         return error.TestUnexpectedResult;
     };
@@ -20,7 +20,7 @@ fn parseOk(c: *kit.Case, kind: rs.Kind, args: kit.Args) !rs.Spec {
 
 fn parseRefused(c: *kit.Case, kind: rs.Kind, args: kit.Args, message: []const u8) !void {
     var s = kit.Streams.init(c.alloc());
-    if (rs.parse(s.io(c), "x", kind, args) != null) {
+    if ((rs.parse(s.io(c), "x", kind, args) catch return error.OutOfMemory) != null) {
         std.debug.print("accepted: {any}\n", .{args});
         return error.TestUnexpectedResult;
     }

@@ -6,6 +6,7 @@ const Io = io_mod.Io;
 const Alloc = io_mod.Alloc;
 const describe = io_mod.describe;
 const Buf = io_mod.Buf;
+const Oom = io_mod.Oom;
 
 // ---- echo -------------------------------------------------------------------------------------------------------
 
@@ -23,18 +24,18 @@ const escape_bytes = "\\\x07\x08\x1b\x0c\n\r\t\x0b";
 
 /// Appends `arg` with its backslash escapes replaced (`\\ \a \b \e \f \n \r \t \v`, `\0` and up to three octal digits, `\x` and up to two
 /// hex digits); another backslash stays as it is. Returns false at `\c`, which ends all output.
-fn unescape(out: *Buf, arg: []const u8) bool {
+fn unescape(out: *Buf, arg: []const u8) Oom!bool {
     var i: usize = 0;
     while (i < arg.len) : (i += 1) {
         if (arg[i] != '\\' or i + 1 == arg.len) {
-            out.byte(arg[i]);
+            try out.byte(arg[i]);
             continue;
         }
         i += 1;
         const c = arg[i];
         if (c == 'c') return false;
         if (std.mem.indexOfScalar(u8, escape_names, c)) |k| {
-            out.byte(escape_bytes[k]);
+            try out.byte(escape_bytes[k]);
         } else if (c == '0' or c == 'x') {
             // `\0` takes up to three more octal digits, `\x` up to two hex digits.
             const base: u8 = if (c == '0') 8 else 16;
@@ -47,13 +48,13 @@ fn unescape(out: *Buf, arg: []const u8) bool {
                 i += 1;
             }
             if (n == 0 and c == 'x') {
-                out.add("\\x");
+                try out.add("\\x");
             } else {
-                out.byte(@truncate(value));
+                try out.byte(@truncate(value));
             }
         } else {
-            out.byte('\\');
-            out.byte(c);
+            try out.byte('\\');
+            try out.byte(c);
         }
     }
     return true;
@@ -62,7 +63,7 @@ fn unescape(out: *Buf, arg: []const u8) bool {
 
 /// `echo [-n] [-e] [-E] [ARG...]`: the arguments, separated by a space, then a newline unless -n. -e replaces backslash escapes, -E (the
 /// default) does not. A first argument that is not made of those flags is text, so `echo --plan` writes `--plan`.
-pub fn echo(a: Alloc, io: Io, args: []const []const u8) u8 {
+pub fn echo(a: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     var newline = true;
     var escapes = false;
     var i: usize = 0;
@@ -77,24 +78,23 @@ pub fn echo(a: Alloc, io: Io, args: []const []const u8) u8 {
     }
     var out = Buf{ .a = a };
     for (args[i..], 0..) |arg, k| {
-        if (k > 0) out.byte(' ');
+        if (k > 0) try out.byte(' ');
         if (!escapes) {
-            out.add(arg);
-        } else if (!unescape(&out, arg)) {
+            try out.add(arg);
+        } else if (!try unescape(&out, arg)) {
             newline = false;
             break;
         }
     }
-    if (newline) out.byte('\n');
-    return if (io.put(out.list.items)) 0 else 1;
+    if (newline) try out.byte('\n');
+    return if (io.put(out.items)) 0 else 1;
 }
 
 // ---- cat --------------------------------------------------------------------------------------------------------
 
 /// `cat [FILE...]`: the files, in order, to stdout; `-` and no operand at all read stdin. A file that cannot be read is an error, and the
 /// rest are still written.
-pub fn cat(a: Alloc, io: Io, args: []const []const u8) u8 {
-    _ = a;
+pub fn cat(_: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     if (args.len == 0) return if (copyStdin(io)) 0 else 1;
     var status: u8 = 0;
     for (args) |name| {
@@ -177,8 +177,7 @@ pub fn parseInterval(text: []const u8) ?u64 {
 }
 
 /// `sleep TIME...`: waits for the sum of the times, each as `parseInterval` reads it. Nothing is waited for unless every one is valid.
-pub fn sleep(a: Alloc, io: Io, args: []const []const u8) u8 {
-    _ = a;
+pub fn sleep(_: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     if (args.len == 0) {
         io.say("sleep", &.{"missing operand"});
         return 1;

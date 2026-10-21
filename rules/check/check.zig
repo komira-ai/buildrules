@@ -22,10 +22,11 @@ const files = @import("files.zig");
 const isa = @import("isa.zig");
 const Io = common.Io;
 const Alloc = common.Alloc;
+const Oom = common.Oom;
 
 const Command = struct {
     name: []const u8,
-    run: *const fn (Alloc, Io, []const []const u8) u8,
+    run: *const fn (Alloc, Io, []const []const u8) Oom!u8,
 };
 
 pub const commands = [_]Command{
@@ -40,8 +41,15 @@ pub const commands = [_]Command{
 
 const usage = "usage: check run|expect|marker|digest|same|copy|isa [ARGUMENT]...";
 
-/// `args` is the command line after the program's name.
+/// `args` is the command line after the program's name. An allocation that fails ends the run: `out of memory`, exit 1.
 pub fn entry(a: Alloc, io: Io, args: []const []const u8) u8 {
+    return dispatch(a, io, args) catch {
+        io.err.writeAll("check: out of memory\n") catch {};
+        return 1;
+    };
+}
+
+fn dispatch(a: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     if (args.len == 0) {
         io.err.writeAll(usage ++ "\n") catch {};
         return 2;
@@ -53,22 +61,28 @@ pub fn entry(a: Alloc, io: Io, args: []const []const u8) u8 {
     for (commands) |command| {
         if (std.mem.eql(u8, command.name, args[0])) return command.run(a, io, args[1..]);
     }
-    io.err.writeAll(common.concat(a, &.{ "check: unknown command ", args[0], "\n", usage, "\n" })) catch {};
+    io.err.writeAll(try common.concat(a, &.{ "check: unknown command ", args[0], "\n", usage, "\n" })) catch {};
     return 2;
+}
+
+/// The program with its inputs given: the allocator, the command line after the program's name, the environment and the two output streams
+/// as files. `main` passes the process's own; the tests pass files of their own. Returns the exit status; a failed flush of stdout is 1.
+pub fn run(a: Alloc, args: []const []const u8, environ: []const []const u8, stdout: std.fs.File, stderr: std.fs.File) u8 {
+    var out_buf: [4096]u8 = undefined;
+    var out = stdout.writer(&out_buf);
+    var err_buf: [0]u8 = undefined;
+    var err = stderr.writer(&err_buf);
+    const io = Io{ .a = a, .out = &out.interface, .err = &err.interface, .cwd = std.fs.cwd(), .environ = environ };
+    const status = entry(a, io, args);
+    io.out.flush() catch return 1;
+    return status;
 }
 
 pub fn main() u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    const argv = std.process.argsAlloc(a) catch common.oom();
-    const environ = a.alloc([]const u8, std.os.environ.len) catch common.oom();
+    const argv = std.process.argsAlloc(a) catch return 1;
+    const environ = a.alloc([]const u8, std.os.environ.len) catch return 1;
     for (std.os.environ, 0..) |entry_z, k| environ[k] = std.mem.span(entry_z);
-    var out_buf: [4096]u8 = undefined;
-    var out = std.fs.File.stdout().writer(&out_buf);
-    var err_buf: [0]u8 = undefined;
-    var err = std.fs.File.stderr().writer(&err_buf);
-    const io = Io{ .a = a, .out = &out.interface, .err = &err.interface, .cwd = std.fs.cwd(), .environ = environ };
-    const status = entry(a, io, argv[1..]);
-    io.out.flush() catch return 1;
-    return status;
+    return run(a, argv[1..], environ, std.fs.File.stdout(), std.fs.File.stderr());
 }

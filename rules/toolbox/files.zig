@@ -30,7 +30,7 @@ fn dangerous(path: []const u8) bool {
 /// `rm [-r] [-R] [-f] [--] PATH...`: removes files; with -r, directories and what is under them. A path that is not there is an error
 /// unless -f. A directory without -r is an error. `.`, `..` and `/` are refused. The remaining paths are still tried after an
 /// error, and the exit status is 1 if there was one.
-pub fn rm(_: Alloc, io: Io, args: []const []const u8) u8 {
+pub fn rm(_: Alloc, io: Io, args: []const []const u8) io_mod.Oom!u8 {
     var recursive = false;
     var force = false;
     var i: usize = 0;
@@ -93,7 +93,7 @@ fn cannot(io: Io, path: []const u8, why: []const u8) bool {
 
 /// `mkdir [-p] [--] DIR...`: makes directories. With -p the parents too, and a directory that is already there is not an error. Without
 /// it the parent must exist and so must not the directory. The remaining operands are still tried after an error.
-pub fn mkdir(_: Alloc, io: Io, args: []const []const u8) u8 {
+pub fn mkdir(_: Alloc, io: Io, args: []const []const u8) io_mod.Oom!u8 {
     var parents = false;
     var i: usize = 0;
     while (i < args.len and args[i].len > 1 and args[i][0] == '-') : (i += 1) {
