@@ -117,7 +117,7 @@ test "glibc_floor: an ELF within the floor is accepted; a usage error, a floor t
     try copyElf(a, tmp.dir, "elf");
     try proc.expectRefusal("no arguments", try proc.run(a, tmp.dir, try exe(a, "GLIBC_FLOOR", &.{})), 2, &.{"usage: glibc_floor <elf> <max> <result.json>"});
     try proc.expectRefusal("too many arguments", try proc.run(a, tmp.dir, try exe(a, "GLIBC_FLOOR", &.{ "elf", "2.34", "r.json", "x" })), 2, &.{"usage: glibc_floor"});
-    for ([_][]const u8{ "2", "two.thirty", "2.34.1.1", "2.x", "" }) |bad| {
+    for ([_][]const u8{ "2", "two.thirty", "2.34.1.x", "2.x", "" }) |bad| {
         const msg = try std.fmt.allocPrint(a, "glibc_floor: {s} is not a version", .{bad});
         try proc.expectRefusal(bad, try proc.run(a, tmp.dir, try exe(a, "GLIBC_FLOOR", &.{ "elf", bad, "result.json" })), 2, &.{msg});
     }
