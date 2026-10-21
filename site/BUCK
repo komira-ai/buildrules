@@ -52,6 +52,7 @@ jest_test(
         "RELEASING.md": "//:RELEASING.md",
         "VERSION": "//:VERSION",
         "ci/BUCK": "//ci:BUCK.txt",
+        "cli/src/autopin.zig": "//cli:autopin.zig",
         "cli/src/buckgen.zig": "//cli:buckgen.zig",
         "cli/src/cargo_cmd.zig": "//cli:cargo_cmd.zig",
         "cli/src/check.zig": "//cli:check.zig",

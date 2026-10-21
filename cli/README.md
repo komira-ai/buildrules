@@ -13,6 +13,7 @@ generated texts as constants, and `src/contract_test.zig` checks them against a 
 | `check` | offline, read-only; exit 1 when `rust-toolchain.toml`, `Cargo.lock` or any `Cargo.toml` differ from what `sync` recorded, or a generated file is hand-edited; also the Mojo check below when the repository has Mojo packages |
 | `mojo sync [--check] [--mopm M] [--buck2 B] [PKG...]` | for each package whose BUCK file calls `mojo_package(`: the pinned mopm's `plan --unit-graph --locked` (mopm-toolchain.toml gives mopm and Mojo) written verbatim as `buildrules.mojo.lock.bzl` beside `mopm.toml`, with `buildrules.mojo.bzl`; `toolchains/mojo_pins.bzl` (mopm's toolchain section) and `toolchains/mopm_pins.bzl` (`buildrules-pins.toml` `[mopm."V"]`) |
 | `mojo check` | offline, read-only; exit 1 when a manifest, a source, a new test or library file, a toolchain version or a generated file is not what the table was made from |
+| `autopin compute --event FILE --out DIR --set DIR=KIND ... [--dir DIR]` | for CI: regenerate the pin tables (`buildrules.lock.bzl`, `pins.lock.bzl`) of the named directories from their `package-lock.json` (strict lock, registry tarballs only, capped downloads), write the changed tables and a `manifest.json` under `--out`; the output is untrusted for whatever reads it next (`src/autopin_*.zig`) |
 
 Exit codes of every command: 0 ok, 1 failed or stale, 2 usage.
 

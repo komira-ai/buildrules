@@ -1,0 +1,406 @@
+//! The strict lock reader, the table reader and the row-to-lock binding of `autopin`. The lock and the table are
+//! untrusted: every test plants one defect and names what must refuse it.
+
+const std = @import("std");
+const lock = @import("autopin_lock.zig");
+const sets_mod = @import("autopin_sets.zig");
+const table = @import("autopin_table.zig");
+const Diag = @import("diag.zig").Diag;
+const t = std.testing;
+
+const sri_a = "sha512-" ++ "A" ** 86 ++ "==";
+const sri_b = "sha512-" ++ "B" ** 85 ++ "A==";
+const sha_a = "a" ** 64;
+const sha_b = "b" ** 64;
+const reg = "https://registry.npmjs.org/";
+
+fn arena() std.heap.ArenaAllocator {
+    return std.heap.ArenaAllocator.init(t.allocator);
+}
+
+const pad_pkg = "\"node_modules/left-pad\":{\"version\":\"1.3.0\",\"resolved\":\"" ++ reg ++ "left-pad/-/left-pad-1.3.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}";
+const scope_pkg = "\"node_modules/@scope/pkg\":{\"version\":\"2.0.0\",\"resolved\":\"" ++ reg ++ "@scope/pkg/-/pkg-2.0.0.tgz\",\"integrity\":\"" ++ sri_b ++ "\",\"os\":[\"darwin\"]}";
+
+fn lockWith(a: std.mem.Allocator, extra: []const u8) ![]u8 {
+    return std.fmt.allocPrint(a, "{{\"name\":\"demo\",\"lockfileVersion\":3,\"packages\":{{\"\":{{\"name\":\"demo\"}},{s},{s}{s}}}}}", .{ pad_pkg, scope_pkg, extra });
+}
+
+/// What `lock.read` says about `text`: the entries and the number of problems.
+fn readLock(a: std.mem.Allocator, text: []const u8, diag: *Diag) ![]lock.Entry {
+    return lock.read(a, text, diag);
+}
+
+fn expectRefused(extra: []const u8, needle: []const u8) !void {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var diag = Diag.init(a);
+    _ = try readLock(a, try lockWith(a, extra), &diag);
+    try t.expect(diag.count() > 0);
+    var named = false;
+    for (diag.msgs.items) |m| if (std.mem.indexOf(u8, m, needle) != null) {
+        named = true;
+    };
+    if (!named) {
+        std.debug.print("no message names {s}: {s}\n", .{ needle, if (diag.msgs.items.len > 0) diag.msgs.items[0] else "(none)" });
+    }
+    try t.expect(named);
+}
+
+test "lock: a registry lock reads, sorted, with the canonical url derived and the platform lists kept" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var diag = Diag.init(a);
+    const got = try readLock(a, try lockWith(a, ""), &diag);
+    try t.expectEqual(@as(usize, 0), diag.count());
+    try t.expectEqual(@as(usize, 2), got.len);
+    try t.expectEqualStrings("@scope/pkg@2.0.0", got[0].key);
+    try t.expectEqualStrings(reg ++ "@scope/pkg/-/pkg-2.0.0.tgz", got[0].url);
+    try t.expectEqualStrings("darwin", got[0].os.?[0]);
+    try t.expectEqualStrings("left-pad@1.3.0", got[1].key);
+    try t.expectEqualStrings(reg ++ "left-pad/-/left-pad-1.3.0.tgz", got[1].url);
+    try t.expect(got[1].os == null);
+}
+
+test "lock: the same name@version at two paths is one entry; different integrities are refused, naming both paths" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var diag = Diag.init(a);
+    const same = ",\"node_modules/x/node_modules/left-pad\":{\"version\":\"1.3.0\",\"resolved\":\"" ++ reg ++ "left-pad/-/left-pad-1.3.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}";
+    const got = try readLock(a, try lockWith(a, same), &diag);
+    // node_modules/x has no entry of its own, which is fine: the path is a chain of node_modules/<name> segments.
+    try t.expectEqual(@as(usize, 0), diag.count());
+    try t.expectEqual(@as(usize, 2), got.len);
+    try expectRefused(",\"node_modules/x/node_modules/left-pad\":{\"version\":\"1.3.0\",\"resolved\":\"" ++ reg ++ "left-pad/-/left-pad-1.3.0.tgz\",\"integrity\":\"" ++ sri_b ++ "\"}", "node_modules/x/node_modules/left-pad");
+}
+
+test "lock: a resolved url that is not the canonical registry url is refused" {
+    try expectRefused(",\"node_modules/a\":{\"version\":\"1.0.0\",\"resolved\":\"https://evil.example/a/-/a-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a");
+    try expectRefused(",\"node_modules/a\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "a/-/a-1.0.0.tgz?x=1\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a");
+    try expectRefused(",\"node_modules/a\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "a/-/a-1.0.1.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a");
+    try expectRefused(",\"node_modules/a\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "b/-/b-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a");
+    try expectRefused(",\"node_modules/a\":{\"version\":\"1.0.0\",\"resolved\":\"http://registry.npmjs.org/a/-/a-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a");
+    // A scoped package's file name is the base name, not the scope/name.
+    try expectRefused(",\"node_modules/@s/a\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "@s/a/-/@s/a-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/@s/a");
+}
+
+test "lock: an alias (name differs from the path's) is refused" {
+    try expectRefused(",\"node_modules/alias\":{\"name\":\"real\",\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "real/-/real-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "alias");
+}
+
+test "lock: bundled, link, git, file and workspace entries are refused, naming the path" {
+    try expectRefused(",\"node_modules/b\":{\"version\":\"1.0.0\",\"inBundle\":true}", "node_modules/b");
+    try expectRefused(",\"node_modules/b\":{\"version\":\"1.0.0\",\"inBundle\":true,\"resolved\":\"" ++ reg ++ "b/-/b-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/b");
+    try expectRefused(",\"node_modules/l\":{\"resolved\":\"packages/l\",\"link\":true}", "node_modules/l");
+    try expectRefused(",\"node_modules/g\":{\"version\":\"1.0.0\",\"resolved\":\"git+ssh://git@github.com/o/g.git#abc\"}", "node_modules/g");
+    try expectRefused(",\"node_modules/f\":{\"version\":\"1.0.0\",\"resolved\":\"file:../f\"}", "node_modules/f");
+    try expectRefused(",\"node_modules/f2\":{\"version\":\"1.0.0\",\"resolved\":\"file:../f\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/f2");
+    try expectRefused(",\"packages/w\":{\"name\":\"w\",\"version\":\"1.0.0\"}", "packages/w");
+    try expectRefused(",\"node_modules/n\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "n/-/n-1.0.0.tgz\"}", "node_modules/n");
+    try expectRefused(",\"node_modules/s1\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "s1/-/s1-1.0.0.tgz\",\"integrity\":\"sha1-qUwiJOvKwEeCoNkDVSHyRzW37JI=\"}", "node_modules/s1");
+}
+
+test "lock: a version that is not strict semver is refused" {
+    const bad = [_][]const u8{ "^1.0.0", "1.0", "01.0.0", "1.0.0-01", "v1.0.0", "latest", "1.0.0 ", "1.0.0+", "1.0.0." ++ "0" };
+    for (bad) |v| {
+        var ar = arena();
+        defer ar.deinit();
+        const a = ar.allocator();
+        const extra = try std.fmt.allocPrint(a, ",\"node_modules/v\":{{\"version\":\"{s}\",\"resolved\":\"{s}v/-/v-{s}.tgz\",\"integrity\":\"{s}\"}}", .{ v, reg, v, sri_a });
+        var diag = Diag.init(a);
+        _ = try readLock(a, try lockWith(a, extra), &diag);
+        try t.expect(diag.count() > 0);
+    }
+}
+
+test "lock: semver, as semver.org writes it" {
+    const good = [_][]const u8{ "1.0.0", "0.0.1", "10.20.30", "1.0.0-rc.1", "1.0.0-alpha-1.2", "1.0.0+build.5", "1.2.3-0.3.7+exp.sha.5114f85", "1.0.0-0" };
+    for (good) |v| try t.expect(lock.isStrictSemver(v));
+    const bad = [_][]const u8{ "", "1", "1.0", "1.0.0." ++ "0", "01.0.0", "1.00.0", "1.0.0-", "1.0.0-01", "1.0.0-a..b", "1.0.0+", "1.0.0+a..b", "1.0.0-a_b", "v1.0.0", "1.0.0 ", "^1.0.0", "x" ** 65 };
+    for (bad) |v| try t.expect(!lock.isStrictSemver(v));
+}
+
+test "lock: not JSON, not an object, not lockfileVersion 3, no packages are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const bad = [_][]const u8{ "{", "[]", "{\"lockfileVersion\":2,\"packages\":{}}", "{\"lockfileVersion\":3}", "{\"lockfileVersion\":3,\"packages\":[]}", "{\"lockfileVersion\":3,\"packages\":{\"node_modules/a\":1}}" };
+    for (bad) |text| {
+        var diag = Diag.init(a);
+        _ = try readLock(a, text, &diag);
+        try t.expect(diag.count() > 0);
+    }
+}
+
+const hdr = "# header\n\nPINS = {}\n\n";
+
+fn row(a: std.mem.Allocator, key: []const u8, name: []const u8, version: []const u8, url: []const u8, sri: []const u8, sha: []const u8, size: []const u8, extra: []const u8) ![]u8 {
+    return std.fmt.allocPrint(a, "    \"{s}\": {{\n        \"name\": \"{s}\",\n        \"version\": \"{s}\",\n        \"url\": \"{s}\",\n        \"sri512\": \"{s}\",\n        \"sha256\": \"{s}\",\n        \"size\": {s},\n{s}    }},\n", .{ key, name, version, url, sri, sha, size, extra });
+}
+
+fn padRow(a: std.mem.Allocator) ![]u8 {
+    return row(a, "left-pad@1.3.0", "left-pad", "1.3.0", reg ++ "left-pad/-/left-pad-1.3.0.tgz", sri_a, sha_a, "11", "");
+}
+
+fn scopeRow(a: std.mem.Allocator, extra: []const u8) ![]u8 {
+    return row(a, "@scope/pkg@2.0.0", "@scope/pkg", "2.0.0", reg ++ "@scope/pkg/-/pkg-2.0.0.tgz", sri_b, sha_b, "22", extra);
+}
+
+fn block(a: std.mem.Allocator, rows: []const []const u8) ![]u8 {
+    var out = std.ArrayList(u8).empty;
+    try out.appendSlice(a, "NPM = {\n");
+    for (rows) |r| try out.appendSlice(a, r);
+    try out.appendSlice(a, "}\n");
+    return out.items;
+}
+
+fn parseBlock(a: std.mem.Allocator, text: []const u8, kind: sets_mod.Kind, diag: *Diag) ![]table.Row {
+    return table.parseRows(a, text, kind, diag);
+}
+
+fn expectBadBlock(text: []const u8, kind: sets_mod.Kind) !void {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var diag = Diag.init(a);
+    try t.expectError(error.BadNpmBlock, parseBlock(a, text, kind, &diag));
+    try t.expect(diag.count() > 0);
+}
+
+test "table: reads the rows of both kinds, with platform lists only in a buildrules table" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var diag = Diag.init(a);
+    const text = try block(a, &.{ try scopeRow(a, "        \"os\": [\"darwin\", \"linux\"],\n        \"libc\": [\"glibc\"],\n"), try padRow(a) });
+    const rows = try parseBlock(a, text, .buildrules_lock, &diag);
+    try t.expectEqual(@as(usize, 2), rows.len);
+    try t.expectEqualStrings("darwin", rows[0].os.?[0]);
+    try t.expectEqualStrings("linux", rows[0].os.?[1]);
+    try t.expect(rows[0].cpu == null);
+    try t.expectEqualStrings("glibc", rows[0].libc.?[0]);
+    try t.expectEqual(@as(u64, 22), rows[0].size);
+    try t.expectEqual(@as(usize, 0), (try parseBlock(a, "NPM = {}\n", .pins_lock, &diag)).len);
+    try t.expectEqual(@as(usize, 0), diag.count());
+    try expectBadBlock(text, .pins_lock);
+}
+
+test "table: a load, a call or any text that is not a row is refused (the generator's grammar and nothing wider)" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const good_row = try padRow(a);
+    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", "    load(\"//evil:x.bzl\", \"y\")\n", good_row, "}\n" }), .pins_lock);
+    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", good_row, "}\nnative.genrule()\n" }), .pins_lock);
+    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", good_row, "}\n\n" }), .pins_lock);
+    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", good_row }), .pins_lock);
+    try expectBadBlock("NPM = {}\nload(\"x\")\n", .pins_lock);
+    try expectBadBlock("NPM = {\n}\n}\n", .pins_lock);
+    try expectBadBlock("NPM = []\n", .pins_lock);
+    try expectBadBlock("", .pins_lock);
+}
+
+test "table: an extra field, a missing field, a reordered field and a changed indent are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.0", "left-pad", "1.3.0", reg ++ "left-pad/-/left-pad-1.3.0.tgz", sri_a, sha_a, "11", "        \"extra\": \"x\",\n")}), .pins_lock);
+    try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.0", "left-pad", "1.3.0", reg ++ "left-pad/-/left-pad-1.3.0.tgz", sri_a, sha_a, "11", "        \"os\": [\"darwin\"],\n")}), .pins_lock);
+    const swapped = "NPM = {\n    \"left-pad@1.3.0\": {\n        \"version\": \"1.3.0\",\n        \"name\": \"left-pad\",\n        \"url\": \"" ++ reg ++ "left-pad/-/left-pad-1.3.0.tgz\",\n        \"sri512\": \"" ++ sri_a ++ "\",\n        \"sha256\": \"" ++ sha_a ++ "\",\n        \"size\": 11,\n    },\n}\n";
+    try expectBadBlock(swapped, .pins_lock);
+    const missing = "NPM = {\n    \"left-pad@1.3.0\": {\n        \"name\": \"left-pad\",\n        \"version\": \"1.3.0\",\n        \"url\": \"" ++ reg ++ "left-pad/-/left-pad-1.3.0.tgz\",\n        \"sri512\": \"" ++ sri_a ++ "\",\n        \"size\": 11,\n    },\n}\n";
+    try expectBadBlock(missing, .pins_lock);
+    const indent = "NPM = {\n  \"left-pad@1.3.0\": {\n        \"name\": \"left-pad\",\n    },\n}\n";
+    try expectBadBlock(indent, .pins_lock);
+}
+
+test "table: rows out of order, a key twice, a key that is not name@version are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try expectBadBlock(try block(a, &.{ try padRow(a), try scopeRow(a, "") }), .pins_lock);
+    try expectBadBlock(try block(a, &.{ try padRow(a), try padRow(a) }), .pins_lock);
+    try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.1", "left-pad", "1.3.0", reg ++ "left-pad/-/left-pad-1.3.0.tgz", sri_a, sha_a, "11", "")}), .pins_lock);
+}
+
+test "table: values outside their sets are refused (name, version, url, sha512, sha256, size)" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const u = reg ++ "left-pad/-/left-pad-1.3.0.tgz";
+    try expectBadBlock(try block(a, &.{try row(a, "l pad@1.3.0", "l pad", "1.3.0", u, sri_a, sha_a, "11", "")}), .pins_lock);
+    try expectBadBlock(try block(a, &.{try row(a, "left-pad@^1.3.0", "left-pad", "^1.3.0", u, sri_a, sha_a, "11", "")}), .pins_lock);
+    try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.0", "left-pad", "1.3.0", "ftp://x/y", sri_a, sha_a, "11", "")}), .pins_lock);
+    try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.0", "left-pad", "1.3.0", u, "sha512-short", sha_a, "11", "")}), .pins_lock);
+    try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.0", "left-pad", "1.3.0", u, sri_a, "A" ** 64, "11", "")}), .pins_lock);
+    try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.0", "left-pad", "1.3.0", u, sri_a, sha_a, "011", "")}), .pins_lock);
+    try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.0", "left-pad", "1.3.0", u, sri_a, sha_a, "-1", "")}), .pins_lock);
+    try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.0", "left-pad", "1.3.0", u, sri_a, sha_a, "67108865", "")}), .pins_lock);
+    try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.0", "left-pad", "1.3.0", u, sri_a, sha_a, "1234567890123", "")}), .pins_lock);
+    try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.0\\", "left-pad", "1.3.0", u, sri_a, sha_a, "11", "")}), .pins_lock);
+    var okd = Diag.init(a);
+    const ok = try parseBlock(a, try block(a, &.{try row(a, "left-pad@1.3.0", "left-pad", "1.3.0", u, sri_a, sha_a, "67108864", "")}), .pins_lock, &okd);
+    try t.expectEqual(@as(u64, 67108864), ok[0].size);
+}
+
+test "table: a bad platform list is refused (empty, unquoted, outside the token set)" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try expectBadBlock(try block(a, &.{try scopeRow(a, "        \"os\": [],\n")}), .buildrules_lock);
+    try expectBadBlock(try block(a, &.{try scopeRow(a, "        \"os\": [darwin],\n")}), .buildrules_lock);
+    try expectBadBlock(try block(a, &.{try scopeRow(a, "        \"os\": [\"da rwin\"],\n")}), .buildrules_lock);
+    try expectBadBlock(try block(a, &.{try scopeRow(a, "        \"cpu\": [\"x64\"],\n        \"os\": [\"darwin\"],\n")}), .buildrules_lock);
+}
+
+test "table: split finds the NPM block after the prefix" {
+    const s = table.split("# h\n\nPINS = {}\n\nNPM = {}\n").?;
+    try t.expectEqualStrings("# h\n\nPINS = {}\n\n", s.prefix);
+    try t.expectEqualStrings("NPM = {}\n", s.npm);
+    try t.expect(table.split("# no block\n") == null);
+}
+
+fn entriesAndRows(a: std.mem.Allocator, kind: sets_mod.Kind, row_extra: []const u8) !struct { entries: []lock.Entry, rows: []table.Row } {
+    var diag = Diag.init(a);
+    const entries = try lock.read(a, try lockWith(a, ""), &diag);
+    const text = try block(a, &.{ try scopeRow(a, row_extra), try padRow(a) });
+    const rows = try table.parseRows(a, text, kind, &diag);
+    try t.expectEqual(@as(usize, 0), diag.count());
+    return .{ .entries = entries, .rows = rows };
+}
+
+fn expectBound(a: std.mem.Allocator, entries: []const lock.Entry, rows: []const table.Row, kind: sets_mod.Kind, needle: ?[]const u8) !void {
+    var diag = Diag.init(a);
+    try table.bind(a, entries, rows, kind, &diag);
+    if (needle) |n| {
+        try t.expect(diag.count() > 0);
+        var named = false;
+        for (diag.msgs.items) |m| if (std.mem.indexOf(u8, m, n) != null) {
+            named = true;
+        };
+        if (!named) std.debug.print("no message has {s}: {s}\n", .{ n, if (diag.msgs.items.len > 0) diag.msgs.items[0] else "(none)" });
+        try t.expect(named);
+    } else try t.expectEqual(@as(usize, 0), diag.count());
+}
+
+test "bind: rows and lock entries pair one to one" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const p = try entriesAndRows(a, .buildrules_lock, "        \"os\": [\"darwin\"],\n");
+    try expectBound(a, p.entries, p.rows, .buildrules_lock, null);
+}
+
+test "bind: a row whose url is not the canonical url of its name and version is refused, whatever the lock says" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const p = try entriesAndRows(a, .pins_lock, "");
+    const rows = try a.dupe(table.Row, p.rows);
+    rows[1].url = "https://evil.example/left-pad/-/left-pad-1.3.0.tgz";
+    try expectBound(a, p.entries, rows, .pins_lock, "left-pad@1.3.0");
+    // The URL of the lock entry is derived, so even a row that copies a hostile lock URL cannot pass.
+    rows[1].url = reg ++ "left-pad/-/left-pad-1.3.0.tgz?evil=1";
+    try expectBound(a, p.entries, rows, .pins_lock, "left-pad@1.3.0");
+}
+
+test "bind: a row whose name or version differs from the entry's is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const p = try entriesAndRows(a, .pins_lock, "");
+    const rows = try a.dupe(table.Row, p.rows);
+    rows[1].name = "left-padx";
+    try expectBound(a, p.entries, rows, .pins_lock, "left-pad@1.3.0");
+}
+
+test "bind: a row whose sri512 is not the lock's integrity is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const p = try entriesAndRows(a, .pins_lock, "");
+    const rows = try a.dupe(table.Row, p.rows);
+    rows[0].sri512 = sri_a;
+    try expectBound(a, p.entries, rows, .pins_lock, "@scope/pkg@2.0.0");
+}
+
+test "bind: a row without an entry, and an entry without a row, are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const p = try entriesAndRows(a, .pins_lock, "");
+    try expectBound(a, p.entries, p.rows[1..], .pins_lock, "@scope/pkg@2.0.0 is in package-lock.json");
+    try expectBound(a, p.entries[0..1], p.rows, .pins_lock, "left-pad@1.3.0 has a row in the table and no entry");
+    try expectBound(a, p.entries, p.rows[0..1], .pins_lock, "left-pad@1.3.0 is in package-lock.json");
+    try expectBound(a, &.{}, p.rows, .pins_lock, "has a row");
+}
+
+test "bind: platform lists must equal the lock's in a buildrules table" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const p = try entriesAndRows(a, .buildrules_lock, "        \"os\": [\"darwin\"],\n");
+    const rows = try a.dupe(table.Row, p.rows);
+    rows[0].os = &.{"linux"};
+    try expectBound(a, p.entries, rows, .buildrules_lock, "os, cpu or libc");
+    rows[0].os = null;
+    try expectBound(a, p.entries, rows, .buildrules_lock, "os, cpu or libc");
+    rows[0].os = &.{"darwin"};
+    rows[1].cpu = &.{"arm64"};
+    try expectBound(a, p.entries, rows, .buildrules_lock, "os, cpu or libc");
+}
+
+test "fresh pins table: the prefix is kept byte for byte and the block is re-emitted, and it reads back" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const p = try entriesAndRows(a, .pins_lock, "");
+    const text = try table.freshPins(a, hdr, p.rows);
+    try t.expect(std.mem.startsWith(u8, text, hdr));
+    const sp = table.split(text).?;
+    try t.expectEqualStrings(hdr, sp.prefix);
+    var diag = Diag.init(a);
+    const again = try table.parseRows(a, sp.npm, .pins_lock, &diag);
+    try t.expectEqual(@as(usize, 2), again.len);
+    try t.expectEqualStrings(text, try table.freshPins(a, hdr, again));
+    try t.expectEqualStrings("NPM = {}\n", try table.emitPinsNpm(a, &.{}));
+}
+
+test "fresh buildrules table: PACKAGE comes from package.json, never from the artifact, and the digests are the files'" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const p = try entriesAndRows(a, .buildrules_lock, "        \"os\": [\"darwin\"],\n");
+    const pj = "{\"name\":\"demo\",\"version\":\"1.0.0\",\"scripts\":{\"test\":\"jest\"},\"buildrules\":{\"dist\":\"dist\"}}";
+    const lk = try lockWith(a, "");
+    var diag = Diag.init(a);
+    const text = (try table.freshBuildrules(a, pj, lk, p.rows, &diag)).?;
+    try t.expectEqual(@as(usize, 0), diag.count());
+    try t.expect(std.mem.indexOf(u8, text, "\"test\": \"jest\"") != null);
+    try t.expect(std.mem.indexOf(u8, text, "\"left-pad@1.3.0\": {") != null);
+    try t.expect(std.mem.indexOf(u8, text, "PACKAGE_LOCK_SHA256 = \"") != null);
+    const sp = table.split(text).?;
+    const back = try table.parseRows(a, sp.npm, .buildrules_lock, &diag);
+    try t.expectEqual(@as(usize, 2), back.len);
+    // A package.json the generator refuses gives no table.
+    var diag2 = Diag.init(a);
+    try t.expect((try table.freshBuildrules(a, "{\"workspaces\":[\"a\"]}", lk, p.rows, &diag2)) == null);
+    try t.expect(diag2.count() > 0);
+}
+
+test "lock: a path over 512 bytes, a name that is not a string, and an entry with no version are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const long = try std.fmt.allocPrint(a, "node_modules/{s}/node_modules/{s}/node_modules/{s}", .{ "a" ** 200, "b" ** 200, "c" ** 200 });
+    const entry = try std.fmt.allocPrint(a, ",\"{s}\":{{\"version\":\"1.0.0\",\"resolved\":\"{s}{s}/-/{s}-1.0.0.tgz\",\"integrity\":\"{s}\"}}", .{ long, reg, "c" ** 200, "c" ** 200, sri_a });
+    try expectRefused(entry, "longer than 512");
+    try expectRefused(",\"node_modules/n\":{\"name\":5,\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "n/-/n-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "not a string");
+    try expectRefused(",\"node_modules/n\":{\"resolved\":\"" ++ reg ++ "n/-/n-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "no version");
+}
+
+test "table: a block that stops in the middle of its first line is refused" {
+    try expectBadBlock("NPM = {", .pins_lock);
+}

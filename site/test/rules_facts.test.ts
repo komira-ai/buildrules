@@ -526,6 +526,7 @@ describe('every `buildrules` command in a code block is a verb the program has, 
     check: usage('check'),
     npm: usage('npm_cmd'),
     mojo: usage('mojo_cmd'),
+    autopin: usage('autopin'),
   };
   const lines: { line: string; verb: string; sub: string; flags: string[] }[] = [];
   for (const p of PAGES) {
@@ -536,14 +537,14 @@ describe('every `buildrules` command in a code block is a verb the program has, 
         if (!m) continue;
         const words = m[1].split(/\s+/);
         if (!/^[a-z]+$/.test(words[0])) continue;
-        const sub = ['cargo', 'npm', 'mojo'].includes(words[0]) && /^[a-z]+$/.test(words[1] ?? '') ? words[1] : '';
+        const sub = ['cargo', 'npm', 'mojo', 'autopin'].includes(words[0]) && /^[a-z]+$/.test(words[1] ?? '') ? words[1] : '';
         lines.push({ line: l.trim(), verb: words[0], sub, flags: [...l.matchAll(/\s(--[a-z][a-z0-9-]*)/g)].map((f) => f[1]) });
       }
     }
   }
 
   test('the pages show commands of every verb', () => {
-    expect([...new Set(lines.map((l) => l.verb))].sort()).toEqual(['cargo', 'check', 'init', 'mojo', 'npm', 'sync']);
+    expect([...new Set(lines.map((l) => l.verb))].sort()).toEqual(['autopin', 'cargo', 'check', 'init', 'mojo', 'npm', 'sync']);
     expect(lines.some((l) => l.verb === 'npm' && l.sub === 'sync')).toBe(true);
     expect(lines.some((l) => l.verb === 'mojo' && l.sub === 'check')).toBe(true);
   });
