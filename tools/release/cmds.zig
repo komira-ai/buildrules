@@ -372,7 +372,7 @@ pub const Blob = assets.Named;
 pub const oidc_issuer = "https://token.actions.githubusercontent.com";
 
 const tar_suffix = ".tar.gz";
-const bundle_suffix = ".sigstore.json";
+const bundle_suffix = assets.bundle_suffix;
 
 /// `buildrules-cli-<number>-<target>.tar.gz`
 pub fn cliName(a: std.mem.Allocator, number: []const u8, target: []const u8) ![]u8 {
@@ -1949,16 +1949,41 @@ test "publish: a re-run changes nothing, adds only the missing files, and refuse
     try t.expectEqual(@as(usize, 1), fake.count("gh release upload v0.0.2 dist/buildrules_0.0.2_amd64.deb dist/buildrules_0.0.2_arm64.deb dist/SHA256SUMS dist/buildrules-0.0.2.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-linux-x86_64.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-linux-aarch64.tar.gz.sigstore.json dist/buildrules-cli-0.0.2-macos-arm64.tar.gz.sigstore.json dist/buildrules_0.0.2_amd64.deb.sigstore.json dist/buildrules_0.0.2_arm64.deb.sigstore.json dist/SHA256SUMS.sigstore.json --repo o/n"));
     try t.expectEqual(@as(usize, 0), fake.count("clobber"));
 
-    // any one of the fourteen there with other bytes: the job fails, nothing is uploaded or created
+    // any one of the seven files there with other bytes: the job fails, nothing is uploaded or created, and a new signing of it does not excuse that
     for (0..all.len) |i| {
-        var differs = try a.dupe(Listed, all);
-        differs[i].digest = "0" ** 64;
+        if (std.mem.endsWith(u8, all[i].name, assets.bundle_suffix)) continue;
+        for ([_]bool{ false, true }) |and_its_bundle| {
+            var differs = try a.dupe(Listed, all);
+            differs[i].digest = "0" ** 64;
+            if (and_its_bundle) {
+                const bundle = try std.fmt.allocPrint(a, "{s}" ++ assets.bundle_suffix, .{all[i].name});
+                for (differs) |*d| {
+                    if (std.mem.eql(u8, d.name, bundle)) d.digest = "1" ** 64;
+                }
+            }
+            fake = Fake{ .a = a, .rules = &.{
+                .{ .needle = "rev-parse", .out = ok(peeled_a) },
+                .{ .needle = "releases/tags/v0.0.2", .out = ok(try releaseJson(a, differs)) },
+            } };
+            try t.expectError(error.AssetDiffers, publish(a, fake.io(), c.o));
+            try t.expectEqual(@as(usize, 0), fake.count("release "));
+        }
+    }
+
+    // the re-run of a released commit (v0.0.11): the seven files are the same bytes and every one of the seven bundles is a new signing of them. The release is
+    // intact, so nothing is created, uploaded or replaced, and the job ends green; one bundle at a time and all together
+    for (0..all.len + 1) |i| {
+        const resigned = try a.dupe(Listed, all);
+        for (resigned, 0..) |*d, k| {
+            if (std.mem.endsWith(u8, d.name, assets.bundle_suffix) and (i == all.len or i == k)) d.digest = "2" ** 64;
+        }
         fake = Fake{ .a = a, .rules = &.{
             .{ .needle = "rev-parse", .out = ok(peeled_a) },
-            .{ .needle = "releases/tags/v0.0.2", .out = ok(try releaseJson(a, differs)) },
+            .{ .needle = "releases/tags/v0.0.2", .out = ok(try releaseJson(a, resigned)) },
         } };
-        try t.expectError(error.AssetDiffers, publish(a, fake.io(), c.o));
+        try t.expectEqual(PublishResult.unchanged, try publish(a, fake.io(), c.o));
         try t.expectEqual(@as(usize, 0), fake.count("release "));
+        try t.expectEqual(@as(usize, 0), fake.files.items.len);
     }
 
     // a digest GitHub does not report is not taken to match

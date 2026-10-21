@@ -306,8 +306,11 @@ failure, not a verdict on the signature"; re-run the job.
 
 `publish` repeats the check of `SHA256SUMS` and requires all seven signature bundles to be there and not empty.
 
-A re-run creates no second release and replaces no asset. If the release exists, each of the fourteen files it already holds must have the sha256
-of ours or the job fails and changes nothing; a file it lacks is added. A release is never edited by the pipeline.
+A re-run creates no second release and replaces no asset. If the release exists, each of the seven files it already holds (the archive, the three tarballs,
+the two `.deb`s and `SHA256SUMS`) must have the sha256 of ours or the job fails and changes nothing; a file it lacks is added. A signature bundle is the one
+file that may differ: every signing makes a new bundle (a new certificate and a new transparency-log entry), so a re-run of a released commit, which rebuilds the
+same seven files and signs them again, keeps the bundle the release holds when the file it signs is held with the same bytes, and ends green. A bundle beside a
+file that differs, or beside a file the release lacks, still fails the job. A release is never edited by the pipeline.
 
 ## Pinning a release
 
