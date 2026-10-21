@@ -8,8 +8,9 @@
 #   tools         builds the stage tool and the command line from the candidate (or takes the release's), and says which legs are ready (a leg that waits for something is planned)
 #   beta          ubuntu x86_64, one job per language: rust, cxx, zig, node, mixed
 #   beta_mojo     the Mojo leg: ubuntu x86_64, the pinned mopm release (rules/mopm/pins.bzl) building a Mojo package
-#   beta_arm      ubuntu-24.04-arm: planned and skipped; buildrules v0 targets linux-x86_64 only
-#   beta_macos    macos-14: planned and skipped; buildrules v0 targets linux-x86_64 only
+#   beta_arm      ubuntu-24.04-arm: the command line the release ships for linux-aarch64, run natively on a hello-world repository (zig, cxx): the version
+#                 it says, `init` writing the same bytes at two paths, Buck2 loading the candidate and listing the targets. Not a build: no rule runs on this host yet
+#   beta_macos    macos-14: the same for macos-arm64
 #   beta_farm     the same repositories built on a remote-execution farm, only when the repository variable FARM_ADDRESS is set (RELEASING.md)
 #
 # ci/stages_check.zig (`//ci:workflow`) holds this file to all of that.
@@ -21,6 +22,11 @@ on:
       # The artifact of the release workflow that holds the command line to walk (one file named `buildrules`: the linux-x86_64 binary build-cli stamped and
       # packaged). Empty: build it from the commit.
       cli-artifact:
+        type: string
+        default: ""
+      # The artifact of the release workflow that holds the command line of all three targets (`linux-x86_64/buildrules`, `linux-aarch64/buildrules`,
+      # `macos-arm64/buildrules`, the directory build-cli made). The native legs run the files of the other two. Empty: build them from the commit.
+      cli-bins-artifact:
         type: string
         default: ""
 
@@ -39,6 +45,7 @@ jobs:
       contents: read
     outputs:
       mojo: ${{ steps.plan.outputs.mojo }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,6 +86,54 @@ jobs:
       - name: Which legs are ready, and which are planned
         id: plan
         run: ./stage plan --root "$GITHUB_WORKSPACE" --output "$GITHUB_OUTPUT"
+
+      # The native legs (beta_arm, beta_macos) run on the machines the release ships a command line for. The stage tool and the command line are built here, for
+      # those two targets, on the x86_64 runner (zig cross-compiles both), with the buck2 that tools/buck2 pins for each (the digests are the sha256 of the .zst).
+      - name: The version the command line says
+        id: version
+        run: ./stage version --buildrules ./buildrules --output "$GITHUB_OUTPUT"
+
+      - name: A place for each other host
+        run: mkdir -p native/linux-aarch64 native/macos-arm64
+
+      - name: The stage tool for the other hosts, linux-aarch64
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out native/linux-aarch64/stage //tools/stage:stage_linux_aarch64
+
+      - name: The stage tool for the other hosts, macos-arm64
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out native/macos-arm64/stage //tools/stage:stage_macos_arm64
+
+      - name: The command line of every target, built from the commit
+        if: ${{ inputs.cli-bins-artifact == '' }}
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out cli-bins //cli:release_binaries
+
+      - name: The command line of every target, as the release built it
+        if: ${{ inputs.cli-bins-artifact != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.cli-bins-artifact }}
+          path: cli-bins
+
+      - name: The command line and buck2 of the other hosts
+        run: |
+          cp cli-bins/linux-aarch64/buildrules native/linux-aarch64/buildrules
+          cp cli-bins/macos-arm64/buildrules native/macos-arm64/buildrules
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2-linux-aarch64.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-aarch64-unknown-linux-gnu.zst
+          echo "e35027a8e3f702fd9f080074ac64ebc80e2a0fe8d669d46d85afc31b0ec4a463  buck2-linux-aarch64.zst" | sha256sum --check --strict -
+          zstd --decompress --quiet buck2-linux-aarch64.zst -o native/linux-aarch64/buck2
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2-macos-arm64.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-aarch64-apple-darwin.zst
+          echo "aacdf7cabe34b9b5dc74866b8dcf7410cdbae3ad2dccef45b7ee9851cb781528  buck2-macos-arm64.zst" | sha256sum --check --strict -
+          zstd --decompress --quiet buck2-macos-arm64.zst -o native/macos-arm64/buck2
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: beta-native
+          path: native
+          retention-days: 7
+          if-no-files-found: error
 
       - name: the farm leg is not run (FARM_ADDRESS or FARM_CONNECT_REF is not set)
         if: ${{ vars.FARM_ADDRESS == '' || vars.FARM_CONNECT_REF == '' }}
@@ -147,25 +202,68 @@ jobs:
       - name: The repository, as a user starts it, built twice
         run: tool/stage beta --root "$GITHUB_WORKSPACE" --lang mojo --work "$RUNNER_TEMP/beta" --origin "$ORIGIN" --commit "$COMMIT" --buck2 "$GITHUB_WORKSPACE/tool/buck2" --buildrules "$GITHUB_WORKSPACE/tool/buildrules" --exec local --summary "$GITHUB_STEP_SUMMARY"
 
-  # Planned: buildrules v0 targets linux-x86_64 only (README.md), so these legs are declared and skipped, not missing. No event is named `planned`,
-  # so the condition is never true (actionlint refuses a constant condition).
+  # The native legs: the command line the release ships for linux-aarch64 and for macos-arm64, run on a machine of that kind, on the hello-world repositories
+  # that need nothing but `buildrules init` before the build (zig, cxx; the others run `cargo new`, `npm sync` and `mojo sync` first, which build a pinned tool).
+  # What each proves: the file runs (it says the version the release planned), `init` writes the same bytes in two directories, and Buck2 reads the
+  # candidate commit as the external cell and lists the targets of the repository. What none does is build: every toolchain of the rules runs on linux x86_64
+  # (execution platform), and no unpack of the pinned downloads exists for these hosts (RELEASING.md, "The beta stage"; docs/pins.md, "Other hosts").
   beta_arm:
-    if: ${{ github.event_name == 'planned' }}
-    name: beta (ubuntu-24.04-arm) planned, skipped - buildrules v0 targets linux-x86_64 only
+    needs: [tools]
+    name: beta ${{ matrix.lang }} (ubuntu-24.04-arm) native, no build yet
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: [zig, cxx]
+    env:
+      LANG_DIR: ${{ matrix.lang }}
+      ORIGIN: https://github.com/${{ github.repository }}
+      COMMIT: ${{ github.sha }}
+      VERSION: ${{ needs.tools.outputs.version }}
     steps:
-      - run: echo "planned - buildrules v0 targets linux-x86_64 only"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: beta-native
+          path: tool
+      - run: chmod +x tool/linux-aarch64/stage tool/linux-aarch64/buildrules tool/linux-aarch64/buck2
+      - name: The command line of this target, natively, up to the build
+        run: tool/linux-aarch64/stage native --root "$GITHUB_WORKSPACE" --lang "$LANG_DIR" --work "$RUNNER_TEMP/native" --origin "$ORIGIN" --commit "$COMMIT" --buck2 "$GITHUB_WORKSPACE/tool/linux-aarch64/buck2" --buildrules "$GITHUB_WORKSPACE/tool/linux-aarch64/buildrules" --host linux-aarch64 --version "$VERSION" --summary "$GITHUB_STEP_SUMMARY"
 
   beta_macos:
-    if: ${{ github.event_name == 'planned' }}
-    name: beta (macos-14) planned, skipped - buildrules v0 targets linux-x86_64 only
+    needs: [tools]
+    name: beta ${{ matrix.lang }} (macos-14) native, no build yet
     runs-on: macos-14
+    timeout-minutes: 30
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: [zig, cxx]
+    env:
+      LANG_DIR: ${{ matrix.lang }}
+      ORIGIN: https://github.com/${{ github.repository }}
+      COMMIT: ${{ github.sha }}
+      VERSION: ${{ needs.tools.outputs.version }}
     steps:
-      - run: echo "planned - buildrules v0 targets linux-x86_64 only"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: beta-native
+          path: tool
+      - run: chmod +x tool/macos-arm64/stage tool/macos-arm64/buildrules tool/macos-arm64/buck2
+      - name: The command line of this target, natively, up to the build
+        run: tool/macos-arm64/stage native --root "$GITHUB_WORKSPACE" --lang "$LANG_DIR" --work "$RUNNER_TEMP/native" --origin "$ORIGIN" --commit "$COMMIT" --buck2 "$GITHUB_WORKSPACE/tool/macos-arm64/buck2" --buildrules "$GITHUB_WORKSPACE/tool/macos-arm64/buildrules" --host macos-arm64 --version "$VERSION" --summary "$GITHUB_STEP_SUMMARY"
 
   # The same repositories on a farm, when one is configured. The farm-connect action is the one the farm's other repositories use; its repository and the
   # full commit to use are repository variables (no repository is named in this file), and tools/stage refuses a checkout that is not that commit

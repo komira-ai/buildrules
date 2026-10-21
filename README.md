@@ -19,6 +19,9 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     platforms/        linux_x86_64, linux_aarch64 and macos_aarch64 (the other hosts: pins only, docs/pins.md), linux_x86_64_v1..v4 and linux_armv8_*, linux_x86_64_rust_<v>; platforms/exec (the execution platforms: agnostic + one per ISA level)
     tools/release     the release tool (Zig): version, deterministic source archive, checks, GitHub release, the release page (RELEASING.md); tools/scrub: the public-repository scrub
     tools/stage       the beta and gamma stages of the release (Zig): hello-world repositories that consume the candidate as a user does, and our own repositories on the farm
+    tools/channels    the build half of the release channels (Zig): the .deb, the apt index of a .deb and the Homebrew formula, byte for byte (vendored from the sibling tool's release; RELEASING.md)
+    tools/deploy      the deploy half (Zig): the signed apt index and its upload, and the pull request that adds the formula to the tap; both do nothing until their settings are made (RELEASING.md)
+    packaging/deb     the metadata of the command line's .deb (control fields, copyright, lintian overrides)
     beta/             the files and commands (STEPS) of those hello-world repositories, per language; not built by //ci:all (README.md in it)
     ci/               the CI matrix (`buck2 build //ci:matrix`): examples on the default and oldest Rust, both zigs, ISA v1 and v3, the refusals, examples/crates;
                       `//ci:mojo`: the Mojo examples; ci/negative planted defects

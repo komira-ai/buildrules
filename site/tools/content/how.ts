@@ -10,7 +10,7 @@ export const how: Page = {
   lead: 'Install, initialize, build. [Configuration](/how/configure/) and [Examples](/how/examples/) are the next two pages; [Why buildrules](/why/) is the design.',
   blocks: [
     info('Everything here is version 0 and runs on linux x86_64 only. It describes the repository at its current `main`. The longer text is `docs/how.md` in the repository.'),
-    planned('Not built yet: Arm and macOS hosts for the rules, a Homebrew formula and an apt repository.'),
+    planned('Not built yet: Arm and macOS hosts for the rules. A Homebrew formula and an apt repository are made by every release and published only after setup (RELEASING.md): until then there is none.'),
     h2('What you need'),
     ul(
       'Linux on x86_64 with glibc 2.34 or newer, and `libgcc_s.so.1` and `libz.so.1` (the Rust compiler loads them; buildrules does not pin them yet).',
@@ -23,7 +23,7 @@ export const how: Page = {
     code('curl -fsSL https://buildrules.dev/install.sh | sh', 'shell'),
     planned('The site is not published yet, so https://buildrules.dev/install.sh answers only after the repository owner has published it ([what is not done](/why/#what-is-not-done)). Until then run the script from a checkout of the repository: `sh site/static/install.sh`.'),
     p('Options follow `sh -s --` when the script is piped: `--version V` installs that release instead of the latest, `--prefix DIR` installs `DIR/bin/buildrules` instead of under `~/.buildrules`, `--verify` also checks the keyless signature of the tarball with `cosign verify-blob` (it stops if `cosign` is not installed), and `--releases-url URL` reads releases from a mirror. The macOS program is for Apple silicon: on an Intel Mac the script stops and says so before it asks for anything.'),
-    p('Or by hand: a release carries the command line as a static program for three platforms, and a source archive. Pick a release from the [releases page](https://github.com/komira-ai/buildrules/releases). To use a program, unpack the tarball of your platform (`linux-x86_64`, `linux-aarch64`, or `macos-arm64`), check it, and put `buildrules` on your `PATH`:'),
+    p('Or by hand: a release carries the command line as a static program for three platforms, as a Debian package for the two Linux ones, and a source archive. Pick a release from the [releases page](https://github.com/komira-ai/buildrules/releases). To use a program, unpack the tarball of your platform (`linux-x86_64`, `linux-aarch64`, or `macos-arm64`), check it, and put `buildrules` on your `PATH`:'),
     code(
       [
         'v=0.0.1     # the release you chose',
@@ -37,7 +37,16 @@ export const how: Page = {
       'shell',
     ),
     p('`--version` prints `buildrules <version>`, the number of the release. Each tarball carries a build provenance attestation and a signature, checked with `gh attestation verify` as for the source archive below. The macOS program (Apple silicon: there is no program for an Intel Mac) is not code-signed or notarised, and only the linux x86_64 program is run by the release\'s user beta. The rules themselves run on a linux x86_64 farm or machine.'),
-    planned('A Homebrew formula and an apt repository are planned.'),
+    planned('A Homebrew formula and an apt repository are published only after setup (RELEASING.md); until then there is none to install from.'),
+    p('Each release also builds the Homebrew formula (a pull request in the organisation\'s tap) and the Debian packages `buildrules_<version>_amd64.deb` and `..._arm64.deb`, which are files of the release, checked like the tarballs. After setup, with `OWNER` the organisation that holds the repository:'),
+    code(
+      [
+        'brew install OWNER/tap/buildrules',
+        'sudo apt install buildrules     # after adding the repository and its key, RELEASING.md',
+      ].join('\n'),
+      'shell',
+    ),
+    p('To install the package of a release by hand before then: `sudo apt install "./buildrules_${v}_amd64.deb"` (`arm64` on an Arm machine), after the checks above.'),
     p('Or build the command line from source with Buck2. Check the source archive:'),
     code(
       [

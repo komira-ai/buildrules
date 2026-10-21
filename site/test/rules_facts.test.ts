@@ -654,13 +654,16 @@ describe('the stages of the release: the page, RELEASING.md, beta.yml and releas
     expect(rulesText).toContain('hello-world repositories (Rust, C and C++, Zig, Node, and one that mixes them)');
   });
 
-  test('arm and macos are planned everywhere they are named, and are in beta.yml as skipped jobs; the Mojo leg runs', () => {
+  test('arm and macos run natively up to the build, and say they do not build; the Mojo leg runs', () => {
     expect(beta).toMatch(/\n {2}beta_mojo:\n/);
     expect(beta).toContain('runs-on: ubuntu-24.04-arm');
     expect(beta).toContain('runs-on: macos-14');
-    expect(beta.match(/if: \$\{\{ github\.event_name == 'planned' \}\}/g)!.length).toBe(2);
-    expect(releasing).toContain('**planned**');
-    expect(rulesText).toContain('The Mojo leg builds a Mojo package with the pinned mopm 0.0.1 release, the same way, and the Arm and macOS legs are planned');
+    // no job of beta.yml is skipped any more, and the two native ones say in their names that they do not build
+    expect(beta).not.toContain("github.event_name == 'planned'");
+    expect(beta.match(/native, no build yet/g)!.length).toBe(2);
+    expect(releasing).toContain('**No build**');
+    expect(rulesText).toContain('The Mojo leg builds a Mojo package with the pinned mopm 0.0.1 release, the same way, and two native legs run the command line the release ships for Arm Linux and for macOS');
+    expect(rulesText).toContain('They do not build, because no toolchain of the rules runs on those hosts yet.');
     expect(rulesText).not.toContain("Mojo leg is planned");
     // the Mojo leg is not waiting for anything: no pending pin, no planned-until line, and RELEASING.md lists it as running
     expect(repoFile('rules/mopm/pins.bzl')).not.toContain('release_pending');

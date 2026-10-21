@@ -1,0 +1,12 @@
+# The helpers of the Zig test drivers of tools/channels and tools/deploy (run a program, capture its output, report ok/FAIL per check).
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_module")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+zig_module(
+    name = "harness",
+    src = "harness.zig",
+    visibility = ["//tools/channels:", "//tools/deploy:"],
+)
+
+scrub_files()
