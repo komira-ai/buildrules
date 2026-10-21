@@ -17,7 +17,9 @@
 const std = @import("std");
 const pins = @import("bootstrap_pins");
 
-pub const repo = "komira-ai/buildrules";
+/// The repository the release lives in, as the address everything here names it by.
+pub const repo_url = "https://github.com/komira-ai/buildrules";
+pub const repo = repo_url["https://github.com/".len..];
 
 /// What running a program gave: its exit status and what it wrote to standard output.
 pub const Ran = struct { code: u8, out: []u8 };

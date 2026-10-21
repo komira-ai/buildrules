@@ -220,7 +220,7 @@ test "a dry run builds, checks and reads the release, and writes nothing on GitH
     defer out.deinit();
     try t.expectEqual(@as(u8, 0), try pub_.publish(a, w.options(false), f.runner(), out.say()));
     try t.expectEqual(@as(usize, 1), f.called("fake-buck2 build --show-full-output"));
-    try t.expectEqual(@as(usize, 1), f.called("fake-gh api repos/komira-ai/buildrules/releases/tags/unpack-4"));
+    try t.expectEqual(@as(usize, 1), f.called("fake-gh api repos/" ++ pub_.repo ++ "/releases/tags/unpack-4"));
     try t.expectEqual(@as(usize, 0), f.called("release create"));
     try t.expectEqual(@as(usize, 0), f.called("release upload"));
     try t.expectEqual(@as(usize, 0), f.called("release download"));
@@ -244,7 +244,7 @@ test "a dry run reads an existing release, and warns of an asset no pin names wi
     try t.expectEqual(@as(u8, 0), try pub_.publish(a, w.options(false), f.runner(), out.say()));
     try t.expect(out.has("it exists"));
     try t.expect(out.has("WARNING"));
-    try t.expect(out.has("gh release delete-asset unpack-4 'stray.bin' --repo komira-ai/buildrules"));
+    try t.expect(out.has("gh release delete-asset unpack-4 'stray.bin' --repo " ++ pub_.repo));
     try t.expectEqual(@as(usize, 0), f.called("delete-asset"));
     try t.expect(!out.has("create the release"));
     try expectNoReplacing(&f);
@@ -270,7 +270,7 @@ test "--apply creates the release, uploads the three assets, downloads and verif
     var out = Lines{};
     defer out.deinit();
     try t.expectEqual(@as(u8, 0), try pub_.publish(a, w.options(true), f.runner(), out.say()));
-    try t.expectEqual(@as(usize, 1), f.called("release create unpack-4 --repo komira-ai/buildrules --target main --latest=false"));
+    try t.expectEqual(@as(usize, 1), f.called("release create unpack-4 --repo " ++ pub_.repo ++ " --target main --latest=false"));
     try t.expectEqual(@as(usize, 3), f.called("release upload unpack-4"));
     try t.expectEqual(@as(usize, 3), f.called("release download unpack-4"));
     try t.expect(out.has("unpack-linux-x86_64 matches the pin"));
