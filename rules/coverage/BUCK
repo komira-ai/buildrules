@@ -309,6 +309,7 @@ zig_test(
         "tools/fixtures/zig_cover/log_test.zig",
         "tools/fixtures/zig_cover/mini.zig",
         "tools/fixtures/zig_cover/mini_test.zig",
+        "tools/fixtures/zig_cover/wrap_test.zig",
         "tools/zig_cov_runner.zig",
     ],
     src = "tools/zig_cover_exe_test.zig",

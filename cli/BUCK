@@ -28,6 +28,7 @@ _TESTS = [
     "buckgen",
     "contract",
     "init",
+    "failclosed",
     "mojo_cmd",
     "pins_toml",
     "npm_cmd",
