@@ -37,6 +37,9 @@ again fails at a different line for each size of its input.
 (`Diag.add`, `Ctx.say`, one per call site) the figure keeps the largest count of blocks that ran in any one test program, so the tests of several files count together only
 as one program.
 
+A coverage build counts how often each block ran in one byte that wraps, so a block that ran 256 times reads as one that did not (`zig_cov_runner.zig` writes the byte as it is). `testkit.saturateCounters`
+sets every non-zero counter to one between the runs of a loop; without it the figure differs by a few blocks from one run of the same tests to the next, and an exact floor would fail at random.
+
 What the figure cannot reach, and why (the floor is the number reached, not 99): the error exit of a `try` on an append that always fits in the capacity the previous append
 made (no input makes it allocate); the safety-check blocks Zig's debug build appears to emit for an index or an unwrapped optional that cannot fail; code that no input reaches
 (the array arm of `val.pyDumps`, which only a flat table reaches; the line after a successful https download in `buckgen` and `npm_cmd`, which needs a server with a certificate

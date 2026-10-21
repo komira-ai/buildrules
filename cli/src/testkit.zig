@@ -6,10 +6,25 @@
 //! (a stream that cannot be written, an allocation that fails in the middle of a command), and each of them is held to what a command promises then.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const ctxm = @import("ctx.zig");
 const main = @import("main.zig");
 const Diag = @import("diag.zig").Diag;
 const t = std.testing;
+
+/// A coverage build counts how often each block ran in one byte (sanitizer coverage's inline 8-bit counters), and the byte wraps: a block that ran 256 times
+/// reads as a block that did not run, and the runs of one test program that differ by one in a hot block differ in the figure. A counter that is not zero
+/// is set to one here, between the runs of a loop, so that a block that ran stays a block that ran (the count itself is not used). In a build without the
+/// counters this does nothing.
+pub fn saturateCounters() void {
+    @disableInstrumentation();
+    if (!builtin.fuzz) return;
+    const cs = @extern([*]u8, .{ .name = "__start___sancov_cntrs", .linkage = .weak }) orelse return;
+    const ce = @extern([*]u8, .{ .name = "__stop___sancov_cntrs", .linkage = .weak }) orelse return;
+    for (cs[0 .. ce - cs]) |*b| {
+        if (b.* != 0) b.* = 1;
+    }
+}
 
 /// Set while a command is run as a replay on a copy of the directory: a fake that keeps a record of what it was asked leaves its record alone.
 pub var replaying = false;
@@ -146,6 +161,7 @@ pub const Harness = struct {
         self.err.clearRetainingCapacity();
         const code = main.run(&self.ctx, argv);
         const r: Run = .{ .code = code, .out = self.out.written(), .err = self.err.written() };
+        saturateCounters();
         if (sweep) self.replays(argv, snap.dir, r);
         return r;
     }
@@ -182,6 +198,7 @@ pub const Harness = struct {
             c.err = &err.writer;
             _ = main.run(&c, argv);
         }
+        saturateCounters();
         // Two runs of one command line that print the same, end the same and allocate the same sizes in the same order take the same paths of the code.
         var kh = std.hash.Wyhash.init(0);
         for (argv) |x| {
@@ -236,6 +253,7 @@ pub const Harness = struct {
             c.out = &out.writer;
             c.err = &err.writer;
             const code = main.run(&c, argv);
+            saturateCounters();
             if (!fa.has_induced_failure) continue;
             failures += 1;
             if (code == 0) exit_zero += 1;
@@ -308,6 +326,7 @@ fn allocSweep(ctx: anytype, strict: bool, must_succeed: bool) !void {
         _ = backing.reset(.retain_capacity);
         var fa = std.testing.FailingAllocator.init(backing.allocator(), .{ .fail_index = i });
         const reported = ctx.call(fa.allocator()) catch false;
+        saturateCounters();
         if (!fa.has_induced_failure) {
             if (must_succeed) try t.expect(reported);
             return;

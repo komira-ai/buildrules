@@ -3,6 +3,7 @@
 //! range or a dropped character in valid.zig is a failing byte, not a test that follows the code.
 
 const std = @import("std");
+const kit = @import("testkit.zig");
 const valid = @import("valid.zig");
 const t = std.testing;
 
@@ -21,6 +22,7 @@ fn oneByte(comptime f: fn ([]const u8) bool, set: []const u8, what: []const u8) 
     while (c < 256) : (c += 1) {
         const b: u8 = @intCast(c);
         const s = [_]u8{b};
+        kit.saturateCounters();
         if (f(&s) != inSet(set, b)) {
             std.debug.print("{s}: byte {d} is {s}\n", .{ what, b, if (inSet(set, b)) "refused" else "accepted" });
             return error.WrongClass;
@@ -34,6 +36,7 @@ fn insideBytes(comptime f: fn ([]const u8) bool, set: []const u8, what: []const 
     while (c < 256) : (c += 1) {
         const b: u8 = @intCast(c);
         const after = [_]u8{ 'a', b, 'a' };
+        kit.saturateCounters();
         if (f(&after) != inSet(set, b)) {
             std.debug.print("{s}: byte {d} inside a name is {s}\n", .{ what, b, if (inSet(set, b)) "refused" else "accepted" });
             return error.WrongClass;
@@ -110,6 +113,7 @@ test "isPackageName: the scope and slash rules" {
     while (c < 256) : (c += 1) {
         const b: u8 = @intCast(c);
         const s = [_]u8{ 'a', b, 'a' };
+        kit.saturateCounters();
         // A byte of the set is accepted in the middle of a name unless it makes `..` or `//` (it cannot, between letters).
         try t.expectEqual(inSet(set, b), valid.isPackageName(&s));
     }
@@ -130,6 +134,7 @@ test "isUrl and isGitOrigin: scheme, host and the character set" {
     while (c < 256) : (c += 1) {
         const b: u8 = @intCast(c);
         const s = [_]u8{ 'h', 't', 't', 'p', 's', ':', '/', '/', 'a', b };
+        kit.saturateCounters();
         try t.expectEqual(inSet(set, b), valid.isUrl(&s));
     }
     try t.expect(valid.isGitOrigin("https://example.invalid/r.git"));
@@ -152,6 +157,7 @@ test "isSha256 and isSri512: lower-case hex of 64 digits; sha512- and 64 bytes o
     while (c < 256) : (c += 1) {
         const b: u8 = @intCast(c);
         buf[17] = b;
+        kit.saturateCounters();
         try t.expectEqual(inSet(digits ++ "abcdef", b), valid.isSha256(&buf));
     }
     var raw: [64]u8 = undefined;
