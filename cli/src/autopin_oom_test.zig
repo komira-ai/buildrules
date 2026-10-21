@@ -14,9 +14,9 @@ const t = std.testing;
 pub fn sweep(comptime run: anytype, args: anytype) !void {
     var n: usize = 0;
     while (n < 200000) : (n += 1) {
-        var fa = std.testing.FailingAllocator.init(std.heap.page_allocator, .{ .fail_index = n });
-        var ar = std.heap.ArenaAllocator.init(fa.allocator());
-        const closed = run(ar.allocator(), args) catch true;
+        var ar = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        var fa = std.testing.FailingAllocator.init(ar.allocator(), .{ .fail_index = n });
+        const closed = run(fa.allocator(), args) catch true;
         ar.deinit();
         if (!fa.has_induced_failure) return;
         if (!closed) {
@@ -36,9 +36,9 @@ pub fn sweepCommand(h: *kit.Harness, argv: []const []const u8, cleanup: []const 
     defer h.ctx.a = saved;
     while (n < 200000) : (n += 1) {
         for (cleanup) |p| h.tmp.dir.deleteTree(p) catch {};
-        var fa = std.testing.FailingAllocator.init(std.heap.page_allocator, .{ .fail_index = n });
-        var ar = std.heap.ArenaAllocator.init(fa.allocator());
-        h.ctx.a = ar.allocator();
+        var ar = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        var fa = std.testing.FailingAllocator.init(ar.allocator(), .{ .fail_index = n });
+        h.ctx.a = fa.allocator();
         h.out.clearRetainingCapacity();
         h.err.clearRetainingCapacity();
         const code = main.run(&h.ctx, argv);

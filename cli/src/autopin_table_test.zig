@@ -628,7 +628,7 @@ test "oom: reading a lock, reading and binding a table, and making fresh tables 
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    const lock_text = try lockWith(a, ",\"node_modules/x/node_modules/@s/n\":{\"version\":\"1.0.0\",\"resolved\":\"https://registry.npmjs.org/@s/n/-/n-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}");
+    const lock_text = try lockWith(a, "");
     const pj = "{\"name\":\"demo\",\"version\":\"1.0.0\",\"scripts\":{\"test\":\"jest\"},\"buildrules\":{\"dist\":\"dist\"}}";
     const rows_text = try block(a, &.{ try scopeRow(a, "        \"os\": [\"darwin\"],\n"), try padRow(a) });
     const run = struct {
@@ -638,7 +638,7 @@ test "oom: reading a lock, reading and binding a table, and making fresh tables 
             if (diag.count() > 0) return true;
             const rows = table.parseRows(al, args.rows, .buildrules_lock, &diag) catch return true;
             if (diag.count() > 0) return true;
-            try table.bind(al, entries[0..2], rows, .buildrules_lock, &diag);
+            try table.bind(al, entries, rows, .buildrules_lock, &diag);
             const fresh = (try table.freshBuildrules(al, args.pj, args.lock, rows, &diag)) orelse return true;
             if (diag.count() > 0) return true;
             const sp = table.split(fresh) orelse return true;
@@ -647,7 +647,6 @@ test "oom: reading a lock, reading and binding a table, and making fresh tables 
             return diag.count() > 0;
         }
     }.f;
-    // bind sees entries and rows that disagree (a third entry): that is a refusal; the sweep needs a success to start from.
     var diag = Diag.init(a);
     _ = try lock.read(a, lock_text, &diag);
     try t.expectEqual(@as(usize, 0), diag.count());
@@ -698,7 +697,40 @@ test "lock: an integrity of 88 base64 characters that decode to more than 64 byt
     try t.expect(!valid.isSri512("sha512-" ++ "A" ** 88));
     try t.expect(!valid.isSri512("sha512-" ++ "A" ** 87 ++ "="));
     try t.expect(!valid.isSri512("sha512-" ++ "A" ** 40 ++ "==" ++ "A" ** 46));
+}
     try t.expect(valid.isSri512("sha512-" ++ "A" ** 86 ++ "=="));
     const R = "https://registry.npmjs.org/";
     try expectRefused(",\"node_modules/x\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ R ++ "x/-/x-1.0.0.tgz\",\"integrity\":\"sha512-" ++ "A" ** 88 ++ "\"}", "integrity is not a sha512");
+
+test "table: a block cut at any byte is refused, and a block with any one byte replaced never crashes the reader" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const text = try block(a, &.{ try scopeRow(a, "        \"os\": [\"darwin\", \"linux\"],\n        \"cpu\": [\"x64\"],\n        \"libc\": [\"glibc\"],\n"), try padRow(a) });
+    for (0..text.len) |cut| {
+        var diag = Diag.init(a);
+        try t.expectError(error.BadNpmBlock, table.parseRows(a, text[0..cut], .buildrules_lock, &diag));
+    }
+    const mutated = try a.dupe(u8, text);
+    for ([_]u8{ 'x', '"', '\n', '0', ' ', ',' }) |with| {
+        for (0..text.len) |i| {
+            mutated[i] = with;
+            var diag = Diag.init(a);
+            _ = table.parseRows(a, mutated, .buildrules_lock, &diag) catch {};
+            var diag2 = Diag.init(a);
+            _ = table.parseRows(a, mutated, .pins_lock, &diag2) catch {};
+            mutated[i] = text[i];
+        }
+    }
+}
+
+test "fresh buildrules table: a diagnostic already raised (by the binding) gives no table" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const p = try entriesAndRows(a, .buildrules_lock, "        \"os\": [\"darwin\"],\n");
+    const pj = "{\"name\":\"demo\",\"version\":\"1.0.0\",\"scripts\":{\"test\":\"jest\"},\"buildrules\":{\"dist\":\"dist\"}}";
+    var diag = Diag.init(a);
+    diag.add("something already wrong", .{});
+    try t.expect((try table.freshBuildrules(a, pj, try lockWith(a, ""), p.rows, &diag)) == null);
 }
