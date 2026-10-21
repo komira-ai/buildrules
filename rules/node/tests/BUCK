@@ -1,0 +1,163 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The refusals of the Node rules that are made while the graph is analysed (rules/node/checks.bzl, called by npm.bzl, modules.bzl and defs.bzl), as analysis tests
+# (rules/rust/refusal.bzl): each target exists, and is green, only if the rule refused what a user would really write, with the message that says what to change.
+# Make a check accept the input and its target stops existing (analysis fails with "expected a refusal"). The accepted form is beside each, so a check that refuses
+# everything is red too. The tool's own refusals, at build time, are //rules/node/tests:node_tools_refuse.
+load(
+    "//rules/node:checks.bzl",
+    "check_action",
+    "check_data_is_not_a_source",
+    "check_exe",
+    "check_expect_error",
+    "check_max_workers",
+    "check_not_a_package",
+    "check_not_listed",
+    "check_not_own_dep",
+    "check_out_dir",
+    "check_package_path",
+    "check_package_pin",
+    "check_program_or_script",
+    "check_same_packages",
+    "check_source",
+    "check_srcs_without_package_json",
+    "check_table",
+    "check_tarballs_cover",
+    "merge_staged",
+)
+load("//rules/rust:refusal.bzl", "accepts", "refuses")
+load("//rules:matrix.bzl", "group")
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/zig:zig.bzl", "zig_test")
+
+_ALL = []
+
+_STEPS = ["typecheck", "lint", "test", "build"]
+_RESERVED = ["dist", "check", "node_modules"]
+_TABLE = {"SCHEMA": 1, "NODE": "22.11.0"}
+
+# ---- npm_package: the BUCK file, the generated table ----------------------------------------------------------------------------------------------
+
+_ALL.append(accepts("npm_package_path_dot_is_accepted", check_package_path, ["."]))
+
+_ALL.append(refuses("npm_package_path_of_a_subdirectory_is_refused", check_package_path, ["web"], ["npm_package: path must be \".\"", "the BUCK file next to package.json", "\"web\""]))
+
+_ALL.append(accepts("npm_package_table_is_accepted", check_table, [_TABLE, 1, "22.11.0", False]))
+
+# The call that does not load npm_package from the generated buildrules.bzl: no table is bound.
+_ALL.append(refuses("npm_package_without_a_table_is_refused", check_table, [None, 1, "22.11.0", False], ["`table` is required", "buildrules npm sync"]))
+
+_ALL.append(refuses("npm_package_table_of_another_schema_is_refused", check_table, [{"SCHEMA": 2, "NODE": "22.11.0"}, 1, "22.11.0", False], ["the table has SCHEMA 2, these rules read 1", "buildrules npm sync"]))
+
+_ALL.append(refuses("npm_package_table_made_for_another_node_is_refused", check_table, [{"SCHEMA": 1, "NODE": "20.0.0"}, 1, "22.11.0", False], ["made for node 20.0.0 and buildrules pins 22.11.0", "buildrules npm sync"]))
+
+# A caller that names its own node dist owns that choice: the table's node is not compared with the pin.
+_ALL.append(accepts("npm_package_table_of_another_node_with_its_own_node_is_accepted", check_table, [{"SCHEMA": 1, "NODE": "20.0.0"}, 1, "22.11.0", True]))
+
+_ALL.append(accepts("npm_package_srcs_without_package_json_is_accepted", check_srcs_without_package_json, [["src/a.ts", "tsconfig.json"]]))
+
+_ALL.append(refuses("npm_package_srcs_with_package_json_is_refused", check_srcs_without_package_json, [["src/a.ts", "package.json"]], ["srcs must not hold package.json", ":package.json.steps"]))
+
+# ---- npm_package: the policy's actions ----------------------------------------------------------------------------------------------------------
+
+_ALL.append(accepts("npm_package_action_is_accepted", check_action, ["ci", ["typecheck", "test", "build"], _STEPS, _RESERVED]))
+
+_ALL += [
+    refuses("npm_package_action_named_{}_is_refused".format(n), check_action, [n, ["test"], _STEPS, _RESERVED], ["the action " + n + " has a step's or a target's name"])
+    for n in ["test", "build", "dist", "check", "node_modules"]
+]
+
+_ALL.append(refuses("npm_package_action_naming_a_missing_step_is_refused", check_action, ["ci", ["typecheck", "deploy"], _STEPS, _RESERVED], ["the action ci names deploy, which is not a step", "typecheck, lint, test, build"]))
+
+_ALL.append(accepts("npm_package_distinct_staged_files_are_accepted", merge_staged, [[{"a.txt": "//x:a"}, {"b.txt": "//x:b"}, {"a.txt": "//x:a"}]]))
+
+# One destination from two sources: the step would see one of them, chosen by order.
+_ALL.append(refuses("npm_package_one_destination_from_two_sources_is_refused", merge_staged, [[{"a.txt": "//x:a"}, {"a.txt": "//y:other"}]], ["a.txt is staged twice, as //x:a and as //y:other"]))
+
+# ---- npm_modules and the tree -----------------------------------------------------------------------------------------------------------------
+
+_ALL.append(accepts("npm_modules_same_packages_are_accepted", check_same_packages, ["//web:node_modules", "tarballs and sri512", ["a@1", "b@2"], ["b@2", "a@1"]]))
+
+_ALL.append(refuses("npm_modules_tarballs_and_sri_of_different_packages_is_refused", check_same_packages, ["//web:node_modules", "tarballs and sri512", ["a@1", "b@2"], ["a@1"]], ["//web:node_modules: tarballs and sri512 name different packages"]))
+
+_ALL.append(accepts("npm_modules_every_package_has_a_tarball_is_accepted", check_tarballs_cover, ["web", ["a@1", "b@2"], {"a@1": ":a", "b@2": ":b"}]))
+
+_ALL.append(refuses("npm_modules_package_without_a_tarball_is_refused", check_tarballs_cover, ["web", ["a@1", "b@2"], {"a@1": ":a"}], ["npm_modules web: tarballs has no b@2"]))
+
+# ---- the program a tree runs -------------------------------------------------------------------------------------------------------------------
+
+_ALL.append(accepts("node_tree_program_alone_is_accepted", check_program_or_script, ["//web:tsc", "node_modules/.bin/tsc", None]))
+
+_ALL.append(accepts("node_tree_script_alone_is_accepted", check_program_or_script, ["//web:tsc", "", "tsc -p ."]))
+
+_ALL.append(refuses("node_tree_program_and_script_are_refused", check_program_or_script, ["//web:tsc", "node_modules/.bin/tsc", "tsc -p ."], ["//web:tsc: name exactly one of program and script"]))
+
+_ALL.append(refuses("node_tree_neither_program_nor_script_is_refused", check_program_or_script, ["//web:tsc", "", None], ["name exactly one of program and script"]))
+
+_ALL.append(accepts("node_tree_source_file_is_accepted", check_source, ["//web:tsc", "src/a.ts", True]))
+
+# A generated file listed as a source would be staged at a path the sandbox does not have: it goes in `data`.
+_ALL.append(refuses("node_tree_build_output_as_a_source_is_refused", check_source, ["//web:tsc", "gen.ts", False], ["gen.ts is a build output", "name it in data, {dest: source}"]))
+
+_ALL.append(refuses("node_tree_source_listed_twice_is_refused", check_not_listed, ["//web:tsc", "web/a.ts", {"web/a.ts": 1}], ["web/a.ts is listed twice"]))
+
+_ALL.append(refuses("node_tree_data_over_a_source_is_refused", check_data_is_not_a_source, ["//web:tsc", "web/a.ts", {"web/a.ts": 1}], ["data destination web/a.ts is also a source"]))
+
+_ALL.append(accepts("node_tree_out_dir_inside_the_package_is_accepted", check_out_dir, ["//web:tsc", "dist"]))
+
+_ALL.append(accepts("node_tree_no_out_dir_is_accepted", check_out_dir, ["//web:tsc", None]))
+
+_ALL += [
+    refuses("node_tree_out_dir_{}_is_refused".format(n), check_out_dir, ["//web:tsc", d], ["out_dir " + r + " must be a relative directory of the package"])
+    for n, d, r in [("empty", "", "\"\""), ("absolute", "/tmp/out", "\"/tmp/out\""), ("above_the_package", "../dist", "\"../dist\"")]
+]
+
+_ALL.append(accepts("jest_test_two_workers_is_accepted", check_max_workers, ["unit", 2]))
+
+_ALL.append(refuses("jest_test_zero_workers_is_refused", check_max_workers, ["unit", 0], ["jest_test unit: max_workers must be at least 1"]))
+
+# ---- npm_tarball and node_test --------------------------------------------------------------------------------------------------------------
+
+_ALL.append(accepts("npm_tarball_one_version_of_a_package_is_accepted", check_package_pin, ["//web:x", "left-pad", "1.3.0", "1.3.0"]))
+
+_ALL.append(accepts("npm_tarball_package_not_yet_in_the_closure_is_accepted", check_package_pin, ["//web:x", "left-pad", None, "1.3.0"]))
+
+# Two deps that need two versions of one package: node resolves one directory, so the rule refuses before it picks one.
+_ALL.append(refuses("npm_tarball_two_versions_of_a_package_are_refused", check_package_pin, ["//web:x", "left-pad", "1.3.0", "1.2.0"], ["left-pad is pinned at 1.3.0 and at 1.2.0 in its deps"]))
+
+_ALL.append(refuses("npm_tarball_empty_exe_is_refused", check_exe, ["//web:esbuild", ""], ["exe is empty", "leave exe out"]))
+
+_ALL.append(accepts("npm_tarball_exe_path_is_accepted", check_exe, ["//web:esbuild", "bin/esbuild"]))
+
+_ALL.append(accepts("npm_tarball_without_exe_is_accepted", check_exe, ["//web:esbuild", None]))
+
+_ALL.append(refuses("npm_tarball_depending_on_itself_is_refused", check_not_own_dep, ["//web:esbuild", "esbuild", {"esbuild": ("0.21.0", None)}], ["esbuild is in its own deps"]))
+
+_ALL.append(accepts("npm_tarball_without_itself_in_deps_is_accepted", check_not_own_dep, ["//web:esbuild", "esbuild", {"left-pad": ("1.3.0", None)}]))
+
+_ALL.append(refuses("node_test_empty_expect_error_is_refused", check_expect_error, ["//web:t", ""], ["expect_error is empty", "the text the script must print on stderr"]))
+
+_ALL.append(accepts("node_test_expect_error_text_is_accepted", check_expect_error, ["//web:t", "boom"]))
+
+_ALL.append(accepts("node_test_without_expect_error_is_accepted", check_expect_error, ["//web:t", None]))
+
+_ALL.append(refuses("node_test_data_over_a_package_is_refused", check_not_a_package, ["//web:t", "left-pad", {"node_modules/left-pad": 1}], ["data destination node_modules/left-pad is also a package of deps"]))
+
+_ALL.append(accepts("node_test_data_beside_the_packages_is_accepted", check_not_a_package, ["//web:t", "left-pad", {"node_modules/other": 1}]))
+
+# node_tools as the process the public target hands out, over a spec and files the test writes: a table that is stale, a lockfile that is not version 3, a tarball that
+# is not the pinned bytes, a spec that is missing or has no fields, a bad command line. `check` is also run on a table that matches, so a tool that refuses everything
+# is red.
+zig_test(
+    name = "node_tools_refuse",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools_refuse_test.zig",
+    deps = ["//rules/core/tests:refusal_proc"],
+    env_tools = {"NODE_TOOLS": "//rules/node:node_tools"},
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+# Every refusal of this package, for //ci:refusals.
+group(name = "all", deps = _ALL + [":node_tools_refuse"], visibility = ["PUBLIC"])
+
+scrub_files()
