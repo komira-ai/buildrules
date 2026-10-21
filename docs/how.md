@@ -609,7 +609,7 @@ buck2 build //hello:ci //hello:coverage
 buildrules mojo check             # offline gate; `buildrules check` also runs it
 ```
 
-Targets: `:lib` (the `.mojoc`), `:test` and one `:<stem>` per test file, `:build` (library and
+Targets: `:lib` (the `.mojoc`, which exists only if every test of the package passed), `:lib_ungated` (the same file before the tests), `:test` and one `:<stem>` per test file, `:build` (library and
 binaries), `:coverage` (line coverage under kcov; red if a library source is in no report), `:ci`,
 `:check`. A workspace member is a package with its own BUCK file. Native libraries are declared with
 `natives = {"libx.so.1": "//path:target"}`. `mopm` is separate software: see <https://mopm.dev> for

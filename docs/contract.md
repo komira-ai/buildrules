@@ -411,7 +411,8 @@ Each package is a mopm project: its own `mopm.toml`, `mopm.lock` and graph (`mop
 
 | target | what |
 |---|---|
-| `:lib` | the package's `.mojoc` (`mopm unit build`, mode `lib`) |
+| `:lib` | the package's `.mojoc`, the copy of `:lib_ungated` that exists only once every test run has passed (the gate, below) |
+| `:lib_ungated` | the `.mojoc` as compiled (`mopm unit build`, mode `lib`); the package's own tests import it |
 | `:<stem>__bin`, `:<stem>` | one test file: the compile (agnostic platform) and the run (the target's ISA platform) |
 | `:test` | every test run |
 | `:bin_<name>`, `:build` | the `[targets] bins` of `mopm.toml`; `:build` is the library and the binaries |
@@ -517,6 +518,7 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 | source, `mopm.toml`, `mopm.lock`, a member's `mopm.toml` or `mopm-toolchain.toml` edited without a sync | `mojo check` (offline); the unit action; `:check` for everything but a source (the build, on every step) | `STALE: <file> changed since `buildrules mojo sync` (the table has sha256 A, now B)`; mopm: `input src/x.mojo has sha256 B, but the graph declares A` (exit 4) |
 | a new test file or library source | `mojo check` | `<file> is a test file that the table does not know` |
 | a failing test | the test run; the coverage run (kcov exits with the test's status) | the test's own output |
+| a failing test, and a target that imports the library | the gate: `:lib` is built by an action that takes every test run's marker as an input, so it, `:build`, a binary and every package that imports it fail to build; `:lib_ungated` is the way to build the library without its tests (12.8) | the same output, and the failed `mojo_gate` action's missing input |
 | a prebuilt whose bytes are not the pinned ones | the download | `Invalid sha256 digest. Expected A, got B` |
 | the toolchain's closure hash differs from the graph's | `mopm unit build` | `the toolchain at T is closure A, but the graph pins B` |
 | the two copies of the closure hash in the table differ | analysis; `mojo check` | `the table records toolchain closure A but its unit graph pins B: the file was edited by hand` |
@@ -538,6 +540,10 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 - **kcov needs `personality(ADDR_NO_RANDOMIZE)`**, which the farm's worker sandbox answers with ENOSYS. kcov is patched to go on (the binaries are not position independent and kcov runs `--skip-solibs`).
 - **`mopm lock` contacts the registry even for a project of path dependencies**, so the examples' `mopm.lock` files are written by hand (their closure hash is mopm's own, read from its refusal).
 - **`mopm pack` refuses a package with `[native.<id>]`**, and puts no native library in the `.conda`; a registry package's native library is declared in the consumer's `mopm.lock`, and its bytes come from buildrules.
+
+### 12.8 The gate
+
+A library that is not tested is not a library: `:lib` is the `.mojoc` behind the run of every test of its package (`mojo_gated_lib_rule`, rules/mojo/unit.bzl). `:lib_ungated` is the compile (`mopm unit build`), the package's own tests import it (they cannot import `:lib`, which waits for them), and `:lib` is a copy of its bytes made by the `mojo_gate` action, whose inputs are the compiled file and the marker each test run writes after the test exited 0. A failing test leaves no marker, so the action never runs; everything that reads `:lib` (a member's unit through `--deps`, a binary, `:build`, `:ci`, `mopm pack`) is red with it. The bytes are the compiled ones, so a dependent's key moves only when the library does and not when only a test changes. A package with no test has nothing to wait for; `:coverage` is what refuses it. The proof is a pair of fixtures that need no compiler (`ci/mojo_gate`): a library behind a failing test makes its consumer red, the same behind a passing one is green, and `ci/negative.bzl` requires both outcomes, plus the wiring: the real packages' `:lib` has every test run among its dependencies.
 
 ### Status
 
