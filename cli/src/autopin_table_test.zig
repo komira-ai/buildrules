@@ -63,7 +63,7 @@ test "lock: a registry lock reads, sorted, with the canonical url derived and th
     try t.expect(got[1].os == null);
 }
 
-test "lock: the same name@version at two paths is one entry; different integrities are refused, naming both paths" {
+test "lock: the same name@version at two paths is one entry" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
@@ -73,6 +73,9 @@ test "lock: the same name@version at two paths is one entry; different integriti
     // node_modules/x has no entry of its own, which is fine: the path is a chain of node_modules/<name> segments.
     try t.expectEqual(@as(usize, 0), diag.count());
     try t.expectEqual(@as(usize, 2), got.len);
+}
+
+test "lock: the same name@version at two paths with different integrities is refused, naming both paths" {
     try expectRefused(",\"node_modules/x/node_modules/left-pad\":{\"version\":\"1.3.0\",\"resolved\":\"" ++ reg ++ "left-pad/-/left-pad-1.3.0.tgz\",\"integrity\":\"" ++ sri_b ++ "\"}", "node_modules/x/node_modules/left-pad");
 }
 
@@ -80,9 +83,14 @@ test "lock: a resolved url that is not the canonical registry url is refused" {
     try expectRefused(",\"node_modules/a\":{\"version\":\"1.0.0\",\"resolved\":\"https://evil.example/a/-/a-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a");
     try expectRefused(",\"node_modules/a\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "a/-/a-1.0.0.tgz?x=1\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a");
     try expectRefused(",\"node_modules/a\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "a/-/a-1.0.1.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a");
-    try expectRefused(",\"node_modules/a\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "b/-/b-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a");
     try expectRefused(",\"node_modules/a\":{\"version\":\"1.0.0\",\"resolved\":\"http://registry.npmjs.org/a/-/a-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a");
-    // A scoped package's file name is the base name, not the scope/name.
+}
+
+test "lock: a resolved url whose name is another package's is refused (name and url disagree)" {
+    try expectRefused(",\"node_modules/a\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "b/-/b-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/a");
+}
+
+test "lock: a scoped package's file name is the base name, not scope/name" {
     try expectRefused(",\"node_modules/@s/a\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "@s/a/-/@s/a-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/@s/a");
 }
 
@@ -90,14 +98,32 @@ test "lock: an alias (name differs from the path's) is refused" {
     try expectRefused(",\"node_modules/alias\":{\"name\":\"real\",\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "real/-/real-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "alias");
 }
 
-test "lock: bundled, link, git, file and workspace entries are refused, naming the path" {
+test "lock: a bundled entry is refused, naming the path" {
     try expectRefused(",\"node_modules/b\":{\"version\":\"1.0.0\",\"inBundle\":true}", "node_modules/b");
+}
+
+test "lock: a bundled entry that has a tarball is refused too" {
     try expectRefused(",\"node_modules/b\":{\"version\":\"1.0.0\",\"inBundle\":true,\"resolved\":\"" ++ reg ++ "b/-/b-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/b");
+}
+
+test "lock: a link is refused" {
     try expectRefused(",\"node_modules/l\":{\"resolved\":\"packages/l\",\"link\":true}", "node_modules/l");
+}
+
+test "lock: a git dependency is refused" {
     try expectRefused(",\"node_modules/g\":{\"version\":\"1.0.0\",\"resolved\":\"git+ssh://git@github.com/o/g.git#abc\"}", "node_modules/g");
+}
+
+test "lock: a file: dependency is refused" {
     try expectRefused(",\"node_modules/f\":{\"version\":\"1.0.0\",\"resolved\":\"file:../f\"}", "node_modules/f");
     try expectRefused(",\"node_modules/f2\":{\"version\":\"1.0.0\",\"resolved\":\"file:../f\",\"integrity\":\"" ++ sri_a ++ "\"}", "node_modules/f2");
+}
+
+test "lock: a workspace member is refused" {
     try expectRefused(",\"packages/w\":{\"name\":\"w\",\"version\":\"1.0.0\"}", "packages/w");
+}
+
+test "lock: an entry with no integrity, or a sha1 integrity, is refused" {
     try expectRefused(",\"node_modules/n\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "n/-/n-1.0.0.tgz\"}", "node_modules/n");
     try expectRefused(",\"node_modules/s1\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "s1/-/s1-1.0.0.tgz\",\"integrity\":\"sha1-qUwiJOvKwEeCoNkDVSHyRzW37JI=\"}", "node_modules/s1");
 }
@@ -187,41 +213,91 @@ test "table: reads the rows of both kinds, with platform lists only in a buildru
     try expectBadBlock(text, .pins_lock);
 }
 
-test "table: a load, a call or any text that is not a row is refused (the generator's grammar and nothing wider)" {
+test "table: a statement standing in a row's header, over a complete row body, is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const body = "        \"name\": \"left-pad\",\n        \"version\": \"1.3.0\",\n        \"url\": \"" ++ reg ++ "left-pad/-/left-pad-1.3.0.tgz\",\n        \"sri512\": \"" ++ sri_a ++ "\",\n        \"sha256\": \"" ++ sha_a ++ "\",\n        \"size\": 11,\n    },\n";
+    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", "    load(\"//evil:x.bzl\", \"y\")\n", body, "}\n" }), .pins_lock);
+    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", "    native.genrule(name = \"x\")\n", body, "}\n" }), .pins_lock);
+}
+
+test "table: text after the block (a call, a blank line) is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
     const good_row = try padRow(a);
-    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", "    load(\"//evil:x.bzl\", \"y\")\n", good_row, "}\n" }), .pins_lock);
     try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", good_row, "}\nnative.genrule()\n" }), .pins_lock);
-    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", good_row, "}\n\n" }), .pins_lock);
-    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", good_row }), .pins_lock);
+}
+
+test "table: a blank line after the block is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", try padRow(a), "}\n\n" }), .pins_lock);
+}
+
+test "table: a block with no closing brace, or a second one, is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", try padRow(a) }), .pins_lock);
     try expectBadBlock("NPM = {}\nload(\"x\")\n", .pins_lock);
     try expectBadBlock("NPM = {\n}\n}\n", .pins_lock);
+}
+
+test "table: a block that does not open with NPM = { is refused" {
     try expectBadBlock("NPM = []\n", .pins_lock);
     try expectBadBlock("", .pins_lock);
 }
 
-test "table: an extra field, a missing field, a reordered field and a changed indent are refused" {
+test "table: an extra field is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
     try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.0", "left-pad", "1.3.0", reg ++ "left-pad/-/left-pad-1.3.0.tgz", sri_a, sha_a, "11", "        \"extra\": \"x\",\n")}), .pins_lock);
+}
+
+test "table: platform lists in a pins.lock.bzl table are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
     try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.0", "left-pad", "1.3.0", reg ++ "left-pad/-/left-pad-1.3.0.tgz", sri_a, sha_a, "11", "        \"os\": [\"darwin\"],\n")}), .pins_lock);
+}
+
+test "table: a reordered field is refused" {
     const swapped = "NPM = {\n    \"left-pad@1.3.0\": {\n        \"version\": \"1.3.0\",\n        \"name\": \"left-pad\",\n        \"url\": \"" ++ reg ++ "left-pad/-/left-pad-1.3.0.tgz\",\n        \"sri512\": \"" ++ sri_a ++ "\",\n        \"sha256\": \"" ++ sha_a ++ "\",\n        \"size\": 11,\n    },\n}\n";
     try expectBadBlock(swapped, .pins_lock);
+}
+
+test "table: a missing field is refused" {
     const missing = "NPM = {\n    \"left-pad@1.3.0\": {\n        \"name\": \"left-pad\",\n        \"version\": \"1.3.0\",\n        \"url\": \"" ++ reg ++ "left-pad/-/left-pad-1.3.0.tgz\",\n        \"sri512\": \"" ++ sri_a ++ "\",\n        \"size\": 11,\n    },\n}\n";
     try expectBadBlock(missing, .pins_lock);
+}
+
+test "table: a changed indent is refused" {
     const indent = "NPM = {\n  \"left-pad@1.3.0\": {\n        \"name\": \"left-pad\",\n    },\n}\n";
     try expectBadBlock(indent, .pins_lock);
 }
 
-test "table: rows out of order, a key twice, a key that is not name@version are refused" {
+test "table: rows out of order are refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
     try expectBadBlock(try block(a, &.{ try padRow(a), try scopeRow(a, "") }), .pins_lock);
+}
+
+test "table: a key twice is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
     try expectBadBlock(try block(a, &.{ try padRow(a), try padRow(a) }), .pins_lock);
+}
+
+test "table: a key that is not name@version is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
     try expectBadBlock(try block(a, &.{try row(a, "left-pad@1.3.1", "left-pad", "1.3.0", reg ++ "left-pad/-/left-pad-1.3.0.tgz", sri_a, sha_a, "11", "")}), .pins_lock);
 }
 
@@ -326,14 +402,21 @@ test "bind: a row whose sri512 is not the lock's integrity is refused" {
     try expectBound(a, p.entries, rows, .pins_lock, "@scope/pkg@2.0.0");
 }
 
-test "bind: a row without an entry, and an entry without a row, are refused" {
+test "bind: a lock entry with no row is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
     const p = try entriesAndRows(a, .pins_lock, "");
     try expectBound(a, p.entries, p.rows[1..], .pins_lock, "@scope/pkg@2.0.0 is in package-lock.json");
-    try expectBound(a, p.entries[0..1], p.rows, .pins_lock, "left-pad@1.3.0 has a row in the table and no entry");
     try expectBound(a, p.entries, p.rows[0..1], .pins_lock, "left-pad@1.3.0 is in package-lock.json");
+}
+
+test "bind: a row with no lock entry is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const p = try entriesAndRows(a, .pins_lock, "");
+    try expectBound(a, p.entries[0..1], p.rows, .pins_lock, "left-pad@1.3.0 has a row in the table and no entry");
     try expectBound(a, &.{}, p.rows, .pins_lock, "has a row");
 }
 

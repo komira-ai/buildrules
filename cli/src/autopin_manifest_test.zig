@@ -83,41 +83,57 @@ test "manifest: a duplicate key is refused" {
     try t.expectError(error.DuplicateKey, parseWith(ar.allocator(), dup));
 }
 
-test "manifest: pr must be a JSON integer (a string, a float, a bool, zero, negative, huge are refused)" {
+test "manifest: pr must be a JSON integer (a string, a float, a bool are refused)" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    const mk = struct {
-        fn f(al: std.mem.Allocator, pr: []const u8) ![]u8 {
-            return std.fmt.allocPrint(al, "{{\"pr\":{s},\"head_sha\":\"{s}\",\"base_sha\":\"{s}\",\"files\":[]}}", .{ pr, head, base });
-        }
-    }.f;
-    try t.expectError(error.PrNotInteger, parseWith(a, try mk(a, "\"7\"")));
-    try t.expectError(error.PrNotInteger, parseWith(a, try mk(a, "7.0")));
-    try t.expectError(error.PrNotInteger, parseWith(a, try mk(a, "7e0")));
-    try t.expectError(error.PrNotInteger, parseWith(a, try mk(a, "true")));
-    try t.expectError(error.PrOutOfRange, parseWith(a, try mk(a, "0")));
-    try t.expectError(error.PrOutOfRange, parseWith(a, try mk(a, "-1")));
-    try t.expectError(error.PrOutOfRange, parseWith(a, try mk(a, "1000000000")));
-    try t.expectEqual(@as(u64, 999_999_999), (try parseWith(a, try mk(a, "999999999"))).pr);
+    try t.expectError(error.PrNotInteger, parseWith(a, try prManifest(a, "\"7\"")));
+    try t.expectError(error.PrNotInteger, parseWith(a, try prManifest(a, "7.0")));
+    try t.expectError(error.PrNotInteger, parseWith(a, try prManifest(a, "7e0")));
+    try t.expectError(error.PrNotInteger, parseWith(a, try prManifest(a, "true")));
 }
 
-test "manifest: an unknown key, a missing key, and a non-object are refused" {
+test "manifest: pr must be in 1..999999999" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expectError(error.PrOutOfRange, parseWith(a, try prManifest(a, "0")));
+    try t.expectError(error.PrOutOfRange, parseWith(a, try prManifest(a, "-1")));
+    try t.expectError(error.PrOutOfRange, parseWith(a, try prManifest(a, "1000000000")));
+    try t.expectEqual(@as(u64, 999_999_999), (try parseWith(a, try prManifest(a, "999999999"))).pr);
+}
+
+fn prManifest(al: std.mem.Allocator, pr: []const u8) ![]u8 {
+    return std.fmt.allocPrint(al, "{{\"pr\":{s},\"head_sha\":\"{s}\",\"base_sha\":\"{s}\",\"files\":[]}}", .{ pr, head, base });
+}
+
+test "manifest: an unknown key is refused, in the manifest and in a file entry" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
     const extra = "{\"pr\":7,\"head_sha\":\"" ++ head ++ "\",\"base_sha\":\"" ++ base ++ "\",\"files\":[],\"note\":\"x\"}";
     try t.expectError(error.UnknownKey, parseWith(a, extra));
-    const missing = "{\"pr\":7,\"head_sha\":\"" ++ head ++ "\",\"files\":[]}";
-    try t.expectError(error.MissingKey, parseWith(a, missing));
-    try t.expectError(error.NotAnObject, parseWith(a, "[]"));
-    try t.expectError(error.NotJson, parseWith(a, "{"));
-    try t.expectError(error.TooLarge, parseWith(a, " " ** (manifest.max_bytes + 1)));
     const file_extra = "{\"pr\":7,\"head_sha\":\"" ++ head ++ "\",\"base_sha\":\"" ++ base ++ "\",\"files\":[{\"path\":\"site/buildrules.lock.bzl\",\"sha256\":\"" ++ sha_a ++ "\",\"mode\":\"755\"}]}";
     try t.expectError(error.UnknownKey, parseWith(a, file_extra));
 }
 
-test "manifest: shas must be 40 lower-case hex, sha256 64" {
+test "manifest: a missing key is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const missing = "{\"pr\":7,\"head_sha\":\"" ++ head ++ "\",\"files\":[]}";
+    try t.expectError(error.MissingKey, parseWith(ar.allocator(), missing));
+}
+
+test "manifest: a non-object, text that is not JSON, and text over the size cap are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expectError(error.NotAnObject, parseWith(a, "[]"));
+    try t.expectError(error.NotJson, parseWith(a, "{"));
+    try t.expectError(error.TooLarge, parseWith(a, " " ** (manifest.max_bytes + 1)));
+}
+
+test "manifest: a head or base sha that is not 40 lower-case hex digits is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
@@ -127,10 +143,20 @@ test "manifest: shas must be 40 lower-case hex, sha256 64" {
     try t.expectError(error.BadSha, parseWith(a, upper));
     const short_base = "{\"pr\":7,\"head_sha\":\"" ++ head ++ "\",\"base_sha\":\"abc\",\"files\":[]}";
     try t.expectError(error.BadSha, parseWith(a, short_base));
+}
+
+test "manifest: a file sha256 that is not 64 lower-case hex digits is refused" {
+    var ar = arena();
+    defer ar.deinit();
     const bad_file = "{\"pr\":7,\"head_sha\":\"" ++ head ++ "\",\"base_sha\":\"" ++ base ++ "\",\"files\":[{\"path\":\"site/buildrules.lock.bzl\",\"sha256\":\"abc\"}]}";
-    try t.expectError(error.BadFileEntry, parseWith(a, bad_file));
+    try t.expectError(error.BadFileEntry, parseWith(ar.allocator(), bad_file));
+}
+
+test "manifest: files that is not an array is refused" {
+    var ar = arena();
+    defer ar.deinit();
     const not_array = "{\"pr\":7,\"head_sha\":\"" ++ head ++ "\",\"base_sha\":\"" ++ base ++ "\",\"files\":{}}";
-    try t.expectError(error.BadFiles, parseWith(a, not_array));
+    try t.expectError(error.BadFiles, parseWith(ar.allocator(), not_array));
 }
 
 test "manifest: a path that is not a SETS output is refused (it is never used to write)" {
