@@ -668,8 +668,18 @@ test "bytes between the central directory and the end record are refused" {
     defer ar.deinit();
     const a = ar.allocator();
     const z = try two(a);
-    put32(z.bytes, z.eocd + 12, @intCast(z.eocd - z.cd_off - 5));
-    try t.expectError(error.CentralDirectoryMisplaced, readIt(a, z));
+    const padded = try std.mem.concat(a, u8, &.{ z.bytes[0..z.eocd], "junk", z.bytes[z.eocd..] });
+    try t.expectError(error.CentralDirectoryMisplaced, zip.read(a, padded, &names, .{}));
+}
+
+test "a central directory with bytes inside its stated size that no entry accounts for is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const z = try two(a);
+    const padded = try std.mem.concat(a, u8, &.{ z.bytes[0..z.eocd], "junk", z.bytes[z.eocd..] });
+    put32(padded, z.eocd + 4 + 12, @intCast(z.eocd - z.cd_off + 4));
+    try t.expectError(error.CentralDirectoryMisplaced, zip.read(a, padded, &names, .{}));
 }
 
 test "a multi-disk archive is refused" {
