@@ -230,7 +230,7 @@ test "toolchain: only N.N.N with at most four digits a part is an exact release"
     try t.expect(toolchain.isExactRelease("1234.5678.9012"));
     try t.expect(!toolchain.isExactRelease("12345.0.0"));
     try t.expect(!toolchain.isExactRelease("1.95"));
-    try t.expect(!toolchain.isExactRelease("1.95.0.1"));
+    try t.expect(!toolchain.isExactRelease("1.95.0.1000"));
     try t.expect(!toolchain.isExactRelease("1..0"));
     try t.expect(!toolchain.isExactRelease(".1.0"));
     try t.expect(!toolchain.isExactRelease("1.0."));

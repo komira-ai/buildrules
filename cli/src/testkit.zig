@@ -81,6 +81,11 @@ const SiteRecorder = struct {
 
 var seen_sites: std.AutoHashMapUnmanaged(u64, void) = .empty;
 
+/// The memory every replay and sweep allocates from. A run that allocates from a heap whose addresses change from run to run takes different paths
+/// (an arena grows a buffer in place or moves it by the room the address leaves it), so the runs of one command line do not allocate the same things in
+/// the same order, and the allocation that is failed is not the one that was meant. From one buffer, reset for each run, they do.
+var fixed_memory: [256 << 20]u8 align(64) = undefined;
+
 /// The first file of `dir` that is a write `ctx.write` began and did not finish (its sibling file is named `.buildrules-tmp`); null when there is none.
 fn firstUnfinishedWrite(a: std.mem.Allocator, dir: std.fs.Dir) ?[]const u8 {
     var w = dir.walk(a) catch return null;
@@ -179,8 +184,8 @@ pub const Harness = struct {
         defer replaying = false;
         const t0 = std.time.milliTimestamp();
         // A run that records the place of every allocation it makes (the same run, so the same allocations, as the ones that fail below).
-        var rec_arena = std.heap.ArenaAllocator.init(t.allocator);
-        defer rec_arena.deinit();
+        var rec_fba = std.heap.FixedBufferAllocator.init(&fixed_memory);
+        var rec_arena = std.heap.ArenaAllocator.init(rec_fba.allocator());
         var rec = SiteRecorder{ .backing = rec_arena.allocator() };
         defer rec.sites.deinit(std.heap.page_allocator);
         {
@@ -218,8 +223,8 @@ pub const Harness = struct {
             var work = std.testing.tmpDir(.{ .iterate = true });
             defer work.cleanup();
             cloneInto(t.allocator, before, work.dir) catch |e| std.debug.panic("replay: cannot copy the directory: {s}", .{@errorName(e)});
-            var arena = std.heap.ArenaAllocator.init(t.allocator);
-            defer arena.deinit();
+            var fba = std.heap.FixedBufferAllocator.init(&fixed_memory);
+            var arena = std.heap.ArenaAllocator.init(fba.allocator());
             var out = std.Io.Writer.failing;
             var err = std.Io.Writer.failing;
             var c = self.ctx;
@@ -240,8 +245,8 @@ pub const Harness = struct {
             var work = std.testing.tmpDir(.{ .iterate = true });
             defer work.cleanup();
             cloneInto(t.allocator, before, work.dir) catch |e| std.debug.panic("replay: cannot copy the directory: {s}", .{@errorName(e)});
-            var arena = std.heap.ArenaAllocator.init(t.allocator);
-            defer arena.deinit();
+            var fba = std.heap.FixedBufferAllocator.init(&fixed_memory);
+            var arena = std.heap.ArenaAllocator.init(fba.allocator());
             var fa = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = i });
             var out_buf: [64]u8 = undefined;
             var err_buf: [64]u8 = undefined;
@@ -319,11 +324,12 @@ pub fn sweepOomRefusal(ctx: anytype) !void {
 }
 
 fn allocSweep(ctx: anytype, strict: bool, must_succeed: bool) !void {
-    var backing = std.heap.ArenaAllocator.init(t.allocator);
-    defer backing.deinit();
+    var fba = std.heap.FixedBufferAllocator.init(&fixed_memory);
+    var backing = std.heap.ArenaAllocator.init(fba.allocator());
     var i: usize = 0;
     while (i < 100_000) : (i += 1) {
-        _ = backing.reset(.retain_capacity);
+        fba.reset();
+        backing = std.heap.ArenaAllocator.init(fba.allocator());
         var fa = std.testing.FailingAllocator.init(backing.allocator(), .{ .fail_index = i });
         const reported = ctx.call(fa.allocator()) catch false;
         saturateCounters();

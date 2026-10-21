@@ -143,7 +143,8 @@ test "isUrl and isGitOrigin: scheme, host and the character set" {
     try t.expect(!valid.isGitOrigin("file://relative"));
     try t.expect(!valid.isGitOrigin("file:///a/../b"));
     try t.expect(!valid.isGitOrigin("file:///a b"));
-    try t.expect(!valid.isGitOrigin("git@example.invalid:r.git"));
+    try t.expect(!valid.isGitOrigin("git://example.invalid/r.git"));
+    try t.expect(!valid.isGitOrigin("ssh://example.invalid/r.git"));
     try t.expect(!valid.isGitOrigin(""));
 }
 
