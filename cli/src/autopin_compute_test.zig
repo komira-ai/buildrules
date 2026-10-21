@@ -284,7 +284,7 @@ test "compute: a hostile lock is refused before any download (alias, other host,
     }
 }
 
-test "compute: downloads are capped (only the registry, 200 new packages, 64 MiB each, 512 MiB together)" {
+test "compute: downloads are capped: only the registry is fetched from" {
     reset();
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
@@ -292,9 +292,28 @@ test "compute: downloads are capped (only the registry, 200 new packages, 64 MiB
     compute.resetCounters();
     try t.expectError(error.HostNotAllowed, compute.capped(a, "https://evil.example/x.tgz"));
     try t.expectError(error.HostNotAllowed, compute.capped(a, "http://registry.npmjs.org/x.tgz"));
+    try t.expectEqual(@as(usize, 0), fetches);
+}
+
+test "compute: downloads are capped: 64 MiB for one tarball" {
+    reset();
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    compute.resetCounters();
     served_size = table.max_size + 1;
     try t.expectError(error.TarballTooLarge, compute.capped(a, reg ++ "x/-/x-1.0.0.tgz"));
-    // 512 MiB together: eight tarballs of 64 MiB fit, the ninth does not.
+    served_size = table.max_size;
+    _ = try compute.capped(a, reg ++ "x/-/x-1.0.0.tgz");
+}
+
+test "compute: downloads are capped: 512 MiB together" {
+    reset();
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    compute.resetCounters();
+    // Eight tarballs of 64 MiB fit, the ninth does not.
     served_size = table.max_size;
     var i: usize = 0;
     while (i < 8) : (i += 1) _ = try compute.capped(a, reg ++ "x/-/x-1.0.0.tgz");

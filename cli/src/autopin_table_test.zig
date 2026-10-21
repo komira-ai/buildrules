@@ -489,3 +489,21 @@ test "lock: a path over 512 bytes, a name that is not a string, and an entry wit
 test "table: a block that stops in the middle of its first line is refused" {
     try expectBadBlock("NPM = {", .pins_lock);
 }
+
+test "table: a row with an extra field and no closing line, followed by a row header, is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    // Without the check for the row's closing line, the extra line would be taken for it and the next header would read as a row.
+    const open_a = "    \"@scope/pkg@2.0.0\": {\n        \"name\": \"@scope/pkg\",\n        \"version\": \"2.0.0\",\n        \"url\": \"" ++ reg ++ "@scope/pkg/-/pkg-2.0.0.tgz\",\n        \"sri512\": \"" ++ sri_b ++ "\",\n        \"sha256\": \"" ++ sha_b ++ "\",\n        \"size\": 22,\n        \"extra\": \"swallowed\",\n";
+    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", open_a, try padRow(a), "}\n" }), .pins_lock);
+}
+
+test "table: a statement whose middle reads as a row key, over a complete row body, is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const body = "        \"name\": \"left-pad\",\n        \"version\": \"1.3.0\",\n        \"url\": \"" ++ reg ++ "left-pad/-/left-pad-1.3.0.tgz\",\n        \"sri512\": \"" ++ sri_a ++ "\",\n        \"sha256\": \"" ++ sha_a ++ "\",\n        \"size\": 11,\n    },\n";
+    // Characters 5.. up to the last 4 are what the key is read from: here exactly left-pad@1.3.0.
+    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", "    load(left-pad@1.3.0)xyz\n", body, "}\n" }), .pins_lock);
+}
