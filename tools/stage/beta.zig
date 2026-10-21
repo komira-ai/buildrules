@@ -210,6 +210,35 @@ pub fn copyRepo(a: std.mem.Allocator, src: []const u8, dst: []const u8) !usize {
     return n;
 }
 
+/// Runs `argv`; when it fails only because a pinned download failed (`isDownloadFlake`) it is run again, up to `download_retries` times, with a wait
+/// that doubles. Any other failure is returned on the first run. The retried command is the same, so what it does is unchanged. From the second
+/// retry on, when `mirror_at` is set, `-c buildrules.url_map=<mirror_map>` is inserted at that index of the argv so the pins are fetched from
+/// their mirrors (the sha256 and size of every download are still checked). A command that cannot take that flag passes null and is run unchanged.
+fn runRetrying(a: std.mem.Allocator, io: Io, o: Options, cwd: []const u8, argv: []const []const u8, mirror_at: ?usize) !io_mod.Out {
+    var r = try io.run(a, cwd, argv);
+    // The second build starts with no buck-out, so every pin is downloaded again; an upstream server that drops it must not block a release.
+    var wait_ms = o.retry_delay_ms;
+    var left = o.download_retries;
+    while (r.code != 0 and left > 0 and isDownloadFlake(r.stderr)) : (left -= 1) {
+        io_mod.say("beta {s}: a pinned download failed ({d} retries left); waiting {d} ms\n{s}\n", .{ o.lang, left, wait_ms, io_mod.tail(r.stderr, 6) });
+        if (wait_ms > 0) std.Thread.sleep(wait_ms * std.time.ns_per_ms);
+        wait_ms *= 2;
+        // The first retry asks the same host again (a throttle ends); from the second on the pins are fetched from their mirrors
+        // (`mirror_map`, rules/core/url_map.bzl).
+        if (left <= 2 and mirror_at != null) {
+            const at = mirror_at.?;
+            var m = std.ArrayList([]const u8).empty;
+            try m.appendSlice(a, argv[0..at]);
+            try m.appendSlice(a, &.{ "-c", "buildrules.url_map=" ++ mirror_map });
+            try m.appendSlice(a, argv[at..]);
+            r = try io.run(a, cwd, m.items);
+        } else {
+            r = try io.run(a, cwd, argv);
+        }
+    }
+    return r;
+}
+
 /// `buck2 build` of the targets, with their outputs. Local mode passes the mode on the command; a farm run must report no local command.
 fn build(a: std.mem.Allocator, io: Io, o: Options, cwd: []const u8, targets: []const []const u8) ![]const Output {
     var argv = std.ArrayList([]const u8).empty;
@@ -218,27 +247,7 @@ fn build(a: std.mem.Allocator, io: Io, o: Options, cwd: []const u8, targets: []c
     const show_at = argv.items.len;
     try argv.append(a, "--show-output");
     try argv.appendSlice(a, targets);
-    var r = try io.run(a, cwd, argv.items);
-    // The second build starts with no buck-out, so every pin is downloaded again; an upstream server that drops it must not block a release.
-    // Only that failure is made again (and the build is the same command, so what it builds is unchanged); a compile, test or hash failure is not.
-    var wait_ms = o.retry_delay_ms;
-    var left = o.download_retries;
-    while (r.code != 0 and left > 0 and isDownloadFlake(r.stderr)) : (left -= 1) {
-        io_mod.say("beta {s}: a pinned download failed ({d} retries left); waiting {d} ms\n{s}\n", .{ o.lang, left, wait_ms, io_mod.tail(r.stderr, 6) });
-        if (wait_ms > 0) std.Thread.sleep(wait_ms * std.time.ns_per_ms);
-        wait_ms *= 2;
-        // The first retry asks the same host again (a throttle ends); from the second on the pins are fetched from their mirrors
-        // (`mirror_map`, rules/core/url_map.bzl). The sha256 and size of every download are still checked, so the bytes are the same.
-        if (left <= 2) {
-            var m = std.ArrayList([]const u8).empty;
-            try m.appendSlice(a, argv.items[0..show_at]);
-            try m.appendSlice(a, &.{ "-c", "buildrules.url_map=" ++ mirror_map });
-            try m.appendSlice(a, argv.items[show_at..]);
-            r = try io.run(a, cwd, m.items);
-        } else {
-            r = try io.run(a, cwd, argv.items);
-        }
-    }
+    const r = try runRetrying(a, io, o, cwd, argv.items, show_at);
     if (r.code != 0) {
         std.debug.print("beta {s}: `{s}` exited {d}\n{s}\n{s}\n", .{ o.lang, try std.mem.join(a, " ", argv.items), r.code, io_mod.tail(r.stderr, 60), io_mod.tail(r.stdout, 20) });
         return error.StepFailed;
@@ -318,7 +327,8 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
                 try argv.append(a, if (std.mem.eql(u8, s, "buildrules")) o.buildrules else s);
             }
             io_mod.say("beta {s}: $ {s}\n", .{ o.lang, try std.mem.join(a, " ", words) });
-            const r = try io.run(a, o.work, argv.items);
+            // `buildrules sync` and `mojo sync` run buck2 inside to fetch the pinned tools, and the CLI does not forward `-c`, so the same argv is run again
+            const r = try runRetrying(a, io, o, o.work, argv.items, null);
             if (r.code != 0) {
                 std.debug.print("beta {s}: `{s}` exited {d}\n{s}\n{s}\n", .{ o.lang, try std.mem.join(a, " ", words), r.code, io_mod.tail(r.stderr, 40), io_mod.tail(r.stdout, 20) });
                 return error.StepFailed;
@@ -697,6 +707,76 @@ test "a build that failed with buck2's real connect error is made again" {
     try t.expectEqual(Outcome.passed, r.outcome);
     // 1 failed + 4 good ones (the step's build, the expect's, the first hash, the second directory's)
     try t.expectEqual(@as(usize, 5), fake.count("build --console simple"));
+}
+
+const sync_flake_stderr = "Error materializing HTTP resource declared by target toolchains//:busybox_pin\n\nCaused by:\n    Timed out while making request to URI: https://busybox.net/downloads/busybox after 30 seconds\nbuildrules mojo sync exited 1\n";
+
+const sync_steps =
+    \\run buildrules init . --git {origin} --commit {commit}
+    \\config
+    \\run buildrules mojo sync
+    \\build //app:bin
+    \\expect //app:bin => Hello, world!
+    \\
+;
+
+test "a sync step that failed only because a pinned download timed out is run again, the same command, and then passes" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = try Env.make(a, sync_steps);
+    defer env.tmp.cleanup();
+    var rules = [_]Fake.Rule{
+        .{ .needle = "init" },
+        .{ .needle = "/bin/buildrules mojo sync", .out = failOut(sync_flake_stderr), .times = 2 },
+        .{ .needle = "/bin/buildrules mojo sync" },
+        .{ .needle = "build --console simple", .out = okOut("root//app:bin " ++ out_path ++ "\n", local_stderr), .files = &.{.{ .path = out_path, .bytes = "ELF" }} },
+        .{ .needle = "/buck-out/v2/art/root/app/bin", .out = okOut("Hello, world!\n", "") },
+        .{ .needle = "buck2 kill" },
+    };
+    var fake = Fake{ .a = a, .rules = &rules };
+    const r = try run(a, fake.io(), env.opts(.local));
+    try t.expectEqual(Outcome.passed, r.outcome);
+    // 2 failed + 1 good
+    try t.expectEqual(@as(usize, 3), fake.count("/bin/buildrules mojo sync"));
+    // the CLI takes no `-c`, so every try is the same argv and no mirror flag is passed to it
+    for (fake.calls.items) |c| {
+        if (std.mem.indexOf(u8, c, "mojo sync") != null) try t.expectEqualStrings("/bin/buildrules mojo sync", c);
+    }
+    try t.expectEqual(@as(usize, 0), fake.count("buildrules.url_map="));
+}
+
+test "a sync step that keeps timing out is red after the retries, and a wrong hash, a 404 or a refused pin is not run again" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const fatal = [_][]const u8{
+        "Error materializing HTTP resource declared by target toolchains//:busybox_pin\n\nCaused by:\n    Invalid hash: expected 6e12, got 0000\n",
+        "Error materializing HTTP resource declared by target toolchains//:busybox_pin\n\nCaused by:\n    HTTP status 404 Not Found\n",
+        "buildrules: mojo sync: the pin for mopm 9.9.9 is refused: no sha256\n",
+    };
+    for (fatal) |text| {
+        var env = try Env.make(a, sync_steps);
+        defer env.tmp.cleanup();
+        var rules = [_]Fake.Rule{
+            .{ .needle = "init" },
+            .{ .needle = "/bin/buildrules mojo sync", .out = failOut(text) },
+        };
+        var fake = Fake{ .a = a, .rules = &rules };
+        try t.expectError(error.StepFailed, run(a, fake.io(), env.opts(.local)));
+        try t.expectEqual(@as(usize, 1), fake.count("/bin/buildrules mojo sync"));
+    }
+
+    // a download that never arrives: 1 + download_retries tries, then the failure
+    var env = try Env.make(a, sync_steps);
+    defer env.tmp.cleanup();
+    var rules = [_]Fake.Rule{
+        .{ .needle = "init" },
+        .{ .needle = "/bin/buildrules mojo sync", .out = failOut(sync_flake_stderr) },
+    };
+    var fake = Fake{ .a = a, .rules = &rules };
+    try t.expectError(error.StepFailed, run(a, fake.io(), env.opts(.local)));
+    try t.expectEqual(@as(usize, 4), fake.count("/bin/buildrules mojo sync"));
 }
 
 test "an output that depends on the directory it was built in is red: the second build is in another directory" {

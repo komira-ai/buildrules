@@ -97,6 +97,72 @@ test "render refuses a value that could be code: a quote, a backslash, a newline
     try t.expectError(error.UnsafeValue, lockfmt.render(t.allocator, .{ .npm = &.{n} }));
 }
 
+// The boundaries of valid.zig, each with the longest value that is accepted next to the shortest that is not: a check loosened by one is red on the refusal,
+// a check tightened by one is red on the control.
+fn renderFile(f: lockfmt.File) lockfmt.RenderError![]u8 {
+    const files = [_]lockfmt.File{f};
+    const pins = [_]lockfmt.LockPin{.{ .name = "a", .version = "1", .files = &files }};
+    return lockfmt.render(t.allocator, .{ .pins = &pins });
+}
+
+fn renderNpm(n: lockfmt.Npm) lockfmt.RenderError![]u8 {
+    return lockfmt.render(t.allocator, .{ .npm = &.{n} });
+}
+
+fn accepts(r: lockfmt.RenderError![]u8) !void {
+    t.allocator.free(try r);
+}
+
+test "render: a sha256 is exactly 64 digits, not 65" {
+    const ok = lockfmt.File{ .platform = "p", .url = "https://h.example/x", .sha256 = fx.ABC_SHA256, .size = 1 };
+    try accepts(renderFile(ok));
+    var f = ok;
+    f.sha256 = fx.ABC_SHA256 ++ "0";
+    try t.expectError(error.UnsafeValue, renderFile(f));
+    f.sha256 = fx.ABC_SHA256[1..];
+    try t.expectError(error.UnsafeValue, renderFile(f));
+    var n = example().npm[0];
+    try accepts(renderNpm(n));
+    n.sha256 = fx.ABC_SHA256 ++ "0";
+    try t.expectError(error.UnsafeValue, renderNpm(n));
+}
+
+test "render: a pin or platform name is at most 64 characters" {
+    const ok = lockfmt.File{ .platform = "p" ** 64, .url = "https://h.example/x", .sha256 = fx.ABC_SHA256, .size = 1 };
+    try accepts(renderFile(ok));
+    var f = ok;
+    f.platform = "p" ** 65;
+    try t.expectError(error.UnsafeValue, renderFile(f));
+    const files = [_]lockfmt.File{ok};
+    const long = [_]lockfmt.LockPin{.{ .name = "a" ** 64, .version = "1", .files = &files }};
+    t.allocator.free(try lockfmt.render(t.allocator, .{ .pins = &long }));
+    const longer = [_]lockfmt.LockPin{.{ .name = "a" ** 65, .version = "1", .files = &files }};
+    try t.expectError(error.UnsafeValue, lockfmt.render(t.allocator, .{ .pins = &longer }));
+}
+
+test "render: a url is at most 2048 characters, and has a host" {
+    const prefix = "https://h.example/";
+    const ok = lockfmt.File{ .platform = "p", .url = prefix ++ "a" ** (2048 - prefix.len), .sha256 = fx.ABC_SHA256, .size = 1 };
+    try accepts(renderFile(ok));
+    var f = ok;
+    f.url = prefix ++ "a" ** (2049 - prefix.len);
+    try t.expectError(error.UnsafeValue, renderFile(f));
+    f.url = "https:///x";
+    try t.expectError(error.UnsafeValue, renderFile(f));
+    f.url = "http:///x";
+    try t.expectError(error.UnsafeValue, renderFile(f));
+}
+
+test "render: a package name with an empty path segment is refused" {
+    var n = example().npm[0];
+    n.name = "a//b";
+    n.key = "a//b@1.3.0";
+    try t.expectError(error.UnsafeValue, renderNpm(n));
+    n.name = "a/b";
+    n.key = "a/b@1.3.0";
+    try accepts(renderNpm(n));
+}
+
 test "render refuses a duplicate key" {
     const lock = example();
     const dup = [_]lockfmt.Npm{ lock.npm[0], lock.npm[0] };

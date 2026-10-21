@@ -12,6 +12,7 @@ only. linux x86_64 only.
 
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/zig:zig.bzl", "ZigTestInfo")
+load(":checks.bzl", "check_test_targets")
 
 def _file(dep):
     return dep[DefaultInfo].default_outputs[0]
@@ -20,8 +21,7 @@ def _impl(ctx):
     reports = []
     blocks = []
     stamps = []
-    if not ctx.attrs.test_targets:
-        fail("{}: test_targets is empty: a package with no test has no coverage to measure".format(ctx.label.raw_target()))
+    check_test_targets(ctx.label.raw_target(), ctx.attrs.test_targets)
     for test in ctx.attrs.test_targets:
         info = test[ZigTestInfo]
         name = test.label.name

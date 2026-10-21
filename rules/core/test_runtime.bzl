@@ -30,29 +30,42 @@ def data_map(ctx, where, data):
             out[pkg + "/" + a.short_path if pkg else a.short_path] = a
     else:
         out = dict(data)
-    prefixes = {}
-    for dest in out:
-        if dest == "" or dest.startswith("/") or dest.endswith("/"):
-            fail("{}: data destination {} must be a relative file path".format(where, repr(dest)))
-        parts = dest.split("/")
-        for part in parts:
-            if part in ("", ".", ".."):
-                fail("{}: data destination {} holds an empty, `.` or `..` segment".format(where, repr(dest)))
-        for i in range(1, len(parts)):
-            prefixes["/".join(parts[:i])] = dest
-    for dest in out:
-        if dest in prefixes:
-            fail("{}: data destination {} is both a file and the directory of {}".format(where, repr(dest), repr(prefixes[dest])))
+    check_data_destinations(where, out.keys())
     return out
 
-def env_args(where, env):
+def check_data_destinations(where, dests, refuse = fail):
+    """Every data destination is a relative file path of clean segments, and none is both a file and the directory of another. `refuse` is `fail`
+    in a rule; a test passes a recorder (rules/rust/refusal.bzl)."""
+    prefixes = {}
+    for dest in dests:
+        if dest == "" or dest.startswith("/") or dest.endswith("/"):
+            refuse("{}: data destination {} must be a relative file path".format(where, repr(dest)))
+            continue
+        parts = dest.split("/")
+        clean = True
+        for part in parts:
+            if part in ("", ".", ".."):
+                refuse("{}: data destination {} holds an empty, `.` or `..` segment".format(where, repr(dest)))
+                clean = False
+                break
+        if not clean:
+            continue
+        for i in range(1, len(parts)):
+            prefixes["/".join(parts[:i])] = dest
+    for dest in dests:
+        if dest in prefixes:
+            refuse("{}: data destination {} is both a file and the directory of {}".format(where, repr(dest), repr(prefixes[dest])))
+
+def env_args(where, env, refuse = fail):
     """`--env NAME=VALUE` runner arguments, after refusing names the runner owns."""
     args = []
     for name in sorted(env.keys()):
         if not regex_match("^[A-Za-z_][A-Za-z0-9_]*$", name):
-            fail("{}: env name {} is not a shell variable name".format(where, repr(name)))
+            refuse("{}: env name {} is not a shell variable name".format(where, repr(name)))
+            continue
         if name in RUNNER_ENV:
-            fail("{}: env sets {}, which the test runner sets itself (runner-owned: {})".format(where, name, ", ".join(RUNNER_ENV)))
+            refuse("{}: env sets {}, which the test runner sets itself (runner-owned: {})".format(where, name, ", ".join(RUNNER_ENV)))
+            continue
         args += ["--env", "{}={}".format(name, env[name])]
     return args
 

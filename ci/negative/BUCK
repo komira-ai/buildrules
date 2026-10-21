@@ -3,7 +3,10 @@ load("@buildrules//rules:isa.bzl", "required_isa", "test_exec_compatible_with")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/zig:zig.bzl", "zig_test")
 load("@buildrules//rules/rust:test_run.bzl", "test_run")
-load("@buildrules//rules/zig:zig.bzl", "zig_exe_target_test")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test")
+load("@buildrules//rules/cxx:defs.bzl", "checked_cxx_library")
+load("@buildrules//rules/node:defs.bzl", "npm_tarball")
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage_rule")
 
 # The control of the bxl check (ci/negative.bzl) on the fixture below: the same run of the same test, with the one line the fixture leaves out. It must analyse, on the platform the
 # fixture does not, or the fixture could be red for another reason.
@@ -25,6 +28,7 @@ zig_test(
         "ci/negative/BUCK": "BUCK",
         "ci/negative.bzl": "//ci:negative.bzl",
         "ci/completeness.bxl": "//ci:completeness.bxl",
+        "ci/all.bzl": "//ci:all.bzl",
         "rules/rust/test_run.bzl": "//rules/rust:test_run.bzl",
     },
     busybox = "buildrules//rules/pins:busybox",
@@ -60,6 +64,50 @@ zig_exe_target_test(
     exe = "//examples/zig:hello_zig",
     expect = "x86_64-linux-musl",
     same_tests_as = "//cli:buildrules",
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+# The refusals a user meets that no wildcard build shows: a dependency of the wrong kind, and coverage of nothing. Each fixture is compatible only with the platform it is
+# analysed on (ci/negative.bzl), so a wildcard build skips it, and analysing it there must FAIL for the reason listed in ci/negative.bzl (`CASES`):
+#
+#   buck2 build --target-platforms buildrules//platforms:linux_x86_64_v3 //ci/negative:zig_exe_with_a_dep_of_the_wrong_kind
+#
+# `deps` of a zig_exe are zig_module targets; here it names an executable.
+zig_exe(
+    name = "zig_exe_with_a_dep_of_the_wrong_kind",
+    src = "negative_check.zig",
+    deps = ["//examples/zig:hello_zig"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+# The `checks` of a checked_cxx_library are validations (a target that returns a ValidationInfo); here one is an executable that returns none, so nothing would run it.
+checked_cxx_library(
+    name = "cxx_library_gated_by_the_wrong_kind",
+    lib = "//examples/cxx:hello_c",
+    checks = ["//examples/zig:hello_zig"],
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+# The `deps` of an npm_tarball are npm packages; here it names an executable.
+npm_tarball(
+    name = "npm_tarball_with_a_dep_of_the_wrong_kind",
+    package = "left-pad",
+    version = "1.3.0",
+    integrity = "sha512-3a81oZNherrMQXNJriBBMRLm+k6JqX6iCp7u5ktV05ohkpkqJ0/BqDa6PCOj/uu9RU1EI2Q86A4qmslPpUyknw==",
+    tarball = "//examples/zig:hello_zig",
+    deps = ["//examples/zig:hello_zig"],
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+# A coverage target with no test to measure: the rule refuses (rules/coverage/checks.bzl).
+zig_coverage_rule(
+    name = "zig_coverage_of_no_test",
+    test_targets = [],
+    expect = [],
+    blocks = False,
+    exec_compatible_with = LINUX_X86_64,
     target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
 )
 

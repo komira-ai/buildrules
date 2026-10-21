@@ -3,13 +3,13 @@
 #
 #   buck2 bxl //ci:negative.bxl:check
 
-load("@buildrules//ci:negative.bzl", "CONTROL", "FIXTURE", "PLATFORM", "negative_problems")
+load("@buildrules//ci:negative.bzl", "CASES", "CONTROL", "FIXTURE", "PLATFORM", "negative_problems")
 
 def _impl(ctx):
     problems = negative_problems(ctx)
     if problems:
         fail("ci/negative: {} problem(s):\n  ".format(len(problems)) + "\n  ".join(problems))
-    ctx.output.print("ok: {} is red on {} for the reason it plants, and {} analyses".format(FIXTURE, PLATFORM, CONTROL))
+    ctx.output.print("ok: {} is red on {} for the reason it plants, {} analyses, and {} more planted defects are red for their reasons".format(FIXTURE, PLATFORM, CONTROL, len(CASES)))
 
 check = bxl_main(
     impl = _impl,

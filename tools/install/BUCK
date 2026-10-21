@@ -1,0 +1,25 @@
+# The test of the install script (site/static/install.sh, served as buildrules.dev/install.sh). The script is shell because `curl | sh` needs one;
+# its test is Zig: install_script_test.zig runs it under the busybox `sh` against fake releases served over loopback, with the stand-ins of
+# fakes.zig for curl, uname, shasum and cosign, and then plants a defect for each check the script makes and requires a failing check for every one.
+# It runs as a build action on the test farm and on the public runner (local mode); no step of the pipeline reaches the network.
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+
+# One program that is several, by the name it is run under: curl, uname, shasum, cosign, and the `buildrules` program inside the fake tarballs.
+zig_exe(
+    name = "fakes",
+    exec_compatible_with = LINUX_X86_64,
+    src = "fakes.zig",
+)
+
+zig_test(
+    name = "install_script_test",
+    exec_compatible_with = LINUX_X86_64,
+    src = "install_script_test.zig",
+    data = {"site/static/install.sh": "//site:install.sh"},
+    exec_tools = {"FAKES": ":fakes"},
+    visibility = ["//ci:"],
+)
+
+scrub_files()
