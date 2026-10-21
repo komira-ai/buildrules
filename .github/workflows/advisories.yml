@@ -1,7 +1,8 @@
 # A daily scan of the repository's lockfiles for known vulnerabilities (OSV database). It reports and never gates: it runs on a schedule and by hand only (never on a
 # pull request or a push, so it cannot block a change or turn main or a release red), writes what it finds to the job summary, and keeps ONE issue titled
 # `Advisories` up to date (opened or updated when there are findings, closed when there are none). The job fails only when the scan cannot run: the tool does not
-# download to its pinned sha256, or the scanner itself errors. That red is on the scheduled run alone. ci/advisories_check.zig (`//ci:workflow`) holds this file to all
+# download to its pinned sha256, the scanner itself errors, or a `gh` call of the Report step fails (an API hiccup): the Report step stops at the first failed call, so it can never
+# create a second issue, and the next day's run reports again. That red is on the scheduled run alone. ci/advisories_check.zig (`//ci:workflow`) holds this file to all
 # of it. Licence and ban checks are not this: they may gate, and this does not.
 #
 # The tool is the OSV-Scanner release pinned in rules/pins/pins.bzl (`osv_scanner`): one static binary that reads npm (package-lock.json) and crates (Cargo.lock)
@@ -42,13 +43,13 @@ jobs:
           echo "160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b  osv-scanner" | sha256sum --check --strict -
           chmod +x osv-scanner
 
-      # Lockfiles under a fixture directory and the beta templates are test inputs, not dependencies of ours: they are not scanned, so the issue can be fixed and closed.
+      # Lockfiles under a fixture directory are test inputs, not dependencies of ours: they are not scanned, so the issue can be fixed and closed. The beta templates are scanned (users copy them; their lockfiles are ours to bump).
       # Exit 0 is no finding and 1 is a finding (both are a scan that ran); anything else is a scan that could not run.
       - name: Scan the lockfiles
         run: |
           set -euo pipefail
           set --
-          while IFS= read -r -d '' lock; do set -- "$@" -L "$lock"; done < <(git ls-files -z -- ':(glob)**/package-lock.json' ':(glob)**/Cargo.lock' ':(exclude,glob)**/fixture/**' ':(exclude,glob)beta/**')
+          while IFS= read -r -d '' lock; do set -- "$@" -L "$lock"; done < <(git ls-files -z -- ':(glob)**/package-lock.json' ':(glob)**/Cargo.lock' ':(exclude,glob)**/fixture/**')
           test "$#" -gt 0
           rc=0
           ./osv-scanner scan --format markdown --output-file advisories.md "$@" || rc=$?
