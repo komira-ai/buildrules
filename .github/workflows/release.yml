@@ -1,21 +1,26 @@
 # The automatic release (RELEASING.md): every push to main is tested in stages, and a green one that changes more than documentation or CI is released with
 # no human action. The release is a tag `v<MAJOR>.<MINOR>.<PATCH>` and a GitHub release carrying the source archive `buildrules-<version>.tar.gz`, the command
-# line for three platforms `buildrules-cli-<version>-<target>.tar.gz`, their SHA256SUMS, a keyless signature (`<file>.sigstore.json`) and a build provenance
-# attestation of each of those five files, and the notes.
+# line for three platforms `buildrules-cli-<version>-<target>.tar.gz`, the Debian packages of the two Linux ones `buildrules_<version>_<arch>.deb`, their
+# SHA256SUMS, a keyless signature (`<file>.sigstore.json`) and a build provenance attestation of each of those seven files, and the notes. After the release
+# exists, two channels follow it (the jobs `tap` and `apt-*` below): the Homebrew formula, as a pull request in the tap, and the Debian packages, in the apt
+# repository the products of the organisation share.
 #
 #   gate       the PR gate, the whole CI (ci.yml, called as a workflow): //ci:all and the completeness check, in local mode on the runner.
-#   tool       builds the release tool (tools/release, Zig) and the stage tool (tools/stage) before any job holds a token, and hands the binaries on.
+#   tool       builds the release tool (tools/release, Zig), the stage tool (tools/stage) and the tools of the channels (tools/channels: the .deb and the formula;
+#              tools/deploy: the tap pull request and the apt publish) before any job holds a token, and hands the binaries on.
 #   plan       read-only: decides whether this commit is released (docs and CI alone are not; a RELEASE_FREEZE of `true` stops every release, and only this
 #              job reads it) and which version (the highest patch of VERSION's MAJOR.MINOR plus one). It creates nothing.
-#   build-cli  builds the command line for the three release targets from the tested commit with the planned version stamped in, and packages the three tarballs.
+#   build-cli  builds the command line for the three release targets from the tested commit with the planned version stamped in, and packages the three tarballs
+#              and, from the very same two Linux binaries, the two .debs.
 #   beta       hello-world repositories per language that consume the candidate commit as a user would, with the linux-x86_64 command line that build-cli
 #              built (beta.yml, called as a workflow), built twice, the second time in a copy at another path, to prove the outputs are the same bytes.
 #   gamma      our own repositories built with the candidate on the farm (tools/stage gamma). It FAILS the release when the farm is not configured.
 #   archive    the deterministic archive of the TESTED COMMIT (git archive of the sha, not of a tag; a fixed prefix `buildrules-<planned version>/` and time,
-#              the tool's own gzip), the tarballs the beta ran, and SHA256SUMS over those four files. No token beyond reading.
-#   attest     only on a push to main: a keyless cosign signature of the five files and build provenance for all five.
+#              the tool's own gzip), the tarballs the beta ran, the .debs (each must hold the program of the tarball of its architecture), and SHA256SUMS over
+#              those six files. No token beyond reading.
+#   attest     only on a push to main: a keyless cosign signature of the seven files and build provenance for all seven.
 #   verify     read-only: the sums, the checkout being the commit, every attestation and signature (this workflow, this commit, main), a second build of the
-#              archive AND of the three binaries giving the same bytes, `buildrules --version` of the shipped linux-x86_64 binary printing the release version,
+#              archive AND of the three binaries and the two .debs giving the same bytes, `buildrules --version` of the shipped linux-x86_64 binary printing the release version,
 #              the archive's file list equal to the commit's tracked files, and the scrub on its contents.
 #   tag        the job that creates the tag, with the release bot's token (the v* tag ruleset allows only that App; GITHUB_TOKEN here only reads): the
 #              annotated tag at that sha, made only after everything was built, tested, attested and verified, so a failure before it leaves no tag behind. It
@@ -28,13 +33,21 @@
 #              release and replaces no asset: a file the release holds must be the same bytes or the job fails, and a missing file is added.
 #   bump       after publish: opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge,
 #              using the release bot's token for that repository alone (`contents: read` for its own token). Nothing waits for it.
+#   tap        after publish: renders `Formula/buildrules.rb` from the verified SHA256SUMS (`channels formula`) and opens the pull request that adds it to the
+#              organisation's Homebrew tap (`tap`), as the release bot, with the token minted for the tap repository alone, in the last two steps. Nothing waits
+#              for it, and a failed tap un-releases nothing.
+#   apt-*      after publish: the .debs go into the apt repository the organisation's products share (RELEASING.md, "The apt repository"), in up to three attempts
+#              of three jobs each: `apt-deploy-read` (the cloud role, by OIDC, and no key) reads the current index, `apt-index` (the signing key, and no role) merges
+#              the .debs into it and signs it, `apt-deploy-write` (the role, and no key) uploads the .debs and writes the index. No job holds both the key and the
+#              role. Until the repository's owner has made the settings every one of them ends green with a notice and writes nothing. Nothing waits for them.
 #
 # It runs on a push to main only. A pull request runs ci.yml alone (build, unit tests, the lints of this file and of the other workflows): the beta, the
 # gamma, the signing and the verification of the release happen here, after the merge, and nowhere before it.
 #
-# `contents: write` is held by publish only (tag and bump write with the release bot's token, not their own), each of tag and publish under the exact `if:` below;
-# `id-token: write` by attest (the signature and the attestation), by gamma (the farm network) and by the call of beta (its farm leg), and `attestations: write`
-# by attest only. No job that writes runs buck2. ci/release_check.zig (`//ci:workflow`) holds this file to all of that, to the order
+# `contents: write` is held by publish only (tag, bump and tap write with the release bot's token, not their own), each of tag and publish under the exact `if:` below;
+# `id-token: write` by attest (the signature and the attestation), by gamma (the farm network), by the call of beta (its farm leg) and by the jobs that assume the
+# apt publish role (`apt-deploy-read`, `apt-deploy-write`), and `attestations: write` by attest only. No job that writes runs buck2. ci/release_check.zig
+# (`//ci:workflow`) holds this file to all of that, to the order
 # gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish (no job before the tag waits for it), to actions pinned by commit,
 # and to local mode on every buck2 command.
 name: release
@@ -85,6 +98,17 @@ jobs:
       - name: Build the stage tool
         run: ./buck2 build --console simple -c buildrules_re.mode=local --out stage //tools/stage:stage
 
+      # The tools of the channels: the .deb writer and the formula renderer (build-cli, verify, tap and the apt jobs run them), the pull request against the tap
+      # and the apt publish. Built here, before any job holds a token or a role.
+      - name: Build the channels tool
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out channels //tools/channels:channels
+
+      - name: Build the tap tool
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out tap //tools/deploy:tap
+
+      - name: Build the apt publish tool
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out apt-publish //tools/deploy:apt_publish
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-tool
@@ -98,6 +122,16 @@ jobs:
           path: |
             ./stage
             ./buck2
+          retention-days: 7
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: channel-tools
+          path: |
+            ./channels
+            ./tap
+            ./apt-publish
           retention-days: 7
           if-no-files-found: error
 
@@ -131,8 +165,9 @@ jobs:
         run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$CANDIDATE" --freeze "$FREEZE" --dry false --output "$GITHUB_OUTPUT"
 
   # The command line for the three release targets, built from the tested commit with the planned version stamped in (-c buildrules.release_version, read by
-  # cli/BUCK), in one directory (//cli:release_binaries) and then packaged as the three tarballs the release ships. The linux-x86_64 binary is handed to the beta
-  # as the file it will run; the tarballs are handed to the archive. It runs the buck2 that `tool` handed on, as the literal `./buck2`.
+  # cli/BUCK), in one directory (//cli:release_binaries) and then packaged as the three tarballs the release ships, and the two Linux binaries as the two .debs
+  # (`channels deb-package`, with the metadata of packaging/deb). The linux-x86_64 binary is handed to the beta as the file it will run; the tarballs and the
+  # .debs are handed to the archive. It runs the buck2 that `tool` handed on, as the literal `./buck2`.
   build-cli:
     needs: [plan, tool]
     if: ${{ needs.plan.outputs.released == 'true' }}
@@ -155,11 +190,17 @@ jobs:
         with:
           name: release-tool
           path: tool
-      - run: chmod +x buck2 tool/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: channel-tools
+          path: tool
+      - run: chmod +x buck2 tool/release tool/channels
       - name: Build the command line for the three targets with the release version stamped in
         run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out cli-bins //cli:release_binaries
       - name: Package the three tarballs
         run: tool/release package-all --version "$NUMBER" --bins cli-bins --license LICENSE --out cli-dist --native linux-x86_64
+      - name: Package the two .debs from the same binaries
+        run: tool/release debs --version "$NUMBER" --bins cli-bins --channels tool/channels --packaging packaging/deb --out cli-dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-cli-tarballs
@@ -170,6 +211,13 @@ jobs:
         with:
           name: release-cli-bin
           path: cli-bins/linux-x86_64/buildrules
+          retention-days: 7
+          if-no-files-found: error
+      # The three binaries in the directory they were built in, for the native beta legs (linux-aarch64 and macos-arm64 run the file their tarball ships).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-cli-bins
+          path: cli-bins
           retention-days: 7
           if-no-files-found: error
 
@@ -183,6 +231,7 @@ jobs:
       id-token: write
     uses: ./.github/workflows/beta.yml
     with:
+      cli-bins-artifact: release-cli-bins
       cli-artifact: release-cli-bin
 
   # Our own repositories, built with the candidate on the farm, in the order GAMMA_REPOS names them. With no farm configured this job fails (the
@@ -238,8 +287,9 @@ jobs:
       - name: Build our repositories with the candidate on the farm
         run: tool/stage gamma --work "$RUNNER_TEMP/gamma" --candidate "$CANDIDATE" --repos "$GAMMA_REPOS" --targets "$GAMMA_TARGETS" --buck2 "$GITHUB_WORKSPACE/tool/buck2" --farm-config "$HOME/.buckconfig.d/farm.buckconfig"
 
-  # The source archive of the tested commit and, beside it, the three tarballs build-cli made. The tarball of linux-x86_64 must hold the very file the beta ran
-  # (`record --ran-binary`), and is then the one `tested` lets through; SHA256SUMS lists the three files. The job holds no token beyond reading: the signing is attest.
+  # The source archive of the tested commit and, beside it, the three tarballs and the two .debs build-cli made. The tarball of linux-x86_64 must hold the very
+  # file the beta ran (`record --ran-binary`), and is then the one `tested` lets through, which also requires each .deb to hold the program of the tarball of its
+  # architecture; SHA256SUMS lists the six files. The job holds no token beyond reading: the signing is attest.
   archive:
     needs: [plan, build-cli, beta, gamma, tool]
     if: ${{ needs.plan.outputs.released == 'true' }}
@@ -273,9 +323,9 @@ jobs:
         run: tool/release archive --root "$GITHUB_WORKSPACE" --tag "$TAG" --sha "$CANDIDATE" --out dist
       - name: The tarball to attest holds the file the beta ran
         run: tool/release record --tarball "dist/buildrules-cli-$NUMBER-linux-x86_64.tar.gz" --ran-binary ran/buildrules --out tested
-      - name: Attest only the tarballs a user beta ran
+      - name: Attest only the tarballs a user beta ran, and the .debs that hold their program
         run: tool/release tested --dist dist --tested tested --targets linux-x86_64
-      - name: SHA256SUMS over the archive and the three tarballs
+      - name: SHA256SUMS over the archive, the three tarballs and the two .debs
         run: tool/release sums --dist dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -284,7 +334,7 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  # Only on a push to main: the keyless signature of each of the five files and the build provenance of all five.
+  # Only on a push to main: the keyless signature of each of the seven files and the build provenance of all seven.
   attest:
     needs: [plan, archive, tool]
     if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
@@ -305,13 +355,14 @@ jobs:
           path: dist
       - run: chmod +x tool/release
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      - name: Sign the five files, keyless
+      - name: Sign the seven files, keyless
         run: tool/release sign --dist dist --dry false
-      - name: Attest the archive, the three tarballs and SHA256SUMS
+      - name: Attest the archive, the three tarballs, the two .debs and SHA256SUMS
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/buildrules-*.tar.gz
+            dist/buildrules_*.deb
             dist/SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -320,8 +371,9 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  # Read-only. It builds the three binaries again, from the commit, on a runner of its own, and requires the same tarballs; it runs the linux-x86_64 binary it
-  # built, which is the file the tarball ships, and requires the release version. It runs the buck2 that `tool` handed on, as the literal `./buck2`.
+  # Read-only. It builds the three binaries again, from the commit, on a runner of its own, and requires the same tarballs and the same two .debs; it runs the
+  # linux-x86_64 binary it built, which is the file the tarball ships, and requires the release version. It runs the buck2 that `tool` handed on, as the literal
+  # `./buck2`.
   verify:
     needs: [plan, attest, tool]
     if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
@@ -352,13 +404,19 @@ jobs:
         with:
           name: release-dist
           path: dist
-      - run: chmod +x buck2 tool/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: channel-tools
+          path: tool
+      - run: chmod +x buck2 tool/release tool/channels
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Build the command line again for the three targets
         run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
       - name: Package the three tarballs again
         run: tool/release package-all --version "$NUMBER" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64
-      - name: The archive and the tarballs, their sums, the second build, file list and scrub, the command line's version, the attestations and the signatures
+      - name: Package the two .debs again
+        run: tool/release debs --version "$NUMBER" --bins rebuilt-bins --channels tool/channels --packaging packaging/deb --out rebuilt-dist
+      - name: The archive, the tarballs and the .debs, their sums, the second build, file list and scrub, the command line's version, the attestations and the signatures
         run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$CANDIDATE" --dist dist --workflow .github/workflows/release.yml --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry false
 
   tag:
@@ -504,3 +562,524 @@ jobs:
           path: site
           retention-days: 30
           if-no-files-found: error
+
+  # After the release exists: the Homebrew formula. `channels formula` renders Formula/buildrules.rb from the SHA256SUMS that verify checked and publish released
+  # (the release-dist artifact), and `tap` opens a pull request with it in the organisation's Homebrew tap, as the release bot, with auto-merge (squash) when the
+  # tap allows it. The tap's own guard admits only the renderer's exact output, so the flags of the render step are the ones the guard's template expects
+  # (ci/release_check.zig holds the line, and tools/channels/channels_cli_test.zig renders with it and compares with the formula the guard is to accept). The
+  # tarballs are named buildrules-cli-<V>-<target>.tar.gz and the formula buildrules, hence `--asset buildrules-cli`. The job holds `contents: read`; its token is
+  # for the tap repository alone, minted in the second to last step and given to the last one alone, and the job is in the environment `release`, where the
+  # key is readable (RELEASING.md). Nothing waits for it: a failed tap is red and un-releases nothing; re-run this job.
+  tap:
+    needs: [plan, tag, publish, tool]
+    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork && needs.tag.outputs.superseded != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The same environment as tag and bump: the key is readable only there (RELEASING.md).
+    environment: release
+    permissions:
+      contents: read
+    env:
+      NUMBER: ${{ needs.tag.outputs.number }}
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: channel-tools
+          path: tool
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+      - run: chmod +x tool/channels tool/tap
+      - name: Render Formula/buildrules.rb from the verified SHA256SUMS, with the flags the tap's guard expects
+        run: tool/channels formula --sums dist/SHA256SUMS --name buildrules --asset buildrules-cli --version "$NUMBER" --desc "Hermetic Buck2 rules and toolchains" --homepage "https://buildrules.dev" --license "Apache-2.0" --repo "$GITHUB_REPOSITORY" --no-explicit-version --out tap/buildrules.rb
+      - name: The token of the release bot, for the tap repository alone
+        id: tap_bot
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: homebrew-tap
+          permission-contents: write
+          permission-pull-requests: write
+      - name: The pull request that adds the formula of this release to the tap, with auto-merge when the tap allows it
+        env:
+          GH_TOKEN: ${{ steps.tap_bot.outputs.token }}
+        run: tool/tap --repo "$GITHUB_REPOSITORY" --version "$NUMBER" --formula-file tap/buildrules.rb --tap-repo "$OWNER/homebrew-tap" --formula buildrules --asset buildrules-cli --workdir "$RUNNER_TEMP/tap-clone"
+
+  # ---- The apt repository (RELEASING.md, "The apt repository"). Three jobs per attempt, split so that no job holds both the signing key and the cloud role:
+  # apt-deploy-read (the role, no key) reads the current index from S3; apt-index (the key, no cloud) merges the .debs into it with tools/channels and signs it;
+  # apt-deploy-write (the role, no key) uploads the .debs and writes the index with If-Match / If-None-Match. A lost write (412) hands over to the next attempt,
+  # which reads again; three attempts, the last one fails. Until the repository's owner has made the settings (the variables of the environment apt-publish and
+  # the secrets of the environment apt-signing) every one of these jobs ends green with a notice and writes nothing. Nothing waits for them: a red apt job goes
+  # red alone and un-releases nothing. The .debs are the ones in release-dist, signed and verified; the tools are the ones `tool` built.
+
+  apt-deploy-read:
+    needs: [plan, tag, publish, tool]
+    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork && needs.tag.outputs.superseded != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The variables of the repository's apt settings; the role's trust names this environment.
+    environment: apt-publish
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: channel-tools
+          path: tool
+      - run: chmod +x tool/apt-publish
+      - name: Gate on the settings of the apt repository (a job without them does nothing and ends green)
+        id: gate
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: tool/apt-publish gate --label "apt publish (read)" --out "$GITHUB_OUTPUT" --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME
+      - name: Assume the publish role through OIDC
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        run: tool/apt-publish assume --env-file "$GITHUB_ENV"
+      - name: Read the current index and its ETags from S3 (never through the CDN, which caches the index)
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+        run: tool/apt-publish read --bucket "$APT_BUCKET" --out "$RUNNER_TEMP/apt-current"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-current
+          path: ${{ runner.temp }}/apt-current
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  apt-index:
+    needs: [apt-deploy-read]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The signing key lives only in this environment; this job holds no cloud credential and no role.
+    environment: apt-signing
+    permissions:
+      contents: read
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    env:
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: channel-tools
+          path: tool
+      - run: chmod +x tool/apt-publish tool/channels
+      - name: Gate on the signing key and on the read (a job without them does nothing and ends green)
+        id: gate
+        env:
+          READ_ENABLED: ${{ needs.apt-deploy-read.outputs.enabled }}
+          HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY != '' }}
+          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        run: tool/apt-publish gate --label "apt index" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true HAVE_KEY --env APT_GPG_FINGERPRINT
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-current
+          path: ${{ runner.temp }}/apt-current
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: release-dist
+          path: ${{ runner.temp }}/apt-debs
+      - name: Merge the .debs into the index that was read (the index of every product is kept)
+        if: steps.gate.outputs.enabled == 'true'
+        run: tool/apt-publish index --channels tool/channels --current "$RUNNER_TEMP/apt-current" --out "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --origin "$OWNER" --label "$OWNER" --description "$OWNER packages"
+      - name: Sign Release with the signing subkey (InRelease and Release.gpg)
+        id: sign
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        run: tool/apt-publish sign --dir "$RUNNER_TEMP/apt-next/dists/stable" --work "$RUNNER_TEMP/apt-sign" --fingerprint "$APT_GPG_FINGERPRINT" --out "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-next
+          path: |
+            ${{ runner.temp }}/apt-next/dists
+            ${{ runner.temp }}/apt-next/etags.txt
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  apt-deploy-write:
+    needs: [apt-deploy-read, apt-index]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: apt-publish
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      conflict: ${{ steps.put.outputs.conflict }}
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: channel-tools
+          path: tool
+      - run: chmod +x tool/apt-publish
+      - name: Gate on the settings of the apt repository and on the signed index (a job without them does nothing and ends green)
+        id: gate
+        env:
+          READ_ENABLED: ${{ needs.apt-deploy-read.outputs.enabled }}
+          INDEX_SIGNED: ${{ needs.apt-index.outputs.signed }}
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: tool/apt-publish gate --label "apt publish (write)" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true INDEX_SIGNED --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-next
+          path: ${{ runner.temp }}/apt-next
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: release-dist
+          path: ${{ runner.temp }}/apt-debs
+      - name: Assume the publish role through OIDC
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        run: tool/apt-publish assume --env-file "$GITHUB_ENV"
+      - name: Upload the .debs (If-None-Match), write the signed index (If-Match on the ETag that was read), then invalidate /apt/dists/*
+        id: put
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: tool/apt-publish write --bucket "$APT_BUCKET" --distribution "$APT_DISTRIBUTION_ID" --hostname "$APT_HOSTNAME" --next "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --out "$GITHUB_OUTPUT"
+
+  apt-deploy-read-2:
+    needs: [apt-deploy-write]
+    if: ${{ needs.apt-deploy-write.outputs.conflict == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The variables of the repository's apt settings; the role's trust names this environment.
+    environment: apt-publish
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: channel-tools
+          path: tool
+      - run: chmod +x tool/apt-publish
+      - name: Gate on the settings of the apt repository (a job without them does nothing and ends green)
+        id: gate
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: tool/apt-publish gate --label "apt publish (read)" --out "$GITHUB_OUTPUT" --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME
+      - name: Assume the publish role through OIDC
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        run: tool/apt-publish assume --env-file "$GITHUB_ENV"
+      - name: Read the current index and its ETags from S3 (never through the CDN, which caches the index)
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+        run: tool/apt-publish read --bucket "$APT_BUCKET" --out "$RUNNER_TEMP/apt-current"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-current-2
+          path: ${{ runner.temp }}/apt-current
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  apt-index-2:
+    needs: [apt-deploy-read-2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The signing key lives only in this environment; this job holds no cloud credential and no role.
+    environment: apt-signing
+    permissions:
+      contents: read
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    env:
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: channel-tools
+          path: tool
+      - run: chmod +x tool/apt-publish tool/channels
+      - name: Gate on the signing key and on the read (a job without them does nothing and ends green)
+        id: gate
+        env:
+          READ_ENABLED: ${{ needs.apt-deploy-read-2.outputs.enabled }}
+          HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY != '' }}
+          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        run: tool/apt-publish gate --label "apt index" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true HAVE_KEY --env APT_GPG_FINGERPRINT
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-current-2
+          path: ${{ runner.temp }}/apt-current
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: release-dist
+          path: ${{ runner.temp }}/apt-debs
+      - name: Merge the .debs into the index that was read (the index of every product is kept)
+        if: steps.gate.outputs.enabled == 'true'
+        run: tool/apt-publish index --channels tool/channels --current "$RUNNER_TEMP/apt-current" --out "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --origin "$OWNER" --label "$OWNER" --description "$OWNER packages"
+      - name: Sign Release with the signing subkey (InRelease and Release.gpg)
+        id: sign
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        run: tool/apt-publish sign --dir "$RUNNER_TEMP/apt-next/dists/stable" --work "$RUNNER_TEMP/apt-sign" --fingerprint "$APT_GPG_FINGERPRINT" --out "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-next-2
+          path: |
+            ${{ runner.temp }}/apt-next/dists
+            ${{ runner.temp }}/apt-next/etags.txt
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  apt-deploy-write-2:
+    needs: [apt-deploy-read-2, apt-index-2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: apt-publish
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      conflict: ${{ steps.put.outputs.conflict }}
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: channel-tools
+          path: tool
+      - run: chmod +x tool/apt-publish
+      - name: Gate on the settings of the apt repository and on the signed index (a job without them does nothing and ends green)
+        id: gate
+        env:
+          READ_ENABLED: ${{ needs.apt-deploy-read-2.outputs.enabled }}
+          INDEX_SIGNED: ${{ needs.apt-index-2.outputs.signed }}
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: tool/apt-publish gate --label "apt publish (write)" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true INDEX_SIGNED --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-next-2
+          path: ${{ runner.temp }}/apt-next
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: release-dist
+          path: ${{ runner.temp }}/apt-debs
+      - name: Assume the publish role through OIDC
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        run: tool/apt-publish assume --env-file "$GITHUB_ENV"
+      - name: Upload the .debs (If-None-Match), write the signed index (If-Match on the ETag that was read), then invalidate /apt/dists/*
+        id: put
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: tool/apt-publish write --bucket "$APT_BUCKET" --distribution "$APT_DISTRIBUTION_ID" --hostname "$APT_HOSTNAME" --next "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --out "$GITHUB_OUTPUT"
+
+  apt-deploy-read-3:
+    needs: [apt-deploy-write-2]
+    if: ${{ needs.apt-deploy-write-2.outputs.conflict == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The variables of the repository's apt settings; the role's trust names this environment.
+    environment: apt-publish
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: channel-tools
+          path: tool
+      - run: chmod +x tool/apt-publish
+      - name: Gate on the settings of the apt repository (a job without them does nothing and ends green)
+        id: gate
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: tool/apt-publish gate --label "apt publish (read)" --out "$GITHUB_OUTPUT" --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME
+      - name: Assume the publish role through OIDC
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        run: tool/apt-publish assume --env-file "$GITHUB_ENV"
+      - name: Read the current index and its ETags from S3 (never through the CDN, which caches the index)
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+        run: tool/apt-publish read --bucket "$APT_BUCKET" --out "$RUNNER_TEMP/apt-current"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-current-3
+          path: ${{ runner.temp }}/apt-current
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  apt-index-3:
+    needs: [apt-deploy-read-3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The signing key lives only in this environment; this job holds no cloud credential and no role.
+    environment: apt-signing
+    permissions:
+      contents: read
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    env:
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: channel-tools
+          path: tool
+      - run: chmod +x tool/apt-publish tool/channels
+      - name: Gate on the signing key and on the read (a job without them does nothing and ends green)
+        id: gate
+        env:
+          READ_ENABLED: ${{ needs.apt-deploy-read-3.outputs.enabled }}
+          HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY != '' }}
+          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        run: tool/apt-publish gate --label "apt index" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true HAVE_KEY --env APT_GPG_FINGERPRINT
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-current-3
+          path: ${{ runner.temp }}/apt-current
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: release-dist
+          path: ${{ runner.temp }}/apt-debs
+      - name: Merge the .debs into the index that was read (the index of every product is kept)
+        if: steps.gate.outputs.enabled == 'true'
+        run: tool/apt-publish index --channels tool/channels --current "$RUNNER_TEMP/apt-current" --out "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --origin "$OWNER" --label "$OWNER" --description "$OWNER packages"
+      - name: Sign Release with the signing subkey (InRelease and Release.gpg)
+        id: sign
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        run: tool/apt-publish sign --dir "$RUNNER_TEMP/apt-next/dists/stable" --work "$RUNNER_TEMP/apt-sign" --fingerprint "$APT_GPG_FINGERPRINT" --out "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-next-3
+          path: |
+            ${{ runner.temp }}/apt-next/dists
+            ${{ runner.temp }}/apt-next/etags.txt
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  apt-deploy-write-3:
+    needs: [apt-deploy-read-3, apt-index-3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: apt-publish
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      conflict: ${{ steps.put.outputs.conflict }}
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: channel-tools
+          path: tool
+      - run: chmod +x tool/apt-publish
+      - name: Gate on the settings of the apt repository and on the signed index (a job without them does nothing and ends green)
+        id: gate
+        env:
+          READ_ENABLED: ${{ needs.apt-deploy-read-3.outputs.enabled }}
+          INDEX_SIGNED: ${{ needs.apt-index-3.outputs.signed }}
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: tool/apt-publish gate --label "apt publish (write)" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true INDEX_SIGNED --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-next-3
+          path: ${{ runner.temp }}/apt-next
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: release-dist
+          path: ${{ runner.temp }}/apt-debs
+      - name: Assume the publish role through OIDC
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        run: tool/apt-publish assume --env-file "$GITHUB_ENV"
+      - name: Upload the .debs (If-None-Match), write the signed index (If-Match on the ETag that was read), then invalidate /apt/dists/*
+        id: put
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: tool/apt-publish write --bucket "$APT_BUCKET" --distribution "$APT_DISTRIBUTION_ID" --hostname "$APT_HOSTNAME" --next "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --out "$GITHUB_OUTPUT" --last

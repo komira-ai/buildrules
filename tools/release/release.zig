@@ -11,9 +11,10 @@
 //!   release bump-internal --repo OWNER/NAME --tag TAG --sha SHA --internal-repo OWNER/NAME --submodule PATH --workdir EMPTYDIR   (GH_TOKEN: the release bot's)
 //!   release package --version V --target T --binary PATH --license PATH --out DIR --exec native|none   (binaries.zig: buildrules-cli-V-T.tar.gz)
 //!   release package-all --version V --bins DIR --license PATH --out DIR [--native T,T]   the three, from DIR/<target>/buildrules
+//!   release debs    --version V --bins DIR --channels PATH --packaging DIR --out DIR   the two .debs, from DIR/<target>/buildrules (`channels deb-package`)
 //!   release record  --tarball PATH --out DIR [--ran-binary PATH]   the sha256 of a tarball a user-beta leg ran (and the file it ran is the tarball's)
-//!   release tested  --dist DIR --tested DIR [--targets T,T]   the tarballs to attest are the ones the user beta ran
-//!   release sums    --dist DIR                      SHA256SUMS over the source archive and the three tarballs
+//!   release tested  --dist DIR --tested DIR [--targets T,T]   the tarballs to attest are the ones the user beta ran, and each .deb holds its tarball's program
+//!   release sums    --dist DIR                      SHA256SUMS over the source archive, the three tarballs and the two .debs
 //!   release sign    --dist DIR [--cosign PATH] [--dry true|false]   a keyless cosign bundle per file (dry: the checks, no signing)
 //!
 //! Exit 0 when the step succeeded (`plan` also when it decided there is nothing to release), 1 when a check failed, 2 on a bad command line.
@@ -149,7 +150,7 @@ pub fn main() !u8 {
     const a = arena.allocator();
     const argv = try std.process.argsAlloc(a);
     if (argv.len < 2) {
-        std.debug.print("usage: release plan|tag|archive|verify|publish|site|bump-check|bump-internal|package|package-all|record|tested|sums|sign --flag value ...\n", .{});
+        std.debug.print("usage: release plan|tag|archive|verify|publish|site|bump-check|bump-internal|package|package-all|debs|record|tested|sums|sign --flag value ...\n", .{});
         return 2;
     }
     var unused: u8 = 0;
@@ -229,12 +230,14 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
             .cli_bytes = try std.fs.cwd().readFileAlloc(a, cli_path, 1 << 30),
             .tarballs = try readMatching(a, dist, "buildrules-cli-", ".tar.gz"),
             .rebuilt = try readMatching(a, try g.need("rebuilt"), "buildrules-cli-", ".tar.gz"),
+            .debs = try readMatching(a, dist, "buildrules_", ".deb"),
+            .rebuilt_debs = try readMatching(a, try g.need("rebuilt"), "buildrules_", ".deb"),
             .dry = dry,
             .cosign = g.get("cosign") orelse "cosign",
         });
         for (f.items) |m| std.debug.print("release verify: {s}\n", .{m});
         if (f.items.len != 0) return 1;
-        say("release verify: {s} is the archive of {s}; checked: sums, checkout, {s}, reproduction of the archive and the three command-line tarballs, the built program's version, file list, scrub\n", .{ name, g.get("sha").?, if (dry) "no attestations or signatures (dry run)" else "attestations and signatures" });
+        say("release verify: {s} is the archive of {s}; checked: sums, checkout, {s}, reproduction of the archive, the three command-line tarballs and the two .debs, the .debs' program, the built program's version, file list, scrub\n", .{ name, g.get("sha").?, if (dry) "no attestations or signatures (dry run)" else "attestations and signatures" });
         return 0;
     }
     if (std.mem.eql(u8, cmd, "publish")) {
@@ -250,6 +253,7 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         const sums = try std.fs.cwd().readFileAlloc(a, try join(a, dist, cmds.sums_name), 1 << 20);
         const r = try cmds.publish(a, io, .{
             .tarballs = try readMatching(a, dist, "buildrules-cli-", ".tar.gz"),
+            .debs = try readMatching(a, dist, "buildrules_", ".deb"),
             .bundles = try readMatching(a, dist, "", ".sigstore.json"),
             .root = try g.need("root"),
             .repo = try g.need("repo"),
@@ -343,6 +347,18 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         for (done) |p| say("release package-all: {s} {s}\n", .{ p.name, p.sha256 });
         return 0;
     }
+    if (std.mem.eql(u8, cmd, "debs")) {
+        const g = try parseArgs(a, rest, &.{ "version", "bins", "channels", "packaging", "out" });
+        const done = binaries.packageDebs(a, io, .{
+            .version = try g.need("version"),
+            .bins = try g.need("bins"),
+            .channels = try g.need("channels"),
+            .packaging = try g.need("packaging"),
+            .out = try g.need("out"),
+        }) catch |e| return failed("debs", e);
+        for (done) |p| say("release debs: {s} {s}\n", .{ p.name, p.sha256 });
+        return 0;
+    }
     if (std.mem.eql(u8, cmd, "record")) {
         const g = try parseArgs(a, rest, &.{ "tarball", "out", "ran-binary" });
         const name = binaries.record(a, try g.need("tarball"), try g.need("out"), g.get("ran-binary")) catch |e| return failed("record", e);
@@ -353,7 +369,8 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         const g = try parseArgs(a, rest, &.{ "dist", "tested", "targets" });
         const walked: []const []const u8 = if (g.get("targets")) |text| try targetList(a, text) else &binaries.tested_targets;
         binaries.testedFor(a, try g.need("dist"), try g.need("tested"), walked) catch |e| return failed("tested", e);
-        say("release tested: the tarballs of {s} are the ones the user beta ran\n", .{g.get("dist").?});
+        binaries.checkDebs(a, try g.need("dist")) catch |e| return failed("tested", e);
+        say("release tested: the tarballs of {s} are the ones the user beta ran, and each .deb holds the program of the tarball of its architecture\n", .{g.get("dist").?});
         return 0;
     }
     if (std.mem.eql(u8, cmd, "sums")) {
@@ -457,6 +474,8 @@ test "the binaries commands: usage errors run nothing, a refused step exits 1, a
     try t.expectError(error.Usage, run(a, io, "record", &.{"--tarball"}));
     try t.expectError(error.Usage, run(a, io, "tested", &.{ "--dist", "d", "--bogus", "x" }));
     try t.expectError(error.Usage, run(a, io, "sums", &.{}));
+    try t.expectError(error.Usage, run(a, io, "debs", &.{ "--version", "0.0.7" }));
+    try t.expectError(error.Usage, run(a, io, "debs", &.{ "--version", "0.0.7", "--bins", "b", "--channels", "c", "--packaging", "p", "--out", "o", "--bogus", "x" }));
     try t.expectError(error.Usage, run(a, io, "sign", &.{ "--cosign", "c" }));
     // --exec is native or none: anything else is a usage error, not a guess
     try t.expectError(error.Usage, run(a, io, "package", &.{ "--version", "0.0.7", "--target", "linux-x86_64", "--binary", "b", "--license", "l", "--out", "o", "--exec", "maybe" }));
@@ -467,6 +486,9 @@ test "the binaries commands: usage errors run nothing, a refused step exits 1, a
     try t.expectEqual(@as(u8, 1), try run(a, io, "sums", &.{ "--dist", dist }));
     try t.expectEqual(@as(u8, 1), try run(a, io, "sign", &.{ "--dist", dist, "--cosign", "/nonexistent/cosign" }));
     try t.expectEqual(@as(u8, 1), try run(a, io, "tested", &.{ "--dist", dist, "--tested", dist }));
+    // a version that is not MAJOR.MINOR.PATCH, and a channels program that cannot be run, are refusals too
+    try t.expectEqual(@as(u8, 1), try run(a, io, "debs", &.{ "--version", "v0.0.7", "--bins", dist, "--channels", "/nonexistent/channels", "--packaging", dist, "--out", dist }));
+    try t.expectEqual(@as(u8, 1), try run(a, io, "debs", &.{ "--version", "0.0.7", "--bins", dist, "--channels", "/nonexistent/channels", "--packaging", dist, "--out", dist }));
     try t.expectEqual(@as(u8, 1), try run(a, io, "record", &.{ "--tarball", "buildrules-0.0.7.tar.gz", "--out", dist }));
 }
 
@@ -494,6 +516,44 @@ test "package then record then sums through the command line, with a binary this
     try t.expectEqual(@as(u8, 1), try run(a, io, "package", &wrong));
     try t.expectEqual(@as(u8, 0), try run(a, io, "record", &.{ "--tarball", try join(a, base, "dist/buildrules-cli-0.0.7-macos-arm64.tar.gz"), "--out", try join(a, base, "rec") }));
     _ = try tmp.dir.statFile("rec/buildrules-cli-0.0.7-macos-arm64.tar.gz.sha256");
+}
+
+/// A `run` that writes the file named by --out, as `channels deb-package` does, and records the commands.
+const WritesDeb = struct {
+    calls: usize = 0,
+
+    fn answer(ctx: *anyopaque, _: std.mem.Allocator, argv: []const []const u8) anyerror!cmds.Out {
+        const self: *WritesDeb = @ptrCast(@alignCast(ctx));
+        self.calls += 1;
+        for (argv, 0..) |x, i| {
+            if (std.mem.eql(u8, x, "--out")) try std.fs.cwd().writeFile(.{ .sub_path = argv[i + 1], .data = "a package" });
+        }
+        return .{ .code = 0, .stdout = "", .stderr = "" };
+    }
+
+    fn io(self: *WritesDeb) cmds.Io {
+        return .{ .ctx = self, .run_fn = answer, .write_fn = realWrite };
+    }
+};
+
+test "debs through the command line: one channels run for each architecture, a file for each, and a refusal when channels fails" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const base = try tmp.dir.realpathAlloc(a, ".");
+    var w = WritesDeb{};
+    const args = [_][]const u8{ "--version", "0.0.7", "--bins", base, "--channels", "channels", "--packaging", "packaging/deb", "--out", try join(a, base, "dist") };
+    try t.expectEqual(@as(u8, 0), try run(a, w.io(), "debs", &args));
+    try t.expectEqual(@as(usize, 2), w.calls);
+    _ = try tmp.dir.statFile("dist/buildrules_0.0.7_amd64.deb");
+    _ = try tmp.dir.statFile("dist/buildrules_0.0.7_arm64.deb");
+    // a channels that exits 0 and writes no file is a refusal, not a pass
+    var silent = Says{ .says = "" };
+    const other = [_][]const u8{ "--version", "0.0.7", "--bins", base, "--channels", "channels", "--packaging", "packaging/deb", "--out", try join(a, base, "dist2") };
+    try t.expectEqual(@as(u8, 1), try run(a, silent.io(), "debs", &other));
+    try t.expectEqual(@as(usize, 1), silent.calls);
 }
 
 /// A `run` that answers every command with `says` and counts the commands.
