@@ -12,7 +12,7 @@
 //!   channels deb-data --name <name> --version <X.Y.Z> --packaging <dir> --file <mode>:<dest>:<src> [--file ...] [--mtime <epoch seconds>] --out <path.deb>
 //!       Writes the .deb of a data-only package (deb_package.zig, buildData): Architecture all, the files given, the copyright and a changelog.gz,
 //!       with the control fields from <dir>/control and the copyright from <dir>/copyright. No maintainer script and no conffile: a <dest> below etc/
-//!       and a <mode> with a bit outside 0755 are refused. The same inputs give the same bytes.
+//!       and any <mode> other than 0644 or 0755 is refused. The same inputs give the same bytes.
 //!   channels apt-index --repo <dir> --out <dir> --deb <path> [--deb ...] --date <epoch seconds>
 //!                --origin <text> --label <text> --description <text> [--arch <arch> ...] [--keep <N>] [--pool-dir pool/<name>]
 //!       Reads the Packages files under <dir>/dists/stable/main/binary-<arch>/ (none is an empty index) for the --arch

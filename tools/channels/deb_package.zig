@@ -158,9 +158,9 @@ pub const DataInputs = struct {
 
 pub const DataError = error{ ConffilePath, ReservedPath, BadMode };
 
-/// The .deb of a data-only package (a keyring, say): Architecture `all`, the given files, the copyright and a `changelog.gz`, and nothing else.
-/// There is no way to give it a maintainer script (the control archive is the control file and the md5sums, always), and no conffile (the control
-/// The same inputs give the same bytes.
+/// There is no way to give it a maintainer script (the control archive is the control file and the md5sums, always) and no conffile (the control
+/// archive has no `conffiles`). A path at or below `etc/` is refused (ConffilePath) rather than left to dpkg's rules, and any mode other than exactly
+/// 0644 or 0755 is refused (BadMode). The same inputs give the same bytes.
 /// other write) is refused. The same inputs give the same bytes.
 pub fn buildData(a: Allocator, in: DataInputs) ![]u8 {
     const version = try debVersion(a, in.version);
