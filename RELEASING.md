@@ -297,6 +297,13 @@ consumer relies on the published file and its sha256, not on making the file aga
 7. the archive's file list equals `git ls-tree -r` of the commit (a missing, extra or repeated file is a failure);
 8. the scrub (`tools/scrub`: dates, names, addresses and the like that a public repository must not hold) passes on the archive's contents.
 
+**The retry of `cosign verify-blob`.** Each of the seven signatures is checked with one `cosign verify-blob`. When cosign cannot fetch the Sigstore
+trusted root (the TUF repository), the call is tried up to 3 times, waiting 2 s and then 4 s between the tries. Only the final line of cosign's error
+output decides: it must hold `tuf refresh failed`, `Could not fetch trusted_root.json` or `error getting live trusted root`. Any other refusal, a
+signature or certificate mismatch above all, is a finding on the first try; so is a mismatch that follows the legacy-bundle
+`Could not fetch trusted_root.json ... Continuing` warning. One more shape is retried: cosign v3.0.6 (the version the release installs) ends a failed fetch with `trusted root is required when using new bundle format` (the fetch error is only the warning line before it), and that final line retries only when an earlier line holds one of the three fetch texts; alone it is a finding. An outage longer than about 6 s still fails the release, and the finding says it is "a network
+failure, not a verdict on the signature"; re-run the job.
+
 `publish` repeats the check of `SHA256SUMS` and requires all seven signature bundles to be there and not empty.
 
 A re-run creates no second release and replaces no asset. If the release exists, each of the fourteen files it already holds must have the sha256
