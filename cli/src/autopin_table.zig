@@ -119,6 +119,7 @@ pub fn parseRows(a: std.mem.Allocator, npm: []const u8, kind: sets_mod.Kind, dia
             break;
         }
         if (rows.items.len >= max_rows) return l.bad("more rows than the cap");
+        if (head.len < 10) return l.bad("a line too short to be a row header");
         if (!std.mem.startsWith(u8, head, "    \"") or !std.mem.endsWith(u8, head, "\": {")) return l.bad("expected a row `    \"name@version\": {{`");
         const key = head[5 .. head.len - 4];
         for (key) |c| if (c == '"' or c == '\\' or c < 0x20 or c > 0x7e) return l.bad("a key with a quote, a backslash or a control byte");

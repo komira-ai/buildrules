@@ -504,6 +504,6 @@ test "table: a statement whose middle reads as a row key, over a complete row bo
     defer ar.deinit();
     const a = ar.allocator();
     const body = "        \"name\": \"left-pad\",\n        \"version\": \"1.3.0\",\n        \"url\": \"" ++ reg ++ "left-pad/-/left-pad-1.3.0.tgz\",\n        \"sri512\": \"" ++ sri_a ++ "\",\n        \"sha256\": \"" ++ sha_a ++ "\",\n        \"size\": 11,\n    },\n";
-    // Characters 5.. up to the last 4 are what the key is read from: here exactly left-pad@1.3.0.
-    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", "    load(left-pad@1.3.0)xyz\n", body, "}\n" }), .pins_lock);
+    // The key is read from the characters between the first five and the last four: here exactly left-pad@1.3.0.
+    try expectBadBlock(try std.mem.concat(a, u8, &.{ "NPM = {\n", "    (left-pad@1.3.0)xyz\n", body, "}\n" }), .pins_lock);
 }
