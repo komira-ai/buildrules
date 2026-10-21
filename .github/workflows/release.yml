@@ -45,9 +45,11 @@ on:
 
 permissions: {}
 
-# A push to main is never cancelled (the group is its own commit).
+# One release run at a time, none cancelled: a run that is publishing is never stopped. GitHub keeps one pending run, and a newer pending run replaces an older
+# one (which ends cancelled, not red), so the plan of a run reads the tags only after the run before it, tag included, has finished. Any other event has a group
+# of its own (its run id).
 concurrency:
-  group: release-${{ github.sha }}
+  group: release-${{ github.event_name == 'push' && 'push' || github.run_id }}
   cancel-in-progress: false
 
 jobs:
