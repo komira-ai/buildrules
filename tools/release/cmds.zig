@@ -402,15 +402,26 @@ const cosign_tries: u32 = 3;
 /// cosign's FINAL stderr line says the trusted root (the TUF repository) could not be fetched: a network failure that says nothing about the
 /// signature. Only these retry; any other refusal (a signature or certificate mismatch) is final. Only the last line counts: in legacy-bundle
 /// mode cosign prints the `Could not fetch trusted_root.json ... Continuing` warning and may then report a real mismatch, which is a verdict.
+/// One more shape retries: cosign v2.5 and v2.6 (cmd/cosign/cli/verify/verify_blob.go) end a failed fetch with `trusted root is required when
+/// using new bundle format`, raised when the trusted material is nil, and the fetch error itself is only an earlier warning line. That final
+/// line retries only when an earlier line holds one of the fetch markers; alone it says nothing about why the root is missing.
 fn isTrustedRootFetchFailure(stderr: []const u8) bool {
     const text = std.mem.trim(u8, stderr, " \r\n");
-    const last = if (std.mem.lastIndexOfScalar(u8, text, '\n')) |i| text[i + 1 ..] else text;
+    const cut = std.mem.lastIndexOfScalar(u8, text, '\n');
+    const last = if (cut) |i| text[i + 1 ..] else text;
+    const earlier = if (cut) |i| text[0..i] else "";
     const markers = [_][]const u8{ "tuf refresh failed", "Could not fetch trusted_root.json", "error getting live trusted root" };
     for (markers) |m| {
         if (std.mem.indexOf(u8, last, m) != null) return true;
     }
+    if (std.mem.indexOf(u8, last, "trusted root is required when using new bundle format") != null) {
+        for (markers) |m| {
+            if (std.mem.indexOf(u8, earlier, m) != null) return true;
+        }
+    }
     return false;
 }
+
 
 pub const VerifyOpts = struct {
     root: []const u8,
@@ -1456,6 +1467,15 @@ test "verify: a Sigstore trusted-root fetch failure is retried up to 3 tries; a 
         try t.expectEqual(base + 1, fake.count("cosign verify-blob"));
     }
 
+    // the incident that this retry exists for (stderr of cosign v2.5, addresses elided): the fetch error is only a warning line and the final line is
+    // its consequence; retried because the warning is there
+    const incident = "WARNING: Could not fetch trusted_root.json from the TUF repository. Continuing with individual targets. Error from TUF: error getting live trusted root: failed to create TUF client failed to load metadata: tuf refresh failed: Get \"https://tuf-repo-cdn.sigstore.dev/14.root.json\": read tcp ...: read: connection reset by peer\n" ++
+        "Error: trusted root is required when using new bundle format\n" ++
+        "error during command execution: trusted root is required when using new bundle format";
+    fake = Fake{ .a = a, .rules = &rules, .flaky_n = 1, .flaky_out = fail(1, incident) };
+    try expectClean(try verify(a, fake.io(), o));
+    try t.expectEqual(base + 1, fake.count("cosign verify-blob"));
+
     // a mismatch whose text says "tuf" and "trusted root" in another context is a verdict: one call per file, each a finding
     var bad_sig = rules;
     bad_sig[6].out = fail(1, "Error: invalid signature when validating ASN.1 encoded signature: the tuf client and the trusted root of this bundle disagree");
@@ -1470,6 +1490,13 @@ test "verify: a Sigstore trusted-root fetch failure is retried up to 3 tries; a 
     fake = Fake{ .a = a, .rules = &bad_sig };
     const fw = try verify(a, fake.io(), o);
     try expectFinding(fw, "the signature of buildrules-0.0.1.tar.gz does not verify");
+    try t.expectEqual(base, fake.count("cosign verify-blob"));
+
+    // the same final lines with no fetch warning before them say nothing about why the root is missing: a verdict, not retried
+    bad_sig[6].out = fail(1, "Error: trusted root is required when using new bundle format\nerror during command execution: trusted root is required when using new bundle format");
+    fake = Fake{ .a = a, .rules = &bad_sig };
+    const fn2 = try verify(a, fake.io(), o);
+    try expectFinding(fn2, "the signature of buildrules-0.0.1.tar.gz does not verify");
     try t.expectEqual(base, fake.count("cosign verify-blob"));
 }
 

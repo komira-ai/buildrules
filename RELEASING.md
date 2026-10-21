@@ -301,7 +301,7 @@ consumer relies on the published file and its sha256, not on making the file aga
 trusted root (the TUF repository), the call is tried up to 3 times, waiting 2 s and then 4 s between the tries. Only the final line of cosign's error
 output decides: it must hold `tuf refresh failed`, `Could not fetch trusted_root.json` or `error getting live trusted root`. Any other refusal, a
 signature or certificate mismatch above all, is a finding on the first try; so is a mismatch that follows the legacy-bundle
-`Could not fetch trusted_root.json ... Continuing` warning. An outage longer than about 6 s still fails the release, and the finding says it is "a network
+`Could not fetch trusted_root.json ... Continuing` warning. One more shape is retried: cosign v2.5 and v2.6 end a failed fetch with `trusted root is required when using new bundle format` (the fetch error is only the warning line before it), and that final line retries only when an earlier line holds one of the three fetch texts; alone it is a finding. An outage longer than about 6 s still fails the release, and the finding says it is "a network
 failure, not a verdict on the signature"; re-run the job.
 
 `publish` repeats the check of `SHA256SUMS` and requires all seven signature bundles to be there and not empty.
