@@ -400,6 +400,8 @@ plan of each reads the tags only after the run before it (tag included) has fini
 releases, and it carries the changes of the commits it replaced. What follows is the second line of defence, for a race that serialization does not cover (a
 re-run of an old run, say). `ci/release_check.zig` refuses a workflow-level group per commit and a `cancel-in-progress` other than `false`.
 
+The rule is one concurrent run of each workflow of the release pipeline: one fixed group per workflow, `cancel-in-progress: false` (`ci/release_check.zig`, `ci/stages_check.zig` and `ci/site_check.zig` pin each). The groups: `release.yml` `release-push` (a push; a run id for any other event), the job `tag` `release`, `beta.yml` `beta` (called by `release.yml`; a different name from the caller's, so neither waits for the other), `site.yml` `site`, `site-publish.yml` none (called by `site.yml`, whose group serializes it; a group of its own with the caller's name would deadlock, and the check refuses any). `ci.yml` is the pull request check and cancels the superseded run of a pull request; it is not part of the release pipeline's serialization.
+
 The plan runs before the build, so two pushes that land within the time of a build (minutes) both plan the same number: with `v0.0.5` the newest tag, both plan
 `v0.0.6`. The binaries, the archive, the sums, the signatures and the attestations of each carry its planned number. The `tag` job is the one place the
 numbers are settled: it is alone (concurrency group `release`, nothing cancelled), and it fetches the tags again before it decides, from the tags as they are

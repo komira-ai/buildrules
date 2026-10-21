@@ -5,7 +5,7 @@
 //!  - the triggers: a call from the release (`workflow_call`) and nothing else, so no pull request runs the beta: it is the beta stage of the release, after the merge; a token with read access, and `id-token: write` in the farm leg alone;
 //!  - the legs: the tools job, one job per ubuntu x86_64 language (the matrix is exactly the directories of beta/ but Mojo), the Mojo job that runs only when
 //!    the tools job says it is ready, the arm and macos jobs that are declared and skipped with their reason, and the farm job that runs only when FARM_ADDRESS is set;
-//!  - no mention of a pull request in the file (the candidate is `github.sha` of the caller), and a concurrency group per commit that never cancels;
+//!  - no mention of a pull request in the file (the candidate is `github.sha` of the caller), and the one fixed concurrency group `beta` that never cancels (one beta at a time);
 //!  - local mode on every buck2 command of the workflow, and `--exec local` for every leg but the farm's, which takes the farm's settings and never `--exec local`;
 //!  - the farm job takes the farm-connect action from the repository and commit that variables name, verifies the checkout before the action runs, and runs
 //!    nothing of the repository's before that;
@@ -86,7 +86,7 @@ pub fn checkBeta(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, dir
     }
     if (!wc.hasLine(text, "permissions:") or !wc.hasLine(text, "  contents: read")) try add(a, &f, "top-level `permissions:` with `contents: read` is missing", .{});
     if (!wc.hasLine(text, "  cancel-in-progress: false")) try add(a, &f, "`cancel-in-progress` is not `false`: nothing cancels a run of the beta", .{});
-    if (!contains(text, "group: beta-${{ github.workflow }}-${{ github.sha }}")) try add(a, &f, "the concurrency group is not per-commit (`beta-${{{{ github.workflow }}}}-${{{{ github.sha }}}}`)", .{});
+    if (!wc.hasLine(text, "  group: beta")) try add(a, &f, "the concurrency group is not the fixed `beta` (one beta at a time, whatever the caller; a name other than the release workflow's group, so caller and callee cannot wait for each other)", .{});
     if (contains(text, "github.event.pull_request") or contains(text, "'pull_request'")) try add(a, &f, "the workflow names a pull request (`github.event.pull_request`): a pull request does not run the beta, and the candidate is `github.sha`", .{});
 
     const jobs = try rc.parseJobs(a, text);
@@ -260,7 +260,7 @@ const fixture_wf =
     \\  contents: read
     \\
     \\concurrency:
-    \\  group: beta-${{ github.workflow }}-${{ github.sha }}
+    \\  group: beta
     \\  cancel-in-progress: false
     \\
     \\jobs:
@@ -538,7 +538,10 @@ test "rule: triggers, token and the cancel group" {
     try expectFinding(a, r, try mutate(a, r.wf, "COMMIT: ${{ github.sha }}", "COMMIT: ${{ secrets.X }}"), "`secrets.`");
     try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: false", "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"), "nothing cancels a run");
     try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: false", "cancel-in-progress: true"), "nothing cancels a run");
-    try expectFinding(a, r, try mutate(a, r.wf, "${{ github.workflow }}-${{ github.sha }}", "${{ github.workflow }}-${{ github.ref }}"), "not per-commit");
+    // one beta at a time: the per-commit group back, a group per ref, and the release workflow's own group (caller and callee would wait for each other) are red
+    try expectFinding(a, r, try mutate(a, r.wf, "  group: beta\n", "  group: beta-${{ github.workflow }}-${{ github.sha }}\n"), "fixed `beta`");
+    try expectFinding(a, r, try mutate(a, r.wf, "  group: beta\n", "  group: beta-${{ github.ref }}\n"), "fixed `beta`");
+    try expectFinding(a, r, try mutate(a, r.wf, "  group: beta\n", "  group: release-push\n"), "fixed `beta`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "ref: ${{ github.sha }}", "ref: ${{ github.event.pull_request.head.sha || github.sha }}"), "names a pull request");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "runs-on: ubuntu-latest\n", "runs-on: ubuntu-latest\n    if: ${{ github.event_name != 'pull_request' }}\n"), "names a pull request");
 }
