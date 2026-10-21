@@ -538,8 +538,9 @@ channels are planned (section 9).
 ### Limits today (built behaviour)
 
 - **Linux x86_64 only**, for clients and workers. macOS, Windows and Arm are *planned*; nothing is
-  built for them. `beta.yml` declares the Arm (`ubuntu-24.04-arm`) and macOS (`macos-14`) legs and
-  skips them, with the reason in the job name.
+  built for them. `beta.yml` runs the command line of each (`ubuntu-24.04-arm`, `macos-14`) natively on a
+  hello-world repository, up to the build: its version, `init`, Buck2 loading the candidate. It cannot
+  build there: no toolchain of the rules runs on those hosts.
 - **Rust:** crates.io only; the workspace root is the repository root and must be a virtual workspace;
   every package listed in `members` (a glob other than `dir/*` is refused); doctests not run;
   `:coverage` refuses; lto, rpath, incremental and split-debuginfo refused; `sync` needs the network
@@ -561,8 +562,8 @@ channels are planned (section 9).
   and publishes them only after setup (the tap's guard and the apt settings, RELEASING.md), so none
   exists for buildrules yet. The release binaries of the command line are installed with the install
   script or unpacked by hand (part 2), and only the linux x86_64 one is run by a user beta.
-- Arm and macOS hosts (planned): their beta legs, which `beta.yml` declares and skips, and execution
-  platforms for the Arm instruction-set levels.
+- Arm and macOS hosts (planned): a build on them (their beta legs run the command line natively up to
+  the build, and no further), and execution platforms for the Arm instruction-set levels.
 - A published, deployed `buildrules.dev` (the site is built and tested; its hosting stack is a step
   the repository owner runs).
 
