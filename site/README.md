@@ -14,7 +14,7 @@ declarations), and nothing from `node_modules` is imported by the rendering code
 | `tools/pages.ts` | the list of pages and the navigation |
 | `tools/check-dist.ts` | the checker for a built tree: every link and fragment resolves, no orphan page, no script, no inline style |
 | `tools/build.ts` | the build program: render, hash the stylesheet, check, write `dist/` |
-| `static/` | the stylesheet and the icon |
+| `static/` | the stylesheet, the icon, and `install.sh`, the install script, served as /install.sh as it is (tested by `tools/install`) |
 | `serve.js`, `preview.bzl` | the local preview server and the `buck2 run` rule that starts it |
 | `test/` | render tests, the link check, tests that compare the pages with the rule sources, the CLI usage text and the contract; `docs_facts.test.ts` for the Why and How pages and `docs/why.md`, `docs/how.md` |
 | `tools/content/why.ts`, `how.ts` | the Why page and the three How pages: the site's copy of `docs/why.md` and `docs/how.md` |

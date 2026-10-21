@@ -15,6 +15,7 @@ configure step of a CMake `configure_file`, without CMake).
 """
 
 load("//rules/zig:zig.bzl", "busybox_sh")
+load(":checks.bzl", "check_listed_once", "check_tree_dirs")
 
 _SCRIPT = """
 BB="$1"; shift
@@ -81,12 +82,10 @@ def _archive_files_impl(ctx):
         outs.append(tree)
         for d in ctx.attrs.tree_dirs:
             sub_targets[d] = [DefaultInfo(default_output = tree.project(d))]
-    elif ctx.attrs.tree_dirs:
-        fail("{}: tree_dirs needs one_tree = True".format(ctx.label))
+    check_tree_dirs(ctx.label, ctx.attrs.one_tree, ctx.attrs.tree_dirs)
     for kind, pairs in [("file", [(f, f) for f in ctx.attrs.files]), ("template", sorted(ctx.attrs.templates.items()))]:
         for name, rel in pairs:
-            if name in sub_targets:
-                fail("{}: {} is listed twice".format(ctx.label, name))
+            check_listed_once(ctx.label, name, sub_targets)
             if tree:
                 args.extend([kind, rel, name])
                 sub_targets[name] = [DefaultInfo(default_output = tree.project(name))]

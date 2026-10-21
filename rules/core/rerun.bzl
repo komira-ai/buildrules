@@ -51,9 +51,11 @@ RerunInfo = provider(
 
 _LABEL = "^[A-Za-z0-9_][A-Za-z0-9_.-]*//[^:#,()\\[\\] ]*:[^:#,()\\[\\] ]+$"
 
-def parse_rerun(raw):
-    """`[buildrules] rerun` as {label: n}; fails, naming the entry and why,
-    unless every entry is `<cell>//<package>:<name>#<n>`."""
+def parse_rerun(raw, refuse = fail):
+    """`[buildrules] rerun` as {label: n}; refuses, naming the entry and why,
+    unless every entry is `<cell>//<package>:<name>#<n>`. `refuse` is `fail`
+    in a rule; a test passes a recorder (rules/rust/refusal.bzl), and the
+    entry that was refused is left out."""
     runs = {}
     raw = raw.strip()
     if not raw:
@@ -62,21 +64,28 @@ def parse_rerun(raw):
         entry = entry.strip()
         where = "[buildrules] rerun = {}: the entry {}".format(repr(raw), repr(entry))
         if not entry:
-            fail("[buildrules] rerun = {}: an empty entry; give `<cell>//<package>:<name>#<n>`, comma-separated".format(repr(raw)))
+            refuse("[buildrules] rerun = {}: an empty entry; give `<cell>//<package>:<name>#<n>`, comma-separated".format(repr(raw)))
+            continue
         if "#" not in entry:
-            fail("{} has no `#<n>`; give `<cell>//<package>:<name>#<n>`".format(where))
+            refuse("{} has no `#<n>`; give `<cell>//<package>:<name>#<n>`".format(where))
+            continue
         i = entry.rfind("#")
         label, n = entry[:i].strip(), entry[i + 1:].strip()
         if not regex_match("^[1-9][0-9]*$", n):
-            fail("{}: `{}` is not a whole number from 1".format(where, n))
+            refuse("{}: `{}` is not a whole number from 1".format(where, n))
+            continue
         if label.startswith("//"):
-            fail("{}: name the cell, as `buildrules{}` or `<cell>{}`".format(where, label, label))
+            refuse("{}: name the cell, as `buildrules{}` or `<cell>{}`".format(where, label, label))
+            continue
         if "[" in label or "(" in label:
-            fail("{}: name the target, without a sub-target or a configuration".format(where))
+            refuse("{}: name the target, without a sub-target or a configuration".format(where))
+            continue
         if not regex_match(_LABEL, label):
-            fail("{}: `{}` is not a target label `<cell>//<package>:<name>`".format(where, label))
+            refuse("{}: `{}` is not a target label `<cell>//<package>:<name>`".format(where, label))
+            continue
         if label in runs:
-            fail("[buildrules] rerun = {}: {} is named twice".format(repr(raw), label))
+            refuse("[buildrules] rerun = {}: {} is named twice".format(repr(raw), label))
+            continue
         runs[label] = n
     return runs
 

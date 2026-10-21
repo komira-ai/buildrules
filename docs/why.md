@@ -33,7 +33,7 @@ Status: version 0, linux x86_64 only for the rules. The public repository's rele
 source archive and the command line for three platforms (section 8). Section 9 lists what is not done.
 
 Planned and not built: Arm and macOS (and Windows) hosts for the rules, a Homebrew formula, an apt
-repository, an install script, and Python rules.
+repository, and Python rules.
 
 ## 2. The problem
 
@@ -514,7 +514,10 @@ same bytes. A consumer relies on the published file and its sha256, not on remak
 runs the linux x86_64 program only; the other two are built from the same source behind the same
 tests and checked for their file header and their version, and are not yet run on their own
 platform. The command line is also built from the source archive on your farm or machine (part 2).
-Other channels are planned (section 9).
+The install script (`site/static/install.sh`, served by the site once it is published) installs the command
+line for your platform after checking its sha256, and `--verify` adds a cosign check of its signature
+(part 2). A test runs it against fake releases and plants a defect for each of its checks. Other
+channels are planned (section 9).
 
 ## 9. Trade-offs, limits and what is not done
 
@@ -555,9 +558,9 @@ Other channels are planned (section 9).
 
 ### Not done, so you know
 
-- A Homebrew formula, an apt repository, an install script: none exist for buildrules (all
-  planned). The release binaries of the command line are unpacked by hand (part 2), and only the
-  linux x86_64 one is run by a user beta.
+- A Homebrew formula, an apt repository: none exist for buildrules (both planned). The release
+  binaries of the command line are installed with the install script or unpacked by hand (part 2), and
+  only the linux x86_64 one is run by a user beta.
 - Arm and macOS hosts (planned): a build on them (their beta legs run the command line natively up to
   the build, and no further), and execution platforms for the Arm instruction-set levels.
 - A published, deployed `buildrules.dev` (the site is built and tested; its hosting stack is a step

@@ -13,6 +13,7 @@ const TYPES = {
   '.svg': 'image/svg+xml',
   '.xml': 'application/xml; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8',
+  '.sh': 'text/plain; charset=utf-8',
 };
 
 /** The file a request path names inside `root`, or null if it escapes the root or is not a file. */

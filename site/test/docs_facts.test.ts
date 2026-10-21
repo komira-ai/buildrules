@@ -35,6 +35,12 @@ const plannedText = (p: Page): string =>
 /** The first planned note of a page: the one at the top that lists everything not built. */
 const firstPlanned = (p: Page): string => (p.blocks.find((b) => b.kind === 'note' && b.tone === 'planned') as Extract<Block, { kind: 'note' }>).text;
 
+/** The usage function of the install script: from `usage() {` to the closing brace at the start of a line. */
+const usageOf = (sh: string): string => {
+  const start = sh.indexOf('usage() {');
+  return sh.slice(start, sh.indexOf('\n}\n', start));
+};
+
 const WHY = page('/why/');
 const HOW = [page('/how/'), page('/how/configure/'), page('/how/examples/')];
 const WHY_MD = repoFile('docs/why.md');
@@ -277,6 +283,8 @@ describe('init and the generated files', () => {
       const start = zig.indexOf('pub const usage_text =');
       return zig.slice(start, zig.indexOf('\n;', start));
     };
+    // the options of the install script (a program of its own, in site/static/install.sh), from its usage text
+    const install = new Set([...usageOf(repoFile('site/static/install.sh')).matchAll(/--[a-z][a-z0-9-]*/g)].map((m) => m[0]));
     const real = new Set(
       ['init', 'cargo_cmd', 'sync', 'check', 'npm_cmd', 'mojo_cmd', 'main'].flatMap((n) => [...usage(repoFile(`cli/src/${n}.zig`)).matchAll(/--[a-z][a-z0-9-]*/g)].map((m) => m[0])),
     );
@@ -284,7 +292,7 @@ describe('init and the generated files', () => {
     const others = ['--ignore-missing', '--show-output', '--target-platforms', '--repo', '--unit-graph', '--locked', '--test', '--strip-debug', '--verify-tag', '--help', '--version'];
     for (const t of [howText, whyText]) {
       for (const m of t.matchAll(/(?<![A-Za-z0-9-])--[a-z][a-z0-9-]*/g)) {
-        expect({ flag: m[0], known: real.has(m[0]) || others.includes(m[0]) }).toEqual({ flag: m[0], known: true });
+        expect({ flag: m[0], known: real.has(m[0]) || install.has(m[0]) || others.includes(m[0]) }).toEqual({ flag: m[0], known: true });
       }
     }
     for (const f of ['--git', '--commit', '--path', '--cell', '--rust-version', '--cargo', '--seed', '--vcs']) expect({ f, real: real.has(f) }).toEqual({ f, real: true });
@@ -407,7 +415,6 @@ describe('what is planned is marked planned', () => {
     ['macOS', /macOS/],
     ['a Homebrew formula', /Homebrew formula/],
     ['an apt repository', /apt repository/],
-    ['an install script', /install script/],
   ];
   test.each(needles)('the Why page has a planned note for %s', (_n, re) => {
     expect(plannedText(WHY)).toMatch(re);
@@ -431,7 +438,7 @@ describe('what is planned is marked planned', () => {
     }
     expect(seen).toBeGreaterThanOrEqual(8);
   });
-  test('the repository really has none of them: no formula, no apt files, no install script in the release job', () => {
+  test('the repository really has no formula and no apt files, and the release job does not run the install script', () => {
     const release = repoFile('.github/workflows/release.yml');
     expect(release).not.toMatch(/brew\b|apt-get install buildrules|install\.sh/);
     // the release carries the command line and says the other channels are not built
@@ -502,5 +509,54 @@ describe('the mopm pin, in both states', () => {
     expect(howText).toContain('mopm = "0.0.1"');
     expect(howText).toContain('[mopm."0.0.2"]');
     expect(pins).not.toContain('"0.0.2": {'); // so the page's example of a version buildrules does not pin is still one
+  });
+});
+
+describe('the install script (site/static/install.sh, served as /install.sh)', () => {
+  const sh = repoFile('site/static/install.sh');
+  const usage = usageOf(sh);
+  const flags = [...new Set([...usage.matchAll(/--[a-z][a-z0-9-]*/g)].map((m) => m[0]))].sort();
+  const pagesAndDocs: [string, string][] = [
+    ['the How page', pageText(HOW[0])],
+    ['docs/how.md', HOW_MD],
+  ];
+  test('it takes the release targets of the release tool and no other', () => {
+    const targets = [...repoFile('tools/release/binhdr.zig').matchAll(/pub const targets = \[_\]\[\]const u8\{([^}]*)\}/g)][0][1];
+    const want = [...targets.matchAll(/"([a-z0-9_-]+)"/g)].map((m) => m[1]).sort();
+    const got = [...sh.matchAll(/\btarget=([a-z0-9_-]+)/g)].map((m) => m[1]).sort();
+    expect(want).toEqual(['linux-aarch64', 'linux-x86_64', 'macos-arm64']);
+    expect(got).toEqual(want);
+  });
+  test('it asks for the asset the release tool names, and for SHA256SUMS', () => {
+    expect(repoFile('tools/release/binaries.zig')).toContain('const cli_prefix = "buildrules-cli-";');
+    expect(repoFile('tools/release/binaries.zig')).toContain('const tar_suffix = ".tar.gz";');
+    expect(sh).toContain('name=buildrules-cli-$version-$target');
+    expect(sh).toContain('asset=$name.tar.gz');
+    expect(sh).toContain('/SHA256SUMS');
+    expect(repoFile('RELEASING.md')).toContain('buildrules-cli-0.0.1-linux-x86_64.tar.gz');
+  });
+  test('it refuses an Intel Mac by name, and so do the pages', () => {
+    expect(sh).toMatch(/Darwin-x86_64\) die "no buildrules release for Intel Macs/);
+    for (const [who, t] of pagesAndDocs) expect({ who, has: /Intel Mac/.test(t) }).toEqual({ who, has: true });
+  });
+  test('the signature --verify checks is the release workflow\'s, on main, from the Actions issuer', () => {
+    expect(sh).toMatch(/^signer=https:\/\/github\.com\/[a-z-]+\/buildrules\/\.github\/workflows\/release\.yml@refs\/heads\/main$/m);
+    expect(sh).toMatch(/^issuer=https:\/\/token\.actions\.githubusercontent\.com$/m);
+    expect(repoFile('.github/workflows/release.yml')).toContain('sigstore/cosign-installer');
+    expect(repoFile('RELEASING.md')).toContain('`<file>.sigstore.json`');
+  });
+  test('the options the pages name are the options of the script, and every option is on the pages', () => {
+    expect(flags).toEqual(['--help', '--prefix', '--releases-url', '--verify', '--version']);
+    for (const [who, t] of pagesAndDocs) for (const f of flags.filter((x) => x !== '--help')) expect({ who, f, has: t.includes(`\`${f}`) }).toEqual({ who, f, has: true });
+  });
+  test('the install location is the one the pages name', () => {
+    expect(sh).toContain('prefix=${HOME:?HOME is not set; use --prefix}/.buildrules');
+    expect(sh).toContain('"$prefix/bin/buildrules"');
+    for (const [who, t] of pagesAndDocs) expect({ who, has: t.includes('~/.buildrules/bin/buildrules') }).toEqual({ who, has: true });
+  });
+  test('the address answers only once the site is published, and the pages say so with a planned note', () => {
+    expect(plannedText(HOW[0])).toMatch(/install\.sh answers only after/);
+    expect(plannedText(WHY)).toMatch(/Publishing this site at buildrules\.dev/);
+    expect(HOW_MD).toMatch(/The site is not published yet \(\*\*planned\*\*\)/);
   });
 });

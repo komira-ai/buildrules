@@ -20,6 +20,7 @@ load("@buildrules//rules/core:pinned_file.bzl", "pinned_file")
 load("@buildrules//rules/core:test_runtime.bzl", "data_map")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/core:rerun.bzl", "RERUN_ATTRS", "rerun_env", "rerun_info")
+load(":checks.bzl", "check_data_is_not_a_source", "check_max_workers", "check_not_listed", "check_out_dir", "check_program_or_script", "check_same_packages", "check_source", "check_tarballs_cover")
 load(":defs.bzl", "NodeDistInfo")
 
 NodeModulesInfo = provider(
@@ -43,8 +44,7 @@ def _tools_run(ctx, mode, spec, out, category):
 
 def _npm_modules_impl(ctx):
     where = str(ctx.label.raw_target())
-    if sorted(ctx.attrs.tarballs.keys()) != sorted(ctx.attrs.sri512.keys()):
-        fail("{}: tarballs and sri512 name different packages".format(where))
+    check_same_packages(where, "tarballs and sri512", ctx.attrs.tarballs.keys(), ctx.attrs.sri512.keys())
     spec = ctx.actions.write_json(
         "spec.json",
         {
@@ -74,22 +74,17 @@ _npm_modules = rule(
 def _run_impl(ctx):
     where = str(ctx.label.raw_target())
     pkg = ctx.label.package
-    if (ctx.attrs.program == "") == (ctx.attrs.script == None):
-        fail("{}: name exactly one of program and script".format(where))
+    check_program_or_script(where, ctx.attrs.program, ctx.attrs.script)
     staged = {}
     for s in ctx.attrs.srcs:
-        if not s.is_source:
-            fail("{}: {} is a build output; name it in data, {{dest: source}}".format(where, s))
+        check_source(where, s, s.is_source)
         dest = pkg + "/" + s.short_path if pkg else s.short_path
-        if dest in staged:
-            fail("{}: {} is listed twice".format(where, dest))
+        check_not_listed(where, dest, staged)
         staged[dest] = s
     for dest, a in data_map(ctx, where + ": data", ctx.attrs.data).items():
-        if dest in staged:
-            fail("{}: data destination {} is also a source".format(where, dest))
+        check_data_is_not_a_source(where, dest, staged)
         staged[dest] = a
-    if ctx.attrs.out_dir != None and (ctx.attrs.out_dir == "" or ctx.attrs.out_dir.startswith("/") or ".." in ctx.attrs.out_dir.split("/")):
-        fail("{}: out_dir {} must be a relative directory of the package".format(where, repr(ctx.attrs.out_dir)))
+    check_out_dir(where, ctx.attrs.out_dir)
     tree = ctx.actions.copied_dir(ctx.label.name + ".tree", staged)
     spec = ctx.actions.write_json(
         "spec.json",
@@ -152,10 +147,10 @@ def _file_name(key):
 def _npm_modules_macro(name, lockfile, npm, tarballs = None, visibility = None, **kwargs):
     """`npm` is the `NPM` of a generated pins.lock.bzl (rules/kpin): one pinned download per entry unless `tarballs` ({key: label}) names the files."""
     files = {}
+    if tarballs != None:
+        check_tarballs_cover(name, sorted(npm.keys()), tarballs)
     for key in sorted(npm.keys()):
         if tarballs != None:
-            if key not in tarballs:
-                fail("npm_modules {}: tarballs has no {}".format(name, key))
             files[key] = tarballs[key]
         else:
             target = name + "." + _file_name(key)
@@ -187,8 +182,7 @@ def _jest_test(name, modules, srcs, data = {}, config = "jest.config.js", max_wo
     With `coverage`, `--coverage`: the config's `collectCoverageFrom` names the package's own code, and the target is the `coverage` directory the run
     writes (a text table on the log, `coverage-summary.json` in the directory), which exists only if the tests passed. `jest_coverage_floor`
     (rules/coverage/jest_cover.bzl) holds its lines and branches to the package's floor."""
-    if max_workers < 1:
-        fail("jest_test {}: max_workers must be at least 1".format(name))
+    check_max_workers(name, max_workers)
     args = ["--ci", "--maxWorkers={}".format(max_workers), "--cacheDirectory=.jest-cache", "--watchman=false", "--config", config]
     if coverage:
         args += ["--coverage", "--coverageDirectory=coverage", "--coverageReporters=json-summary", "--coverageReporters=text"]

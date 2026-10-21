@@ -97,7 +97,6 @@ export const cli: Page = {
     h2('Not yet in the command line'),
     ul(
       'Commands for Zig and C/C++: those rules are used with hand-written `BUCK` files today.',
-      'An install script. A release holds the command line as a tarball for each of three platforms, which you unpack yourself.',
       'A workspace below the repository root.',
     ),
   ],

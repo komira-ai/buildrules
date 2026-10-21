@@ -1,0 +1,113 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The refusals of the rules every family shares (rules/core), as analysis tests (rules/rust/refusal.bzl): a download that is not pinned, a rerun request, a
+# download mirror, a test's data and environment. Each is green only if the rule refused, with the message that says what to write instead; the accepted form of
+# each is beside it, so a check that refuses everything is red too.
+load("//rules/core:pinned_file.bzl", "check_pinned")
+load("//rules/core:rerun.bzl", "parse_rerun")
+load("//rules/core:test_runtime.bzl", "check_data_destinations", "env_args")
+load("//rules/core:url_map.bzl", "map_url")
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/rust:refusal.bzl", "accepts", "refuses")
+load("//rules:matrix.bzl", "group")
+load("//rules/zig:zig.bzl", "zig_module", "zig_test")
+
+_ALL = []
+
+_SHA = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+_WHO = "//rules/pins:zig"
+
+# ---- pinned_file: a download without its pin --------------------------------------------------------------------------------------------------------
+
+_ALL.append(accepts("pinned_file_with_hash_and_size_is_accepted", check_pinned, [_WHO, _SHA, 3]))
+
+_ALL.append(refuses("pinned_file_without_a_size_is_refused", check_pinned, [_WHO, _SHA, 0], ["pinned_file //rules/pins:zig", "`size_bytes` must be the file's positive length"]))
+
+_ALL.append(refuses("pinned_file_with_a_negative_size_is_refused", check_pinned, [_WHO, _SHA, -1], ["`size_bytes` must be the file's positive length"]))
+
+_ALL.append(refuses("pinned_file_with_an_empty_hash_is_refused", check_pinned, [_WHO, "", 3], ["`sha256` must be 64 lower-case hex digits", "\"\""]))
+
+_ALL.append(refuses("pinned_file_with_a_short_hash_is_refused", check_pinned, [_WHO, _SHA[:40], 3], ["`sha256` must be 64 lower-case hex digits"]))
+
+_ALL.append(refuses("pinned_file_with_an_upper_case_hash_is_refused", check_pinned, [_WHO, _SHA.upper(), 3], ["`sha256` must be 64 lower-case hex digits"]))
+
+_ALL.append(refuses("pinned_file_with_a_hash_that_is_not_hex_is_refused", check_pinned, [_WHO, "z" * 64, 3], ["`sha256` must be 64 lower-case hex digits"]))
+
+# ---- [buildrules] rerun -----------------------------------------------------------------------------------------------------------------------------
+
+_ALL.append(accepts("rerun_one_target_is_accepted", parse_rerun, ["buildrules//rules/gate:gate#1"]))
+
+_ALL.append(accepts("rerun_several_targets_are_accepted", parse_rerun, ["buildrules//a:a#1, crates//b:b#12"]))
+
+_ALL.append(refuses("rerun_without_a_number_is_refused", parse_rerun, ["buildrules//rules/gate:gate"], ["has no `#<n>`", "<cell>//<package>:<name>#<n>"]))
+
+_ALL.append(refuses("rerun_with_number_zero_is_refused", parse_rerun, ["buildrules//rules/gate:gate#0"], ["`0` is not a whole number from 1"]))
+
+_ALL.append(refuses("rerun_with_a_word_for_a_number_is_refused", parse_rerun, ["buildrules//rules/gate:gate#once"], ["`once` is not a whole number from 1"]))
+
+_ALL.append(refuses("rerun_without_the_cell_is_refused", parse_rerun, ["//rules/gate:gate#1"], ["name the cell"]))
+
+_ALL.append(refuses("rerun_with_a_subtarget_is_refused", parse_rerun, ["buildrules//rules/gate:gate[out]#1"], ["name the target, without a sub-target or a configuration"]))
+
+_ALL.append(refuses("rerun_with_a_label_that_is_not_one_is_refused", parse_rerun, ["buildrules//rules/gate#1"], ["is not a target label"]))
+
+_ALL.append(refuses("rerun_with_an_empty_entry_is_refused", parse_rerun, ["buildrules//a:a#1,,buildrules//b:b#1"], ["an empty entry"]))
+
+_ALL.append(refuses("rerun_naming_a_target_twice_is_refused", parse_rerun, ["buildrules//a:a#1,buildrules//a:a#2"], ["buildrules//a:a is named twice"]))
+
+# ---- buildrules.url_map ----------------------------------------------------------------------------------------------------------------------------
+
+_ALL.append(accepts("url_map_pair_is_accepted", map_url, ["https://a.example/=https://mirror.example/", "https://a.example/x.tgz"]))
+
+_ALL.append(refuses("url_map_without_equals_is_refused", map_url, ["https://a.example/", "https://a.example/x.tgz"], ["buildrules.url_map: `https://a.example/` is not <from-prefix>=<to-prefix>"]))
+
+# ---- a test's data and environment ----------------------------------------------------------------------------------------------------------------
+
+_ALL.append(accepts("data_destinations_are_accepted", check_data_destinations, ["//t:t", ["a.txt", "dir/b.txt", "dir2/c/d.txt"]]))
+
+_ALL.append(refuses("data_destination_absolute_is_refused", check_data_destinations, ["//t:t", ["/etc/passwd"]], ["data destination \"/etc/passwd\" must be a relative file path"]))
+
+_ALL.append(refuses("data_destination_empty_is_refused", check_data_destinations, ["//t:t", [""]], ["must be a relative file path"]))
+
+_ALL.append(refuses("data_destination_ending_in_a_slash_is_refused", check_data_destinations, ["//t:t", ["dir/"]], ["must be a relative file path"]))
+
+_ALL.append(refuses("data_destination_with_dotdot_is_refused", check_data_destinations, ["//t:t", ["a/../../b"]], ["holds an empty, `.` or `..` segment"]))
+
+_ALL.append(refuses("data_destination_with_an_empty_segment_is_refused", check_data_destinations, ["//t:t", ["a//b"]], ["holds an empty, `.` or `..` segment"]))
+
+# Staging a file at `a` and another at `a/b` would make `a` both: the second would overwrite or fail inside the tree.
+_ALL.append(refuses("data_destination_file_and_directory_is_refused", check_data_destinations, ["//t:t", ["a", "a/b"]], ["data destination \"a\" is both a file and the directory of \"a/b\""]))
+
+_ALL.append(accepts("env_names_are_accepted", env_args, ["//t:t", {"MY_VAR": "1", "_x2": "y"}]))
+
+_ALL.append(refuses("env_name_with_a_dash_is_refused", env_args, ["//t:t", {"MY-VAR": "1"}], ["env name \"MY-VAR\" is not a shell variable name"]))
+
+_ALL.append(refuses("env_name_starting_with_a_digit_is_refused", env_args, ["//t:t", {"1VAR": "1"}], ["is not a shell variable name"]))
+
+_ALL += [
+    refuses("env_name_{}_is_refused".format(n.lower()), env_args, ["//t:t", {n: "x"}], ["env sets " + n + ", which the test runner sets itself"])
+    for n in ["PATH", "LD_PRELOAD", "TMPDIR", "HOME"]
+]
+
+# ---- the process tests of the refusals of the tools (rules/*/tests/*_refuse_test.zig) ----------------------------------------------------------------
+#
+# `refusal_proc` runs a built tool as a child and holds its exit status and its message to what the tool must say when it refuses. It is a module behind its own
+# test, so no refusal test imports it unless it passed.
+zig_test(
+    name = "proc_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "proc.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+zig_module(
+    name = "refusal_proc",
+    src = "proc.zig",
+    unit_tests = [":proc_unit"],
+    visibility = ["PUBLIC"],
+)
+
+# Every refusal of this package, for //ci:refusals.
+group(name = "all", deps = _ALL + [":proc_unit", ":refusal_proc"], visibility = ["PUBLIC"])
+
+scrub_files()

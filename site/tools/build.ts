@@ -13,13 +13,16 @@ import { renderNotFound, renderPage, SITE_URL, type Assets } from './render';
 
 export const STYLESHEET = 'site.css';
 export const ICON = 'icon.svg';
+// The install script, served at /install.sh as it is in static/ (tools/install tests it against fake releases).
+export const INSTALL = 'install.sh';
 
-export function siteFiles(css: Buffer, icon: Buffer): Map<string, string | Buffer> {
+export function siteFiles(css: Buffer, icon: Buffer, install: Buffer): Map<string, string | Buffer> {
   const hash = createHash('sha256').update(css).digest('hex').slice(0, 12);
   const assets: Assets = { css: `/assets/site.${hash}.css`, icon: '/assets/icon.svg' };
   const files = new Map<string, string | Buffer>();
   files.set(fileOf(assets.css), css);
   files.set(fileOf(assets.icon), icon);
+  files.set(INSTALL, install);
   for (const page of PAGES) files.set(fileOf(page.path), renderPage(page, NAV, assets).html);
   files.set('404.html', renderNotFound(NAV, assets));
   files.set('robots.txt', `User-agent: *\nAllow: /\nSitemap: ${SITE_URL}/sitemap.xml\n`);
@@ -42,7 +45,7 @@ export function writeSite(files: Files, outDir: string): void {
 }
 
 export function buildSite(staticDir: string, outDir: string): string[] {
-  const files = siteFiles(readFileSync(join(staticDir, STYLESHEET)), readFileSync(join(staticDir, ICON)));
+  const files = siteFiles(readFileSync(join(staticDir, STYLESHEET)), readFileSync(join(staticDir, ICON)), readFileSync(join(staticDir, INSTALL)));
   const problems = checkSite(files);
   if (problems.length > 0) return problems;
   writeSite(files, outDir);
