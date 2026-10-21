@@ -230,6 +230,7 @@ group(name = "all", deps = [
     "//tools/scrub:scrub",
     "//tools/release:release",
     "//tools/stage:stage",
+    "//tools/install:install_script_test",
     "//beta:beta_check",
     "//rules/gate:gate",
     "//rules/kpin:kpin",
