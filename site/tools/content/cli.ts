@@ -4,7 +4,7 @@ export const cli: Page = {
   path: '/cli/',
   title: 'CLI reference',
   nav: 'CLI',
-  description: 'The buildrules command line: init, cargo new, cargo init, cargo adopt, sync, check, npm and mojo, with every flag and exit code.',
+  description: 'The buildrules command line: init, cargo new, cargo init, cargo adopt, sync, check, npm, mojo and autopin, with every flag and exit code.',
   lead: 'The `buildrules` program writes and reads the files the Rust, Node and Mojo rules need. It is written in Zig. `buildrules --version` prints the release it was built as (`0.0.N`), or the `VERSION` file\'s `MAJOR.MINOR` with `-dev` when it was built from a checkout.',
   blocks: [
     code('buildrules <command> [flags]\nbuildrules <command> --help\nbuildrules --version', 'usage'),
@@ -94,6 +94,17 @@ export const cli: Page = {
       ['`--mopm MOPM`', '`sync`: the mopm executable; otherwise `buck2 build toolchains//:mopm_<v>` builds the pinned one'],
       ['`--buck2 BUCK2`', 'the `buck2` binary used for that; default `buck2`'],
     ),
+    h2('autopin'),
+    code('buildrules autopin compute --event FILE --out DIR --set DIR=KIND [--set DIR=KIND ...] [--dir DIR]', 'usage'),
+    p('For continuous integration, not for people: the unprivileged half of keeping the pin tables of a Dependabot pull request current. It runs on the checkout of the pull request with no secrets, regenerates the pin table of each directory named by `--set` from its `package-lock.json`, and writes the tables that changed, with a `manifest.json` naming the pull request and its head, under `--out`. Whatever reads that artifact next treats it as untrusted bytes and checks it again.'),
+    table(
+      ['Flag', 'Meaning'],
+      ['`--event FILE`', 'the `pull_request` event of the run: the pull request number and the head and base sha'],
+      ['`--out DIR`', 'where the changed tables and `manifest.json` go; an empty or absent directory'],
+      ['`--set DIR=KIND`', 'a directory that may be regenerated; KIND is `buildrules-lock` (`buildrules.lock.bzl`, as `npm sync` writes it) or `pins-lock` (`pins.lock.bzl`); repeatable, at most eight'],
+      ['`--dir DIR`', 'the repository root; default `.`'],
+    ),
+    p('The lock must be strict: only registry tarballs with a sha512 integrity and the canonical `registry.npmjs.org` URL, strict semver versions, and no alias, link, git, `file:` or workspace entry. A tarball the table lacks is downloaded from `registry.npmjs.org` only, without following a redirect, at most 64 MiB each, 200 new and 512 MiB in all, and its sha512 must be the lock\'s. The new table is read back and bound to the lock offline before it is written.'),
     h2('Not yet in the command line'),
     ul(
       'Commands for Zig and C/C++: those rules are used with hand-written `BUCK` files today.',
