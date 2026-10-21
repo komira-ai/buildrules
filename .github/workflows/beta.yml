@@ -34,7 +34,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: beta-${{ github.workflow }}-${{ github.sha }}
+  group: beta
   cancel-in-progress: false
 
 jobs:

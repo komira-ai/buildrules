@@ -351,6 +351,8 @@ pub fn checkPublish(a: std.mem.Allocator, raw: []const u8, config: []const u8) !
     try onlyActions(a, &f, wf, &actions_publish, file);
     try writeScopes(a, &f, wf, "publish", file);
     try triggerSet(a, &f, wf, &.{"workflow_call"}, file);
+    // the called workflow has no concurrency of its own: site.yml's group `site` already holds the deploy, and a group of the same name here would make the call wait for itself
+    if (std.mem.indexOf(u8, wf, "concurrency:") != null) try add(a, &f, "{s}: the reusable workflow declares a concurrency group (the caller's group `site` serializes it; the same name here would deadlock the call)", .{file});
     try expectLines(a, &f, wf, file, &.{
         "      claims_only:\n        type: boolean",
         "      AWS_DEFAULT_REGION: us-east-1",
@@ -652,6 +654,7 @@ test "site-publish.yml: the trust, the environment and the token" {
     try expectPublish(a, r, try mutate(a, p, "      id-token: write\n", ""), r.config, "permissions are not exactly");
     try expectPublish(a, r, try mutate(a, p, "      contents: read\n      id-token: write\n", "      contents: write\n      id-token: write\n"), r.config, "holds the write permission");
     try expectPublish(a, r, try mutate(a, p, "permissions: {}\n", ""), r.config, "permissions: {}");
+    try expectPublish(a, r, try mutate(a, p, "permissions: {}\n", "permissions: {}\n\nconcurrency:\n  group: site\n  cancel-in-progress: false\n"), r.config, "declares a concurrency group");
     try expectPublish(a, r, try mutate(a, p, "  workflow_call:\n", "  workflow_call:\n  push:\n"), r.config, "triggers");
     try expectPublish(a, r, try mutate(a, p, "  workflow_call:\n", "  workflow_call:\n  workflow_dispatch:\n"), r.config, "triggers");
     try expectPublish(a, r, try mutate(a, p, "  workflow_call:\n", "  pull_request:\n  workflow_call:\n"), r.config, "pull request");

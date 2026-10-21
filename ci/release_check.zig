@@ -5,7 +5,7 @@
 //!
 //!  - the triggers: a push to main and nothing else (no pull request, no dispatch, no schedule, no workflow_run): a pull request runs ci.yml alone (build and
 //!    unit tests), and the beta, the gamma, the signing, the attestation and the verification are this workflow's, after the merge; the workflow-level
-//!    concurrency is per commit and never cancels;
+//!    concurrency is one group for every push, which never cancels a run;
 //!  - the token: `permissions: {}` at the top, every job states its own, and a write scope only where it belongs: `contents: write` in the job
 //!    `publish` (and nowhere else; `tag` holds `contents: read` and writes with the release bot's token, minted by one step with exact inputs and used by the tag step alone), `id-token: write` and `attestations: write` in `attest` (and `id-token` in `gamma`, in the call of `beta`, for the farm, and in the `apt-deploy-*` jobs, for the cloud role), each of
 //!    `attest`, `verify`, `tag`, `publish` and `bump` under its exact `if:` (a push to main, not a fork, a commit the plan released) so that no pull request signs, attests, tags or publishes, and every `: write` of the file accounted for by a job's permissions block;
@@ -716,7 +716,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         try add(a, &f, "a checkout keeps the token in the checkout (`persist-credentials: false` is missing)", .{});
 
     // Triggers: a push to main and nothing else. A pull request runs ci.yml alone (build and unit tests); the stages of the release run after the merge.
-    // The concurrency is per commit and nothing cancels a run.
+    // The concurrency is one group for every push (a run waits for the one before it) and nothing cancels a running release.
     const on = try triggers(a, text);
     var has_push = false;
     for (on) |k| {
@@ -726,8 +726,8 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     for ([_][]const u8{ "pull_request_target", "workflow_run", "workflow_dispatch", "schedule:" }) |bad| {
         if (std.mem.indexOf(u8, text, bad) != null) try add(a, &f, "`{s}` appears in the workflow", .{bad});
     }
-    if (!wc.hasLine(text, "  group: release-${{ github.sha }}") or !wc.hasLine(text, "  cancel-in-progress: false"))
-        try add(a, &f, "the workflow's concurrency is not `group: release-${{{{ github.sha }}}}` with `cancel-in-progress: false`: a run of a release is never cancelled", .{});
+    if (!wc.hasLine(text, "  group: release-${{ github.event_name == 'push' && 'push' || github.run_id }}") or !wc.hasLine(text, "  cancel-in-progress: false"))
+        try add(a, &f, "the workflow's concurrency is not `group: release-${{{{ github.event_name == 'push' && 'push' || github.run_id }}}}` with `cancel-in-progress: false`: the pushes are serialized and a running release is never cancelled", .{});
     // The secrets: the release bot's private key (read by the steps of `tag`, `bump` and `tap` that mint a token) and the apt signing key (read by the signing step of
     // each `apt-index` job). Any other `secrets.` is refused.
     const bot_key_refs = std.mem.count(u8, text, "secrets.RELEASE_BOT_PRIVATE_KEY }}");
@@ -863,7 +863,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     if (jobNamed(jobs, "tag")) |j| {
         if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, tag_if)) try add(a, &f, "the job `tag` is not under its exact `if:` ({s})", .{tag_if});
         if (j.group == null or !std.mem.eql(u8, j.group.?, "release") or j.cancel == null or !std.mem.eql(u8, j.cancel.?, "false"))
-            try add(a, &f, "the job `tag` is not in the concurrency group `release` with `cancel-in-progress: false`", .{});
+            try add(a, &f, "the job `tag` is not in the concurrency group `release` with `cancel-in-progress: false` (exactly `release`, never the workflow's own group `release-push`: a job in its run's group waits for itself and the run deadlocks)", .{});
     }
     if (jobNamed(jobs, "publish")) |j| {
         const l = permLevel(j, "contents");
@@ -1205,7 +1205,7 @@ const fixture_wf =
     \\permissions: {}
     \\
     \\concurrency:
-    \\  group: release-${{ github.sha }}
+    \\  group: release-${{ github.event_name == 'push' && 'push' || github.run_id }}
     \\  cancel-in-progress: false
     \\
     \\jobs:
@@ -2727,7 +2727,7 @@ test "rule: RELEASE_FREEZE is read in the plan and nowhere else, and the plan is
     try expectFinding(a, r, try mutateIn(a, r.wf, "plan", " --dry false", ""), "not told it is a real run");
 }
 
-test "rule: the workflow's concurrency is per commit and never cancels" {
+test "rule: the workflow's concurrency is one group for every push and never cancels" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -2736,9 +2736,12 @@ test "rule: the workflow's concurrency is per commit and never cancels" {
     // a push to main that cancels the one before it would stop a release between its stages
     try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: false", "cancel-in-progress: true"), need);
     try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: false", "cancel-in-progress: ${{ github.event_name == 'push' }}"), need);
-    try expectFinding(a, r, try mutate(a, r.wf, "group: release-${{ github.sha }}", "group: release"), need);
-    try expectFinding(a, r, try mutate(a, r.wf, "group: release-${{ github.sha }}", "group: release-${{ github.ref }}"), need);
-    try expectFinding(a, r, try mutate(a, r.wf, "\nconcurrency:\n  group: release-${{ github.sha }}\n  cancel-in-progress: false\n", "\n"), need);
+    const grp = "group: release-${{ github.event_name == 'push' && 'push' || github.run_id }}";
+    // the per-commit group (two pushes run in parallel and plan the same number) is the defect this rule exists for
+    try expectFinding(a, r, try mutate(a, r.wf, grp, "group: release-${{ github.sha }}"), need);
+    try expectFinding(a, r, try mutate(a, r.wf, grp, "group: release"), need);
+    try expectFinding(a, r, try mutate(a, r.wf, grp, "group: release-${{ github.ref }}"), need);
+    try expectFinding(a, r, try mutate(a, r.wf, "\nconcurrency:\n  " ++ grp ++ "\n  cancel-in-progress: false\n", "\n"), need);
 }
 
 test "rule: the jobs that test the commit name the pushed commit, and the jobs that write name GITHUB_SHA" {
@@ -2806,6 +2809,9 @@ test "rule: the tag job is in the release concurrency group and none is cancelle
     const need = "concurrency group `release` with `cancel-in-progress: false`";
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "cancel-in-progress: false", "cancel-in-progress: true"), need);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "group: release", "group: release-${{ github.sha }}"), need);
+    // the workflow's own group on the tag job: it would wait on its own run
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "group: release", "group: release-push"), need);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "group: release", "group: release-${{ github.event_name == 'push' && 'push' || github.run_id }}"), need);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "    concurrency:\n      group: release\n      cancel-in-progress: false\n", ""), need);
 }
 
