@@ -7,7 +7,7 @@
 //!    unit tests), and the beta, the gamma, the signing, the attestation and the verification are this workflow's, after the merge; the workflow-level
 //!    concurrency is one group for every push, which never cancels a run;
 //!  - the token: `permissions: {}` at the top, every job states its own, and a write scope only where it belongs: `contents: write` in the job
-//!    `publish` (and nowhere else; `tag` holds `contents: read` and writes with the release bot's token, minted by one step with exact inputs and used by the tag step alone), `id-token: write` and `attestations: write` in `attest` (and `id-token` in `gamma` and in the call of `beta`, for the farm), each of
+//!    `publish` (and nowhere else; `tag` holds `contents: read` and writes with the release bot's token, minted by one step with exact inputs and used by the tag step alone), `id-token: write` and `attestations: write` in `attest` (and `id-token` in `gamma`, in the call of `beta`, for the farm, and in the `apt-deploy-*` jobs, for the cloud role), each of
 //!    `attest`, `verify`, `tag`, `publish` and `bump` under its exact `if:` (a push to main, not a fork, a commit the plan released) so that no pull request signs, attests, tags or publishes, and every `: write` of the file accounted for by a job's permissions block;
 //!  - the order gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish, with no job before the tag waiting for it (a failure
 //!    before the tag leaves no tag behind), a release made only when the plan released, and no status function (`always()`, `failure()`, `cancelled()`) or
@@ -16,13 +16,20 @@
 //!  - the binaries: the stamped build of `//cli:release_binaries` and its three tarballs in `build-cli`, the very file the beta runs handed on as `release-cli-bin`
 //!    and checked against the tarball in `archive`, the second build in `verify` that must give the same tarballs, and `release-dist` as the one set of files
 //!    that `verify`, `publish` and `site` read;
+//!  - `tap` (the Homebrew formula as a pull request in the tap): `contents: read`, the exact `if:` of `publish`, a wait for the plan, the tag, the publish and the tool, nothing
+//!    waiting for it, the environment `release`, the formula rendered by one exact command before any token exists, the release bot's token minted for the tap
+//!    repository alone in the second to last step (exact inputs) and given to the last step alone, and the arguments the tap's guard depends on;
+//!  - the apt repository (`apt-deploy-read`, `apt-index`, `apt-deploy-write`, in three attempts): the signing key (environment `apt-signing`, secrets `APT_GPG_*`) is read
+//!    by the `apt-index` jobs alone, in the signing step, and the cloud role (environment `apt-publish`, `id-token: write`, `APT_PUBLISH_ROLE_ARN`) by the
+//!    `apt-deploy-*` jobs alone, so no job holds both; every step that reads, signs or writes is behind the gate that makes a job without the settings end
+//!    green and do nothing; the last attempt writes with `--last`; nothing waits for these jobs but themselves;
 //!  - `bump`, the last step (the pull request that moves the internal repository's submodule to the release): `contents: read` for its own token, the exact
 //!    `if:` of `tag` and `publish`, a wait for the plan, the tag, the publish and the tool, nothing waiting for it, the release bot's token minted for the internal
 //!    repository alone (a second mint, exact inputs, after a step that refuses an unnamed repository) and used by the bump step alone, and the arguments the
 //!    internal repository's bump guard depends on;
 //!  - the jobs that write run no buck2 and only the checkout and download actions (`attest` also the upload, cosign and attestation actions): the tool they run was built before any token existed;
 //!  - the attestation action is in `attest` only, every checkout drops its credentials, `run:` lines are single invocations (the
-//!    install of buck2 aside), a cosign bundle is only ever named `<file>.sigstore.json` for `SHA256SUMS`, the source archive or a CLI tarball (the names `release sign` writes), no asset is ever replaced (`--clobber`), no secret is read but the release bot's private key (once, in `tag`).
+//!    install of buck2 aside), a cosign bundle is only ever named `<file>.sigstore.json` for `SHA256SUMS`, the source archive, a CLI tarball or a .deb (the names `release sign` writes), no asset is ever replaced (`--clobber`), no secret is read but the release bot's private key (in `tag`, `bump` and `tap`, once each) and the apt signing key (in the signing step of each `apt-index` job).
 const std = @import("std");
 const wc = @import("workflow_check.zig");
 const t = std.testing;
@@ -51,6 +58,12 @@ const beta_call = "./.github/workflows/beta.yml";
 const farm_action = "./farm-action/.github/actions/farm-connect";
 const tool_target = "//tools/release:release";
 const stage_target = "//tools/stage:stage";
+/// The tools of the channels, built by `tool` and handed on as the artifact `channel-tools`.
+const channel_targets = [_][2][]const u8{
+    .{ "//tools/channels:channels", "--out channels " },
+    .{ "//tools/deploy:tap", "--out tap " },
+    .{ "//tools/deploy:apt_publish", "--out apt-publish " },
+};
 
 /// The jobs, and the job each one must wait for (`needs`): gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish
 /// (tool beside gate; site after tag and verify).
@@ -82,12 +95,49 @@ const order = [_][2][]const u8{
     .{ "publish", "verify" },
     .{ "site", "tag" },
     .{ "site", "verify" },
+    .{ "tap", "plan" },
+    .{ "tap", "tag" },
+    .{ "tap", "publish" },
+    .{ "tap", "tool" },
+    .{ "apt-deploy-read", "plan" },
+    .{ "apt-deploy-read", "tag" },
+    .{ "apt-deploy-read", "publish" },
+    .{ "apt-deploy-read", "tool" },
+    .{ "apt-index", "apt-deploy-read" },
+    .{ "apt-deploy-write", "apt-deploy-read" },
+    .{ "apt-deploy-write", "apt-index" },
+    .{ "apt-deploy-read-2", "apt-deploy-write" },
+    .{ "apt-index-2", "apt-deploy-read-2" },
+    .{ "apt-deploy-write-2", "apt-deploy-read-2" },
+    .{ "apt-deploy-write-2", "apt-index-2" },
+    .{ "apt-deploy-read-3", "apt-deploy-write-2" },
+    .{ "apt-index-3", "apt-deploy-read-3" },
+    .{ "apt-deploy-write-3", "apt-deploy-read-3" },
+    .{ "apt-deploy-write-3", "apt-index-3" },
 };
 /// The jobs that run before the tag exists: none of them may wait for it, or a failure there could not be told from one after the tag.
 const before_tag = [_][]const u8{ "gate", "tool", "plan", "build-cli", "beta", "gamma", "archive", "attest", "verify" };
-const all_jobs = [_][]const u8{ "gate", "tool", "plan", "build-cli", "beta", "gamma", "archive", "attest", "verify", "tag", "site", "publish", "bump" };
+const all_jobs = [_][]const u8{
+    "gate", "tool", "plan", "build-cli", "beta", "gamma", "archive", "attest", "verify", "tag", "site", "publish", "bump", "tap",
+    "apt-deploy-read", "apt-index", "apt-deploy-write", "apt-deploy-read-2", "apt-index-2", "apt-deploy-write-2", "apt-deploy-read-3", "apt-index-3", "apt-deploy-write-3",
+};
+/// The three attempts of the apt publish: the jobs of each, in order, and the suffix of its artifacts. A lost write hands over to the next attempt.
+const AptAttempt = struct { read: []const u8, index: []const u8, write: []const u8, suffix: []const u8, prev_write: ?[]const u8, last: bool };
+const apt_attempts = [_]AptAttempt{
+    .{ .read = "apt-deploy-read", .index = "apt-index", .write = "apt-deploy-write", .suffix = "", .prev_write = null, .last = false },
+    .{ .read = "apt-deploy-read-2", .index = "apt-index-2", .write = "apt-deploy-write-2", .suffix = "-2", .prev_write = "apt-deploy-write", .last = false },
+    .{ .read = "apt-deploy-read-3", .index = "apt-index-3", .write = "apt-deploy-write-3", .suffix = "-3", .prev_write = "apt-deploy-write-2", .last = true },
+};
+const apt_publish_environment = "apt-publish";
+const apt_signing_environment = "apt-signing";
+/// The guard of every step that reads, signs or writes in an apt job: the gate step said the settings are made.
+const apt_guard = "        if: steps.gate.outputs.enabled == 'true'\n";
+/// What the gate of each kind of apt job requires. A job whose settings are not made ends green with a notice and runs nothing behind the gate.
+const apt_read_gate = "tool/apt-publish gate --label \"apt publish (read)\" --out \"$GITHUB_OUTPUT\" --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME";
+const apt_index_gate = "tool/apt-publish gate --label \"apt index\" --out \"$GITHUB_OUTPUT\" --true READ_ENABLED --true HAVE_KEY --env APT_GPG_FINGERPRINT";
+const apt_write_gate = "tool/apt-publish gate --label \"apt publish (write)\" --out \"$GITHUB_OUTPUT\" --true READ_ENABLED --true INDEX_SIGNED --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME";
 /// What `bump` waits for: the plan (the tag it opens the pull request for), the tag and the publish (the guard of the internal repository reads the
-/// tag, and the release exists before anything points at it), and the tool. Nothing waits for `bump`.
+/// tag, and the release exists before anything points at it), and the tool. Nothing waits for `bump`. `tap` and the first apt read wait for the same four.
 const bump_needs = [_][]const u8{ "plan", "tag", "publish", "tool" };
 /// What each job runs of the tool.
 const tool_runs = [_][2][]const u8{
@@ -96,18 +146,22 @@ const tool_runs = [_][2][]const u8{
     .{ "gamma", "tool/stage gamma " },
     .{ "plan", "tool/release plan " },
     .{ "build-cli", "tool/release package-all " },
+    .{ "build-cli", "tool/release debs " },
     .{ "archive", "tool/release archive " },
     .{ "archive", "tool/release record " },
     .{ "archive", "tool/release tested " },
     .{ "archive", "tool/release sums " },
     .{ "attest", "tool/release sign " },
     .{ "verify", "tool/release package-all " },
+    .{ "verify", "tool/release debs " },
     .{ "verify", "tool/release verify " },
     .{ "tag", "tool/release tag " },
     .{ "site", "tool/release site " },
     .{ "publish", "tool/release publish " },
     .{ "bump", "tool/release bump-check " },
     .{ "bump", "tool/release bump-internal " },
+    .{ "tap", "tool/channels formula " },
+    .{ "tap", "tool/tap " },
 };
 /// The actions a job that writes may use; `tag` also mints the release bot's token.
 const write_job_actions = [_][]const u8{ "actions/checkout", "actions/download-artifact" };
@@ -115,7 +169,7 @@ const write_job_actions = [_][]const u8{ "actions/checkout", "actions/download-a
 const attest_actions = [_][]const u8{ "actions/download-artifact", "actions/upload-artifact", "sigstore/cosign-installer", "actions/attest-build-provenance" };
 const cosign_action = "sigstore/cosign-installer";
 const app_token_action = "actions/create-github-app-token";
-/// The environment that holds the release bot's key (restricted to main); declared by the jobs that read `RELEASE_BOT_*` and by no other.
+/// The environment that holds the release bot's key (the owner restricts it to main as a setup step; nothing here checks that); declared by the jobs that read `RELEASE_BOT_*` and by no other.
 const release_environment = "release";
 
 /// The step of `tag` that mints the release bot's token: every input exact. The v* tag ruleset lets only that App create a tag, so the tag
@@ -163,6 +217,36 @@ const bump_args = [_][]const u8{
     "--submodule buildrules",
 };
 const bump_internal_env = "      INTERNAL_REPO: ${{ github.repository_owner }}/${{ vars.BUMP_REPOSITORY }}\n";
+
+/// The render step of `tap`: the formula from the verified SHA256SUMS with the flags the tap's guard expects (no version line, the asset stem of the tarballs,
+/// this repository's release urls). tools/channels/channels_cli_test.zig runs this very line and compares the file with the formula the guard is to accept.
+const tap_render = "tool/channels formula --sums dist/SHA256SUMS --name buildrules --asset buildrules-cli --version \"$NUMBER\" --desc \"Hermetic Buck2 rules and toolchains\" --homepage \"https://buildrules.dev\" --license \"Apache-2.0\" --repo \"$GITHUB_REPOSITORY\" --no-explicit-version --out tap/buildrules.rb";
+/// The step of `tap` that mints the release bot's token for the tap repository alone: every input exact, the organisation the repository's own.
+const tap_mint =
+    "      - name: The token of the release bot, for the tap repository alone\n" ++
+    "        id: tap_bot\n" ++
+    "        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n" ++
+    "        with:\n" ++
+    "          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n" ++
+    "          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n" ++
+    "          owner: ${{ github.repository_owner }}\n" ++
+    "          repositories: homebrew-tap\n" ++
+    "          permission-contents: write\n" ++
+    "          permission-pull-requests: write\n" ++
+    "      - name: The pull request that adds the formula of this release to the tap, with auto-merge when the tap allows it\n"; // the next step: no input may follow the last one
+/// The tap step: the tap bot's token is its GH_TOKEN, here and nowhere else.
+const tap_step_env = "        env:\n          GH_TOKEN: ${{ steps.tap_bot.outputs.token }}\n        run: tool/tap ";
+/// The arguments of the tap step that the tap's guard depends on: the released repository, the version of the tag job, the formula file the render step wrote,
+/// the tap (the owner's own `homebrew-tap`), the formula and the asset stem.
+const tap_args = [_][]const u8{
+    "--repo \"$GITHUB_REPOSITORY\"",
+    "--version \"$NUMBER\"",
+    "--formula-file tap/buildrules.rb",
+    "--tap-repo \"$OWNER/homebrew-tap\"",
+    "--formula buildrules",
+    "--asset buildrules-cli",
+};
+const tap_env = "      NUMBER: ${{ needs.tag.outputs.number }}\n      OWNER: ${{ github.repository_owner }}\n";
 
 const Perm = struct { scope: []const u8, level: []const u8 };
 
@@ -306,18 +390,28 @@ pub fn permLevel(j: *const Job, scope: []const u8) ?[]const u8 {
     return null;
 }
 
-/// Whether a job may hold `scope: write`: `contents` in publish (tag writes with the release bot's token, not its own); `id-token` in attest (the signature and
-/// the attestation), in gamma (the farm's network) and in beta (the call of beta.yml, whose farm leg joins the farm's network); `attestations` in attest.
+/// Whether a job may hold `scope: write`: `contents` in publish (tag, bump and tap write with the release bot's token, not their own); `id-token` in attest (the
+/// signature and the attestation), in gamma (the farm's network), in beta (the call of beta.yml, whose farm leg joins the farm's network) and in the apt-deploy jobs
+/// (the OIDC exchange for the publish role); `attestations` in attest.
 fn writeAllowed(job: []const u8, scope: []const u8) bool {
     if (std.mem.eql(u8, scope, "contents")) return std.mem.eql(u8, job, "publish");
-    if (std.mem.eql(u8, scope, "id-token")) return std.mem.eql(u8, job, "attest") or std.mem.eql(u8, job, "gamma") or std.mem.eql(u8, job, "beta");
+    if (std.mem.eql(u8, scope, "id-token")) return std.mem.eql(u8, job, "attest") or std.mem.eql(u8, job, "gamma") or std.mem.eql(u8, job, "beta") or isAptDeploy(job);
     if (std.mem.eql(u8, scope, "attestations")) return std.mem.eql(u8, job, "attest");
     return false;
 }
 
+/// The jobs that assume the apt publish role through OIDC: the reads and the writes of the three attempts (the index jobs hold the key and no role).
+fn isAptDeploy(job: []const u8) bool {
+    return std.mem.startsWith(u8, job, "apt-deploy-");
+}
+
+fn isAptIndex(job: []const u8) bool {
+    return std.mem.startsWith(u8, job, "apt-index");
+}
+
 fn writeOwners(scope: []const u8) []const u8 {
     if (std.mem.eql(u8, scope, "contents")) return "publish";
-    if (std.mem.eql(u8, scope, "id-token")) return "attest, gamma and beta";
+    if (std.mem.eql(u8, scope, "id-token")) return "attest, gamma, beta and the apt-deploy jobs";
     if (std.mem.eql(u8, scope, "attestations")) return "attest";
     return "no job";
 }
@@ -383,8 +477,8 @@ fn isVersionTarget(s: []const u8) bool {
 }
 
 /// The one spelling of a cosign bundle's name: `<file>.sigstore.json` for exactly the files `release sign` signs (tools/release/binaries.zig): `SHA256SUMS`, the
-/// source archive `buildrules-<V>.tar.gz` and the three tarballs `buildrules-cli-<V>-<target>.tar.gz`, with `V` a version written out or as a variable and `<target>`
-/// one of the three release targets or a variable. Every word of the workflow that mentions `sigstore` (but the install of cosign, which is not a file) must be one
+/// source archive `buildrules-<V>.tar.gz`, the three tarballs `buildrules-cli-<V>-<target>.tar.gz` and the two .debs `buildrules_<V>_<arch>.deb`, with `V` a version
+/// written out or as a variable and `<target>` one of the three release targets (`<arch>` amd64 or arm64) or a variable. Every word of the workflow that mentions `sigstore` (but the install of cosign, which is not a file) must be one
 /// of those shapes, so a bundle a step uploads or verifies by another name (`.sigstore`, `.bundle`, `.sigstore.json.json`, a glob, a stem that is no release file)
 /// is not one `sign` wrote.
 pub fn sigstoreName(word: []const u8) bool {
@@ -394,6 +488,15 @@ pub fn sigstoreName(word: []const u8) bool {
     if (std.mem.indexOf(u8, stem, "sigstore") != null) return false;
     const base = if (std.mem.lastIndexOfScalar(u8, stem, '/')) |i| stem[i + 1 ..] else stem;
     if (std.mem.eql(u8, base, "SHA256SUMS")) return true;
+    if (std.mem.endsWith(u8, base, ".deb") and std.mem.indexOfAny(u8, base, "*?[") == null) {
+        const deb = base[0 .. base.len - ".deb".len];
+        if (!std.mem.startsWith(u8, deb, "buildrules_")) return false;
+        const rest = deb["buildrules_".len..];
+        const us = std.mem.lastIndexOfScalar(u8, rest, '_') orelse return false;
+        const arch = rest[us + 1 ..];
+        if (!(std.mem.eql(u8, arch, "amd64") or std.mem.eql(u8, arch, "arm64") or isExpression(arch))) return false;
+        return isVersionWord(rest[0..us]);
+    }
     if (!std.mem.endsWith(u8, base, ".tar.gz") or std.mem.indexOfAny(u8, base, "*?[") != null) return false;
     const name = base[0 .. base.len - ".tar.gz".len];
     if (std.mem.startsWith(u8, name, "buildrules-cli-")) return isVersionTarget(name["buildrules-cli-".len..]);
@@ -411,7 +514,7 @@ fn sigstoreNames(a: std.mem.Allocator, f: *Findings, text: []const u8) !void {
         var it = std.mem.tokenizeAny(u8, line, " \t\r\n\"'`,()=:;|<>");
         while (it.next()) |word| {
             if (std.mem.indexOf(u8, word, "sigstore") == null) continue;
-            if (!sigstoreName(word)) try add(a, f, "`{s}` names a cosign bundle other than `<file>.sigstore.json` of SHA256SUMS, `buildrules-<V>.tar.gz` or `buildrules-cli-<V>-<target>.tar.gz` (what `release sign` writes)", .{word});
+            if (!sigstoreName(word)) try add(a, f, "`{s}` names a cosign bundle other than `<file>.sigstore.json` of SHA256SUMS, `buildrules-<V>.tar.gz`, `buildrules-cli-<V>-<target>.tar.gz` or `buildrules_<V>_<arch>.deb` (what `release sign` writes)", .{word});
         }
     }
 }
@@ -441,6 +544,163 @@ fn buildBinaries(out_dir: []const u8) []const u8 {
         "./buck2 build --console simple -c buildrules_re.mode=local -c \"buildrules.release_version=$NUMBER\" --out rebuilt-bins //cli:release_binaries";
 }
 
+/// The step of the job `jb` (indentation kept) that holds `marker`: from its `      - ` line to the next step's, or null when no step holds it.
+fn stepWith(jb: []const u8, marker: []const u8) ?[]const u8 {
+    const at = std.mem.indexOf(u8, jb, marker) orelse return null;
+    const start = if (std.mem.lastIndexOf(u8, jb[0..at], "\n      - ")) |i| i + 1 else 0;
+    const end = std.mem.indexOfPos(u8, jb, at, "\n      - ") orelse jb.len;
+    return jb[start..end];
+}
+
+/// Whether the position of `a_marker` in `jb` is before `b_marker`'s (both present).
+fn precedes(jb: []const u8, a_marker: []const u8, b_marker: []const u8) bool {
+    const x = std.mem.indexOf(u8, jb, a_marker) orelse return false;
+    const y = std.mem.indexOf(u8, jb, b_marker) orelse return false;
+    return x < y;
+}
+
+/// `tap`: the Homebrew formula as a pull request in the tap, after the release exists. The token is for the tap repository alone, minted in the second to last
+/// step with exact inputs and used by the last step alone; the formula is rendered before any token exists, by the one command the tap's guard depends on.
+fn checkTap(a: std.mem.Allocator, f: *Findings, jobs: []Job, text: []const u8) !void {
+    const j = jobNamed(jobs, "tap") orelse return;
+    if (j.if_expr == null or !std.mem.eql(u8, j.if_expr.?, publish_if)) try add(a, f, "the job `tap` is not under its exact `if:` ({s})", .{publish_if});
+    for (bump_needs) |need| {
+        if (!hasNeed(j, need)) try add(a, f, "the job `tap` does not wait for `{s}` (it opens the pull request after the tag exists and the release is published)", .{need});
+    }
+    const jb = jobBlock(text, "tap");
+    const render_at = std.mem.indexOf(u8, jb, "        run: tool/channels formula ");
+    if (!hasLineEnd(jb, "        run: " ++ tap_render)) try add(a, f, "the job `tap` does not render the formula with exactly `{s}` (the flags the tap's guard expects)", .{tap_render});
+    const mint = std.mem.indexOf(u8, jb, tap_mint);
+    if (mint == null) try add(a, f, "the job `tap` does not mint the release bot's token with exactly the pinned inputs of `actions/create-github-app-token` (app-id, private-key, owner, repositories: homebrew-tap, permission-contents, permission-pull-requests), in the step before the last", .{});
+    const use = std.mem.indexOf(u8, jb, tap_step_env);
+    if (use == null) try add(a, f, "the step of `tap` that runs `tool/tap` does not take the bot's token as its GH_TOKEN (`steps.tap_bot.outputs.token`)", .{});
+    if (mint != null and use != null and mint.? > use.?) try add(a, f, "the job `tap` uses the bot's token before the step that mints it", .{});
+    if (render_at != null and mint != null and render_at.? > mint.?) try add(a, f, "the job `tap` mints the bot's token before it has rendered the formula: no token exists while a tool runs but the last", .{});
+    if (std.mem.count(u8, jb, "steps.tap_bot.outputs.token") != 1) try add(a, f, "the job `tap` uses the bot's token other than once, in the tap step", .{});
+    if (std.mem.indexOf(u8, jb, "github.token") != null or std.mem.indexOf(u8, jb, "secrets.GITHUB_TOKEN") != null) try add(a, f, "the job `tap` uses GITHUB_TOKEN, which holds no write to the tap", .{});
+    if (std.mem.count(u8, jb, "secrets.") != 1) try add(a, f, "the job `tap` reads other than the one secret of the release bot's key", .{});
+    if (use) |u| {
+        // the tap step is the last step of the job: nothing runs after the token is in the environment
+        const end = std.mem.indexOfScalarPos(u8, jb, u + tap_step_env.len, '\n') orelse jb.len;
+        if (std.mem.indexOf(u8, jb[end..], "\n      - ") != null) try add(a, f, "a step runs after the tap step, which holds the bot's token: it must be the last step of `tap`", .{});
+        const run_line = jb[u + tap_step_env.len .. end];
+        for (tap_args) |arg| {
+            if (std.mem.indexOf(u8, run_line, arg) == null) try add(a, f, "the tap step does not pass {s}", .{arg});
+        }
+    }
+    if (std.mem.indexOf(u8, jb, tap_env) == null) try add(a, f, "the job `tap` does not take the version from the tag job and the owner from the repository (`NUMBER: ${{{{ needs.tag.outputs.number }}}}`, `OWNER: ${{{{ github.repository_owner }}}}`)", .{});
+    if (std.mem.indexOf(u8, jb, "needs.plan.outputs.number") != null or std.mem.indexOf(u8, jb, "needs.plan.outputs.tag") != null) try add(a, f, "the job `tap` reads the plan's version, which a push that landed meanwhile may have taken: it uses `needs.tag.outputs.number`", .{});
+    if (std.mem.indexOf(u8, jb, "actions/checkout@") != null) try add(a, f, "the job `tap` checks the repository out: it needs the tools and the verified files, not the sources", .{});
+    if (std.mem.indexOf(u8, jb, "name: release-dist\n          path: dist\n") == null or std.mem.indexOf(u8, jb, "release-unsigned") != null) try add(a, f, "the job `tap` does not read `release-dist` (the files that were signed and verified) alone", .{});
+    if (std.mem.indexOf(u8, jb, "name: channel-tools\n          path: tool\n") == null) try add(a, f, "the job `tap` does not download the tools of the channels (`channel-tools`) into `tool`", .{});
+}
+
+/// The apt repository: three attempts of `apt-deploy-read`, `apt-index` and `apt-deploy-write`. No job holds both the signing key and the cloud role; the key is read in
+/// the signing step of the index jobs alone; every step that assumes the role, reads, signs or writes is behind the gate that ends a job without the settings green.
+fn checkApt(a: std.mem.Allocator, f: *Findings, jobs: []Job, text: []const u8) !void {
+    for (jobs) |*j| {
+        const jt = try j.text(a);
+        const key = std.mem.indexOf(u8, jt, "secrets.APT_GPG_PRIVATE_KEY") != null;
+        const names_role = std.mem.indexOf(u8, jt, "APT_PUBLISH_ROLE_ARN") != null;
+        const role = names_role or (permLevel(j, "id-token") != null and std.mem.eql(u8, permLevel(j, "id-token").?, "write") and isAptDeploy(j.name)) or (j.environment != null and std.mem.eql(u8, j.environment.?, apt_publish_environment));
+        if (key and role) try add(a, f, "the job `{s}` holds both the apt signing key and the cloud role: one job reads the index, another signs it and a third writes it, so that none can sign what it chose to write", .{j.name});
+        if (key and !isAptIndex(j.name)) try add(a, f, "the job `{s}` reads the apt signing key: only the `apt-index` jobs may", .{j.name});
+        if (names_role and !isAptDeploy(j.name)) try add(a, f, "the job `{s}` names the apt publish role: only the `apt-deploy-*` jobs may", .{j.name});
+        if (isAptDeploy(j.name) and std.mem.indexOf(u8, jt, "secrets.") != null) try add(a, f, "the job `{s}` assumes the apt publish role and reads a secret", .{j.name});
+        if (isAptIndex(j.name) and (std.mem.indexOf(u8, jt, "id-token") != null or std.mem.indexOf(u8, jt, "AWS_") != null)) try add(a, f, "the job `{s}` holds the apt signing key and is given the means to reach the cloud (`id-token`, `AWS_*`)", .{j.name});
+        if (isAptDeploy(j.name) or isAptIndex(j.name)) {
+            for (j.lines.items) |l| {
+                if (std.mem.indexOf(u8, l, "buck2") != null) try add(a, f, "the job `{s}` holds the apt signing key or role and runs buck2: {s}", .{ j.name, l });
+            }
+            if (std.mem.indexOf(u8, jt, "actions/checkout@") != null) try add(a, f, "the job `{s}` checks the repository out: it needs the tools and the verified files, not the sources", .{j.name});
+            for (j.lines.items) |l| {
+                if (usesRepo(l)) |repo| {
+                    if (!std.mem.eql(u8, repo, "actions/download-artifact") and !std.mem.eql(u8, repo, "actions/upload-artifact"))
+                        try add(a, f, "the job `{s}` holds the apt signing key or role and uses {s}", .{ j.name, repo });
+                }
+            }
+        }
+        // nothing but the apt jobs waits for an apt job: a failed one un-releases nothing
+        if (!std.mem.startsWith(u8, j.name, "apt-")) {
+            for (j.needs.items) |n| {
+                if (std.mem.startsWith(u8, n, "apt-")) try add(a, f, "the job `{s}` waits for `{s}`: nothing may, a failed apt job un-releases nothing", .{ j.name, n });
+            }
+        }
+    }
+    for (apt_attempts) |at| {
+        const rd = jobNamed(jobs, at.read) orelse continue;
+        if (jobNamed(jobs, at.index) == null) continue;
+        const wr = jobNamed(jobs, at.write) orelse continue;
+        const read_b = jobBlock(text, at.read);
+        const index_b = jobBlock(text, at.index);
+        const write_b = jobBlock(text, at.write);
+
+        // the read: the role, no key; the first attempt after the publish, a later one only after a lost write
+        for ([_]*Job{ rd, wr }) |j| {
+            const ok_perms = j.perms.items.len == 2 and permLevel(j, "contents") != null and std.mem.eql(u8, permLevel(j, "contents").?, "read") and permLevel(j, "id-token") != null and std.mem.eql(u8, permLevel(j, "id-token").?, "write");
+            if (!ok_perms) try add(a, f, "the job `{s}` is not `contents: read` and `id-token: write` alone", .{j.name});
+        }
+        if (at.prev_write) |prev| {
+            const want = try std.fmt.allocPrint(a, "${{{{ needs.{s}.outputs.conflict == 'true' }}}}", .{prev});
+            if (rd.if_expr == null or !std.mem.eql(u8, rd.if_expr.?, want)) try add(a, f, "the job `{s}` does not run only when the write before it lost (`if: {s}`)", .{ at.read, want });
+            if (!hasNeed(rd, prev)) try add(a, f, "the job `{s}` does not wait for `{s}`", .{ at.read, prev });
+        } else {
+            if (rd.if_expr == null or !std.mem.eql(u8, rd.if_expr.?, publish_if)) try add(a, f, "the job `{s}` is not under its exact `if:` ({s})", .{ at.read, publish_if });
+            for (bump_needs) |need| {
+                if (!hasNeed(rd, need)) try add(a, f, "the job `{s}` does not wait for `{s}` (it publishes after the tag exists and the release is published)", .{ at.read, need });
+            }
+        }
+        if (!hasLineEnd(read_b, "        run: " ++ apt_read_gate)) try add(a, f, "the job `{s}` does not gate on the settings with exactly `{s}`", .{ at.read, apt_read_gate });
+        if (std.mem.indexOf(u8, read_b, "      enabled: ${{ steps.gate.outputs.enabled }}\n") == null) try add(a, f, "the job `{s}` does not output the gate's `enabled`, which the index and the write wait on", .{at.read});
+        try aptGuarded(a, f, at.read, read_b, &.{ "run: tool/apt-publish assume ", "run: tool/apt-publish read ", try std.fmt.allocPrint(a, "name: apt-current{s}\n", .{at.suffix}) });
+        if (!precedes(read_b, "tool/apt-publish gate ", "tool/apt-publish assume ") or !precedes(read_b, "tool/apt-publish assume ", "tool/apt-publish read ")) try add(a, f, "the job `{s}` does not gate, then assume the role, then read (in that order)", .{at.read});
+
+        // the index: the key, no role
+        if (!hasLineEnd(index_b, "        run: " ++ apt_index_gate)) try add(a, f, "the job `{s}` does not gate on the key and the read with exactly `{s}`", .{ at.index, apt_index_gate });
+        const read_env = try std.fmt.allocPrint(a, "          READ_ENABLED: ${{{{ needs.{s}.outputs.enabled }}}}\n", .{at.read});
+        if (std.mem.indexOf(u8, index_b, read_env) == null) try add(a, f, "the job `{s}` does not take the read's `enabled` for its gate (`READ_ENABLED: ${{{{ needs.{s}.outputs.enabled }}}}`)", .{ at.index, at.read });
+        if (std.mem.indexOf(u8, index_b, "      signed: ${{ steps.sign.outputs.signed }}\n") == null) try add(a, f, "the job `{s}` does not output `signed` of its signing step, which the write waits on", .{at.index});
+        if (std.mem.count(u8, index_b, "secrets.APT_GPG_PRIVATE_KEY") != 2 or std.mem.count(u8, index_b, "secrets.APT_GPG_PASSPHRASE") != 1)
+            try add(a, f, "the job `{s}` reads the signing key other than twice (the gate's test and the signing step) or the passphrase other than once", .{at.index});
+        if (stepWith(index_b, "run: tool/apt-publish sign ")) |sign_step| {
+            if (std.mem.indexOf(u8, sign_step, "        id: sign\n") == null) try add(a, f, "the signing step of `{s}` is not `id: sign`, so its `signed` would not reach the write", .{at.index});
+            if (std.mem.indexOf(u8, sign_step, "          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n") == null or std.mem.indexOf(u8, sign_step, "          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}\n") == null)
+                try add(a, f, "the signing step of `{s}` does not take the key and the passphrase from the secrets (`APT_GPG_PRIVATE_KEY`, `APT_GPG_PASSPHRASE`), in its own environment", .{at.index});
+        } else try add(a, f, "the job `{s}` does not sign (`tool/apt-publish sign`)", .{at.index});
+        try aptGuarded(a, f, at.index, index_b, &.{ "run: tool/apt-publish index ", "run: tool/apt-publish sign ", try std.fmt.allocPrint(a, "name: apt-current{s}\n", .{at.suffix}), try std.fmt.allocPrint(a, "name: apt-next{s}\n", .{at.suffix}), "name: release-dist\n" });
+        if (!precedes(index_b, "tool/apt-publish gate ", "tool/apt-publish index ") or !precedes(index_b, "tool/apt-publish index ", "tool/apt-publish sign ")) try add(a, f, "the job `{s}` does not gate, then merge the .debs into the index, then sign (in that order)", .{at.index});
+        if (std.mem.indexOf(u8, index_b, "release-unsigned") != null) try add(a, f, "the job `{s}` reads `release-unsigned`: the .debs it indexes are the signed and verified ones (`release-dist`)", .{at.index});
+
+        // the write: the role, no key
+        if (!hasNeed(wr, at.read) or !hasNeed(wr, at.index)) try add(a, f, "the job `{s}` does not wait for `{s}` and `{s}`", .{ at.write, at.read, at.index });
+        if (!hasLineEnd(write_b, "        run: " ++ apt_write_gate)) try add(a, f, "the job `{s}` does not gate on the settings and the signed index with exactly `{s}`", .{ at.write, apt_write_gate });
+        const signed_env = try std.fmt.allocPrint(a, "          INDEX_SIGNED: ${{{{ needs.{s}.outputs.signed }}}}\n", .{at.index});
+        if (std.mem.indexOf(u8, write_b, signed_env) == null) try add(a, f, "the job `{s}` does not take the index's `signed` for its gate (`INDEX_SIGNED: ${{{{ needs.{s}.outputs.signed }}}}`)", .{ at.write, at.index });
+        if (std.mem.indexOf(u8, write_b, "      conflict: ${{ steps.put.outputs.conflict }}\n") == null) try add(a, f, "the job `{s}` does not output the `conflict` of its write step, which the next attempt waits on", .{at.write});
+        try aptGuarded(a, f, at.write, write_b, &.{ "run: tool/apt-publish assume ", "run: tool/apt-publish write ", try std.fmt.allocPrint(a, "name: apt-next{s}\n", .{at.suffix}), "name: release-dist\n" });
+        if (!precedes(write_b, "tool/apt-publish gate ", "tool/apt-publish assume ") or !precedes(write_b, "tool/apt-publish assume ", "tool/apt-publish write ")) try add(a, f, "the job `{s}` does not gate, then assume the role, then write (in that order)", .{at.write});
+        const write_end = " --out \"$GITHUB_OUTPUT\"";
+        if (at.last) {
+            if (!hasLineEnd(write_b, write_end ++ " --last")) try add(a, f, "the last attempt (`{s}`) does not write with `--last`: a lost write there must fail the job, not hand over to an attempt that does not exist", .{at.write});
+        } else {
+            if (std.mem.indexOf(u8, write_b, "--last") != null) try add(a, f, "the job `{s}` writes with `--last` but another attempt follows it", .{at.write});
+            if (!hasLineEnd(write_b, write_end)) try add(a, f, "the job `{s}` does not write with `--out \"$GITHUB_OUTPUT\"`, so its `conflict` would not reach the next attempt", .{at.write});
+        }
+        if (std.mem.indexOf(u8, write_b, "release-unsigned") != null) try add(a, f, "the job `{s}` reads `release-unsigned`: the .debs it uploads are the signed and verified ones (`release-dist`)", .{at.write});
+    }
+}
+
+/// Every step of the job `jb` that holds one of `markers` carries the gate's guard: a job whose settings are not made does nothing there.
+fn aptGuarded(a: std.mem.Allocator, f: *Findings, job: []const u8, jb: []const u8, markers: []const []const u8) !void {
+    for (markers) |m| {
+        const step = stepWith(jb, m) orelse {
+            try add(a, f, "the job `{s}` has no step with `{s}`", .{ job, std.mem.trim(u8, m, " \n") });
+            continue;
+        };
+        if (std.mem.indexOf(u8, step, apt_guard) == null) try add(a, f, "the step with `{s}` in the job `{s}` does not run only behind the gate (`if: steps.gate.outputs.enabled == 'true'`)", .{ std.mem.trim(u8, m, " \n"), job });
+    }
+}
+
 /// Everything wrong with `wf` (release.yml), given the dotslash file of the pinned buck2 and ci.yml.
 pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, ci_yml: []const u8) !Findings {
     var f = Findings.init(a);
@@ -468,8 +728,11 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     }
     if (!wc.hasLine(text, "  group: release-${{ github.event_name == 'push' && 'push' || github.run_id }}") or !wc.hasLine(text, "  cancel-in-progress: false"))
         try add(a, &f, "the workflow's concurrency is not `group: release-${{{{ github.event_name == 'push' && 'push' || github.run_id }}}}` with `cancel-in-progress: false`: the pushes are serialized and a running release is never cancelled", .{});
-    // The one secret: the release bot's private key, read once, by the step of `tag` that mints the token. Any other `secrets.` is refused.
-    if (std.mem.count(u8, text, "secrets.") != std.mem.count(u8, text, "secrets.RELEASE_BOT_PRIVATE_KEY }}")) try add(a, &f, "the workflow reads a secret", .{});
+    // The secrets: the release bot's private key (read by the steps of `tag`, `bump` and `tap` that mint a token) and the apt signing key (read by the signing step of
+    // each `apt-index` job). Any other `secrets.` is refused.
+    const bot_key_refs = std.mem.count(u8, text, "secrets.RELEASE_BOT_PRIVATE_KEY }}");
+    const gpg_refs = std.mem.count(u8, text, "secrets.APT_GPG_");
+    if (std.mem.count(u8, text, "secrets.") != bot_key_refs + gpg_refs) try add(a, &f, "the workflow reads a secret other than the release bot's key and the apt signing key", .{});
     if (std.mem.indexOf(u8, text, "--clobber") != null or std.mem.indexOf(u8, text, "release delete") != null)
         try add(a, &f, "the workflow replaces or deletes a release asset (`--clobber`, `release delete`): a release is never changed", .{});
     for ([_][]const u8{ "always()", "failure()", "cancelled()" }) |fun| {
@@ -495,21 +758,30 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             }
         }
     }
-    // The release bot's key is an environment secret of `release_environment`, restricted to main: exactly the jobs that read `RELEASE_BOT_*` declare it, and no
-    // other job declares an environment.
+    // The release bot's key is an environment secret of `release_environment` (the owner restricts it to main as a setup step): exactly the jobs that read `RELEASE_BOT_*` declare it. The apt
+    // signing key is a secret of `apt_signing_environment`, read by the `apt-index` jobs alone, and the apt publish role is assumed in `apt_publish_environment` by the
+    // `apt-deploy-*` jobs alone. No other job declares an environment.
     for (jobs) |*j| {
         const jt = try j.text(a);
-        if (std.mem.indexOf(u8, jt, "RELEASE_BOT") != null) {
+        const reads_bot = std.mem.indexOf(u8, jt, "RELEASE_BOT") != null;
+        const reads_gpg = std.mem.indexOf(u8, jt, "secrets.APT_GPG_") != null;
+        if (reads_bot) {
             if (j.environment == null or !std.mem.eql(u8, j.environment.?, release_environment))
                 try add(a, &f, "the job `{s}` reads `RELEASE_BOT_*` but does not declare `environment: {s}` (it has {s})", .{ j.name, release_environment, j.environment orelse "none" });
+        } else if (reads_gpg) {
+            if (j.environment == null or !std.mem.eql(u8, j.environment.?, apt_signing_environment))
+                try add(a, &f, "the job `{s}` reads the apt signing key (`APT_GPG_*`) but does not declare `environment: {s}` (it has {s})", .{ j.name, apt_signing_environment, j.environment orelse "none" });
+        } else if (isAptDeploy(j.name)) {
+            if (j.environment == null or !std.mem.eql(u8, j.environment.?, apt_publish_environment))
+                try add(a, &f, "the job `{s}` assumes the apt publish role but does not declare `environment: {s}` (it has {s})", .{ j.name, apt_publish_environment, j.environment orelse "none" });
         } else if (j.environment) |e| {
-            try add(a, &f, "the job `{s}` declares `environment: {s}`; only the jobs that read `RELEASE_BOT_*` (`tag`, `bump`) declare one", .{ j.name, e });
+            try add(a, &f, "the job `{s}` declares `environment: {s}`; only the jobs that read `RELEASE_BOT_*` (`tag`, `bump`, `tap`), the apt signing key (`apt-index*`) or assume the apt publish role (`apt-deploy-*`) declare one", .{ j.name, e });
         }
     }
     // `permission-contents: write` and `permission-pull-requests: write` are inputs of the App-token action, not grants of a job's token: they are counted by their own rules below.
     if (std.mem.count(u8, text, ": write") - std.mem.count(u8, text, "permission-contents: write") - std.mem.count(u8, text, "permission-pull-requests: write") != writes) try add(a, &f, "a `: write` is granted outside a job's `permissions:` block", .{});
     // Jobs that only read hold `contents: read` alone (verify also reads attestations).
-    for ([_][]const u8{ "archive", "build-cli", "plan" }) |name| {
+    for ([_][]const u8{ "archive", "build-cli", "plan", "tap", "apt-index", "apt-index-2", "apt-index-3" }) |name| {
         const j = jobNamed(jobs, name) orelse continue;
         if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read"))
             try add(a, &f, "the job `{s}` is not `contents: read` alone", .{name});
@@ -532,11 +804,13 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         if (std.mem.indexOf(u8, jt, "github.token") != null or std.mem.indexOf(u8, jt, "secrets.GITHUB_TOKEN") != null) try add(a, &f, "the job `tag` uses GITHUB_TOKEN, which the ruleset refuses for a tag", .{});
         if (std.mem.count(u8, jt, "secrets.") != 1) try add(a, &f, "the job `tag` reads other than the one secret of the release bot's key", .{});
     }
-    // The token is minted in `tag` (for this repository) and in `bump` (for the internal one), once each, and nowhere else; the key, the two token outputs and the
-    // permission inputs (one in `tag`, two in `bump`) appear nowhere else.
-    if (std.mem.count(u8, text, app_token_action ++ "@") != 2) try add(a, &f, "`actions/create-github-app-token` is used other than twice, in `tag` and in `bump`", .{});
-    if (std.mem.count(u8, text, "secrets.RELEASE_BOT_PRIVATE_KEY") != 2 or std.mem.count(u8, text, "steps.bot.outputs.token") != 1 or std.mem.count(u8, text, "steps.bump_bot.outputs.token") != 1 or std.mem.count(u8, text, "permission-") != 3)
-        try add(a, &f, "the release bot's key, token or permission input appears other than in `tag` and `bump`", .{});
+    // The token is minted in `tag` (for this repository), in `bump` (for the internal one) and in `tap` (for the tap), once each, and nowhere else; the key, the three
+    // token outputs and the permission inputs (one in `tag`, two in `bump`, two in `tap`) appear nowhere else.
+    if (std.mem.count(u8, text, app_token_action ++ "@") != 3) try add(a, &f, "`actions/create-github-app-token` is used other than three times, in `tag`, `bump` and `tap`", .{});
+    if (std.mem.count(u8, text, "secrets.RELEASE_BOT_PRIVATE_KEY") != 3 or std.mem.count(u8, text, "steps.bot.outputs.token") != 1 or std.mem.count(u8, text, "steps.bump_bot.outputs.token") != 1 or std.mem.count(u8, text, "steps.tap_bot.outputs.token") != 1 or std.mem.count(u8, text, "permission-") != 5)
+        try add(a, &f, "the release bot's key, token or permission input appears other than in `tag`, `bump` and `tap`", .{});
+    try checkTap(a, &f, jobs, text);
+    try checkApt(a, &f, jobs, text);
     if (jobNamed(jobs, "bump")) |j| {
         // The job's own token only reads; the write is the release bot's token for the internal repository, minted by one step with exact inputs and used by one step.
         if (j.perms.items.len != 1 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read"))
@@ -566,9 +840,10 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             }
         }
     }
-    // Nothing waits for `bump`: a failed bump is red and un-releases nothing.
+    // Nothing waits for `bump` or `tap`: a failed bump or tap is red and un-releases nothing.
     for (jobs) |*j| {
         if (hasNeed(j, "bump")) try add(a, &f, "the job `{s}` waits for `bump`: nothing may, a failed bump un-releases nothing", .{j.name});
+        if (hasNeed(j, "tap")) try add(a, &f, "the job `{s}` waits for `tap`: nothing may, a failed tap un-releases nothing", .{j.name});
     }
     // The race of two pushes that plan the same number: the tag job (alone in its concurrency group) settles it, and what comes after takes the tag from its outputs.
     if (jobNamed(jobs, "tag")) |_| {
@@ -617,8 +892,8 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         if (std.mem.count(u8, jt, cosign_action ++ "@") != 1) try add(a, &f, "the job `attest` does not install cosign (`sigstore/cosign-installer` once, before it signs)", .{});
         if (std.mem.indexOf(u8, jt, "tool/release sign --dist dist --dry false") == null) try add(a, &f, "the job `attest` does not sign (`tool/release sign --dist dist --dry false`)", .{});
         if (std.mem.indexOf(u8, jt, "--dry true") != null) try add(a, &f, "the job `attest` runs a dry signing", .{});
-        // the attested files are the archive, the tarballs and SHA256SUMS: the subject glob names them all
-        if (std.mem.indexOf(u8, jt, "subject-path: |\ndist/buildrules-*.tar.gz\ndist/SHA256SUMS\n") == null) try add(a, &f, "the job `attest` does not attest `dist/buildrules-*.tar.gz` (the archive and the three tarballs) and `dist/SHA256SUMS`", .{});
+        // the attested files are the archive, the tarballs, the .debs and SHA256SUMS: the subject glob names them all
+        if (std.mem.indexOf(u8, jt, "subject-path: |\ndist/buildrules-*.tar.gz\ndist/buildrules_*.deb\ndist/SHA256SUMS\n") == null) try add(a, &f, "the job `attest` does not attest `dist/buildrules-*.tar.gz` (the archive and the three tarballs), `dist/buildrules_*.deb` (the two .debs) and `dist/SHA256SUMS`", .{});
         // sign comes before the attestation, and both before the upload of what verify and publish read
         const i_sign = std.mem.indexOf(u8, jt, "tool/release sign ");
         const i_att = std.mem.indexOf(u8, jt, "actions/attest-build-provenance@");
@@ -733,7 +1008,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         if (j.perms.items.len != 2 or permLevel(j, "contents") == null or !std.mem.eql(u8, permLevel(j, "contents").?, "read") or permLevel(j, "id-token") == null or !std.mem.eql(u8, permLevel(j, "id-token").?, "write"))
             try add(a, &f, "the job `beta` is not `contents: read` and `id-token: write` alone", .{});
         const jt = try j.text(a);
-        if (!std.mem.endsWith(u8, jt, "\nwith:\ncli-artifact: release-cli-bin")) try add(a, &f, "the job `beta` does not run the command line that `build-cli` built (`with: cli-artifact: release-cli-bin`)", .{});
+        if (!std.mem.endsWith(u8, jt, "\nwith:\ncli-bins-artifact: release-cli-bins\ncli-artifact: release-cli-bin")) try add(a, &f, "the job `beta` does not run the command line that `build-cli` built (`with: cli-bins-artifact: release-cli-bins`, `cli-artifact: release-cli-bin`)", .{});
     }
     // gamma: our own repositories on the farm. It holds the farm's token and no write access to the repository, takes the farm-connect
     // action from the repository and commit that variables name (the checkout is verified before the action runs), and runs no buck2 itself.
@@ -768,8 +1043,15 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         if (!hasLineEnd(jt, buildBinaries("cli-bins"))) try add(a, &f, "the job `build-cli` does not build //cli:release_binaries with the planned version stamped in (`-c \"buildrules.release_version=$NUMBER\"`, `--out cli-bins`)", .{});
         if (!hasLineEnd(jt, "tool/release package-all --version \"$NUMBER\" --bins cli-bins --license LICENSE --out cli-dist --native linux-x86_64"))
             try add(a, &f, "the job `build-cli` does not package the three tarballs of the stamped build (`package-all --version \"$NUMBER\" --bins cli-bins`, running only the linux-x86_64 binary)", .{});
-        if (std.mem.indexOf(u8, jt, "name: release-cli-tarballs\npath: cli-dist\n") == null) try add(a, &f, "the job `build-cli` does not upload the three tarballs as the artifact `release-cli-tarballs`", .{});
+        if (!hasLineEnd(jt, "tool/release debs --version \"$NUMBER\" --bins cli-bins --channels tool/channels --packaging packaging/deb --out cli-dist"))
+            try add(a, &f, "the job `build-cli` does not package the two .debs from the same binaries (`debs --version \"$NUMBER\" --bins cli-bins --channels tool/channels --packaging packaging/deb --out cli-dist`)", .{});
+        if (std.mem.indexOf(u8, jt, "name: channel-tools\npath: tool\n") == null) try add(a, &f, "the job `build-cli` does not download the tools of the channels (`channel-tools`) into `tool`", .{});
+        const i_pkg = std.mem.indexOf(u8, jt, "tool/release package-all ");
+        const i_deb = std.mem.indexOf(u8, jt, "tool/release debs ");
+        if (i_pkg != null and i_deb != null and i_deb.? < i_pkg.?) try add(a, &f, "the job `build-cli` makes the .debs before the tarballs", .{});
+        if (std.mem.indexOf(u8, jt, "name: release-cli-tarballs\npath: cli-dist\n") == null) try add(a, &f, "the job `build-cli` does not upload the three tarballs and the two .debs as the artifact `release-cli-tarballs`", .{});
         if (std.mem.indexOf(u8, jt, "name: release-cli-bin\npath: cli-bins/linux-x86_64/buildrules\n") == null) try add(a, &f, "the job `build-cli` does not upload the linux-x86_64 binary it packaged as the artifact `release-cli-bin`", .{});
+        if (std.mem.indexOf(u8, jt, "name: release-cli-bins\npath: cli-bins\n") == null) try add(a, &f, "the job `build-cli` does not upload the directory of the three binaries it packaged as the artifact `release-cli-bins` (the native beta legs run two of them)", .{});
     }
     // archive: the tarballs the build made, the file the beta ran, and the check that the tarball holds that very file.
     if (jobNamed(jobs, "archive")) |j| {
@@ -800,6 +1082,11 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         if (std.mem.indexOf(u8, jt, "NUMBER: ${{ needs.plan.outputs.number }}") == null) try add(a, &f, "the job `{s}` does not take the planned version from the plan (`NUMBER: ${{{{ needs.plan.outputs.number }}}}`)", .{name});
         if (!hasLineEnd(jt, buildBinaries("rebuilt-bins"))) try add(a, &f, "the job `{s}` does not build the three binaries again with the planned version stamped in (`--out rebuilt-bins //cli:release_binaries`)", .{name});
         if (!hasLineEnd(jt, "tool/release package-all --version \"$NUMBER\" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64")) try add(a, &f, "the job `{s}` does not package the second build's three tarballs", .{name});
+        if (!hasLineEnd(jt, "tool/release debs --version \"$NUMBER\" --bins rebuilt-bins --channels tool/channels --packaging packaging/deb --out rebuilt-dist")) try add(a, &f, "the job `{s}` does not package the second build's two .debs", .{name});
+        if (std.mem.indexOf(u8, jt, "name: channel-tools\npath: tool\n") == null) try add(a, &f, "the job `{s}` does not download the tools of the channels (`channel-tools`) into `tool`", .{name});
+        const i_second = std.mem.indexOf(u8, jt, "tool/release debs ");
+        const i_verify = std.mem.indexOf(u8, jt, "tool/release verify ");
+        if (i_second != null and i_verify != null and i_second.? > i_verify.?) try add(a, &f, "the job `{s}` verifies before it has made the second build's .debs", .{name});
         if (std.mem.indexOf(u8, jt, " --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry ") == null) try add(a, &f, "the job `{s}` does not pass `--cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist` to verify, so the shipped program's version and the second build are not checked", .{name});
         if (std.mem.indexOf(u8, jt, "name: release-dist") == null or std.mem.indexOf(u8, jt, "release-unsigned") != null) try add(a, &f, "the job `{s}` does not read `release-dist` (what attest made) alone", .{name});
     }
@@ -829,7 +1116,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     }
 
     // The jobs that write run no buck2 and use only the checkout and download actions.
-    for ([_][]const u8{ "tag", "publish", "bump" }) |name| {
+    for ([_][]const u8{ "tag", "publish", "bump", "tap" }) |name| {
         const j = jobNamed(jobs, name) orelse continue;
         for (j.lines.items) |l| {
             if (usesRepo(l)) |repo| {
@@ -837,7 +1124,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
                 for (write_job_actions) |w| {
                     if (std.mem.eql(u8, repo, w)) ok = true;
                 }
-                if ((std.mem.eql(u8, name, "tag") or std.mem.eql(u8, name, "bump")) and std.mem.eql(u8, repo, app_token_action)) ok = true;
+                if ((std.mem.eql(u8, name, "tag") or std.mem.eql(u8, name, "bump") or std.mem.eql(u8, name, "tap")) and std.mem.eql(u8, repo, app_token_action)) ok = true;
                 if (!ok) try add(a, &f, "the job `{s}` holds a write scope and uses {s}", .{ name, repo });
             }
             if (std.mem.indexOf(u8, l, "buck2") != null and !std.mem.startsWith(u8, l, "#")) try add(a, &f, "the job `{s}` holds a write scope and runs buck2: {s}", .{ name, l });
@@ -870,6 +1157,17 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     }
     if (!built) try add(a, &f, "the workflow does not build {s}", .{tool_target});
     if (!stage_built) try add(a, &f, "the workflow does not build {s}, which gamma runs", .{stage_target});
+    // The tools of the channels are built in `tool`, before any job holds a token or a role, each into its own file, and handed on as one artifact.
+    for (channel_targets) |ct| {
+        var channel_built = false;
+        for (try wc.commands(a, text)) |cmd| {
+            if (std.mem.indexOf(u8, cmd, "./buck2 build ") != null and std.mem.indexOf(u8, cmd, ct[0]) != null and std.mem.indexOf(u8, cmd, ct[1]) != null) channel_built = true;
+        }
+        if (!channel_built) try add(a, &f, "the workflow does not build {s} into its own file ({s}...)", .{ ct[0], ct[1] });
+    }
+    if (jobNamed(jobs, "tool")) |j| {
+        if (std.mem.indexOf(u8, try j.text(a), "name: channel-tools\npath: |\n./channels\n./tap\n./apt-publish\n") == null) try add(a, &f, "the job `tool` does not hand on the tools of the channels as the artifact `channel-tools` (`./channels`, `./tap`, `./apt-publish`)", .{});
+    }
     try wc.buck2Install(a, &f, text, dotslash);
     return f;
 }
@@ -943,6 +1241,15 @@ const fixture_wf =
     \\      - name: Build the stage tool
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local --out stage //tools/stage:stage
     \\
+    \\      - name: Build the channels tool
+    \\        run: ./buck2 build --console simple -c buildrules_re.mode=local --out channels //tools/channels:channels
+    \\
+    \\      - name: Build the tap tool
+    \\        run: ./buck2 build --console simple -c buildrules_re.mode=local --out tap //tools/deploy:tap
+    \\
+    \\      - name: Build the apt publish tool
+    \\        run: ./buck2 build --console simple -c buildrules_re.mode=local --out apt-publish //tools/deploy:apt_publish
+    \\
     \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
     \\        with:
     \\          name: release-tool
@@ -956,6 +1263,16 @@ const fixture_wf =
     \\          path: |
     \\            ./stage
     \\            ./buck2
+    \\          retention-days: 7
+    \\          if-no-files-found: error
+    \\
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: |
+    \\            ./channels
+    \\            ./tap
+    \\            ./apt-publish
     \\          retention-days: 7
     \\          if-no-files-found: error
     \\
@@ -1010,11 +1327,17 @@ const fixture_wf =
     \\        with:
     \\          name: release-tool
     \\          path: tool
-    \\      - run: chmod +x buck2 tool/release
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: tool
+    \\      - run: chmod +x buck2 tool/release tool/channels
     \\      - name: Build the command line for the three targets with the release version stamped in
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out cli-bins //cli:release_binaries
     \\      - name: Package the three tarballs
     \\        run: tool/release package-all --version "$NUMBER" --bins cli-bins --license LICENSE --out cli-dist --native linux-x86_64
+    \\      - name: Package the two .debs from the same binaries
+    \\        run: tool/release debs --version "$NUMBER" --bins cli-bins --channels tool/channels --packaging packaging/deb --out cli-dist
     \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
     \\        with:
     \\          name: release-cli-tarballs
@@ -1027,6 +1350,12 @@ const fixture_wf =
     \\          path: cli-bins/linux-x86_64/buildrules
     \\          retention-days: 7
     \\          if-no-files-found: error
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        with:
+    \\          name: release-cli-bins
+    \\          path: cli-bins
+    \\          retention-days: 7
+    \\          if-no-files-found: error
     \\
     \\  beta:
     \\    needs: [plan, build-cli]
@@ -1036,6 +1365,7 @@ const fixture_wf =
     \\      id-token: write
     \\    uses: ./.github/workflows/beta.yml
     \\    with:
+    \\      cli-bins-artifact: release-cli-bins
     \\      cli-artifact: release-cli-bin
     \\
     \\  gamma:
@@ -1122,9 +1452,9 @@ const fixture_wf =
     \\        run: tool/release archive --root "$GITHUB_WORKSPACE" --tag "$TAG" --sha "$CANDIDATE" --out dist
     \\      - name: The tarball to attest holds the file the beta ran
     \\        run: tool/release record --tarball "dist/buildrules-cli-$NUMBER-linux-x86_64.tar.gz" --ran-binary ran/buildrules --out tested
-    \\      - name: Attest only the tarballs a user beta ran
+    \\      - name: Attest only the tarballs a user beta ran, and the .debs that hold their program
     \\        run: tool/release tested --dist dist --tested tested --targets linux-x86_64
-    \\      - name: SHA256SUMS over the archive and the three tarballs
+    \\      - name: SHA256SUMS over the archive, the three tarballs and the two .debs
     \\        run: tool/release sums --dist dist
     \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
     \\        with:
@@ -1153,13 +1483,14 @@ const fixture_wf =
     \\          path: dist
     \\      - run: chmod +x tool/release
     \\      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-    \\      - name: Sign the five files, keyless
+    \\      - name: Sign the seven files, keyless
     \\        run: tool/release sign --dist dist --dry false
-    \\      - name: Attest the archive, the three tarballs and SHA256SUMS
+    \\      - name: Attest the archive, the three tarballs, the two .debs and SHA256SUMS
     \\        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
     \\        with:
     \\          subject-path: |
     \\            dist/buildrules-*.tar.gz
+    \\            dist/buildrules_*.deb
     \\            dist/SHA256SUMS
     \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
     \\        with:
@@ -1198,13 +1529,19 @@ const fixture_wf =
     \\        with:
     \\          name: release-dist
     \\          path: dist
-    \\      - run: chmod +x buck2 tool/release
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: tool
+    \\      - run: chmod +x buck2 tool/release tool/channels
     \\      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
     \\      - name: Build the command line again for the three targets
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
     \\      - name: Package the three tarballs again
     \\        run: tool/release package-all --version "$NUMBER" --bins rebuilt-bins --license LICENSE --out rebuilt-dist --native linux-x86_64
-    \\      - name: The archive and the tarballs, their sums, the second build, file list and scrub, the command line's version, the attestations and the signatures
+    \\      - name: Package the two .debs again
+    \\        run: tool/release debs --version "$NUMBER" --bins rebuilt-bins --channels tool/channels --packaging packaging/deb --out rebuilt-dist
+    \\      - name: The archive, the tarballs and the .debs, their sums, the second build, file list and scrub, the command line's version, the attestations and the signatures
     \\        run: tool/release verify --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$CANDIDATE" --dist dist --workflow .github/workflows/release.yml --cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry false
     \\
     \\  tag:
@@ -1339,6 +1676,506 @@ const fixture_wf =
     \\          path: site
     \\          retention-days: 30
     \\          if-no-files-found: error
+    \\
+    \\  tap:
+    \\    needs: [plan, tag, publish, tool]
+    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork && needs.tag.outputs.superseded != 'true' }}
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    environment: release
+    \\    permissions:
+    \\      contents: read
+    \\    env:
+    \\      NUMBER: ${{ needs.tag.outputs.number }}
+    \\      OWNER: ${{ github.repository_owner }}
+    \\    steps:
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: tool
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: release-dist
+    \\          path: dist
+    \\      - run: chmod +x tool/channels tool/tap
+    \\      - name: Render Formula/buildrules.rb from the verified SHA256SUMS, with the flags the tap's guard expects
+    \\        run: tool/channels formula --sums dist/SHA256SUMS --name buildrules --asset buildrules-cli --version "$NUMBER" --desc "Hermetic Buck2 rules and toolchains" --homepage "https://buildrules.dev" --license "Apache-2.0" --repo "$GITHUB_REPOSITORY" --no-explicit-version --out tap/buildrules.rb
+    \\      - name: The token of the release bot, for the tap repository alone
+    \\        id: tap_bot
+    \\        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+    \\        with:
+    \\          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+    \\          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+    \\          owner: ${{ github.repository_owner }}
+    \\          repositories: homebrew-tap
+    \\          permission-contents: write
+    \\          permission-pull-requests: write
+    \\      - name: The pull request that adds the formula of this release to the tap, with auto-merge when the tap allows it
+    \\        env:
+    \\          GH_TOKEN: ${{ steps.tap_bot.outputs.token }}
+    \\        run: tool/tap --repo "$GITHUB_REPOSITORY" --version "$NUMBER" --formula-file tap/buildrules.rb --tap-repo "$OWNER/homebrew-tap" --formula buildrules --asset buildrules-cli --workdir "$RUNNER_TEMP/tap-clone"
+    \\
+    \\  apt-deploy-read:
+    \\    needs: [plan, tag, publish, tool]
+    \\    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork && needs.tag.outputs.superseded != 'true' }}
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    environment: apt-publish
+    \\    permissions:
+    \\      contents: read
+    \\      id-token: write
+    \\    outputs:
+    \\      enabled: ${{ steps.gate.outputs.enabled }}
+    \\    env:
+    \\      AWS_DEFAULT_REGION: us-east-1
+    \\    steps:
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: tool
+    \\      - run: chmod +x tool/apt-publish
+    \\      - name: Gate on the settings of the apt repository (a job without them does nothing and ends green)
+    \\        id: gate
+    \\        env:
+    \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+    \\          APT_BUCKET: ${{ vars.APT_BUCKET }}
+    \\          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+    \\          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+    \\        run: tool/apt-publish gate --label "apt publish (read)" --out "$GITHUB_OUTPUT" --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME
+    \\      - name: Assume the publish role through OIDC
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+    \\        run: tool/apt-publish assume --env-file "$GITHUB_ENV"
+    \\      - name: Read the current index and its ETags from S3 (never through the CDN, which caches the index)
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_BUCKET: ${{ vars.APT_BUCKET }}
+    \\        run: tool/apt-publish read --bucket "$APT_BUCKET" --out "$RUNNER_TEMP/apt-current"
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: apt-current
+    \\          path: ${{ runner.temp }}/apt-current
+    \\          if-no-files-found: error
+    \\          retention-days: 1
+    \\          overwrite: true
+    \\
+    \\  apt-index:
+    \\    needs: [apt-deploy-read]
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    environment: apt-signing
+    \\    permissions:
+    \\      contents: read
+    \\    outputs:
+    \\      signed: ${{ steps.sign.outputs.signed }}
+    \\    env:
+    \\      OWNER: ${{ github.repository_owner }}
+    \\    steps:
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: tool
+    \\      - run: chmod +x tool/apt-publish tool/channels
+    \\      - name: Gate on the signing key and on the read (a job without them does nothing and ends green)
+    \\        id: gate
+    \\        env:
+    \\          READ_ENABLED: ${{ needs.apt-deploy-read.outputs.enabled }}
+    \\          HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY != '' }}
+    \\          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+    \\        run: tool/apt-publish gate --label "apt index" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true HAVE_KEY --env APT_GPG_FINGERPRINT
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: apt-current
+    \\          path: ${{ runner.temp }}/apt-current
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: release-dist
+    \\          path: ${{ runner.temp }}/apt-debs
+    \\      - name: Merge the .debs into the index that was read (the index of every product is kept)
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        run: tool/apt-publish index --channels tool/channels --current "$RUNNER_TEMP/apt-current" --out "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --origin "$OWNER" --label "$OWNER" --description "$OWNER packages"
+    \\      - name: Sign Release with the signing subkey (InRelease and Release.gpg)
+    \\        id: sign
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+    \\          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+    \\          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+    \\        run: tool/apt-publish sign --dir "$RUNNER_TEMP/apt-next/dists/stable" --work "$RUNNER_TEMP/apt-sign" --fingerprint "$APT_GPG_FINGERPRINT" --out "$GITHUB_OUTPUT"
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: apt-next
+    \\          path: |
+    \\            ${{ runner.temp }}/apt-next/dists
+    \\            ${{ runner.temp }}/apt-next/etags.txt
+    \\          if-no-files-found: error
+    \\          retention-days: 1
+    \\          overwrite: true
+    \\
+    \\  apt-deploy-write:
+    \\    needs: [apt-deploy-read, apt-index]
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    environment: apt-publish
+    \\    permissions:
+    \\      contents: read
+    \\      id-token: write
+    \\    outputs:
+    \\      conflict: ${{ steps.put.outputs.conflict }}
+    \\    env:
+    \\      AWS_DEFAULT_REGION: us-east-1
+    \\    steps:
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: tool
+    \\      - run: chmod +x tool/apt-publish
+    \\      - name: Gate on the settings of the apt repository and on the signed index (a job without them does nothing and ends green)
+    \\        id: gate
+    \\        env:
+    \\          READ_ENABLED: ${{ needs.apt-deploy-read.outputs.enabled }}
+    \\          INDEX_SIGNED: ${{ needs.apt-index.outputs.signed }}
+    \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+    \\          APT_BUCKET: ${{ vars.APT_BUCKET }}
+    \\          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+    \\          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+    \\        run: tool/apt-publish gate --label "apt publish (write)" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true INDEX_SIGNED --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: apt-next
+    \\          path: ${{ runner.temp }}/apt-next
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: release-dist
+    \\          path: ${{ runner.temp }}/apt-debs
+    \\      - name: Assume the publish role through OIDC
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+    \\        run: tool/apt-publish assume --env-file "$GITHUB_ENV"
+    \\      - name: Upload the .debs (If-None-Match), write the signed index (If-Match on the ETag that was read), then invalidate /apt/dists/*
+    \\        id: put
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_BUCKET: ${{ vars.APT_BUCKET }}
+    \\          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+    \\          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+    \\        run: tool/apt-publish write --bucket "$APT_BUCKET" --distribution "$APT_DISTRIBUTION_ID" --hostname "$APT_HOSTNAME" --next "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --out "$GITHUB_OUTPUT"
+    \\
+    \\  apt-deploy-read-2:
+    \\    needs: [apt-deploy-write]
+    \\    if: ${{ needs.apt-deploy-write.outputs.conflict == 'true' }}
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    environment: apt-publish
+    \\    permissions:
+    \\      contents: read
+    \\      id-token: write
+    \\    outputs:
+    \\      enabled: ${{ steps.gate.outputs.enabled }}
+    \\    env:
+    \\      AWS_DEFAULT_REGION: us-east-1
+    \\    steps:
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: tool
+    \\      - run: chmod +x tool/apt-publish
+    \\      - name: Gate on the settings of the apt repository (a job without them does nothing and ends green)
+    \\        id: gate
+    \\        env:
+    \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+    \\          APT_BUCKET: ${{ vars.APT_BUCKET }}
+    \\          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+    \\          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+    \\        run: tool/apt-publish gate --label "apt publish (read)" --out "$GITHUB_OUTPUT" --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME
+    \\      - name: Assume the publish role through OIDC
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+    \\        run: tool/apt-publish assume --env-file "$GITHUB_ENV"
+    \\      - name: Read the current index and its ETags from S3 (never through the CDN, which caches the index)
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_BUCKET: ${{ vars.APT_BUCKET }}
+    \\        run: tool/apt-publish read --bucket "$APT_BUCKET" --out "$RUNNER_TEMP/apt-current"
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: apt-current-2
+    \\          path: ${{ runner.temp }}/apt-current
+    \\          if-no-files-found: error
+    \\          retention-days: 1
+    \\          overwrite: true
+    \\
+    \\  apt-index-2:
+    \\    needs: [apt-deploy-read-2]
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    environment: apt-signing
+    \\    permissions:
+    \\      contents: read
+    \\    outputs:
+    \\      signed: ${{ steps.sign.outputs.signed }}
+    \\    env:
+    \\      OWNER: ${{ github.repository_owner }}
+    \\    steps:
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: tool
+    \\      - run: chmod +x tool/apt-publish tool/channels
+    \\      - name: Gate on the signing key and on the read (a job without them does nothing and ends green)
+    \\        id: gate
+    \\        env:
+    \\          READ_ENABLED: ${{ needs.apt-deploy-read-2.outputs.enabled }}
+    \\          HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY != '' }}
+    \\          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+    \\        run: tool/apt-publish gate --label "apt index" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true HAVE_KEY --env APT_GPG_FINGERPRINT
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: apt-current-2
+    \\          path: ${{ runner.temp }}/apt-current
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: release-dist
+    \\          path: ${{ runner.temp }}/apt-debs
+    \\      - name: Merge the .debs into the index that was read (the index of every product is kept)
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        run: tool/apt-publish index --channels tool/channels --current "$RUNNER_TEMP/apt-current" --out "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --origin "$OWNER" --label "$OWNER" --description "$OWNER packages"
+    \\      - name: Sign Release with the signing subkey (InRelease and Release.gpg)
+    \\        id: sign
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+    \\          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+    \\          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+    \\        run: tool/apt-publish sign --dir "$RUNNER_TEMP/apt-next/dists/stable" --work "$RUNNER_TEMP/apt-sign" --fingerprint "$APT_GPG_FINGERPRINT" --out "$GITHUB_OUTPUT"
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: apt-next-2
+    \\          path: |
+    \\            ${{ runner.temp }}/apt-next/dists
+    \\            ${{ runner.temp }}/apt-next/etags.txt
+    \\          if-no-files-found: error
+    \\          retention-days: 1
+    \\          overwrite: true
+    \\
+    \\  apt-deploy-write-2:
+    \\    needs: [apt-deploy-read-2, apt-index-2]
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    environment: apt-publish
+    \\    permissions:
+    \\      contents: read
+    \\      id-token: write
+    \\    outputs:
+    \\      conflict: ${{ steps.put.outputs.conflict }}
+    \\    env:
+    \\      AWS_DEFAULT_REGION: us-east-1
+    \\    steps:
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: tool
+    \\      - run: chmod +x tool/apt-publish
+    \\      - name: Gate on the settings of the apt repository and on the signed index (a job without them does nothing and ends green)
+    \\        id: gate
+    \\        env:
+    \\          READ_ENABLED: ${{ needs.apt-deploy-read-2.outputs.enabled }}
+    \\          INDEX_SIGNED: ${{ needs.apt-index-2.outputs.signed }}
+    \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+    \\          APT_BUCKET: ${{ vars.APT_BUCKET }}
+    \\          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+    \\          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+    \\        run: tool/apt-publish gate --label "apt publish (write)" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true INDEX_SIGNED --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: apt-next-2
+    \\          path: ${{ runner.temp }}/apt-next
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: release-dist
+    \\          path: ${{ runner.temp }}/apt-debs
+    \\      - name: Assume the publish role through OIDC
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+    \\        run: tool/apt-publish assume --env-file "$GITHUB_ENV"
+    \\      - name: Upload the .debs (If-None-Match), write the signed index (If-Match on the ETag that was read), then invalidate /apt/dists/*
+    \\        id: put
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_BUCKET: ${{ vars.APT_BUCKET }}
+    \\          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+    \\          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+    \\        run: tool/apt-publish write --bucket "$APT_BUCKET" --distribution "$APT_DISTRIBUTION_ID" --hostname "$APT_HOSTNAME" --next "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --out "$GITHUB_OUTPUT"
+    \\
+    \\  apt-deploy-read-3:
+    \\    needs: [apt-deploy-write-2]
+    \\    if: ${{ needs.apt-deploy-write-2.outputs.conflict == 'true' }}
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    environment: apt-publish
+    \\    permissions:
+    \\      contents: read
+    \\      id-token: write
+    \\    outputs:
+    \\      enabled: ${{ steps.gate.outputs.enabled }}
+    \\    env:
+    \\      AWS_DEFAULT_REGION: us-east-1
+    \\    steps:
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: tool
+    \\      - run: chmod +x tool/apt-publish
+    \\      - name: Gate on the settings of the apt repository (a job without them does nothing and ends green)
+    \\        id: gate
+    \\        env:
+    \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+    \\          APT_BUCKET: ${{ vars.APT_BUCKET }}
+    \\          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+    \\          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+    \\        run: tool/apt-publish gate --label "apt publish (read)" --out "$GITHUB_OUTPUT" --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME
+    \\      - name: Assume the publish role through OIDC
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+    \\        run: tool/apt-publish assume --env-file "$GITHUB_ENV"
+    \\      - name: Read the current index and its ETags from S3 (never through the CDN, which caches the index)
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_BUCKET: ${{ vars.APT_BUCKET }}
+    \\        run: tool/apt-publish read --bucket "$APT_BUCKET" --out "$RUNNER_TEMP/apt-current"
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: apt-current-3
+    \\          path: ${{ runner.temp }}/apt-current
+    \\          if-no-files-found: error
+    \\          retention-days: 1
+    \\          overwrite: true
+    \\
+    \\  apt-index-3:
+    \\    needs: [apt-deploy-read-3]
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    environment: apt-signing
+    \\    permissions:
+    \\      contents: read
+    \\    outputs:
+    \\      signed: ${{ steps.sign.outputs.signed }}
+    \\    env:
+    \\      OWNER: ${{ github.repository_owner }}
+    \\    steps:
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: tool
+    \\      - run: chmod +x tool/apt-publish tool/channels
+    \\      - name: Gate on the signing key and on the read (a job without them does nothing and ends green)
+    \\        id: gate
+    \\        env:
+    \\          READ_ENABLED: ${{ needs.apt-deploy-read-3.outputs.enabled }}
+    \\          HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY != '' }}
+    \\          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+    \\        run: tool/apt-publish gate --label "apt index" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true HAVE_KEY --env APT_GPG_FINGERPRINT
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: apt-current-3
+    \\          path: ${{ runner.temp }}/apt-current
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: release-dist
+    \\          path: ${{ runner.temp }}/apt-debs
+    \\      - name: Merge the .debs into the index that was read (the index of every product is kept)
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        run: tool/apt-publish index --channels tool/channels --current "$RUNNER_TEMP/apt-current" --out "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --origin "$OWNER" --label "$OWNER" --description "$OWNER packages"
+    \\      - name: Sign Release with the signing subkey (InRelease and Release.gpg)
+    \\        id: sign
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+    \\          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+    \\          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+    \\        run: tool/apt-publish sign --dir "$RUNNER_TEMP/apt-next/dists/stable" --work "$RUNNER_TEMP/apt-sign" --fingerprint "$APT_GPG_FINGERPRINT" --out "$GITHUB_OUTPUT"
+    \\      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: apt-next-3
+    \\          path: |
+    \\            ${{ runner.temp }}/apt-next/dists
+    \\            ${{ runner.temp }}/apt-next/etags.txt
+    \\          if-no-files-found: error
+    \\          retention-days: 1
+    \\          overwrite: true
+    \\
+    \\  apt-deploy-write-3:
+    \\    needs: [apt-deploy-read-3, apt-index-3]
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 15
+    \\    environment: apt-publish
+    \\    permissions:
+    \\      contents: read
+    \\      id-token: write
+    \\    outputs:
+    \\      conflict: ${{ steps.put.outputs.conflict }}
+    \\    env:
+    \\      AWS_DEFAULT_REGION: us-east-1
+    \\    steps:
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        with:
+    \\          name: channel-tools
+    \\          path: tool
+    \\      - run: chmod +x tool/apt-publish
+    \\      - name: Gate on the settings of the apt repository and on the signed index (a job without them does nothing and ends green)
+    \\        id: gate
+    \\        env:
+    \\          READ_ENABLED: ${{ needs.apt-deploy-read-3.outputs.enabled }}
+    \\          INDEX_SIGNED: ${{ needs.apt-index-3.outputs.signed }}
+    \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+    \\          APT_BUCKET: ${{ vars.APT_BUCKET }}
+    \\          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+    \\          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+    \\        run: tool/apt-publish gate --label "apt publish (write)" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true INDEX_SIGNED --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: apt-next-3
+    \\          path: ${{ runner.temp }}/apt-next
+    \\      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        with:
+    \\          name: release-dist
+    \\          path: ${{ runner.temp }}/apt-debs
+    \\      - name: Assume the publish role through OIDC
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+    \\        run: tool/apt-publish assume --env-file "$GITHUB_ENV"
+    \\      - name: Upload the .debs (If-None-Match), write the signed index (If-Match on the ETag that was read), then invalidate /apt/dists/*
+    \\        id: put
+    \\        if: steps.gate.outputs.enabled == 'true'
+    \\        env:
+    \\          APT_BUCKET: ${{ vars.APT_BUCKET }}
+    \\          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+    \\          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+    \\        run: tool/apt-publish write --bucket "$APT_BUCKET" --distribution "$APT_DISTRIBUTION_ID" --hostname "$APT_HOSTNAME" --next "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --out "$GITHUB_OUTPUT" --last
 
 ;
 
@@ -1412,7 +2249,7 @@ test "the jobs are parsed as the rules read them" {
     const a = ar.allocator();
     const r = try fx(a);
     const jobs = try parseJobs(a, try body(a, r.wf));
-    try t.expectEqual(@as(usize, 13), jobs.len);
+    try t.expectEqual(@as(usize, 23), jobs.len);
     const bp = jobNamed(jobs, "bump").?;
     try t.expect(hasNeed(bp, "plan") and hasNeed(bp, "tag") and hasNeed(bp, "publish") and hasNeed(bp, "tool"));
     try t.expectEqualStrings(publish_if, bp.if_expr.?);
@@ -1552,7 +2389,7 @@ test "rule: the tag is made with the release bot's token, minted by `tag` alone 
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "owner: ${{ github.repository_owner }}\n", "owner: other\n"), mint);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "repositories: buildrules\n", ""), mint);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "repositories: buildrules\n", "repositories: buildrules,mopm\n"), mint);
-    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "permission-contents: write\n", "permission-contents: write\n          permission-actions: write\n"), "release bot's key, token or permission input appears other than in `tag` and `bump`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "permission-contents: write\n", "permission-contents: write\n          permission-actions: write\n"), "release bot's key, token or permission input appears other than in `tag`, `bump` and `tap`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "permission-contents: write\n", "permission-contents: write\n          permission-actions: write\n"), mint);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "permission-contents: write\n", "permission-contents: read\n"), mint);
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0", "v3.2.0"), mint);
@@ -1565,11 +2402,11 @@ test "rule: the tag is made with the release bot's token, minted by `tag` alone 
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      TAG: ${{ needs.plan.outputs.tag }}\n", "      TAG: ${{ needs.plan.outputs.tag }}\n      GH_TOKEN: ${{ github.token }}\n"), "uses GITHUB_TOKEN");
     // the minted token reaches no other step of `tag` and no other job
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      TAG: ${{ needs.plan.outputs.tag }}\n", "      TAG: ${{ needs.plan.outputs.tag }}\n      GH_TOKEN: ${{ steps.bot.outputs.token }}\n"), "other than once");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ steps.bot.outputs.token }}"), "other than in `tag` and `bump`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ steps.bot.outputs.token }}"), "other than in `tag`, `bump` and `tap`");
     // nor is the key read, or the token minted, in any other job
-    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}"), "appears other than in `tag` and `bump`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than twice, in `tag` and in `bump`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than twice, in `tag` and in `bump`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}"), "appears other than in `tag`, `bump` and `tap`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than three times, in `tag`, `bump` and `tap`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release tool/channels\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n"), "used other than three times, in `tag`, `bump` and `tap`");
     // and publish still holds the job token's write, which creates no tag
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      contents: write\n", "      contents: read\n"), "`publish` does not hold `contents: write`");
 }
@@ -1580,7 +2417,7 @@ test "rule: the internal repository's submodule bump runs after publish, with th
     const a = ar.allocator();
     const r = try fx(a);
     const mint = "does not mint the release bot's token";
-    const key_token = "appears other than in `tag` and `bump`";
+    const key_token = "appears other than in `tag`, `bump` and `tap`";
     // the job's own token only reads
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      contents: read\n", "      contents: write\n"), "`bump` is not `contents: read` alone");
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      contents: read\n", "      contents: write\n"), "job `bump` holds `contents: write`");
@@ -1626,7 +2463,7 @@ test "rule: the internal repository's submodule bump runs after publish, with th
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}"), key_token);
     // a second mint anywhere else
     const second_mint = "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n      - run: chmod +x tool/release\n";
-    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "      - run: chmod +x tool/release\n", second_mint), "used other than twice, in `tag` and in `bump`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "      - run: chmod +x tool/release\n", second_mint), "used other than three times, in `tag`, `bump` and `tap`");
     // the repository is named before a token exists, and the name is the owner's own plus the variable
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "      - name: The internal repository is named\n        run: tool/release bump-check --internal-repo \"$INTERNAL_REPO\"\n", ""), "does not check, in a step of its own");
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "tool/release bump-check ", "echo bump-check "), "does not check, in a step of its own");
@@ -1762,7 +2599,11 @@ test "rule: beta is a call of beta.yml with the command line build-cli built, th
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "      id-token: write\n", "      id-token: write\n      packages: read\n"), "`beta` is not `contents: read` and `id-token: write` alone");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "      contents: read\n", "      contents: write\n"), "job `beta` holds `contents: write`");
     // it walks the file build-cli built, not one it builds itself, and the name is the one build-cli uploads
-    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    with:\n      cli-artifact: release-cli-bin\n", ""), "`beta` does not run the command line that `build-cli` built");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "    with:\n      cli-bins-artifact: release-cli-bins\n      cli-artifact: release-cli-bin\n", ""), "`beta` does not run the command line that `build-cli` built");
+    // and the two native legs run the files of the other two targets of that same build, not ones the beta builds itself
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "      cli-bins-artifact: release-cli-bins\n", ""), "`beta` does not run the command line that `build-cli` built");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "cli-bins-artifact: release-cli-bins", "cli-bins-artifact: release-cli-bin"), "`beta` does not run the command line that `build-cli` built");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "cli-bins-artifact: release-cli-bins", "cli-bins-artifact: \"\""), "`beta` does not run the command line that `build-cli` built");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "cli-artifact: release-cli-bin", "cli-artifact: release-cli-tarballs"), "`beta` does not run the command line that `build-cli` built");
     try expectFinding(a, r, try mutateIn(a, r.wf, "beta", "cli-artifact: release-cli-bin", "cli-artifact: \"\""), "`beta` does not run the command line that `build-cli` built");
     // the workflow it calls must be pinned like any other local reference: only these three are allowed
@@ -1979,14 +2820,16 @@ test "rule: the signature and the attestation are made in attest, once, in that 
     try expectFinding(a, r, try mutate(a, r.wf, "actions/attest-build-provenance@", "actions/attest-sbom@"), "does not attest");
     // a second attestation elsewhere
     const second = "      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2\n        with:\n          subject-path: x\n      - run: chmod +x buck2 tool/release\n";
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release\n", second), "used other than once");
-    // the subject: the archive, the three tarballs (one glob) and SHA256SUMS; a narrower subject leaves files unattested
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release tool/channels\n", second), "used other than once");
+    // the subject: the archive, the three tarballs (one glob), the two .debs (another) and SHA256SUMS; a narrower subject leaves files unattested
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "            dist/buildrules-*.tar.gz\n", "            dist/buildrules-0.0.1.tar.gz\n"), "does not attest `dist/buildrules-*.tar.gz`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "            dist/buildrules_*.deb\n", ""), "`dist/buildrules_*.deb` (the two .debs)");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "            dist/buildrules_*.deb\n", "            dist/buildrules_0.0.1_amd64.deb\n"), "`dist/buildrules_*.deb` (the two .debs)");
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "            dist/SHA256SUMS\n", ""), "does not attest `dist/buildrules-*.tar.gz`");
     // cosign is installed in attest, and sign comes before the attestation, and both before the upload
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "does not install cosign");
     {
-        const sign_step = "      - name: Sign the five files, keyless\n        run: tool/release sign --dist dist --dry false\n";
+        const sign_step = "      - name: Sign the seven files, keyless\n        run: tool/release sign --dist dist --dry false\n";
         const moved = try mutateIn(a, r.wf, "attest", sign_step, "");
         const after = try mutateIn(a, moved, "attest", "      - uses: actions/upload-artifact@", sign_step ++ "      - uses: actions/upload-artifact@");
         try expectFinding(a, r, after, "does not sign, then attest, then upload `release-dist`");
@@ -2016,6 +2859,8 @@ test "rule: the binaries are built stamped, packaged, run by the beta, checked a
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", " --native linux-x86_64", ""), "`build-cli` does not package the three tarballs");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-tarballs", "name: other"), "`build-cli` does not upload the three tarballs");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-bin", "name: other"), "`build-cli` does not upload the linux-x86_64 binary");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-bins\n          path: cli-bins\n", "name: release-cli-bins\n          path: cli-bins/linux-x86_64\n"), "`build-cli` does not upload the directory of the three binaries");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-bins", "name: other-bins"), "`build-cli` does not upload the directory of the three binaries");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "path: cli-bins/linux-x86_64/buildrules", "path: cli-bins/macos-arm64/buildrules"), "`build-cli` does not upload the linux-x86_64 binary");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "needs: [plan, tool]", "needs: [plan]"), "`build-cli` does not wait for `tool`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "tool/release package-all ", "echo package-all "), "`build-cli` does not run `tool/release package-all");
@@ -2030,7 +2875,7 @@ test "rule: the binaries are built stamped, packaged, run by the beta, checked a
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "name: release-unsigned", "name: release-dist"), "does not upload `dist` as the artifact `release-unsigned`");
     {
         // sums before tested: the order of the tool is archive, record, tested, sums
-        const sums = "      - name: SHA256SUMS over the archive and the three tarballs\n        run: tool/release sums --dist dist\n";
+        const sums = "      - name: SHA256SUMS over the archive, the three tarballs and the two .debs\n        run: tool/release sums --dist dist\n";
         const moved = try mutateIn(a, r.wf, "archive", sums, "");
         const before = try mutateIn(a, moved, "archive", "      - name: The tarball to attest holds the file the beta ran\n", sums ++ "      - name: The tarball to attest holds the file the beta ran\n");
         try expectFinding(a, r, before, "has no `tool/release sums ` after the step before it");
@@ -2085,7 +2930,7 @@ test "rule: each step runs its command of the tool, and run lines are single inv
     // one invocation per run line: no chain, no pipe, no block
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", "      - run: chmod +x tool/release && echo hi\n"), "more than one invocation");
     try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "      - run: chmod +x tool/release\n", "      - run: echo a; echo b\n"), "more than one invocation");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release\n", "      - run: cat x | wc -l\n"), "more than one invocation");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release tool/channels\n", "      - run: cat x | wc -l\n"), "more than one invocation");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "      - run: chmod +x tool/release\n", "      - run: |\n          echo a\n          echo b\n"), "`run:` block in the job `tag`");
 }
 
@@ -2097,6 +2942,10 @@ test "rule: no asset is replaced, no secret is read" {
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "--dist dist\n", "--dist dist --clobber\n"), "--clobber");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", "      - run: gh release delete v1\n"), "release delete");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.X }}"), "reads a secret");
+    // the apt signing key is a secret of the index jobs and of no other job
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.APT_GPG_PASSPHRASE }}"), "reads the apt signing key");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.APT_GPG_PRIVATE_KEY }}"), "only the `apt-index` jobs may");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}", "APT_GPG_PASSPHRASE: ${{ secrets.OTHER }}"), "reads a secret");
 }
 
 test "rule: buck2 runs in local mode, as the literal ./buck2, from the pinned release, and the tool is built" {
@@ -2171,6 +3020,10 @@ test "rule: a cosign bundle is named <file>.sigstore.json, for the files release
         "dist/buildrules-cli-${{needs.plan.outputs.number}}-linux-x86_64.tar.gz.sigstore.json",
         "dist/buildrules-cli-${{needs.plan.outputs.number}}-${{matrix.target}}.tar.gz.sigstore.json",
         "dist/buildrules-cli-0.12.345-${{matrix.target}}.tar.gz.sigstore.json",
+        "dist/buildrules_0.0.7_amd64.deb.sigstore.json",
+        "dist/buildrules_0.0.7_arm64.deb.sigstore.json",
+        "dist/buildrules_${{needs.plan.outputs.number}}_amd64.deb.sigstore.json",
+        "dist/buildrules_${{needs.plan.outputs.number}}_${{matrix.arch}}.deb.sigstore.json",
     }) |good| {
         const wf = try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", try std.fmt.allocPrint(a, step, .{good}));
         const f = try checkRelease(a, wf, r.ds, r.ci);
@@ -2210,11 +3063,21 @@ test "rule: a cosign bundle is named <file>.sigstore.json, for the files release
         "dist/buildrules-cli-${{a}}${{b}}-linux-x86_64.tar.gz.sigstore.json",
         "dist/other.tar.gz.sigstore.json",
         "dist/buildrules-cli-0.0.7-linux-x86_64.zip.sigstore.json",
+        // a .deb of an architecture the release has none for, a name with no version or no architecture, a version that is none, a glob
+        "dist/buildrules_0.0.7_i386.deb.sigstore.json",
+        "dist/buildrules_0.0.7.deb.sigstore.json",
+        "dist/buildrules_amd64.deb.sigstore.json",
+        "dist/buildrules_0.0_amd64.deb.sigstore.json",
+        "dist/buildrules_v0.0.7_amd64.deb.sigstore.json",
+        "dist/buildrules_*.deb.sigstore.json",
+        "dist/other_0.0.7_amd64.deb.sigstore.json",
+        "dist/buildrules_0.0.7_amd64.deb.sigstore",
+        "dist/buildrules_0.0.7_amd64.rpm.sigstore.json",
     }) |bad| {
         try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "      - run: chmod +x tool/release\n", try std.fmt.allocPrint(a, step, .{bad})), "names a cosign bundle other than");
     }
     // The same in a job that does not write.
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release\n", try std.fmt.allocPrint(a, step, .{"dist/SHA256SUMS.sig.sigstore.jsn"})), "names a cosign bundle other than");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release tool/channels\n", try std.fmt.allocPrint(a, step, .{"dist/SHA256SUMS.sig.sigstore.jsn"})), "names a cosign bundle other than");
     // The install of cosign names the word `sigstore` without naming a file: that action, pinned, is exempt, and no other sigstore action is.
     const installer = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n";
     try t.expect(std.mem.indexOf(u8, r.wf, installer) != null);
@@ -2224,7 +3087,262 @@ test "rule: a cosign bundle is named <file>.sigstore.json, for the files release
     }
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", installer, "      - uses: sigstore/gh-action-sigstore-python@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n"), "names a cosign bundle other than");
     // the exemption is for the `uses:` line alone: the same word in a run line or an input is checked
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release\n", "      - run: echo sigstore/cosign-installer\n"), "names a cosign bundle other than");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release tool/channels\n", "      - run: echo sigstore/cosign-installer\n"), "names a cosign bundle other than");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", installer, installer ++ "        with:\n          cosign-release: sigstore\n"), "names a cosign bundle other than");
 }
 
+
+// ---- the channels: tap, apt, and the .debs ---------------------------------------------------------------------------------------------
+
+test "rule: the tap pull request runs after publish, with the release bot's token for the tap repository alone, minted in the second to last step and used by the last, and nothing waits for it" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const mint = "does not mint the release bot's token";
+    const key_token = "appears other than in `tag`, `bump` and `tap`";
+    // the job's own token only reads
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "      contents: read\n", "      contents: write\n"), "`tap` is not `contents: read` alone");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "      contents: read\n", "      contents: write\n"), "job `tap` holds `contents: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "      contents: read\n", "      contents: read\n      pull-requests: write\n"), "job `tap` holds `pull-requests: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `tap` holds `id-token: write`");
+    // the exact if of publish, and the four jobs it waits for
+    const exact = "the job `tap` is not under its exact `if:`";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", " && github.ref == 'refs/heads/main'", ""), exact);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", " && needs.tag.outputs.superseded != 'true'", ""), exact);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "needs.plan.outputs.released == 'true' && ", ""), exact);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "needs: [plan, tag, publish, tool]", "needs: [plan, tag, tool]"), "`tap` does not wait for `publish`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "needs: [plan, tag, publish, tool]", "needs: [plan, publish, tool]"), "`tap` does not wait for `tag`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "needs: [plan, tag, publish, tool]", "needs: [tag, publish, tool]"), "`tap` does not wait for `plan`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "needs: [plan, tag, publish, tool]", "needs: [plan, tag, publish]"), "`tap` does not wait for `tool`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs: [plan, tag, verify, tool]", "needs: [plan, tag, verify, tool, tap]"), "`publish` waits for `tap`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "needs: [plan, tag, publish, tool]", "needs: [plan, tag, publish, tool, tap]"), "`bump` waits for `tap`");
+    // it reads the key, so it is in the environment where the key lives
+    const reads = "reads `RELEASE_BOT_*` but does not declare `environment: release`";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "    environment: release\n", ""), "the job `tap` " ++ reads);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "    environment: release\n", "    environment: prod\n"), "the job `tap` " ++ reads);
+    // each input of the mint is exact: the repository is the tap alone, the owner the repository's own, the scopes the two
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "repositories: homebrew-tap\n", ""), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "repositories: homebrew-tap\n", "repositories: buildrules\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "repositories: homebrew-tap\n", "repositories: homebrew-tap,buildrules\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "owner: ${{ github.repository_owner }}\n          repositories", "repositories"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "owner: ${{ github.repository_owner }}\n          repositories", "owner: other\n          repositories"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "app-id: ${{ vars.RELEASE_BOT_APP_ID }}", "app-id: 5395718"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "permission-pull-requests: write\n", ""), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "permission-pull-requests: write\n", "permission-pull-requests: read\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "permission-contents: write\n", "permission-contents: read\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "permission-pull-requests: write\n", "permission-pull-requests: write\n          permission-actions: write\n"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "permission-pull-requests: write\n", "permission-pull-requests: write\n          permission-actions: write\n"), key_token);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0", "v3.2.0"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", "private-key: ${{ secrets.OTHER_KEY }}"), mint);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", "private-key: ${{ secrets.OTHER_KEY }}"), "reads a secret");
+    // the token is the GH_TOKEN of the tap step and nothing else's, and no other token stands in
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "GH_TOKEN: ${{ steps.tap_bot.outputs.token }}", "GH_TOKEN: ${{ github.token }}"), "does not take the bot's token as its GH_TOKEN");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "GH_TOKEN: ${{ steps.tap_bot.outputs.token }}", "GH_TOKEN: ${{ github.token }}"), "uses GITHUB_TOKEN");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "GH_TOKEN: ${{ steps.tap_bot.outputs.token }}", "GH_TOKEN: ${{ steps.bot.outputs.token }}"), "does not take the bot's token as its GH_TOKEN");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "      OWNER: ${{ github.repository_owner }}\n", "      OWNER: ${{ github.repository_owner }}\n      GH_TOKEN: ${{ steps.tap_bot.outputs.token }}\n"), "uses the bot's token other than once");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ steps.tap_bot.outputs.token }}"), key_token);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "GH_TOKEN: ${{ steps.bump_bot.outputs.token }}", "GH_TOKEN: ${{ steps.tap_bot.outputs.token }}"), key_token);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}"), key_token);
+    // the tap step is the last step, and the formula is rendered before any token exists
+    const use_end = "--workdir \"$RUNNER_TEMP/tap-clone\"\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", use_end, use_end ++ "      - run: chmod +x tool/tap\n"), "a step runs after the tap step, which holds the bot's token");
+    {
+        const render = "      - name: Render Formula/buildrules.rb from the verified SHA256SUMS, with the flags the tap's guard expects\n        run: " ++ tap_render ++ "\n";
+        const moved = try mutateIn(a, r.wf, "tap", render, "");
+        const after = try mutateIn(a, moved, "tap", use_end, use_end ++ render);
+        try expectFinding(a, r, after, "mints the bot's token before it has rendered the formula");
+        try expectFinding(a, r, after, "a step runs after the tap step");
+    }
+    // the render command is exact: every flag the tap's guard depends on
+    const bad_render = "does not render the formula with exactly";
+    for ([_][2][]const u8{
+        .{ " --no-explicit-version", "" },
+        .{ " --asset buildrules-cli", "" },
+        .{ " --asset buildrules-cli", " --asset buildrules" },
+        .{ "--name buildrules ", "--name other " },
+        .{ " --license \"Apache-2.0\"", " --license \"MIT\"" },
+        .{ " --homepage \"https://buildrules.dev\"", "" },
+        .{ " --repo \"$GITHUB_REPOSITORY\"", "" },
+        .{ " --version \"$NUMBER\"", " --version \"$TAG\"" },
+        .{ "--sums dist/SHA256SUMS", "--sums SHA256SUMS" },
+        .{ " --out tap/buildrules.rb", " --out buildrules.rb" },
+        .{ " --no-explicit-version", " --url-base https://example.invalid/dl" },
+        .{ "tool/channels formula ", "tool/channels formula --verbose " },
+    }) |m| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, "tap", m[0], m[1]), bad_render);
+    }
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "tool/channels formula ", "echo formula "), "`tap` does not run `tool/channels formula");
+    // the arguments of the tap step
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", " --asset buildrules-cli --workdir", " --workdir"), "does not pass --asset buildrules-cli");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", " --formula buildrules ", " --formula other "), "does not pass --formula buildrules");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "--tap-repo \"$OWNER/homebrew-tap\"", "--tap-repo other/homebrew-tap"), "does not pass --tap-repo \"$OWNER/homebrew-tap\"");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "--formula-file tap/buildrules.rb", "--formula-file buildrules.rb"), "does not pass --formula-file tap/buildrules.rb");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "--version \"$NUMBER\" --formula-file", "--formula-file"), "does not pass --version \"$NUMBER\"");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "--repo \"$GITHUB_REPOSITORY\" --version", "--version"), "does not pass --repo \"$GITHUB_REPOSITORY\"");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "tool/tap --repo", "echo --repo"), "`tap` does not run `tool/tap ");
+    // the version is the tag job's, not the plan's
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "NUMBER: ${{ needs.tag.outputs.number }}", "NUMBER: ${{ needs.plan.outputs.number }}"), "does not take the version from the tag job");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "NUMBER: ${{ needs.tag.outputs.number }}", "NUMBER: ${{ needs.plan.outputs.number }}"), "reads the plan's version");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "OWNER: ${{ github.repository_owner }}", "OWNER: other"), "does not take the version from the tag job");
+    // the files are the verified ones, and the tools are the ones `tool` built; no checkout, no buck2, no other action
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "name: release-dist", "name: release-unsigned"), "does not read `release-dist`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "name: channel-tools", "name: other-tools"), "does not download the tools of the channels");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "      - run: chmod +x tool/channels tool/tap\n", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n"), "job `tap` checks the repository out");
+    const buck2_run = "      - run: ./buck2 build --console simple -c buildrules_re.mode=local //tools/release:release\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "      - run: chmod +x tool/channels tool/tap\n", buck2_run), "job `tap` holds a write scope and runs buck2");
+    const cache = "      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n        with:\n          path: x\n          key: x\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tap", "      - run: chmod +x tool/channels tool/tap\n", cache), "job `tap` holds a write scope and uses actions/cache");
+    // a fourth mint, or the job missing
+    const second_mint = "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        with:\n          app-id: 1\n      - run: chmod +x tool/release\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "      - run: chmod +x tool/release\n", second_mint), "used other than three times, in `tag`, `bump` and `tap`");
+    {
+        const f = try checkRelease(a, try mutate(a, r.wf, "\n  tap:\n", "\n  tapped:\n"), r.ds, r.ci);
+        var named = false;
+        for (f.items) |m| {
+            if (std.mem.indexOf(u8, m, "the job `tap` is missing") != null) named = true;
+        }
+        try t.expect(named);
+    }
+}
+
+test "rule: the apt repository is published by three jobs per attempt, none holding both the signing key and the cloud role, every step behind the gate, the last attempt writing with --last" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    // no job holds the key and the role: the role named in the index job, the key read in a deploy job, the id-token in the index job
+    const both = "holds both the apt signing key and the cloud role";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "    env:\n      OWNER:", "    env:\n      APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}\n      OWNER:"), both);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "    env:\n      OWNER:", "    env:\n      APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}\n      OWNER:"), "names the apt publish role: only the `apt-deploy-*` jobs may");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write", "    env:\n      AWS_DEFAULT_REGION: us-east-1\n", "    env:\n      AWS_DEFAULT_REGION: us-east-1\n      KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n"), both);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write", "    env:\n      AWS_DEFAULT_REGION: us-east-1\n", "    env:\n      AWS_DEFAULT_REGION: us-east-1\n      KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n"), "only the `apt-index` jobs may");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read-2", "    env:\n      AWS_DEFAULT_REGION: us-east-1\n", "    env:\n      AWS_DEFAULT_REGION: us-east-1\n      KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n"), both);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read", "    env:\n      AWS_DEFAULT_REGION: us-east-1\n", "    env:\n      AWS_DEFAULT_REGION: us-east-1\n      PASS: ${{ secrets.APT_GPG_PASSPHRASE }}\n"), "assumes the apt publish role and reads a secret");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index-3", "      contents: read\n", "      contents: read\n      id-token: write\n"), "job `apt-index-3` holds `id-token: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index-3", "      contents: read\n", "      contents: read\n      id-token: write\n"), "is given the means to reach the cloud");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "    env:\n      OWNER:", "    env:\n      AWS_ACCESS_KEY_ID: x\n      OWNER:"), "is given the means to reach the cloud");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "    environment: apt-signing\n", "    environment: apt-publish\n"), "does not declare `environment: apt-signing`");
+    // the role named outside the apt-deploy jobs
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ vars.APT_PUBLISH_ROLE_ARN }}"), "names the apt publish role");
+    // id-token write: the deploy jobs hold it with contents read and nothing else
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read", "      id-token: write\n", ""), "`apt-deploy-read` is not `contents: read` and `id-token: write` alone");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write-2", "      id-token: write\n", "      id-token: write\n      packages: write\n"), "`apt-deploy-write-2` is not `contents: read` and `id-token: write` alone");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write-2", "      id-token: write\n", "      id-token: write\n      packages: write\n"), "job `apt-deploy-write-2` holds `packages: write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index-2", "      contents: read\n", "      contents: write\n"), "`apt-index-2` is not `contents: read` alone");
+    // the environments
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read", "    environment: apt-publish\n", ""), "the job `apt-deploy-read` assumes the apt publish role but does not declare `environment: apt-publish`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write-3", "    environment: apt-publish\n", "    environment: release\n"), "the job `apt-deploy-write-3` assumes the apt publish role but does not declare `environment: apt-publish`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index-2", "    environment: apt-signing\n", ""), "the job `apt-index-2` reads the apt signing key (`APT_GPG_*`) but does not declare `environment: apt-signing`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "    timeout-minutes: 15\n", "    timeout-minutes: 15\n    environment: apt-signing\n"), "the job `publish` declares `environment: apt-signing`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "    timeout-minutes: 60\n", "    timeout-minutes: 60\n    environment: apt-publish\n"), "the job `verify` declares `environment: apt-publish`");
+    // every step that assumes the role, reads, signs or writes is behind the gate: a job without the settings ends green and does nothing
+    const gate_if = "        if: steps.gate.outputs.enabled == 'true'\n";
+    const unguarded = "does not run only behind the gate";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read", "      - name: Assume the publish role through OIDC\n" ++ gate_if, "      - name: Assume the publish role through OIDC\n"), unguarded);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read-2", "      - name: Read the current index and its ETags from S3 (never through the CDN, which caches the index)\n" ++ gate_if, "      - name: Read the current index and its ETags from S3 (never through the CDN, which caches the index)\n"), unguarded);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "      - name: Merge the .debs into the index that was read (the index of every product is kept)\n" ++ gate_if, "      - name: Merge the .debs into the index that was read (the index of every product is kept)\n"), unguarded);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index-3", "        id: sign\n" ++ gate_if, "        id: sign\n"), unguarded);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write", "        id: put\n" ++ gate_if, "        id: put\n"), unguarded);
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write-3", "      - name: Assume the publish role through OIDC\n" ++ gate_if, "      - name: Assume the publish role through OIDC\n"), unguarded);
+    // the gate itself is exact: it names the settings, and the key, and the signed index
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read", " --env APT_BUCKET", ""), "does not gate on the settings with exactly");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read-2", " --env APT_PUBLISH_ROLE_ARN", ""), "does not gate on the settings with exactly");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", " --true HAVE_KEY", ""), "does not gate on the key and the read with exactly");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index-2", " --true READ_ENABLED", ""), "does not gate on the key and the read with exactly");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write", " --true INDEX_SIGNED", ""), "does not gate on the settings and the signed index with exactly");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write-3", " --env APT_HOSTNAME", ""), "does not gate on the settings and the signed index with exactly");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "READ_ENABLED: ${{ needs.apt-deploy-read.outputs.enabled }}", "READ_ENABLED: 'true'"), "does not take the read's `enabled` for its gate");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write-2", "INDEX_SIGNED: ${{ needs.apt-index-2.outputs.signed }}", "INDEX_SIGNED: 'true'"), "does not take the index's `signed` for its gate");
+    // the order inside a job: gate, assume, read; gate, merge, sign; gate, assume, write
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read", "tool/apt-publish assume ", "tool/apt-publish read-then-assume "), "does not gate, then assume the role, then read");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "tool/apt-publish sign ", "tool/apt-publish index-sign "), "does not sign (`tool/apt-publish sign`)");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write-2", "tool/apt-publish write ", "tool/apt-publish put "), "has no step with `run: tool/apt-publish write`");
+    // the key is read in the signing step alone, once for the gate's test and once to sign, the passphrase once
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "          HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY != '' }}\n", "          HAVE_KEY: 'true'\n"), "reads the signing key other than twice");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index-2", "          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}\n", ""), "the signing step of `apt-index-2` does not take the key and the passphrase from the secrets");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index-2", "          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}\n", ""), "reads the signing key other than twice (the gate's test and the signing step) or the passphrase other than once");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index-3", "        id: sign\n", "        id: signature\n"), "is not `id: sign`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "      signed: ${{ steps.sign.outputs.signed }}\n", ""), "does not output `signed` of its signing step");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read-2", "      enabled: ${{ steps.gate.outputs.enabled }}\n", ""), "does not output the gate's `enabled`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write", "      conflict: ${{ steps.put.outputs.conflict }}\n", ""), "does not output the `conflict` of its write step");
+    // the attempts: the first after the publish, the next two only after a lost write, the last writing with --last
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read-2", "needs.apt-deploy-write.outputs.conflict == 'true'", "needs.apt-deploy-write.outputs.conflict != 'false'"), "does not run only when the write before it lost");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read-3", "needs.apt-deploy-write-2.outputs.conflict == 'true'", "needs.apt-deploy-write.outputs.conflict == 'true'"), "does not run only when the write before it lost");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read-3", "needs: [apt-deploy-write-2]", "needs: [apt-deploy-write]"), "`apt-deploy-read-3` does not wait for `apt-deploy-write-2`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write-3", " --out \"$GITHUB_OUTPUT\" --last", " --out \"$GITHUB_OUTPUT\""), "does not write with `--last`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write-2", " --out \"$GITHUB_OUTPUT\"\n", " --out \"$GITHUB_OUTPUT\" --last\n"), "writes with `--last` but another attempt follows it");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write", " --out \"$GITHUB_OUTPUT\"\n", "\n"), "does not write with `--out");
+    // the first read: the exact if of publish, the same four jobs
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read", " && github.ref == 'refs/heads/main'", ""), "the job `apt-deploy-read` is not under its exact `if:`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read", " && needs.tag.outputs.superseded != 'true'", ""), "the job `apt-deploy-read` is not under its exact `if:`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read", "needs: [plan, tag, publish, tool]", "needs: [plan, tag, tool]"), "`apt-deploy-read` does not wait for `publish`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read", "needs: [plan, tag, publish, tool]", "needs: [plan, publish, tool]"), "`apt-deploy-read` does not wait for `tag`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "needs: [apt-deploy-read]", "needs: [plan]"), "`apt-index` does not wait for `apt-deploy-read`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write-2", "needs: [apt-deploy-read-2, apt-index-2]", "needs: [apt-deploy-read-2]"), "`apt-deploy-write-2` does not wait for `apt-index-2`");
+    // nothing but the apt jobs waits for an apt job
+    try expectFinding(a, r, try mutateIn(a, r.wf, "bump", "needs: [plan, tag, publish, tool]", "needs: [plan, tag, publish, tool, apt-deploy-write]"), "`bump` waits for `apt-deploy-write`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs: [plan, tag, verify, tool]", "needs: [plan, tag, verify, tool, apt-index]"), "`publish` waits for `apt-index`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "site", "needs: [plan, tag, verify, tool]", "needs: [plan, tag, verify, tool, apt-deploy-write-3]"), "`site` waits for `apt-deploy-write-3`");
+    // the .debs are the verified ones, the tools the ones tool built
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "name: release-dist", "name: release-unsigned"), "reads `release-unsigned`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write-3", "name: release-dist", "name: release-unsigned"), "reads `release-unsigned`");
+    // they run no buck2, check nothing out, and use no action but the artifacts'
+    const buck2_run = "      - run: ./buck2 build --console simple -c buildrules_re.mode=local //tools/release:release\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-write", "      - run: chmod +x tool/apt-publish\n", buck2_run), "holds the apt signing key or role and runs buck2");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index-2", "      - run: chmod +x tool/apt-publish tool/channels\n", buck2_run), "holds the apt signing key or role and runs buck2");
+    const cache = "      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n        with:\n          path: x\n          key: x\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-deploy-read-3", "      - run: chmod +x tool/apt-publish\n", cache), "holds the apt signing key or role and uses actions/cache");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "apt-index", "      - run: chmod +x tool/apt-publish tool/channels\n", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n"), "job `apt-index` checks the repository out");
+    // every job of the three attempts is there
+    inline for (.{ "apt-deploy-read", "apt-index", "apt-deploy-write", "apt-deploy-read-2", "apt-index-2", "apt-deploy-write-2", "apt-deploy-read-3", "apt-index-3", "apt-deploy-write-3" }) |name| {
+        const header = "\n  " ++ name ++ ":\n";
+        const f = try checkRelease(a, try mutate(a, r.wf, header, "\n  not-" ++ name ++ ":\n"), r.ds, r.ci);
+        var named = false;
+        for (f.items) |m| {
+            if (std.mem.indexOf(u8, m, "the job `" ++ name ++ "` is missing") != null) named = true;
+        }
+        try t.expect(named);
+    }
+}
+
+test "rule: the .debs are made in build-cli and again in verify, the tools of the channels are built by tool and handed on, and the tool is run from the artifact" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const debs_step = "      - name: Package the two .debs from the same binaries\n        run: tool/release debs --version \"$NUMBER\" --bins cli-bins --channels tool/channels --packaging packaging/deb --out cli-dist\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", debs_step, ""), "`build-cli` does not package the two .debs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "--bins cli-bins --channels", "--bins rebuilt-bins --channels"), "`build-cli` does not package the two .debs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "--channels tool/channels --packaging packaging/deb --out cli-dist", "--channels tool/channels --packaging other --out cli-dist"), "`build-cli` does not package the two .debs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "--packaging packaging/deb --out cli-dist", "--packaging packaging/deb --out elsewhere"), "`build-cli` does not package the two .debs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "tool/release debs ", "echo debs "), "`build-cli` does not run `tool/release debs");
+    {
+        // the .debs before the tarballs
+        const pkg = "      - name: Package the three tarballs\n        run: tool/release package-all --version \"$NUMBER\" --bins cli-bins --license LICENSE --out cli-dist --native linux-x86_64\n";
+        const moved = try mutateIn(a, r.wf, "build-cli", pkg, "");
+        const swapped = try mutateIn(a, moved, "build-cli", debs_step, debs_step ++ pkg);
+        try expectFinding(a, r, swapped, "`build-cli` makes the .debs before the tarballs");
+    }
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "          name: channel-tools\n", "          name: release-tool\n"), "`build-cli` does not download the tools of the channels");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "name: release-cli-tarballs", "name: other"), "does not upload the three tarballs and the two .debs");
+    // verify: the second build's .debs, with the tools of the channels, before it compares
+    const second = "      - name: Package the two .debs again\n        run: tool/release debs --version \"$NUMBER\" --bins rebuilt-bins --channels tool/channels --packaging packaging/deb --out rebuilt-dist\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", second, ""), "`verify` does not package the second build's two .debs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "--bins rebuilt-bins --channels", "--bins cli-bins --channels"), "`verify` does not package the second build's two .debs");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "--out rebuilt-dist\n", "--out cli-dist\n"), "`verify` does not package the second build's");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "          name: channel-tools\n", "          name: release-tool\n"), "`verify` does not download the tools of the channels");
+    {
+        // the second build's .debs made after the verify step that compares them
+        const moved = try mutateIn(a, r.wf, "verify", second, "");
+        const late = try mutateIn(a, moved, "verify", "--cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry false\n", "--cli rebuilt-bins/linux-x86_64/buildrules --rebuilt rebuilt-dist --dry false\n" ++ second);
+        try expectFinding(a, r, late, "verifies before it has made the second build's .debs");
+    }
+    // tool: each tool of the channels is built into its own file, and handed on as one artifact
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tool", "--out channels //tools/channels:channels", "--out other //tools/channels:channels"), "does not build //tools/channels:channels into its own file");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tool", "--out tap //tools/deploy:tap", "--out tap //tools/deploy:other"), "does not build //tools/deploy:tap into its own file");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tool", "--out apt-publish //tools/deploy:apt_publish", "--out apt //tools/deploy:apt_publish"), "does not build //tools/deploy:apt_publish into its own file");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tool", "            ./apt-publish\n", ""), "does not hand on the tools of the channels");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tool", "          name: channel-tools\n", "          name: other\n"), "does not hand on the tools of the channels");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tool", " -c buildrules_re.mode=local --out tap", " --out tap"), "does not pass `-c buildrules_re.mode=local`");
+}

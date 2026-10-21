@@ -79,6 +79,9 @@ fn boundedAt(line: []const u8, at: usize, len: usize) bool {
 /// Why a date on `line` is a fact about an upstream artifact, or null.
 pub const why_edition = "a Rust edition";
 pub const why_npm = "an author's address inside the metadata of a third-party npm package";
+/// The one address that is ours: the maintainer of the .deb packages (packaging/deb/control), a no-reply address of the code host, spelled in parts.
+pub const why_maintainer = "the no-reply maintainer address of the .deb packages";
+const maintainer_address = "buildrules@" ++ "users.noreply." ++ "github.com";
 
 /// Why a date on `line` is not a date, or null. Only the Rust edition ("2024" is the name of a language edition).
 pub fn upstreamReason(line: []const u8) ?[]const u8 {
@@ -309,10 +312,12 @@ pub fn scanText(a: std.mem.Allocator, file: []const u8, text: []const u8, hits: 
         var i: usize = 0;
         while (i < line.len) : (i += 1) {
             if (emailAt(line, i)) |m| {
-                _ = m;
+                // The maintainer address is ours and allowed (reported, with its reason), and it does not hide another address on the same line.
+                const own = std.ascii.eqlIgnoreCase(line[m.start..m.end], maintainer_address);
                 const meta = std.mem.eql(u8, std.fs.path.basename(file), "package-lock.json") and std.mem.indexOf(u8, line, "\"deprecated\"") != null;
-                try push(a, hits, file, ln, "email address", if (meta) why_npm else null, line);
-                break;
+                try push(a, hits, file, ln, "email address", if (own) why_maintainer else if (meta) why_npm else null, line);
+                if (!own) break;
+                i = m.end - 1;
             }
         }
         i = 0;
@@ -397,7 +402,7 @@ pub fn main() !u8 {
     }
     var out = std.ArrayList(u8).empty;
     var bad: usize = 0;
-    const reasons = [_][]const u8{ why_edition, why_npm };
+    const reasons = [_][]const u8{ why_edition, why_npm, why_maintainer };
     var counts = [_]usize{0} ** reasons.len;
     for (hits.items) |h| {
         if (h.allowed) |why| {

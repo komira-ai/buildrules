@@ -230,6 +230,8 @@ pub const NotesArgs = struct {
     archive_sha256: []const u8,
     /// The command-line tarballs of the release, with their sha256, in the order to show.
     binaries: []const Binary = &.{},
+    /// The Debian packages of the release, with their sha256, in the order to show.
+    debs: []const Binary = &.{},
 };
 
 pub const Binary = struct { name: []const u8, sha256: []const u8 };
@@ -255,6 +257,10 @@ pub fn notes(a: std.mem.Allocator, n: NotesArgs) ![]u8 {
     if (n.binaries.len != 0) {
         try out.print(a, "- the command line, one static tarball per platform (`buildrules` and `LICENSE` in a directory of the tarball's name):\n", .{});
         for (n.binaries) |b| try out.print(a, "  - https://github.com/{s}/releases/download/{s}/{s} sha256 `{s}`\n", .{ n.repo, n.tag, b.name, b.sha256 });
+    }
+    if (n.debs.len != 0) {
+        try out.print(a, "- the command line as a Debian package, one static package per architecture (`buildrules` in `/usr/bin`):\n", .{});
+        for (n.debs) |b| try out.print(a, "  - https://github.com/{s}/releases/download/{s}/{s} sha256 `{s}`\n", .{ n.repo, n.tag, b.name, b.sha256 });
     }
     try out.print(a, "- SHA256SUMS lists every file above; each file and SHA256SUMS carries a build provenance attestation (`gh attestation verify {s} --repo {s}`)", .{ n.archive, n.repo });
     if (n.binaries.len != 0) try out.print(a, " and a keyless signature `<file>.sigstore.json` (`cosign verify-blob --bundle {s}.sigstore.json --certificate-identity https://github.com/{s}/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com {s}`)", .{ n.archive, n.repo, n.archive });

@@ -13,7 +13,7 @@ dotfiles a glob does not return) and fails on:
 
 Two things that are not ours are reported as `allowed (<reason>)` and counted at the end of the report, never hidden: the Rust edition
 (`edition = "2024"` is the name of a language edition, not a date) and an author's address inside the metadata of an npm package in a lock file.
-They are the only allowances (`upstreamReason` in scrub.zig). The release date of a pinned artifact is not one: pins use versioned URLs.
+They, and the one maintainer address of the .deb packages (`why_maintainer`, a no-reply address of the code host, in `packaging/deb/control`), are the only allowances (`upstreamReason` and the email scan in scrub.zig). The release date of a pinned artifact is not one: pins use versioned URLs.
 
 `--require` names files that must be among the inputs: a package whose `scrub_files()` is missing, or a glob that came up empty, is red and
 not green. A new package needs `scrub_files()` at the end of its BUCK file and its label in `tools/scrub/BUCK`. The one package without it is
