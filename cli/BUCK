@@ -24,6 +24,14 @@ zig_module(
 )
 
 _TESTS = [
+    "autopin_api",
+    "autopin_compute",
+    "autopin_inflate",
+    "autopin_manifest",
+    "autopin_oom",
+    "autopin_safe",
+    "autopin_table",
+    "autopin_zip",
     "cargo_cmd",
     "buckgen",
     "contract",
@@ -148,6 +156,13 @@ zig_test(
     visibility = ["PUBLIC"],
 )
 
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check the CLI page against its flags.
+export_file(
+    name = "autopin.zig",
+    src = "src/autopin.zig",
+    visibility = ["//site:"],
+)
 
 # Read by the buildrules.dev site's tests (site/BUCK), which check the CLI page against its flags.
 export_file(
