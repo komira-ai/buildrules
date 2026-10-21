@@ -180,13 +180,20 @@ test "manifest: a path that is not a SETS output is refused (it is never used to
     }
 }
 
-test "manifest: a file listed twice is refused, and more than eleven files" {
+test "manifest: a file listed twice is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
     const one = "{\"path\":\"site/buildrules.lock.bzl\",\"sha256\":\"" ++ sha_a ++ "\"}";
     const twice = "{\"pr\":7,\"head_sha\":\"" ++ head ++ "\",\"base_sha\":\"" ++ base ++ "\",\"files\":[" ++ one ++ "," ++ one ++ "]}";
     try t.expectError(error.DuplicatePath, parseWith(a, twice));
+}
+
+test "manifest: more than eleven files are refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const one = "{\"path\":\"site/buildrules.lock.bzl\",\"sha256\":\"" ++ sha_a ++ "\"}";
     const many = "{\"pr\":7,\"head_sha\":\"" ++ head ++ "\",\"base_sha\":\"" ++ base ++ "\",\"files\":[" ++ (one ++ ",") ** 11 ++ one ++ "]}";
     try t.expectError(error.BadFiles, parseWith(a, many));
 }
@@ -255,12 +262,19 @@ test "members: bytes whose sha256 is not the manifest's are refused" {
     try t.expectError(error.Sha256Mismatch, manifest.members(a, m, &.{ entry("manifest.json", "{}"), entry("site/buildrules.lock.bzl", "tablE") }, try sets(a)));
 }
 
-test "members: a member the manifest does not list, and a listed file with no member, are refused" {
+test "members: a member the manifest does not list is refused" {
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
     const m = try manifestFor(a, "table");
     try t.expectError(error.MemberNotListed, manifest.members(a, m, &.{ entry("manifest.json", "{}"), entry("site/buildrules.lock.bzl", "table"), entry("service/api/pins.lock.bzl", "x") }, try sets(a)));
+}
+
+test "members: a listed file with no member is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const m = try manifestFor(a, "table");
     try t.expectError(error.ListedFileMissing, manifest.members(a, m, &.{entry("manifest.json", "{}")}, try sets(a)));
 }
 

@@ -164,9 +164,9 @@ pub fn read(a: std.mem.Allocator, lock_text: []const u8, diag: *Diag) ![]Entry {
             diag.add("packages[{s}]: a link or a bundled package has no tarball of its own", .{path});
             continue;
         }
-        const resolved = text(o, "resolved");
-        const integrity = text(o, "integrity");
-        if (resolved == null or integrity == null) {
+        const resolved = text(o, "resolved") orelse "";
+        const integrity = text(o, "integrity") orelse "";
+        if (resolved.len == 0 or integrity.len == 0) {
             diag.add("packages[{s}]: needs both `resolved` and `integrity` (a bundled, git, file: or workspace entry has neither)", .{path});
             continue;
         }
@@ -186,12 +186,12 @@ pub fn read(a: std.mem.Allocator, lock_text: []const u8, diag: *Diag) ![]Entry {
             diag.add("packages[{s}]: version {s} is not strict semver", .{ path, version });
             continue;
         }
-        if (!valid.isSri512(integrity.?)) {
+        if (!valid.isSri512(integrity)) {
             diag.add("packages[{s}]: integrity is not a sha512 of 64 bytes", .{path});
             continue;
         }
         const url = try canonicalUrl(a, derived, version);
-        if (!std.mem.eql(u8, resolved.?, url)) {
+        if (!std.mem.eql(u8, resolved, url)) {
             diag.add("packages[{s}]: resolved is not the registry tarball URL of {s}@{s} (git, another host, another file name, a query?)", .{ path, derived, version });
             continue;
         }
@@ -200,7 +200,7 @@ pub fn read(a: std.mem.Allocator, lock_text: []const u8, diag: *Diag) ![]Entry {
             .key = try std.fmt.allocPrint(a, "{s}@{s}", .{ derived, version }),
             .name = derived,
             .version = version,
-            .sri512 = integrity.?,
+            .sri512 = integrity,
             .url = url,
             .path = path,
             .os = npm_cmd.strList(a, o, "os", diag, where),

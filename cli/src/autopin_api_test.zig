@@ -65,6 +65,7 @@ test "download: a Location off the allow-list is refused and never requested" {
         "https://X.blob.core.windows.net/x",
         "http://x.blob.core.windows.net/x",
         "https://x.blob.core.windows.net/x#frag",
+        "http://xy.blob.core.windows.net/x",
         "https://x.blob.core.windows.net\\@evil.example/x",
         "https://githubusercontent.com/x",
         "https://api.github.com/x",
@@ -102,6 +103,8 @@ test "download: the API's first answer must be a 302 with a Location" {
     try t.expectError(error.NotARedirect, api_mod.download(a, ok200.api(), "p", 1024));
     var no_loc = Fake{ .a = a, .answers = &.{.{ .status = 302 }} };
     try t.expectError(error.NotARedirect, api_mod.download(a, no_loc.api(), "p", 1024));
+    var inline_with_location = Fake{ .a = a, .answers = &.{.{ .status = 200, .location = blob, .body = "x" }} };
+    try t.expectError(error.NotARedirect, api_mod.download(a, inline_with_location.api(), "p", 1024));
     var forbidden = Fake{ .a = a, .answers = &.{.{ .status = 403, .body = "{}" }} };
     try t.expectError(error.NotARedirect, api_mod.download(a, forbidden.api(), "p", 1024));
 }

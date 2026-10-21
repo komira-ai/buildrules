@@ -108,6 +108,7 @@ test "lock: a bundled entry that has a tarball is refused too" {
 
 test "lock: a link is refused" {
     try expectRefused(",\"node_modules/l\":{\"resolved\":\"packages/l\",\"link\":true}", "node_modules/l");
+    try expectRefused(",\"node_modules/l2\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ reg ++ "l2/-/l2-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\",\"link\":true}", "node_modules/l2");
 }
 
 test "lock: a git dependency is refused" {
