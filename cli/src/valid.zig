@@ -90,6 +90,9 @@ pub fn isSri512(s: []const u8) bool {
     if (!std.mem.startsWith(u8, s, prefix)) return false;
     const b64 = s[prefix.len..];
     if (b64.len != 88) return false;
+    // The size first: the decoder writes what the text says, and 88 characters without padding are 66 bytes.
+    const size = std.base64.standard.Decoder.calcSizeForSlice(b64) catch return false;
+    if (size != 64) return false;
     var out: [64]u8 = undefined;
     std.base64.standard.Decoder.decode(&out, b64) catch return false;
     return true;

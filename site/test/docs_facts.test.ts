@@ -286,7 +286,7 @@ describe('init and the generated files', () => {
     // the options of the install script (a program of its own, in site/static/install.sh), from its usage text
     const install = new Set([...usageOf(repoFile('site/static/install.sh')).matchAll(/--[a-z][a-z0-9-]*/g)].map((m) => m[0]));
     const real = new Set(
-      ['init', 'cargo_cmd', 'sync', 'check', 'npm_cmd', 'mojo_cmd', 'main'].flatMap((n) => [...usage(repoFile(`cli/src/${n}.zig`)).matchAll(/--[a-z][a-z0-9-]*/g)].map((m) => m[0])),
+      ['init', 'cargo_cmd', 'sync', 'check', 'npm_cmd', 'mojo_cmd', 'autopin', 'main'].flatMap((n) => [...usage(repoFile(`cli/src/${n}.zig`)).matchAll(/--[a-z][a-z0-9-]*/g)].map((m) => m[0])),
     );
     // other programs' flags the pages mention: buck2, curl, gh, mopm, rustc, the linker
     const others = ['--ignore-missing', '--show-output', '--target-platforms', '--repo', '--unit-graph', '--locked', '--test', '--strip-debug', '--verify-tag', '--help', '--version'];
