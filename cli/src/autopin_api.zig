@@ -99,8 +99,9 @@ pub const Http = struct {
     base_url: []const u8 = "https://api.github.com",
     /// Tests only: allow http to 127.0.0.1.
     allow_http_loopback: bool = false,
-    /// How long one read or one write on the connection may wait, in seconds. The connect itself has no deadline of its own in
-    /// the standard library client: a connect that hangs is ended by the workflow job's `timeout-minutes`. A server that sends a
+    /// How long one read or one write on the connection may wait, in seconds. The deadlines are set once the connection exists. The
+    /// connect and the TLS handshake (done inside the connect) have no deadline of their own in the standard library client: a connect or a
+    /// handshake that hangs is ended only by the workflow job's `timeout-minutes`. A server that sends a
     /// byte at a time can keep a body coming for longer than this; the cap on the body and the job's timeout bound that.
     timeout_seconds: u32 = 60,
 
