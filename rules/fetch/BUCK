@@ -1,0 +1,30 @@
+# fetch_tool: GET one URL, publish its bytes only if their sha512 is the stated one (see main.zig).
+# A Zig tool built behind its unit tests, as every build tool here is.
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/zig:zig.bzl", "zig_exe", "zig_test")
+
+_ZIG = "buildrules//rules/pins:zig_next"
+_ZIG_VERSION = "buildrules//rules/pins:zig_next_version"
+
+zig_test(
+    name = "fetch_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "fetch_test.zig",
+    imports = ["fetch.zig"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "fetch_tool",
+    exec_compatible_with = LINUX_X86_64,
+    src = "main.zig",
+    imports = ["fetch.zig"],
+    unit_tests = [":fetch_unit", _ZIG_VERSION],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()
