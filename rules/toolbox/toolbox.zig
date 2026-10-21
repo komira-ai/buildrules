@@ -32,6 +32,7 @@ const Applet = struct {
 pub const applets = [_]Applet{
     .{ .name = "rm", .run = files.rm },
     .{ .name = "mkdir", .run = files.mkdir },
+    .{ .name = "ln", .run = files.ln },
     .{ .name = "sleep", .run = text.sleep },
     .{ .name = "echo", .run = text.echo },
     .{ .name = "cat", .run = text.cat },

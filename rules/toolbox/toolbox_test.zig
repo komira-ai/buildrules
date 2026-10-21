@@ -42,10 +42,10 @@ test "dispatch: an unknown applet is not found (127), by either route; no applet
     try t.expectEqual(@as(u8, 1), r.status);
 }
 
-test "dispatch: --list names the nine applets, in order, one a line; a closed stdout is a failure" {
+test "dispatch: --list names the ten applets, in order, one a line; a closed stdout is a failure" {
     var c = tk.Case.init();
     defer c.deinit();
-    try expectRun(&c, &.{ "toolbox", "--list" }, 0, "rm\nmkdir\nsleep\necho\ncat\nenv\nprintenv\ntrue\nfalse\n", "");
+    try expectRun(&c, &.{ "toolbox", "--list" }, 0, "rm\nmkdir\nln\nsleep\necho\ncat\nenv\nprintenv\ntrue\nfalse\n", "");
     c.stdout_closed = true;
     try expectRun(&c, &.{ "toolbox", "--list" }, 1, "", "");
 }
@@ -334,7 +334,7 @@ test "rm: `--` ends the options; an unknown option and no operand are refused" {
     try c.put("-r", "odd name");
     try expectRun(&c, &.{ "rm", "--", "-r" }, 0, "", "");
     try t.expect(!c.exists("-r"));
-    try c.put("-", "dash");
+    try c.put("-", "hyphen");
     try expectRun(&c, &.{ "rm", "-" }, 0, "", "");
     try expectRun(&c, &.{ "rm", "-x", "a" }, 1, "", "rm: invalid option -- 'x'\n");
     try expectRun(&c, &.{ "rm", "-rx", "a" }, 1, "", "rm: invalid option -- 'x'\n");
@@ -572,24 +572,20 @@ test "every applet, with the allocator failing at each allocation in turn, fails
     }
     const path_entry = try std.fmt.allocPrint(c.alloc(), "PATH={s}/bin", .{try c.path(".")});
     const lines = [_][]const []const u8{
-        &.{"true"},
-        &.{"false"},
         &.{ "toolbox", "--list" },
         &.{"toolbox"},
         &.{"nosuch"},
         &.{ "echo", "hello", "world" },
-        &.{ "echo", "-n" },
         &.{ "echo", "-e", "a\\x41\\0101\\n\\\\z\\c", "dropped" },
         &.{ "echo", "-e", "\\x", "\\xg", "\\q", "tail\\", "\\0" },
         &.{ "cat", "f", "missing" },
-        &.{ "sleep", "0.5" },
         &.{ "sleep", "x" },
-        &.{ "rm", "-f", "missing" },
         &.{ "rm", "missing" },
         &.{ "rm", "-x" },
         &.{ "rm", ".." },
-        &.{ "mkdir", "-p", "bin" },
         &.{ "mkdir", "bin" },
+        &.{ "ln", "-s", "t", "no-dir/lnk" },
+        &.{"ln"},
         &.{ "mkdir", "-m" },
         &.{"printenv"},
         &.{ "printenv", "A", "NOPE", "B" },
@@ -602,6 +598,17 @@ test "every applet, with the allocator failing at each allocation in turn, fails
         &.{ "env", "nosuchtool" },
     };
     for (lines) |line| try tk.sweep(&c, line);
+    // these allocate nothing, and the sweep says so
+    const quiet = [_][]const []const u8{
+        &.{"true"},
+        &.{"false"},
+        &.{ "echo", "-n" },
+        &.{ "sleep", "0.5" },
+        &.{ "rm", "-f", "missing" },
+        &.{ "mkdir", "-p", "bin" },
+        &.{ "ln", "-sf", "t", "lnk" },
+    };
+    for (quiet) |line| try tk.sweepNone(&c, line);
 }
 
 // ---- main -------------------------------------------------------------------------------------------------------
@@ -659,4 +666,54 @@ test "rm -r of a name the file system refuses is an error with the reason, and a
     try expectRun(&c, &.{ "env", "/bin/prog" }, 0, "", "");
     try t.expectEqual(@as(usize, 1), tk.ran_env.len);
     try t.expectEqualStrings("A=1", tk.ran_env[0]);
+}
+
+// ---- ln ---------------------------------------------------------------------------------------------------------
+
+test "ln -s: a link to a target that is there, and to one that is not (dangling)" {
+    var c = tk.Case.init();
+    defer c.deinit();
+    try c.put("target", "content");
+    try expectRun(&c, &.{ "ln", "-s", "target", "link" }, 0, "", "");
+    var buf: [64]u8 = undefined;
+    try t.expectEqualStrings("target", try c.tmp.dir.readLink("link", &buf));
+    try t.expectEqualStrings("content", try c.read("link"));
+    try expectRun(&c, &.{ "ln", "-s", "nowhere", "dangling" }, 0, "", "");
+    try t.expectEqualStrings("nowhere", try c.tmp.dir.readLink("dangling", &buf));
+    try expectRun(&c, &.{ "ln", "-s", "--", "-odd", "dashed" }, 0, "", "");
+    try t.expectEqualStrings("-odd", try c.tmp.dir.readLink("dashed", &buf));
+}
+
+test "ln -s: an existing link name is an error and is left as it was; -f replaces a link or a file; -sf and -fs are the same as -s -f" {
+    var c = tk.Case.init();
+    defer c.deinit();
+    var buf: [64]u8 = undefined;
+    try c.tmp.dir.symLink("old", "link", .{});
+    try expectRun(&c, &.{ "ln", "-s", "new", "link" }, 1, "", "ln: failed to create symbolic link 'link': File exists\n");
+    try t.expectEqualStrings("old", try c.tmp.dir.readLink("link", &buf));
+    try expectRun(&c, &.{ "ln", "-sf", "new", "link" }, 0, "", "");
+    try t.expectEqualStrings("new", try c.tmp.dir.readLink("link", &buf));
+    try expectRun(&c, &.{ "ln", "-fs", "newer", "link" }, 0, "", "");
+    try expectRun(&c, &.{ "ln", "-s", "-f", "newest", "link" }, 0, "", "");
+    try t.expectEqualStrings("newest", try c.tmp.dir.readLink("link", &buf));
+    try c.put("file", "x");
+    try expectRun(&c, &.{ "ln", "-sf", "elsewhere", "file" }, 0, "", "");
+    try t.expectEqualStrings("elsewhere", try c.tmp.dir.readLink("file", &buf));
+    // -f does not remove a directory
+    try c.tmp.dir.makePath("dir");
+    try expectRun(&c, &.{ "ln", "-sf", "x", "dir" }, 1, "", "ln: failed to create symbolic link 'dir': Is a directory\n");
+    try t.expect(c.exists("dir"));
+}
+
+test "ln -s: a missing parent is an error; so are a missing operand, a missing -s and an unknown option" {
+    var c = tk.Case.init();
+    defer c.deinit();
+    try expectRun(&c, &.{ "ln", "-s", "t", "no-dir/link" }, 1, "", "ln: failed to create symbolic link 'no-dir/link': No such file or directory\n");
+    try expectRun(&c, &.{ "ln", "-sf", "t", "no-dir/link" }, 1, "", "ln: failed to create symbolic link 'no-dir/link': No such file or directory\n");
+    try expectRun(&c, &.{ "ln", "-s", "t" }, 1, "", "ln: usage: ln -s [-f] TARGET LINK\n");
+    try expectRun(&c, &.{ "ln", "-s", "a", "b", "c" }, 1, "", "ln: usage: ln -s [-f] TARGET LINK\n");
+    try expectRun(&c, &.{"ln"}, 1, "", "ln: only symbolic links are made: give -s\n");
+    try expectRun(&c, &.{ "ln", "t", "l" }, 1, "", "ln: only symbolic links are made: give -s\n");
+    try expectRun(&c, &.{ "ln", "-sx", "t", "l" }, 1, "", "ln: invalid option -- 'x'\n");
+    try t.expect(!c.exists("l"));
 }

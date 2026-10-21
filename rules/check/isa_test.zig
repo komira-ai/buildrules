@@ -276,3 +276,24 @@ test "isa: the failure of a binary that has ymm instructions where none are allo
     try kit.expectResult(try isaRun(&c, WITHOUT_YMM, "avx2"), 1, "", "");
     try kit.expectResult(try isaRun(&c, WITH_YMM, "sse"), 2, "", "");
 }
+
+test "report: an allocation that fails while the report is built is an error, at each of its allocations" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    const n = try counted(&c, &.{SAMPLE});
+    var i: usize = 0;
+    var failed: usize = 0;
+    while (i < 200) : (i += 1) {
+        var fa = std.testing.FailingAllocator.init(c.alloc(), .{ .fail_index = i });
+        if (isa.report(fa.allocator(), "//x:y", "avx2", n)) |text| {
+            try t.expect(!fa.has_induced_failure);
+            try t.expect(std.mem.startsWith(u8, text, "target: //x:y\n"));
+            break;
+        } else |err| {
+            try t.expectEqual(error.OutOfMemory, err);
+            try t.expect(fa.has_induced_failure);
+            failed += 1;
+        }
+    }
+    try t.expect(failed > 10);
+}

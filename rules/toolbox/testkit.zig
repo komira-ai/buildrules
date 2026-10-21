@@ -131,7 +131,8 @@ pub fn exe(a: std.mem.Allocator) ![]const u8 {
 /// Runs `args` with the allocator failing at its 1st, 2nd, ... allocation in turn, until a run meets no failure. A run in which an allocation failed
 /// must not be a success when the plain run is (an out-of-memory that was swallowed would hand back a wrong answer as a right one), and the run
 /// that meets no failure must end as the plain run did.
-pub fn sweep(c: *Case, args: []const []const u8) !void {
+fn sweepCount(c: *Case, args: []const []const u8) !usize {
+    var induced: usize = 0;
     const plain = try c.run(args);
     var i: usize = 0;
     while (i < 10_000) : (i += 1) {
@@ -140,8 +141,9 @@ pub fn sweep(c: *Case, args: []const []const u8) !void {
         if (!fa.has_induced_failure) {
             try std.testing.expectEqual(plain.status, r.status);
             try std.testing.expectEqualStrings(plain.out, r.out);
-            return;
+            return induced;
         }
+        induced += 1;
         if (plain.status == 0 and r.status == 0) {
             std.debug.print("`{s}`: with allocation {d} failing the run still succeeded\n", .{ args[0], i });
             return error.SwallowedOutOfMemory;
@@ -150,4 +152,22 @@ pub fn sweep(c: *Case, args: []const []const u8) !void {
         if (r.out.len != 0 and !std.mem.eql(u8, r.out, plain.out)) return error.PartialOutput;
     }
     return error.SweepDidNotEnd;
+}
+
+/// `sweepCount`, and the sweep must have failed at least one allocation: a sweep that never fails one proves nothing.
+pub fn sweep(c: *Case, args: []const []const u8) !void {
+    const induced = try sweepCount(c, args);
+    if (induced == 0) {
+        std.debug.print("`{s}`: the sweep failed no allocation\n", .{args[0]});
+        return error.SweepFailedNothing;
+    }
+}
+
+/// For a command that allocates nothing: the sweep fails no allocation, and says so.
+pub fn sweepNone(c: *Case, args: []const []const u8) !void {
+    const induced = try sweepCount(c, args);
+    if (induced != 0) {
+        std.debug.print("`{s}`: {d} allocations failed, though none was expected\n", .{ args[0], induced });
+        return error.SweepFailedSomething;
+    }
 }

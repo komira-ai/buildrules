@@ -327,3 +327,17 @@ test "digest: an integrity string that is not base64 of the right shape is statu
         try kit.expectFailure(try c.run(&.{ "digest", want, "abc", "n" }), 2, "is not sha256:<hex>");
     }
 }
+
+test "digest: the FIPS 180 test vectors of a million 'a', which no chunk size of the reader may change" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    const million = try c.alloc().alloc(u8, 1_000_000);
+    @memset(million, 'a');
+    try c.put("million", million);
+    const sha256 = "sha256:cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0";
+    const sha512 = "sha512:e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973ebde0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b";
+    try kit.expectResult(try c.run(&.{ "digest", sha256, "million", "a", sha512, "million", "b" }), 0, "", "");
+    // and a file one byte shorter is another digest
+    try c.put("short", million[0 .. million.len - 1]);
+    try kit.expectFailure(try c.run(&.{ "digest", sha256, "short", "a" }), 1, "the sha256 of short is ");
+}

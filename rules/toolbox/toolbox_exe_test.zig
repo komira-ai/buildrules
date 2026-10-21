@@ -55,7 +55,7 @@ test "by name: `toolbox <applet>`, and a link named for the applet; an unknown o
     try expectRun(try run(a, c.tmp.dir, &.{ exe, "nosuch" }, &.{}), 127, "");
     try expectRun(try run(a, c.tmp.dir, &.{try link(&c, exe, "nosuch")}, &.{}), 127, "");
     try expectRun(try run(a, c.tmp.dir, &.{exe}, &.{}), 1, "");
-    try expectRun(try run(a, c.tmp.dir, &.{ exe, "--list" }, &.{}), 0, "rm\nmkdir\nsleep\necho\ncat\nenv\nprintenv\ntrue\nfalse\n");
+    try expectRun(try run(a, c.tmp.dir, &.{ exe, "--list" }, &.{}), 0, "rm\nmkdir\nln\nsleep\necho\ncat\nenv\nprintenv\ntrue\nfalse\n");
     try expectRun(try run(a, c.tmp.dir, &.{try link(&c, exe, "true")}, &.{}), 0, "");
     try expectRun(try run(a, c.tmp.dir, &.{try link(&c, exe, "false")}, &.{}), 1, "");
 }
@@ -198,4 +198,19 @@ test "env: a command that is not there is 127; one that is there and not executa
     const r = try run(a, c.tmp.dir, &.{ exe, "env", plain }, &.{});
     try t.expectEqual(@as(u8, 126), r.code);
     try t.expect(std.mem.indexOf(u8, r.stderr, "Permission denied") != null);
+}
+
+test "ln through a link: a symbolic link, a dangling one, and -f over an existing one" {
+    var c = tk.Case.init();
+    defer c.deinit();
+    const a = c.alloc();
+    const exe = try tk.exe(a);
+    const ln = try link(&c, exe, "ln");
+    try expectRun(try run(a, c.tmp.dir, &.{ ln, "-s", "dangling-target", "l1" }, &.{}), 0, "");
+    var buf: [64]u8 = undefined;
+    try t.expectEqualStrings("dangling-target", try c.tmp.dir.readLink("l1", &buf));
+    try expectRun(try run(a, c.tmp.dir, &.{ ln, "-s", "other", "l1" }, &.{}), 1, "");
+    try expectRun(try run(a, c.tmp.dir, &.{ ln, "-sf", "other", "l1" }, &.{}), 0, "");
+    try t.expectEqualStrings("other", try c.tmp.dir.readLink("l1", &buf));
+    try expectRun(try run(a, c.tmp.dir, &.{ ln, "-s", "x", "no-dir/l2" }, &.{}), 1, "");
 }

@@ -129,3 +129,48 @@ fn failed(io: Io, dir: []const u8, why: []const u8) bool {
     io.say("mkdir", &.{ "cannot create directory '", dir, "': ", why });
     return false;
 }
+
+/// `ln -s [-f] [--] TARGET LINK`: makes LINK a symbolic link to TARGET, which need not be there. A LINK that exists is an error unless `-f`, which
+/// removes it first (a file or a link; not a directory). The parent of LINK must exist. A link without `-s` (a hard link) is not made.
+pub fn ln(_: Alloc, io: Io, args: []const []const u8) io_mod.Oom!u8 {
+    var symbolic = false;
+    var force = false;
+    var i: usize = 0;
+    while (i < args.len and args[i].len > 1 and args[i][0] == '-') : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--")) {
+            i += 1;
+            break;
+        }
+        for (args[i][1..], 1..) |c, k| {
+            switch (c) {
+                's' => symbolic = true,
+                'f' => force = true,
+                else => {
+                    io.say("ln", &.{ "invalid option -- '", args[i][k .. k + 1], "'" });
+                    return 1;
+                },
+            }
+        }
+    }
+    if (!symbolic) {
+        io.say("ln", &.{"only symbolic links are made: give -s"});
+        return 1;
+    }
+    if (args.len - i != 2) {
+        io.say("ln", &.{"usage: ln -s [-f] TARGET LINK"});
+        return 1;
+    }
+    const target = args[i];
+    const link = args[i + 1];
+    io.cwd.symLink(target, link, .{}) catch |err| {
+        if (err != error.PathAlreadyExists or !force) return linkFailed(io, link, err);
+        io.cwd.deleteFile(link) catch |gone| return linkFailed(io, link, gone);
+        io.cwd.symLink(target, link, .{}) catch |again| return linkFailed(io, link, again);
+    };
+    return 0;
+}
+
+fn linkFailed(io: Io, link: []const u8, err: anyerror) u8 {
+    io.say("ln", &.{ "failed to create symbolic link '", link, "': ", describe(err) });
+    return 1;
+}

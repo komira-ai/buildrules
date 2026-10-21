@@ -164,7 +164,8 @@ pub fn valueOf(c: *Case, before: Args, name: []const u8) !?[]const u8 {
 /// Runs `args` with the allocator failing at its 1st, 2nd, ... allocation in turn, until a run meets no failure. The files in `outputs` are removed
 /// before each run. A run in which an allocation failed must not be a success when the plain run is, and must not have written an output file
 /// (a command writes it only when it succeeded); the run that meets no failure must end as the plain run did.
-pub fn sweep(c: *Case, args: Args, outputs: []const []const u8) !void {
+fn sweepCount(c: *Case, args: Args, outputs: []const []const u8) !usize {
+    var induced: usize = 0;
     const plain = try c.run(args);
     var i: usize = 0;
     while (i < 10_000) : (i += 1) {
@@ -173,8 +174,9 @@ pub fn sweep(c: *Case, args: Args, outputs: []const []const u8) !void {
         const r = try c.runWith(fa.allocator(), args);
         if (!fa.has_induced_failure) {
             try std.testing.expectEqual(plain.status, r.status);
-            return;
+            return induced;
         }
+        induced += 1;
         if (plain.status != 0) continue;
         if (r.status == 0) {
             std.debug.print("`{s}`: with allocation {d} failing the run still succeeded\n", .{ args[0], i });
@@ -186,4 +188,22 @@ pub fn sweep(c: *Case, args: Args, outputs: []const []const u8) !void {
         };
     }
     return error.SweepDidNotEnd;
+}
+
+/// `sweepCount`, and the sweep must have failed at least one allocation: a sweep that never fails one proves nothing.
+pub fn sweep(c: *Case, args: Args, outputs: []const []const u8) !void {
+    const induced = try sweepCount(c, args, outputs);
+    if (induced == 0) {
+        std.debug.print("`{s}`: the sweep failed no allocation\n", .{if (args.len > 0) args[0] else ""});
+        return error.SweepFailedNothing;
+    }
+}
+
+/// For a command line that allocates nothing: the sweep fails no allocation, and says so.
+pub fn sweepNone(c: *Case, args: Args, outputs: []const []const u8) !void {
+    const induced = try sweepCount(c, args, outputs);
+    if (induced != 0) {
+        std.debug.print("`{s}`: {d} allocations failed, though none was expected\n", .{ if (args.len > 0) args[0] else "", induced });
+        return error.SweepFailedSomething;
+    }
 }

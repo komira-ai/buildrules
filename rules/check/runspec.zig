@@ -291,6 +291,10 @@ fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom
         }
         p.cwd = try common.absolute(a, here, dir);
     }
+    io.cwd.access(p.cwd, .{}) catch |err| {
+        io.say(sub, &.{ "cannot use the working directory ", p.cwd, ": ", @errorName(err) });
+        return 1;
+    };
     var argv = common.Strings{ .a = a };
     try argv.add(try common.absolute(a, here, spec.argv[0]));
     for (spec.argv[1..]) |arg| try argv.add(arg);

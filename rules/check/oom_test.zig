@@ -60,18 +60,18 @@ test "digest, same, copy: every allocation failed in turn" {
     try c.put("longer", "abcd");
     const o: []const []const u8 = &.{"o"};
     const abc = "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
-    try kit.sweep(&c, &.{ "digest", "--out", "o", abc, "abc", "n" }, o);
+    try kit.sweepNone(&c, &.{ "digest", "--out", "o", abc, "abc", "n" }, o);
     try kit.sweep(&c, &.{ "digest", abc, "abd", "n", "sha512:" ++ "00" ** 64, "abd", "m" }, o);
     try kit.sweep(&c, &.{ "digest", "md5:x", "abc", "n" }, o);
     try kit.sweep(&c, &.{ "digest", abc, "missing", "n" }, o);
     try kit.sweep(&c, &.{"digest"}, o);
-    try kit.sweep(&c, &.{ "same", "--out", "o", "abc", "abc2" }, o);
+    try kit.sweepNone(&c, &.{ "same", "--out", "o", "abc", "abc2" }, o);
     try kit.sweep(&c, &.{ "same", "--out", "o", "abc", "abd" }, o);
     try kit.sweep(&c, &.{ "same", "--out", "o", "abc", "longer" }, o);
     try kit.sweep(&c, &.{ "same", "--out", "o", "longer", "abc" }, o);
     try kit.sweep(&c, &.{ "same", "--out", "o", "abc", "missing" }, o);
     try kit.sweep(&c, &.{ "same", "--out", "o", "abc" }, o);
-    try kit.sweep(&c, &.{ "copy", "abc", "o" }, o);
+    try kit.sweepNone(&c, &.{ "copy", "abc", "o" }, o);
     try kit.sweep(&c, &.{ "copy", "missing", "o" }, o);
     try kit.sweep(&c, &.{"copy"}, o);
 }
@@ -92,8 +92,8 @@ test "isa and the dispatch: every allocation failed in turn" {
     try kit.sweep(&c, &.{ "isa", "--objdump", c.toolbox, "--binary", with, "--expect", "none", "--label", "l", "--out", "r" }, o);
     try kit.sweep(&c, &.{"isa"}, o);
     try kit.sweep(&c, &.{ "isa", "--bogus", "x" }, o);
-    try kit.sweep(&c, &.{}, o);
-    try kit.sweep(&c, &.{"--help"}, o);
+    try kit.sweepNone(&c, &.{}, o);
+    try kit.sweepNone(&c, &.{"--help"}, o);
     try kit.sweep(&c, &.{"frobnicate"}, o);
 }
 

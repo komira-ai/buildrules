@@ -358,7 +358,7 @@ test "a program that cannot be started is 127 when it is not there and 126 when 
     const r2 = try c.run(&.{ "marker", "--out", "o", "--capture", "--", plain });
     try kit.expectFailure(r2, 126, "AccessDenied");
     // a working directory that is not there
-    try kit.expectFailure(try c.runTool(&.{ "run", "--cwd", "nodir" }, &.{"true"}), 127, "cannot run ");
+    try kit.expectFailure(try c.runTool(&.{ "run", "--cwd", "nodir" }, &.{"true"}), 1, "cannot use the working directory ");
 }
 
 test "statusOf: the exit status, 128 and the signal for a signal, 255 otherwise" {
