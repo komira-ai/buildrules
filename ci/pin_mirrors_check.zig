@@ -118,7 +118,50 @@ pub fn check(a: std.mem.Allocator, files: []const File, script: []const u8, list
     if (!has(script, "--apply")) try add(a, &f, "tools/held/mirror-busybox.sh: no --apply (a held script is a dry run unless told)", .{});
     if (!has(script, "apply=0")) try add(a, &f, "tools/held/mirror-busybox.sh: the dry run is not the default", .{});
     if (has(script, "--force") or has(script, "--clobber")) try add(a, &f, "tools/held/mirror-busybox.sh: --force and --clobber are never used", .{});
+    try uploadRule(a, &f, script);
+    try curlRule(a, &f, script);
     return f;
+}
+
+/// Every curl of the held script (a non-comment line with the word `curl`) carries --max-time, --connect-timeout and --max-redirs, so no download can hang.
+fn curlRule(a: std.mem.Allocator, f: *Findings, script: []const u8) !void {
+    var seen: usize = 0;
+    var it = std.mem.splitScalar(u8, script, '\n');
+    while (it.next()) |line| {
+        if (isComment(line) or !has(line, "curl ")) continue;
+        seen += 1;
+        for ([_][]const u8{ "--max-time ", "--connect-timeout ", "--max-redirs " }) |flag| {
+            if (!has(line, flag)) try add(a, f, "tools/held/mirror-busybox.sh: a curl without {s}: {s}", .{ std.mem.trim(u8, flag, " "), std.mem.trim(u8, line, " ") });
+        }
+    }
+    if (seen == 0) try add(a, f, "tools/held/mirror-busybox.sh: no curl line (the downloads moved; update curlRule)", .{});
+}
+
+/// The file argument of every `gh release upload` line of the held script must end in `/busybox` (the asset name is the basename; `path#text` is only a label), contain no `#`, and there must be one.
+fn uploadRule(a: std.mem.Allocator, f: *Findings, script: []const u8) !void {
+    const who = "tools/held/mirror-busybox.sh";
+    var seen: usize = 0;
+    var it = std.mem.splitScalar(u8, script, '\n');
+    while (it.next()) |line| {
+        if (isComment(line)) continue;
+        const at = std.mem.indexOf(u8, line, "gh release upload ") orelse continue;
+        seen += 1;
+        const rest = line[at + "gh release upload ".len ..];
+        const q1 = std.mem.indexOfScalar(u8, rest, '"') orelse {
+            try add(a, f, "{s}: an upload line without a quoted tag", .{who});
+            continue;
+        };
+        const q2 = std.mem.indexOfScalarPos(u8, rest, q1 + 1, '"') orelse rest.len;
+        const q3 = std.mem.indexOfScalarPos(u8, rest, q2 + 1, '"') orelse {
+            try add(a, f, "{s}: an upload line without a quoted file argument", .{who});
+            continue;
+        };
+        const q4 = std.mem.indexOfScalarPos(u8, rest, q3 + 1, '"') orelse rest.len;
+        const arg = rest[q3 + 1 .. q4];
+        if (has(arg, "#")) try add(a, f, "{s}: the upload file argument {s} has a #label; the asset name is the file's basename, so the pinned url would 404", .{ who, arg });
+        if (!std.mem.endsWith(u8, arg, "/$ASSET") and !std.mem.endsWith(u8, arg, "/busybox")) try add(a, f, "{s}: the upload file argument {s} must end in /$ASSET or /busybox (the asset name is the basename)", .{ who, arg });
+    }
+    if (seen == 0) try add(a, f, "{s}: no gh release upload line", .{who});
 }
 
 // ---- tests -------------------------------------------------------------------------------------------------------------------------------
@@ -271,4 +314,31 @@ test "mutant: the held script drifts" {
     try expectFinding(a, files, try std.mem.concat(a, u8, &.{ script, "gh release create --force\n" }), &allow, "--force and --clobber are never used");
     const noapply = try std.mem.replaceOwned(u8, a, script, "--apply", "--go");
     try expectFinding(a, files, noapply, &allow, "no --apply");
+}
+
+test "mutant: the upload names the asset by label or by another basename" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const files = try realFiles(a);
+    const script = try work(a, "tools/held/mirror-busybox.sh");
+    const up = "\"$work/$ASSET\" --repo";
+    const label = try mutate(a, script, up, "\"$work/official#$ASSET\" --repo");
+    try expectFinding(a, files, label, &allow, "has a #label");
+    try expectFinding(a, files, label, &allow, "must end in /$ASSET or /busybox");
+    try expectFinding(a, files, try mutate(a, script, up, "\"$work/official\" --repo"), &allow, "must end in /$ASSET or /busybox");
+    try expectFinding(a, files, try mutate(a, script, up, "\"$work/busybox#busybox\" --repo"), &allow, "has a #label");
+    try expectFinding(a, files, try std.mem.replaceOwned(u8, a, script, "gh release upload", "gh release up"), &allow, "no gh release upload line");
+}
+
+test "mutant: a curl of the held script without a time limit" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const files = try realFiles(a);
+    const script = try work(a, "tools/held/mirror-busybox.sh");
+    try expectFinding(a, files, try mutate(a, script, "--max-time 60 ", ""), &allow, "a curl without --max-time");
+    try expectFinding(a, files, try mutate(a, script, "--connect-timeout 20 ", ""), &allow, "a curl without --connect-timeout");
+    try expectFinding(a, files, try mutate(a, script, "--max-redirs 5 ", ""), &allow, "a curl without --max-redirs");
+    try expectFinding(a, files, try std.mem.concat(a, u8, &.{ script, "curl -sS -o x https://github.com/x\n" }), &allow, "a curl without --max-time");
 }
