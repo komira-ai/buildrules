@@ -169,7 +169,7 @@ const write_job_actions = [_][]const u8{ "actions/checkout", "actions/download-a
 const attest_actions = [_][]const u8{ "actions/download-artifact", "actions/upload-artifact", "sigstore/cosign-installer", "actions/attest-build-provenance" };
 const cosign_action = "sigstore/cosign-installer";
 const app_token_action = "actions/create-github-app-token";
-/// The environment that holds the release bot's key (restricted to main); declared by the jobs that read `RELEASE_BOT_*` and by no other.
+/// The environment that holds the release bot's key (the owner restricts it to main as a setup step; nothing here checks that); declared by the jobs that read `RELEASE_BOT_*` and by no other.
 const release_environment = "release";
 
 /// The step of `tag` that mints the release bot's token: every input exact. The v* tag ruleset lets only that App create a tag, so the tag
@@ -758,7 +758,7 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
             }
         }
     }
-    // The release bot's key is an environment secret of `release_environment`, restricted to main: exactly the jobs that read `RELEASE_BOT_*` declare it. The apt
+    // The release bot's key is an environment secret of `release_environment` (the owner restricts it to main as a setup step): exactly the jobs that read `RELEASE_BOT_*` declare it. The apt
     // signing key is a secret of `apt_signing_environment`, read by the `apt-index` jobs alone, and the apt publish role is assumed in `apt_publish_environment` by the
     // `apt-deploy-*` jobs alone. No other job declares an environment.
     for (jobs) |*j| {

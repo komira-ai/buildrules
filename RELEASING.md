@@ -364,7 +364,7 @@ and to `permission-contents: write`, from two things the repository owner create
 | `RELEASE_BOT_APP_ID` | repository variable | the App id of the release bot |
 | `RELEASE_BOT_PRIVATE_KEY` | secret of the environment `release` | the App's private key (PEM); not a repository secret |
 
-The key lives in the environment `release`, restricted to the `main` branch (deployment branches: `main` only), so a workflow run from any other branch cannot read it. The repository-level copy is removed (the owner's held script creates the environment, moves the secret into it and deletes the repository copy). `tag` and `bump`, the only jobs that read `RELEASE_BOT_*`, declare `environment: release`; no other job declares an environment. `ci/release_check.zig` holds this: exactly the jobs that read `RELEASE_BOT_*` declare `environment: release`, any other job with an environment is a finding, a job that reads them without it is a finding, and `ci/workflow_check.zig` refuses an `environment:` in `ci.yml`. Until that script has run, a job that declares `environment: release` still reads the repository-level secret (GitHub creates an empty environment on first use), so the order is: merge the change, then run the script.
+The key lives in the environment `release`. Restricting that environment to the `main` branch (deployment branches: `main` only) is a setup step for the repository owner; **this repository does not set it and no check here sees it**, and until it is made a workflow run from another branch that declares the environment can read the key. The repository-level copy is removed (the owner's held script creates the environment, moves the secret into it and deletes the repository copy). `tag` and `bump`, the only jobs that read `RELEASE_BOT_*`, declare `environment: release`; no other job declares an environment. `ci/release_check.zig` holds this: exactly the jobs that read `RELEASE_BOT_*` declare `environment: release`, any other job with an environment is a finding, a job that reads them without it is a finding, and `ci/workflow_check.zig` refuses an `environment:` in `ci.yml`. Until that script has run, a job that declares `environment: release` still reads the repository-level secret (GitHub creates an empty environment on first use), so the order is: merge the change, then run the script.
 
 Only the `tag` step receives that token (`GH_TOKEN: ${{ steps.bot.outputs.token }}`); `publish` keeps `GITHUB_TOKEN` with `contents: write`, which is enough
 because `gh release create --verify-tag` aborts when the tag does not exist and creates no tag (the tool passes it, `tools/release/cmds.zig`). If either name is
@@ -432,7 +432,7 @@ organisation's Homebrew tap, the repository `<owner>/homebrew-tap` that `brew ta
 - **The token.** As for `bump`: in the second to last step `actions/create-github-app-token` (pinned by commit; `owner: ${{ github.repository_owner }}`, `repositories: homebrew-tap`,
   `permission-contents: write`, `permission-pull-requests: write`) gives the release bot's installation token for the tap repository alone to the last step, which runs `tool/tap`, as `GH_TOKEN`; it is never an
   argument. The job holds `contents: read` of its own and runs nothing after the token exists. `ci/release_check.zig` holds all of that: the exact inputs, the mint immediately before the last step,
-  the token used once, by that step, the key read once in the job, the environment `release` (restricted to `main`, where the key lives), the render step before the mint, and the arguments the guard depends on.
+  the token used once, by that step, the key read once in the job, the environment `release` (where the key lives; restricting it to `main` is the owner's setup step), the render step before the mint, and the arguments the guard depends on.
   The App must be installed on the tap repository; if it is not, the mint fails, `tap` is red and nothing else is affected.
 - **What the tool does.** It checks that the file is the formula of this version (every url `.../releases/download/v<V>/buildrules-cli-<V>-<target>.tar.gz`, one `<V>`, no `version` line) and that the tag exists;
   reads `Formula/buildrules.rb` on the tap's `main` and **refuses (red) when its version is above this release's** (a tap never moves down; the same version means it is already there: nothing to open); lists
@@ -477,12 +477,14 @@ its by-hash files already there; the driver stops the write after every put and 
 
 **A lost write.** Another product may publish between the read and the write. Every put of the index is conditional on the version that was read, so the loser gets a `412`: it writes nothing more, says so, and its
 output `conflict=true` starts the next attempt (`apt-deploy-read-2`, then `-3`), which reads, merges and signs again. The write of the third attempt (`--last`) fails the job instead. A `.deb` that is already in
-the pool (a `412` on its put) is kept as it is.
+the pool (a `412` on its put) is kept as it is **if it has the same bytes**: the tool reads the object back (`get-object`) and compares its sha256 with the file to publish. A pool object with other bytes is a red failure
+(a version published twice with different files, or a build that is not reproducible), and so is one that cannot be read; either way nothing of the index is written. The publish role therefore needs `s3:GetObject` on the
+product's pool prefix (`apt/pool/buildrules/*`) as well as on the index.
 
 **The settings, and what happens until they are made.** The repository owner makes them once:
 
-- the environment `apt-publish` (deployments from `main` only) with the variables `APT_PUBLISH_ROLE_ARN`, `APT_BUCKET`, `APT_DISTRIBUTION_ID` and `APT_HOSTNAME`, and a role whose trust names this repository and that environment;
-- the environment `apt-signing` (deployments from `main` only) with the secrets `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE`, and `APT_GPG_FINGERPRINT`, the fingerprint of the signing subkey, as a secret or as a variable.
+- the environment `apt-publish` (restrict its deployment branches to `main`, also a setup step) with the variables `APT_PUBLISH_ROLE_ARN`, `APT_BUCKET`, `APT_DISTRIBUTION_ID` and `APT_HOSTNAME`, and a role whose trust names this repository and that environment;
+- the environment `apt-signing` (restrict its deployment branches to `main`, also a setup step) with the secrets `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE`, and `APT_GPG_FINGERPRINT`, the fingerprint of the signing subkey, as a secret or as a variable.
 
 GitHub creates an environment the first time a job names it, with no variables and no restriction, so the first release after this change creates both empty. **Fail-safe.** Every apt job has a step `gate`
 (`apt-publish gate`) that checks the settings it needs, after only the step that makes the tool executable. When one is missing the gate prints a notice that names it (the names, never a value), and every later

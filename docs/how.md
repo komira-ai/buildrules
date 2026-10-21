@@ -41,8 +41,8 @@ installed), and `--releases-url URL` reads releases from a mirror. The macOS pro
 silicon: on an Intel Mac the script stops and says so before it asks for anything.
 
 Or by hand: a release carries the command line as a static program for three platforms, as a Debian package
-for the two Linux ones, and a source archive (the Homebrew formula and the apt repository come **after
-setup**, below). Pick a release from the
+for the two Linux ones, and a source archive (the Homebrew formula and the apt repository come
+**after setup**, below). Pick a release from the
 [releases page](https://github.com/komira-ai/buildrules/releases). To use a program, unpack the
 tarball of your platform (`linux-x86_64`, `linux-aarch64`, or `macos-arm64`), check it,
 and put `buildrules` on your `PATH`:
