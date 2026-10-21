@@ -2,9 +2,10 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("@buildrules//rules:matrix.bzl", "group", "isa_at", "rust_at")
 load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_OLDEST")
-load("@buildrules//rules/zig:zig.bzl", "zig_test")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load(":workflow_lint.bzl", "actionlint_check")
+load(":no_shell.bzl", "no_shell")
 
 # The CI matrix (docs/contract.md, section 10). Every cell builds AND tests: a test of these examples is a build action that
 # writes a `.passed` marker, a library is welded to its tests, and `run_check` executes the binary.
@@ -244,7 +245,97 @@ zig_test(
     },
 )
 
-group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":pin_mirrors_check", "//ci/negative:negative_check"])
+# The no-shell lint (ci/no_shell_check.zig): the build rules are leaving busybox and every shell, and this keeps a new use from coming in while they go. Its unit tests
+# plant each defect and its green controls; `no_shell` runs the check over every package's files (the `scrub_files` of each, as the scrub does) against
+# ci/no_shell_allow.tsv. A package missing its `scrub_files()` is not read: add its label here (the scrub has the same list).
+zig_test(
+    name = "no_shell_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "no_shell_check.zig",
+)
+
+zig_exe(
+    name = "no_shell_exe",
+    exec_compatible_with = LINUX_X86_64,
+    src = "no_shell_main.zig",
+    imports = ["no_shell_check.zig"],
+    unit_tests = [":no_shell_unit"],
+    visibility = ["PUBLIC"],
+)
+
+no_shell(
+    name = "no_shell",
+    allow = "no_shell_allow.tsv",
+    packages = [
+        "//:scrub_files",
+        "//beta:scrub_files",
+        "//ci/mojo_gate:scrub_files",
+        "//ci/negative:scrub_files",
+        "//ci:scrub_files",
+        "//cli:scrub_files",
+        "//docs:scrub_files",
+        "//examples/cxx:scrub_files",
+        "//examples/hello:scrub_files",
+        "//examples/isa:scrub_files",
+        "//examples/mojo/copy_of_base:scrub_files",
+        "//examples/mojo/registry/cnative:scrub_files",
+        "//examples/mojo/ws/util/base:scrub_files",
+        "//examples/mojo/ws/util:scrub_files",
+        "//examples/mojo/ws:scrub_files",
+        "//examples/mojo:scrub_files",
+        "//examples/node:scrub_files",
+        "//examples/p4ws/crates/links_a:scrub_files",
+        "//examples/p4ws/crates/links_b:scrub_files",
+        "//examples/p4ws/crates/probe_env:scrub_files",
+        "//examples/p4ws/crates/probe_ok:scrub_files",
+        "//examples/p4ws/crates/probe_tree:scrub_files",
+        "//examples/p4ws/crates/probe_usr:scrub_files",
+        "//examples/unpinned/crates/app:scrub_files",
+        "//examples/unpinned:scrub_files",
+        "//examples/zig:scrub_files",
+        "//infra/site:scrub_files",
+        "//packaging/deb:scrub_files",
+        "//platforms/exec:scrub_files",
+        "//platforms:scrub_files",
+        "//rules/core/tests:scrub_files",
+        "//rules/core:scrub_files",
+        "//rules/coverage/tests:scrub_files",
+        "//rules/coverage:scrub_files",
+        "//rules/cxx/tests:scrub_files",
+        "//rules/cxx:scrub_files",
+        "//rules/gate:scrub_files",
+        "//rules/kpin:scrub_files",
+        "//rules/minicfg:scrub_files",
+        "//rules/mojo/tests:scrub_files",
+        "//rules/mojo:scrub_files",
+        "//rules/mopm:scrub_files",
+        "//rules/node/tests:scrub_files",
+        "//rules/node:scrub_files",
+        "//rules/pins:scrub_files",
+        "//rules/probe:scrub_files",
+        "//rules/rust/tests:scrub_files",
+        "//rules/rust:scrub_files",
+        "//rules/zig/tests:scrub_files",
+        "//rules/zig:scrub_files",
+        "//third_party/aws-lc:scrub_files",
+        "//rules:scrub_files",
+        "//site:scrub_files",
+        "toolchains//:scrub_files",
+        "//tools/channels:scrub_files",
+        "//tools/deploy:scrub_files",
+        "//tools/harness:scrub_files",
+        "//tools/held:scrub_files",
+        "//tools/install:scrub_files",
+        "//tools/release:scrub_files",
+        "//tools/scrub:scrub_files",
+        "//tools/stage:scrub_files",
+        "crates//:scrub_files",
+        "crates//crates/zdemo:scrub_files",
+    ],
+    require = ["BUCK", "ci/no_shell_check.zig", "ci/no_shell_allow.tsv", "rules/zig/zig.bzl", "site/static/install.sh", "tools/held/BUCK", "examples/crates/Cargo.toml", ".github/workflows/ci.yml"],
+)
+
+group(name = "workflow", deps = [":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":pin_mirrors_check", "//ci/negative:negative_check"])
 
 # The coverage of every package with Zig unit tests (rules/coverage/README.md, "Zig coverage"), each held to its floor (`coverage_floor.txt` beside its
 # BUCK file) both ways: a fall fails, and so does a rise the floor has not been raised to. Building this builds the tests again under kcov and with block
@@ -347,12 +438,12 @@ export_file(
     visibility = ["//site:"],
 )
 
-# The coverage of the three workflow checks (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. They are built by zig 0.12, which
+# The coverage of the three workflow checks and the no-shell lint (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. They are built by zig 0.12, which
 # has no block counters, so the report is lines only; each file holds its tests, whose lines are counted with the rest.
 zig_coverage(
     blocks = False,
-    test_targets = [":workflow_check", ":release_check", ":stages_check"],
-    expect = ["ci/workflow_check.zig", "ci/release_check.zig", "ci/stages_check.zig"],
+    test_targets = [":workflow_check", ":release_check", ":stages_check", ":no_shell_unit"],
+    expect = ["ci/workflow_check.zig", "ci/release_check.zig", "ci/stages_check.zig", "ci/no_shell_check.zig"],
 )
 
 scrub_files()
