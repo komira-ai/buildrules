@@ -26,6 +26,12 @@ var calls: [32][]const u8 = undefined;
 var n_calls: usize = 0;
 var plan_code: u8 = 0;
 var plan_graph: []const u8 = fx.graph;
+/// What the fake buck2 and mopm do instead of answering: an error from the exec seam (for the program whose path ends with `exec_error_on`), a
+/// non-zero exit of buck2, or other output of buck2.
+var exec_error: ?anyerror = null;
+var exec_error_on: []const u8 = "";
+var buck2_code: u8 = 0;
+var buck2_stdout: ?[]const u8 = null;
 var mopm_dir_seen: [32][]const u8 = undefined;
 
 fn joinArgs(ctx: *ctxm.Ctx, spec: ctxm.Exec) ![]const u8 {
@@ -38,14 +44,20 @@ fn joinArgs(ctx: *ctxm.Ctx, spec: ctxm.Exec) ![]const u8 {
 }
 
 fn fakeExec(ctx: *ctxm.Ctx, spec: ctxm.Exec) anyerror!ctxm.ExecResult {
-    calls[n_calls] = try joinArgs(ctx, spec);
-    // Where the command ran: the context's directory holds the package's own mopm.toml, or the root's .buckconfig.
-    mopm_dir_seen[n_calls] = if (ctx.exists("mopm.toml")) "package" else "root";
-    n_calls += 1;
+    // A replay (testkit.zig) runs the command on a copy; only the run the test made is on the record.
+    if (!kit.replaying) {
+        calls[n_calls] = try joinArgs(ctx, spec);
+        // Where the command ran: the context's directory holds the package's own mopm.toml, or the root's .buckconfig.
+        mopm_dir_seen[n_calls] = if (ctx.exists("mopm.toml")) "package" else "root";
+        n_calls += 1;
+    }
     const a0 = spec.argv[0];
+    if (exec_error) |e| if (std.mem.endsWith(u8, a0, exec_error_on)) return e;
     if (std.mem.endsWith(u8, a0, "buck2")) {
         // The toolchain targets load toolchains/mopm_pins.bzl and mojo_pins.bzl: they must exist before buck2 is asked.
         if (!ctx.exists("toolchains/mopm_pins.bzl") or !ctx.exists("toolchains/mojo_pins.bzl")) return .{ .code = 9 };
+        if (buck2_code != 0) return .{ .code = buck2_code };
+        if (buck2_stdout) |out| return .{ .code = 0, .stdout = out };
         return .{ .code = 0, .stdout = try std.fmt.allocPrint(ctx.a, "{s} /fake/mopm\n", .{spec.argv[2]}) };
     }
     // mopm plan --unit-graph --locked --mojo M
@@ -68,6 +80,9 @@ fn fresh() !*kit.Harness {
     n_calls = 0;
     plan_code = 0;
     plan_graph = fx.graph;
+    exec_error = null;
+    buck2_code = 0;
+    buck2_stdout = null;
     try h.put(".buckconfig", "[cells]\n");
     try h.put("mopm-toolchain.toml", fx.toolchain);
     try h.put("toolchains/BUCK", "# toolchains\n");
@@ -577,4 +592,300 @@ test "the BUCK export of mopm-toolchain.toml fails the load, with the file and a
     try t.expect(kit.contains(mc.export_snippet, "if glob([\"mopm-toolchain.toml\"]) else fail("));
     try t.expect(kit.contains(mc.export_snippet, "mopm-toolchain.toml is required and there is no default. Create it, for example:"));
     try t.expect(kit.contains(mc.export_snippet, "[toolchain]\\nmopm = '0.0.1'\\nmojo = '1.0.0'"));
+}
+
+// ---- more of sync and check: arguments, discovery, failures of the programs it runs, path dependencies --------------------
+
+fn sha256Hex(h: *kit.Harness, bytes: []const u8) ![]const u8 {
+    return ctxm.sha256Hex(h.a(), bytes);
+}
+
+test "arguments: -h, a flag without its value, package directories in their several spellings, and a directory that is not there" {
+    const h = try fresh();
+    defer h.destroy();
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "-h" }).code);
+    for ([_][]const []const u8{
+        &.{ "mojo", "sync", "--dir" },
+        &.{ "mojo", "check", "--dir" },
+        &.{ "mojo", "sync", "--buck2" },
+        &.{ "mojo", "check", "--mopm", "x" },
+        &.{ "mojo", "check", "pkgs/base" },
+        &.{ "mojo", "sync", "-x" },
+    }) |argv| try t.expectEqual(@as(u8, 2), h.run(argv).code);
+    // The package given as ./pkgs/base/, pkgs/base//, and by --dir.
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2", "./pkgs/base/" }).code);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2", "pkgs/base//" }).code);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--dir", ".", "--buck2", "./buck2", "./pkgs/base" }).code);
+    // A package that has no mopm.toml, and the root, which has none either.
+    var r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2", "pkgs/none" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "pkgs/none: no mopm.toml here"));
+    r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2", "." });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, ".: no mopm.toml here"));
+    r = h.run(&.{ "mojo", "sync", "--dir", "nowhere", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cannot open nowhere"));
+    r = h.run(&.{ "mojo", "check", "--dir", "nowhere" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cannot open nowhere"));
+}
+
+test "sync: no .buckconfig, no Mojo package, and packages in directories the walk does not enter" {
+    const h = try fresh();
+    defer h.destroy();
+    for ([_][]const u8{ ".git", "node_modules", "buck-out", "target", ".buck", ".hidden", "ok/.deep" }) |dir| {
+        try h.put(try std.fmt.allocPrint(h.a(), "{s}/BUCK", .{dir}), fx.buck);
+        try h.put(try std.fmt.allocPrint(h.a(), "{s}/mopm.toml", .{dir}), fx.manifest);
+    }
+    try h.put("other/BUCK", "# a BUCK file that calls no mojo_package\n");
+    const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 0), r.code);
+    try t.expect(kit.contains(r.out, "synced: 1 Mojo package(s)"));
+    try h.tmp.dir.deleteFile(".buckconfig");
+    const no_cell = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), no_cell.code);
+    try t.expect(kit.contains(no_cell.err, "no .buckconfig here"));
+    const empty = try kit.Harness.create();
+    defer empty.destroy();
+    try empty.put(".buckconfig", "[cells]\n");
+    const none = empty.run(&.{ "mojo", "sync" });
+    try t.expectEqual(@as(u8, 1), none.code);
+    try t.expect(kit.contains(none.err, "no package here calls mojo_package"));
+}
+
+test "sync: buck2 that fails, prints nothing usable, or cannot be started is a message that says what to do, and mopm that cannot be started too" {
+    const h = try fresh();
+    defer h.destroy();
+    buck2_code = 1;
+    var r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "`./buck2 build toolchains//:mopm_0_0_1` exited 1"));
+    try t.expect(kit.contains(r.err, "[mopm.\"0.0.1\"]"));
+    buck2_code = 0;
+    for ([_][]const u8{ "", "nothing useful here\n", "other//:label /abs/path\n", "toolchains//:mopm_0_0_1 relative/path\n", "toolchains//:mopm_0_0_1 \n" }) |out| {
+        buck2_stdout = out;
+        r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+        try t.expectEqual(@as(u8, 1), r.code);
+        try t.expect(kit.contains(r.err, "printed no output path (pass --mopm instead)"));
+    }
+    buck2_stdout = null;
+    exec_error = error.FileNotFound;
+    exec_error_on = "buck2";
+    r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cannot run ./buck2: FileNotFound (pass --mopm instead)"));
+    exec_error_on = "mopm";
+    r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "pkgs/base: cannot run mopm: FileNotFound"));
+    exec_error = null;
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
+}
+
+fn syncWithGraph(h: *kit.Harness, text: []const u8) kit.Run {
+    plan_graph = text;
+    return h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+}
+
+test "sync: a graph mopm printed that is not a graph, or that cannot be embedded, is refused with the package" {
+    const h = try fresh();
+    defer h.destroy();
+    const cases = [_]struct { text: []const u8, needle: []const u8 }{
+        .{ .text = "not json", .needle = "pkgs/base: the GRAPH_JSON block is not JSON" },
+        .{ .text = "[]", .needle = "the unit graph is not a JSON object" },
+        .{ .text = "{\"unit_graph\": 2}", .needle = "unit_graph format is not 1" },
+        .{ .text = "{\"unit_graph\": 1, \"toolchain\": {}}", .needle = "no `units` array" },
+    };
+    for (cases) |c| {
+        const r = syncWithGraph(h, c.text);
+        try t.expectEqual(@as(u8, 1), r.code);
+        try t.expect(kit.contains(r.err, c.needle));
+    }
+    const triple = try std.mem.replaceOwned(u8, h.a(), fx.graph, "\"package\": \"base@0.1.0\"", "\"package\": \"base@0.1.0'''\"");
+    const r = syncWithGraph(h, triple);
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "mopm's graph holds ''' and cannot be embedded in a table"));
+    try t.expect(!h.has("pkgs/base/buildrules.mojo.lock.bzl"));
+}
+
+test "sync: a toolchain in a graph that a table may not carry is refused, and so is a missing mopm.lock" {
+    const h = try fresh();
+    defer h.destroy();
+    const r = syncWithGraph(h, try std.mem.replaceOwned(u8, h.a(), fx.graph, "\"zig\": {", "\"zag\": {"));
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "the unit graph's toolchain has no zig"));
+    plan_graph = fx.graph;
+    try h.tmp.dir.deleteFile("pkgs/base/mopm.lock");
+    const missing = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), missing.code);
+    try t.expect(kit.contains(missing.err, "pkgs/base/mopm.lock is missing: `mopm lock` writes it"));
+}
+
+test "sync and check: buildrules-pins.toml with a bad [mopm] table is a failure of both" {
+    const h = try fresh();
+    defer h.destroy();
+    try h.put("buildrules-pins.toml", "[mopm.\"1.0\"]\n");
+    for ([_][]const []const u8{ &.{ "mojo", "sync", "--buck2", "./buck2" }, &.{ "mojo", "sync", "--check", "--mopm", "/p/mopm" } }) |argv| {
+        const r = h.run(argv);
+        try t.expectEqual(@as(u8, 1), r.code);
+        try t.expect(kit.contains(r.err, "mopm \"1.0\" is not an exact release"));
+    }
+    try h.put("buildrules-pins.toml", "");
+    _ = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try h.put("buildrules-pins.toml", "[mopm.\"1.0\"]\n");
+    const c = h.run(&.{ "mojo", "check" });
+    try t.expectEqual(@as(u8, 1), c.code);
+    try t.expect(kit.contains(c.err, "mopm \"1.0\" is not an exact release"));
+}
+
+const util_graph_unit =
+    "{\"id\": \"util@0.1.0#mojo1.0.0/lib\", \"package\": \"util\", \"version\": \"0.1.0\", \"kind\": \"lib\", \"root\": \"../util/src/util\", " ++
+    "\"srcs\": [{\"path\": \"../util/src/util/__init__.mojo\", \"sha256\": \"@SHA@\"}]}, ";
+const odd_units =
+    "{\"package\": \"base\", \"kind\": \"lib\", \"root\": \"../base2/src/base\"}, " ++
+    "{\"package\": \"vendored\", \"kind\": \"test\", \"root\": \"../v/src/vendored\"}, " ++
+    "{\"package\": \"flat\", \"kind\": \"lib\", \"root\": \"src/flat\"}, " ++
+    "{\"package\": \"elsewhere\", \"kind\": \"lib\", \"root\": \"somewhere/else\"}, " ++
+    "{\"package\": \"zeta\", \"kind\": \"lib\", \"root\": \"xsrc/zeta\"}, ";
+
+/// The repository of `fresh` with a second package `util` that `base` imports: the graph names its sources and its manifest is a manifest of the table.
+fn withMember(h: *kit.Harness) !void {
+    try h.put("pkgs/util/mopm.toml", "[package]\nname = \"util\"\nversion = \"0.1.0\"\n");
+    try h.put("pkgs/util/src/util/__init__.mojo", "def util() -> Int:\n    return 1\n");
+    const sha = try sha256Hex(h, "def util() -> Int:\n    return 1\n");
+    const unit = try std.mem.replaceOwned(u8, h.a(), util_graph_unit, "@SHA@", sha);
+    plan_graph = try std.mem.replaceOwned(u8, h.a(), fx.graph, "\"units\": [", try std.mem.concat(h.a(), u8, &.{ "\"units\": [", unit, odd_units }));
+}
+
+test "sync and check: a package the graph imports from a sibling directory has its manifest in the table, and check follows it" {
+    const h = try fresh();
+    defer h.destroy();
+    try withMember(h);
+    const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 0), r.code);
+    const lock = h.read("pkgs/base/buildrules.mojo.lock.bzl");
+    try t.expect(kit.contains(lock, "\"../util/mopm.toml\": \""));
+    // Only the library of another package whose root ends in src/<its name> after a directory is a member.
+    try t.expect(!kit.contains(lock, "\"../base2/mopm.toml\""));
+    try t.expect(!kit.contains(lock, "\"../v/mopm.toml\""));
+    try t.expect(!kit.contains(lock, "\"../elsewhere"));
+    try t.expect(!kit.contains(lock, "xsrc/mopm.toml"));
+    // The member's manifest changed, and its source gained a file and a test.
+    try h.put("pkgs/util/mopm.toml", "[package]\nname = \"util\"\nversion = \"0.1.1\"\n");
+    try h.put("pkgs/util/src/util/extra.mojo", "def f():\n    pass\n");
+    try h.put("pkgs/util/src/util/tests/test_inner.mojo", "def main():\n    pass\n");
+    try h.put("pkgs/util/src/util/.hidden/skip.mojo", "def g():\n    pass\n");
+    try h.put("pkgs/util/src/util/.skip.mojo", "def g():\n    pass\n");
+    const c = h.run(&.{ "mojo", "check" });
+    try t.expectEqual(@as(u8, 1), c.code);
+    try t.expect(kit.contains(c.err, "pkgs/util/mopm.toml changed since"));
+    try t.expect(kit.contains(c.err, "pkgs/util/src/util/extra.mojo is a source of util@0.1.0#mojo1.0.0/lib that the table does not know"));
+    try t.expect(!kit.contains(c.err, "skip.mojo"));
+    try t.expect(!kit.contains(c.err, "test_inner.mojo is a source"));
+    // The manifest is gone: sync says so, and the table is not written again.
+    try h.tmp.dir.deleteFile("pkgs/util/mopm.toml");
+    const gone = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), gone.code);
+    try t.expect(kit.contains(gone.err, "pkgs/util/mopm.toml is missing (a path dependency of pkgs/base)"));
+}
+
+test "check: a table that does not record the manifests of its package, or a path dependency's, is stale" {
+    const h = try fresh();
+    defer h.destroy();
+    try withMember(h);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
+    const lock = h.read("pkgs/base/buildrules.mojo.lock.bzl");
+    const sha = try sha256Hex(h, "[package]\nname = \"util\"\nversion = \"0.1.0\"\n");
+    const util_line = try std.fmt.allocPrint(h.a(), "    \"../util/mopm.toml\": \"{s}\",\n", .{sha});
+    try t.expect(kit.contains(lock, util_line));
+    var r: kit.Run = undefined;
+    for ([_][]const u8{ "mopm.toml", "mopm.lock" }) |name| {
+        const prefix = try std.fmt.allocPrint(h.a(), "    \"{s}\": \"", .{name});
+        const at = std.mem.indexOf(u8, lock, prefix).?;
+        const end = std.mem.indexOfScalarPos(u8, lock, at, '\n').? + 1;
+        try h.put("pkgs/base/buildrules.mojo.lock.bzl", try std.mem.concat(h.a(), u8, &.{ lock[0..at], lock[end..] }));
+        r = h.run(&.{ "mojo", "check" });
+        try t.expectEqual(@as(u8, 1), r.code);
+        try t.expect(kit.contains(r.err, try std.fmt.allocPrint(h.a(), "does not record {s}", .{name})));
+    }
+    try h.put("pkgs/base/buildrules.mojo.lock.bzl", try std.mem.replaceOwned(u8, h.a(), lock, util_line, ""));
+    r = h.run(&.{ "mojo", "check" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "../util/mopm.toml is a path dependency's manifest the table does not know"));
+    // A manifest the table records that is gone from disk.
+    try h.put("pkgs/base/buildrules.mojo.lock.bzl", lock);
+    try h.tmp.dir.deleteFile("pkgs/base/mopm.lock");
+    r = h.run(&.{ "mojo", "check" });
+    try t.expect(kit.contains(r.err, "pkgs/base/mopm.lock is in pkgs/base/buildrules.mojo.lock.bzl but is gone"));
+}
+
+test "check: a table that is damaged is refused with the line, whichever line it is" {
+    const h = try synced();
+    defer h.destroy();
+    const lock = h.read("pkgs/base/buildrules.mojo.lock.bzl");
+    const cases = [_]struct { from: []const u8, to: []const u8, needle: []const u8 }{
+        .{ .from = "GRAPH_JSON = r'''", .to = "GRAPH = r'''", .needle = "no GRAPH_JSON" },
+        .{ .from = "\"unit_graph\": 1", .to = "\"unit_graph\": 3", .needle = "unit_graph format is not 1" },
+        .{ .from = "{\n  \"unit_graph\"", .to = "[\n  \"unit_graph\"", .needle = "is not JSON" },
+        .{ .from = "MOJO = \"1.0.0\"", .to = "MOJO = \"1.0.1\"", .needle = "MOJO is 1.0.1 but its unit graph is for Mojo 1.0.0" },
+        .{ .from = "CLOSURE_SHA256 = \"", .to = "CLOSURE_SHA256 = \"x", .needle = "CLOSURE_SHA256 is not a sha256" },
+    };
+    for (cases) |c| {
+        try h.put("pkgs/base/buildrules.mojo.lock.bzl", try std.mem.replaceOwned(u8, h.a(), lock, c.from, c.to));
+        const r = h.run(&.{ "mojo", "check" });
+        try t.expectEqual(@as(u8, 1), r.code);
+        if (!kit.contains(r.err, c.needle)) {
+            std.debug.print("expected `{s}`, got: {s}\n", .{ c.needle, r.err });
+            return error.WrongMessage;
+        }
+    }
+    // The glue file is not there at all.
+    try h.put("pkgs/base/buildrules.mojo.lock.bzl", lock);
+    try h.tmp.dir.deleteFile("pkgs/base/buildrules.mojo.bzl");
+    const r = h.run(&.{ "mojo", "check" });
+    try t.expect(kit.contains(r.err, "pkgs/base/buildrules.mojo.bzl is missing"));
+}
+
+test "check: a toolchain table that cannot be made from the graphs in the committed tables is a failure, whichever table it is" {
+    const h = try synced();
+    defer h.destroy();
+    const lock = h.read("pkgs/base/buildrules.mojo.lock.bzl");
+    // The graph inside the table lost its zig: the tables are otherwise consistent (the closure hash copy is the graph's).
+    try h.put("pkgs/base/buildrules.mojo.lock.bzl", try std.mem.replaceOwned(u8, h.a(), lock, "\"zig\": {", "\"zag\": {"));
+    const r = h.run(&.{ "mojo", "check" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "the unit graph's toolchain has no zig"));
+    // sync --check does the same with mopm's fresh graph.
+    plan_graph = try std.mem.replaceOwned(u8, h.a(), fx.graph, "\"zig\": {", "\"zag\": {");
+    const s = h.run(&.{ "mojo", "sync", "--check", "--mopm", "/p/mopm" });
+    try t.expectEqual(@as(u8, 1), s.code);
+    try t.expect(kit.contains(s.err, "the unit graph's toolchain has no zig"));
+}
+
+test "sync --check says which generated file is not what a sync writes, for the table, the glue and the pins" {
+    const h = try synced();
+    defer h.destroy();
+    try h.put("pkgs/base/buildrules.mojo.bzl", "# mine\n");
+    try h.put("toolchains/mojo_pins.bzl", "# mine\n");
+    try h.put("toolchains/mopm_pins.bzl", "# mine\n");
+    try h.put("pkgs/base/buildrules.mojo.lock.bzl", "# mine\n");
+    const r = h.run(&.{ "mojo", "sync", "--check", "--mopm", "/p/mopm" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    for ([_][]const u8{ "pkgs/base/buildrules.mojo.lock.bzl is not what the inputs generate", "pkgs/base/buildrules.mojo.bzl is not what the inputs generate", "toolchains/mojo_pins.bzl is not what the inputs generate", "toolchains/mopm_pins.bzl is not what the inputs generate" }) |m| {
+        try t.expect(kit.contains(r.err, m));
+    }
+    try h.tmp.dir.deleteFile("toolchains/mopm_pins.bzl");
+    try t.expect(kit.contains(h.run(&.{ "mojo", "sync", "--check", "--mopm", "/p/mopm" }).err, "toolchains/mopm_pins.bzl is missing"));
+}
+
+test "mojo_cmd.run itself answers --help and -h (main answers `mojo --help` before it gets here, so this is the entry used by a caller of the module)" {
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    const mc = @import("mojo_cmd.zig");
+    for ([_][]const u8{ "--help", "-h" }) |flag| {
+        h.out.clearRetainingCapacity();
+        try t.expectEqual(@as(u8, 0), mc.run(&h.ctx, &.{flag}));
+        try t.expect(kit.contains(h.out.written(), "usage: buildrules mojo sync"));
+    }
 }

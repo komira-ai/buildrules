@@ -208,6 +208,10 @@ var n_calls: usize = 0;
 var fail_when: []const u8 = "";
 var lock_missing_text: []const u8 = fx.cargo_lock;
 var fetched: usize = 0;
+/// What the fakes do instead of answering: an error from the exec seam for the command line that holds `error_when`, other output of buck2, another graph.
+var error_when: []const u8 = "";
+var buck2_out: ?[]const u8 = null;
+var graph_text: ?[]const u8 = null;
 
 fn joinArgs(ctx: *ctxm.Ctx, spec: ctxm.Exec) ![]const u8 {
     var o = std.ArrayList(u8).empty;
@@ -226,7 +230,7 @@ fn helloGraph(ctx: *ctxm.Ctx, spec: ctxm.Exec) ![]const u8 {
     for (spec.argv) |x| {
         if (std.mem.eql(u8, x, "--release")) release = true;
     }
-    const template = if (std.mem.eql(u8, verb, "test")) fx.graph_test else if (release) fx.graph_release else fx.graph_build;
+    const template = graph_text orelse if (std.mem.eql(u8, verb, "test")) fx.graph_test else if (release) fx.graph_release else fx.graph_build;
     const root = try ctx.dir.realpathAlloc(ctx.a, ".");
     return std.mem.replaceOwned(u8, ctx.a, template, "@ROOT@", root);
 }
@@ -239,11 +243,16 @@ fn pinsFile(ctx: *ctxm.Ctx) ![]const u8 {
 
 fn fakeExec(ctx: *ctxm.Ctx, spec: ctxm.Exec) anyerror!ctxm.ExecResult {
     const line = try joinArgs(ctx, spec);
-    calls[n_calls] = line;
-    n_calls += 1;
+    // A replay (testkit.zig) runs the command on a copy; only the run the test made is on the record.
+    if (!kit.replaying) {
+        calls[n_calls] = line;
+        n_calls += 1;
+    }
     if (fail_when.len > 0 and std.mem.indexOf(u8, line, fail_when) != null) return .{ .code = 7 };
+    if (error_when.len > 0 and std.mem.indexOf(u8, line, error_when) != null) return error.FileNotFound;
     const a0 = spec.argv[0];
     if (std.mem.endsWith(u8, a0, "buck2")) {
+        if (buck2_out) |out| return .{ .code = 0, .stdout = out };
         // The toolchain targets load toolchains/rust_pins.bzl: it must exist before buck2 is asked for them.
         if (!ctx.exists("toolchains/rust_pins.bzl")) return .{ .code = 9 };
         // `buck2 build <cargo label> <sysroot label> <pins file> --show-full-output`: answer for the labels asked.
@@ -258,7 +267,7 @@ fn fakeExec(ctx: *ctxm.Ctx, spec: ctxm.Exec) anyerror!ctxm.ExecResult {
 }
 
 fn noNetwork(_: std.mem.Allocator, url: []const u8) anyerror!@import("fetch.zig").Digest.Result {
-    fetched += 1;
+    if (!kit.replaying) fetched += 1;
     std.debug.print("unexpected download of {s}\n", .{url});
     return error.NoNetworkInThisTest;
 }
@@ -267,6 +276,9 @@ fn withExec(h: *kit.Harness) void {
     h.ctx.execer = &fakeExec;
     n_calls = 0;
     fail_when = "";
+    error_when = "";
+    buck2_out = null;
+    graph_text = null;
     lock_missing_text = fx.cargo_lock;
     fetched = 0;
     buckgen.fetcher = &noNetwork;
@@ -539,4 +551,279 @@ test "check: an invalid buildrules-pins.toml is reported, not silently ignored" 
     const r = h.run(&.{"check"});
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "\"stable\" is not an exact release"));
+}
+
+// ---- more of sync: arguments, the tools, the steps that fail, the registry crates ------------------------------------
+
+test "sync arguments: a flag without its value, a directory that is not there, and --dir to a repository below the working directory" {
+    const h = try fresh();
+    defer h.destroy();
+    withExec(h);
+    for ([_][]const u8{ "--dir", "--cargo", "--rustc", "--pins", "--buck2" }) |flag| {
+        const r = h.run(&.{ "sync", flag });
+        try t.expectEqual(@as(u8, 2), r.code);
+        try t.expect(kit.contains(r.err, "needs a value"));
+    }
+    var r = h.run(&.{ "sync", "--dir", "nowhere" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cannot open nowhere"));
+    try t.expectEqual(@as(usize, 0), n_calls);
+    // The whole repository one directory down.
+    const below = try kit.Harness.create();
+    defer below.destroy();
+    withExec(below);
+    try below.put("sub/.buckconfig", "[cells]\n");
+    try below.put("sub/Cargo.toml", fx.root_cargo);
+    try below.put("sub/Cargo.lock", fx.cargo_lock);
+    try below.put("sub/crates/hello/Cargo.toml", fx.hello_cargo);
+    try below.put("sub/crates/hello/BUCK", fx.hello_buck);
+    try below.put("sub/rust-toolchain.toml", fx.toolchain);
+    r = below.run(&.{ "sync", "--dir", "sub", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 0), r.code);
+    try t.expect(below.has("sub/buildrules.lock.bzl"));
+    try t.expectEqual(@as(u8, 0), below.run(&.{ "check", "--dir", "sub" }).code);
+}
+
+test "sync: a tool given by a flag is used and not asked of buck2; the ones not given are" {
+    const h = try fresh();
+    defer h.destroy();
+    withExec(h);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "sync", "--cargo", "/c/cargo", "--buck2", "./buck2" }).code);
+    try t.expectEqual(@as(usize, 1), called("./buck2 build"));
+    try t.expectEqual(@as(usize, 1), called("/c/cargo fetch"));
+    try t.expectEqual(@as(usize, 4), called("RUSTC=/fake/sysroot/bin/rustc "));
+    const g = try fresh();
+    defer g.destroy();
+    withExec(g);
+    try t.expectEqual(@as(u8, 0), g.run(&.{ "sync", "--rustc", "/r/rustc", "--pins", "fake/pins.bzl", "--buck2", "./buck2" }).code);
+    try t.expectEqual(@as(usize, 4), called("RUSTC=/r/rustc "));
+    try t.expectEqual(@as(usize, 1), called("/fake/cargo/bin/cargo fetch"));
+}
+
+test "sync: buck2 that prints nothing usable, fails, or cannot be started is a message that names the flags to pass" {
+    const h = try fresh();
+    defer h.destroy();
+    withExec(h);
+    for ([_][]const u8{
+        "",
+        "no space here\n",
+        "toolchains//:cargo_1_95_0 relative/path\ntoolchains//:sysroot_1_95_0 /abs\nbuildrules//rules/rust:pins.bzl /abs/pins.bzl\n",
+        "toolchains//:cargo_1_95_0 \n",
+        "other//:label /abs/x\n",
+    }) |out| {
+        buck2_out = out;
+        const r = h.run(&.{ "sync", "--buck2", "./buck2" });
+        try t.expectEqual(@as(u8, 1), r.code);
+        try t.expect(kit.contains(r.err, "could not find the pinned cargo, rustc and the Rust version table (pass --cargo, --rustc and --pins)"));
+    }
+    buck2_out = null;
+    error_when = "buck2 build";
+    var r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cannot run ./buck2: FileNotFound (pass --cargo, --rustc and --pins instead)"));
+    error_when = "";
+    fail_when = "buck2 build";
+    r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "exited 7. If rust-toolchain.toml names a Rust version buildrules does not pin"));
+}
+
+test "sync: a root Cargo.toml that is missing, is not a workspace, or has a glob it cannot expand is a refusal that runs nothing" {
+    const h = try fresh();
+    defer h.destroy();
+    withExec(h);
+    try h.tmp.dir.deleteFile("Cargo.toml");
+    var r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "Cargo.toml is missing"));
+    try h.put("Cargo.toml", "[dependencies]\n");
+    r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "Cargo.toml has no [workspace]"));
+    try h.put("Cargo.toml", "[workspace]\nmembers = [\"crates/*/x\"]\n");
+    r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "a `members` entry is a glob buildrules does not expand"));
+    try t.expectEqual(@as(usize, 0), n_calls);
+}
+
+test "sync: cargo that cannot be started, a Cargo.lock it leaves unreadable, and one with no workspace package are refusals" {
+    const h = try fresh();
+    defer h.destroy();
+    withExec(h);
+    error_when = "cargo fetch";
+    var r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cargo fetch: cannot run /fake/cargo/bin/cargo: FileNotFound"));
+    error_when = "-p hello";
+    r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cargo build -p hello --unit-graph: FileNotFound"));
+    error_when = "";
+    fail_when = "cargo build --release -p hello";
+    r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cargo build -p hello --unit-graph exited 7"));
+    fail_when = "";
+    try h.put("Cargo.lock", "version = 2\n[[package]]\nname = \"hello\"\nversion = \"0.1.0\"\n");
+    r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "Cargo.lock: lock version 2 is not 3 or 4"));
+    try h.put("Cargo.lock", "version = 4\n[[package]]\nname = \"itoa\"\nversion = \"1.0.15\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"" ++ "ab" ** 32 ++ "\"\n");
+    r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "Cargo.lock lists no workspace package: run `buildrules cargo new crates/NAME` first"));
+}
+
+test "sync: a compiler nobody pinned is refused by the generator with the way to pin it; a pinned one that is not the default is recorded as such" {
+    const h = try fresh();
+    defer h.destroy();
+    withExec(h);
+    try h.put("rust-toolchain.toml", "[toolchain]\nchannel = \"1.80.0\"\n");
+    var r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "rust-toolchain.toml pins rustc 1.80.0, which buildrules does not pin"));
+    try t.expect(!h.has("buildrules.lock.bzl"));
+    try h.put("rust-toolchain.toml", "[toolchain]\nchannel = \"1.85.0\"\n");
+    r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 0), r.code);
+    try t.expect(kit.contains(h.read("buildrules.lock.bzl"), "\"default\": False"));
+    try t.expectEqual(@as(usize, 1), called("toolchains//:cargo_1_85_0"));
+}
+
+const itoa_sum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c";
+const profile_dev_text =
+    "{\"name\":\"dev\",\"opt_level\":\"0\",\"lto\":\"false\",\"codegen_backend\":null,\"codegen_units\":null,\"debuginfo\":2," ++
+    "\"split_debuginfo\":null,\"debug_assertions\":true,\"overflow_checks\":true,\"rpath\":false,\"incremental\":false," ++
+    "\"panic\":\"unwind\",\"strip\":{\"deferred\":\"None\"}}";
+const graph_with_itoa =
+    "{\"version\":1,\"units\":[" ++
+    "{\"pkg_id\":\"registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.15\",\"target\":{\"kind\":[\"lib\"],\"crate_types\":[\"lib\"],\"name\":\"itoa\"," ++
+    "\"src_path\":\"@ROOT@/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/itoa-1.0.15/src/lib.rs\",\"edition\":\"2018\",\"doctest\":true,\"test\":true}," ++
+    "\"profile\":" ++ profile_dev_text ++ ",\"platform\":\"x86_64-unknown-linux-gnu\",\"mode\":\"build\",\"features\":[\"std\"],\"dependencies\":[]}," ++
+    "{\"pkg_id\":\"path+file://@ROOT@/crates/hello#0.1.0\",\"target\":{\"kind\":[\"lib\"],\"crate_types\":[\"lib\"],\"name\":\"hello\"," ++
+    "\"src_path\":\"@ROOT@/crates/hello/src/lib.rs\",\"edition\":\"2021\",\"doctest\":true,\"test\":true}," ++
+    "\"profile\":" ++ profile_dev_text ++ ",\"platform\":\"x86_64-unknown-linux-gnu\",\"mode\":\"build\",\"features\":[]," ++
+    "\"dependencies\":[{\"index\":0,\"extern_crate_name\":\"itoa\",\"public\":false,\"noprelude\":false}]}" ++
+    "],\"roots\":[1]}";
+
+/// A repository whose one member depends on the registry crate itoa, whose bytes sit in the cargo registry cache `sync` looks in.
+fn withRegistry(h: *kit.Harness, crate_bytes: []const u8) !void {
+    withExec(h);
+    graph_text = graph_with_itoa;
+    const sum = try ctxm.sha256Hex(h.a(), crate_bytes);
+    try h.put("Cargo.lock", try std.fmt.allocPrint(h.a(), "version = 4\n\n[[package]]\nname = \"hello\"\nversion = \"0.1.0\"\ndependencies = [\n \"itoa\",\n]\n\n[[package]]\nname = \"itoa\"\nversion = \"1.0.15\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"{s}\"\n", .{sum}));
+    try h.put("buck-out/buildrules/cargo-home/registry/cache/index.crates.io-1949cf8c6b5b557f/itoa-1.0.15.crate", crate_bytes);
+    try h.put("cargo/registry/src/index.crates.io-1949cf8c6b5b557f/itoa-1.0.15/Cargo.toml", "[package]\nname = \"itoa\"\nversion = \"1.0.15\"\n");
+}
+
+test "sync: a registry crate is read from the cargo cache, its size is recorded and its hash is checked against Cargo.lock; check reads the same files" {
+    const h = try fresh();
+    defer h.destroy();
+    try withRegistry(h, "the bytes of the crate");
+    const r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 0), r.code);
+    try t.expect(kit.contains(h.read("third_party/buildrules/crate_sizes.tsv"), "itoa 1.0.15 22\n"));
+    try t.expect(kit.contains(h.read("third_party/buildrules/BUCK"), "crate_src("));
+    try t.expect(kit.contains(h.read("third_party/buildrules/BUCK"), "size_bytes = 22"));
+    try t.expectEqual(@as(usize, 0), fetched);
+    const c = h.run(&.{ "sync", "--check", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 0), c.code);
+}
+
+test "sync: a crate whose bytes are not the ones Cargo.lock pinned is refused, and so is a sizes file or an overrides file that is wrong" {
+    const h = try fresh();
+    defer h.destroy();
+    try withRegistry(h, "the bytes of the crate");
+    try h.put("buck-out/buildrules/cargo-home/registry/cache/index.crates.io-1949cf8c6b5b557f/itoa-1.0.15.crate", "other bytes");
+    var r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "itoa 1.0.15: sha256 "));
+    try t.expect(kit.contains(r.err, "but the table (Cargo.lock) says"));
+    try t.expect(!h.has("third_party/buildrules/BUCK"));
+    // --check does not read the cache: the sizes file is its input.
+    try h.put("buck-out/buildrules/cargo-home/registry/cache/index.crates.io-1949cf8c6b5b557f/itoa-1.0.15.crate", "the bytes of the crate");
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "sync", "--buck2", "./buck2" }).code);
+    try h.put("third_party/buildrules/crate_sizes.tsv", "itoa 1.0.15 many\n");
+    r = h.run(&.{ "sync", "--check", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "the sizes file: `many` is not a number"));
+    try h.put("third_party/buildrules/crate_sizes.tsv", "# no crates\n");
+    r = h.run(&.{ "sync", "--check", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "sizes file lacks: itoa 1.0.15"));
+    try h.tmp.dir.deleteFile("third_party/buildrules/crate_sizes.tsv");
+    r = h.run(&.{ "sync", "--check", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "third_party/buildrules/crate_sizes.tsv is missing: run `buildrules sync` and commit it"));
+}
+
+test "sync --check: a missing generated file is named, and so is a missing root BUCK" {
+    const h = try synced();
+    defer h.destroy();
+    withExec(h);
+    try h.tmp.dir.deleteFile("buildrules.bzl");
+    try h.tmp.dir.deleteFile("BUCK");
+    const r = h.run(&.{ "sync", "--check", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "buildrules.bzl is missing: run `buildrules sync` and commit it"));
+    try t.expect(kit.contains(r.err, "BUCK is missing: run `buildrules sync` and commit it"));
+    try h.tmp.dir.deleteFile("buildrules.lock.bzl");
+    try t.expect(kit.contains(h.run(&.{ "sync", "--check", "--buck2", "./buck2" }).err, "buildrules.lock.bzl is missing"));
+}
+
+// ---- more of check ------------------------------------------------------------------------------------------------
+
+test "check: a Cargo.toml that is missing, is a package, or has a glob it cannot expand, a missing BUCK, glue and Cargo.lock are each reported" {
+    const h = try synced();
+    defer h.destroy();
+    try h.tmp.dir.deleteFile("Cargo.toml");
+    var r = h.run(&.{"check"});
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "Cargo.toml is missing"));
+    try h.put("Cargo.toml", "[package]\nname = \"x\"\n[workspace]\n");
+    r = h.run(&.{"check"});
+    try t.expect(kit.contains(r.err, "Cargo.toml must be a virtual workspace"));
+    try h.put("Cargo.toml", "[workspace]\nmembers = [\"a/*/b\"]\n");
+    r = h.run(&.{"check"});
+    try t.expect(kit.contains(r.err, "a `members` entry is a glob buildrules does not expand"));
+    try h.put("Cargo.toml", fx.root_cargo);
+    try h.tmp.dir.deleteFile("BUCK");
+    try h.tmp.dir.deleteFile("buildrules.bzl");
+    try h.tmp.dir.deleteFile("Cargo.lock");
+    r = h.run(&.{"check"});
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "BUCK is missing"));
+    try t.expect(kit.contains(r.err, "buildrules.bzl is missing"));
+    try t.expect(kit.contains(r.err, "Cargo.lock is missing"));
+    try h.put("BUCK", fx.root_buck);
+    try h.tmp.dir.deleteFile("rust-toolchain.toml");
+    r = h.run(&.{"check"});
+    try t.expect(kit.contains(r.err, "rust-toolchain.toml is missing"));
+}
+
+test "check: a pins file that sync recorded is an input like a manifest: edited, it is stale, and removed, it is no longer in the workspace" {
+    const h = try fresh();
+    defer h.destroy();
+    withExec(h);
+    try h.put("rust-toolchain.toml", "[toolchain]\nchannel = \"1.86.0\"\n");
+    try h.put("buildrules-pins.toml", my_pins);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "sync", "--buck2", "./buck2" }).code);
+    try t.expectEqual(@as(u8, 0), h.run(&.{"check"}).code);
+    try h.put("buildrules-pins.toml", my_pins ++ "# edited\n");
+    var r = h.run(&.{"check"});
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "buildrules-pins.toml changed since `buildrules sync`"));
+    try h.tmp.dir.deleteFile("buildrules-pins.toml");
+    r = h.run(&.{"check"});
+    try t.expect(kit.contains(r.err, "buildrules-pins.toml is in the table but no longer in the workspace"));
+}
+
+test "check: the working directory is the repository unless --dir says otherwise, and a directory that is not there is an error" {
+    const h = try synced();
+    defer h.destroy();
+    const r = h.run(&.{ "check", "--dir", "nowhere" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cannot open nowhere"));
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "check", "--dir", "." }).code);
 }
