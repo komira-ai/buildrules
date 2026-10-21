@@ -532,7 +532,7 @@ test "table: a statement whose middle reads as a row key, over a complete row bo
 }
 
 test "npm names: an optional scope and one segment are accepted" {
-    const good = [_][]const u8{ "left-pad", "@scope/pkg", "a", "A_b.c", "a.b", "x~y", "-x", "@s/n", "a-b_c.d-1" };
+    const good = [_][]const u8{ "left-pad", "@scope/pkg", "a", "A_b.c", "a.b", "x~y", "@s/n", "a-b_c.d-1" };
     for (good) |n| try t.expect(lock.isNpmName(n));
 }
 
@@ -748,4 +748,10 @@ test "table: a platform list may hold a negated token, and a list of another len
     const longer = try a.dupe(table.Row, p.rows);
     longer[0].os = &.{ "darwin", "linux" };
     try expectBound(a, p.entries, longer, .buildrules_lock, "os, cpu or libc");
+}
+
+test "npm names: a name may not start with a hyphen (a bare name, the scope, or the name after it)" {
+    for ([_][]const u8{ "-x", "--x", "@-s/n", "@s/-n" }) |n| try t.expect(!lock.isNpmName(n));
+    try t.expect(lock.isNpmName("a-"));
+    try t.expect(lock.isNpmName("a-b"));
 }

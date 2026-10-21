@@ -230,14 +230,14 @@ pub fn read(a: std.mem.Allocator, lock_text: []const u8, diag: *Diag) ![]Entry {
 fn nameSegment(x: []const u8) bool {
     if (x.len == 0) return false;
     for (x, 0..) |c, i| {
-        const first_ok = std.ascii.isAlphanumeric(c) or c == '-' or c == '~';
-        const rest_ok = first_ok or c == '.' or c == '_';
+        const first_ok = std.ascii.isAlphanumeric(c) or c == '~';
+        const rest_ok = first_ok or c == '.' or c == '_' or c == '-';
         if (!(if (i == 0) first_ok else rest_ok)) return false;
     }
     return true;
 }
 
-/// An npm package name: an optional `@scope/` and one segment, each segment of letters, digits, `-` and `~`, then also
+/// An npm package name: an optional `@scope/` and one segment, each segment of letters, digits and `~`, then also `-`,
 /// `.` and `_` after the first character (upper case is allowed: old packages have it). No other `/`, no `..`
 /// component, no `+`, no `@` in the middle.
 pub fn isNpmName(s: []const u8) bool {
