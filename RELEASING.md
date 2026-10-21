@@ -156,7 +156,7 @@ mopm repository has one and the other repository planned for this stage does not
 | `RELEASE_BOT_APP_ID` | the App id of the release bot whose token the `tag` job makes the tag with (with the secret `RELEASE_BOT_PRIVATE_KEY`, an environment secret of `release`; see "The tag ruleset"); not the farm's, and read by `tag`, `bump` and `tap` |
 | `BUMP_REPOSITORY` | the name, without its owner, of the internal repository whose `buildrules` submodule the `bump` job moves to each release (see "The submodule bump"); read by `bump` alone |
 | `APT_PUBLISH_ROLE_ARN`, `APT_BUCKET`, `APT_DISTRIBUTION_ID`, `APT_HOSTNAME` | optional; variables of the environment `apt-publish`: the role the `apt-deploy-*` jobs assume by OIDC, the bucket and the CDN distribution of the apt repository, and its host name. All four make the apt channel work; any one missing and every apt job ends green with a notice and writes nothing (see "The apt repository") |
-| `APT_GPG_FINGERPRINT` | optional; the fingerprint of the apt signing subkey, as a variable or as a secret of the environment `apt-signing` (with the secrets `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE`); read by the `apt-index` jobs alone |
+| `APT_GPG_FINGERPRINT` | optional; the fingerprint of the apt signing subkey (during a key rotation a comma-separated list of the old and the new one: the index is then signed by each), as a variable or as a secret of the environment `apt-signing` (with the secrets `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE`); read by the `apt-index` jobs alone |
 
 No endpoint or property set is written in this repository, and the farm's values are passed to steps as `${{ vars.X != '' }}` or read from the file the
 farm-connect action writes, so none is printed in a log by this repository's workflows. `FARM_ADDRESS` and `FARM_CONNECT_REF` together turn on the beta farm leg (it is skipped, with a notice, when either is empty; gamma fails instead).
@@ -491,7 +491,7 @@ product's pool prefix (`apt/pool/buildrules/*`) as well as on the index.
 **The settings, and what happens until they are made.** The repository owner makes them once:
 
 - the environment `apt-publish` (restrict its deployment branches to `main`, also a setup step) with the variables `APT_PUBLISH_ROLE_ARN`, `APT_BUCKET`, `APT_DISTRIBUTION_ID` and `APT_HOSTNAME`, and a role whose trust names this repository and that environment;
-- the environment `apt-signing` (restrict its deployment branches to `main`, also a setup step) with the secrets `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE`, and `APT_GPG_FINGERPRINT`, the fingerprint of the signing subkey, as a secret or as a variable.
+- the environment `apt-signing` (restrict its deployment branches to `main`, also a setup step) with the secrets `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE`, and `APT_GPG_FINGERPRINT`, the fingerprint of the signing subkey (or a comma-separated list of them, while a key rotation signs with the old and the new subkey at once, `APT_GPG_PRIVATE_KEY` then holding both), as a secret or as a variable.
 
 GitHub creates an environment the first time a job names it, with no variables and no restriction, so the first release after this change creates both empty. **Fail-safe.** Every apt job has a step `gate`
 (`apt-publish gate`) that checks the settings it needs, after only the step that makes the tool executable. When one is missing the gate prints a notice that names it (the names, never a value), and every later
