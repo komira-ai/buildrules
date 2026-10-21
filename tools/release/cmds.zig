@@ -395,6 +395,19 @@ fn tarballBinary(a: std.mem.Allocator, number: []const u8, target: []const u8, t
     return error.NoBinaryInTarball;
 }
 
+/// Tries of `cosign verify-blob` per file when it cannot fetch the Sigstore trusted root.
+const cosign_tries: u32 = 3;
+
+/// cosign's stderr says the trusted root (the TUF repository) could not be fetched: a network failure that says nothing about the signature.
+/// Only these retry; any other refusal (a signature or certificate mismatch) is final.
+fn isTrustedRootFetchFailure(stderr: []const u8) bool {
+    const markers = [_][]const u8{ "tuf refresh failed", "Could not fetch trusted_root.json", "error getting live trusted root" };
+    for (markers) |m| {
+        if (std.mem.indexOf(u8, stderr, m) != null) return true;
+    }
+    return false;
+}
+
 pub const VerifyOpts = struct {
     root: []const u8,
     repo: []const u8,
@@ -420,6 +433,8 @@ pub const VerifyOpts = struct {
     /// The dry run (the release workflow no longer asks for it: no pull request runs the pipeline): nothing is signed or attested there, so the signatures and attestations are not checked. Everything else is.
     dry: bool = false,
     cosign: []const u8 = "cosign",
+    /// The delay before the second try of a `cosign verify-blob` that could not fetch the trusted root; the third waits twice as long.
+    retry_ms: u32 = 2000,
 };
 
 /// Every reason the files must not be published; empty when there is none. Nothing is written.
@@ -474,13 +489,21 @@ pub fn verify(a: std.mem.Allocator, io: Io, o: VerifyOpts) !assets.Findings {
             });
             if (r.code != 0) try assets.add(a, &f, "the attestation of {s} does not verify (workflow {s}, commit {s}, refs/heads/main): {s}", .{ file, signer, o.sha, trimNl(r.stderr) });
             const bundle = try std.fmt.allocPrint(a, "{s}" ++ bundle_suffix, .{path});
-            const c = try io.run(a, &.{
-                o.cosign,                             "verify-blob",                  "--bundle",                                   bundle,
-                "--certificate-identity",             identity,                       "--certificate-oidc-issuer",                  oidc_issuer,
-                "--certificate-github-workflow-sha",  o.sha,                          "--certificate-github-workflow-trigger",      "push",
-                "--certificate-github-workflow-repository", o.repo,                   path,
-            });
-            if (c.code != 0) try assets.add(a, &f, "the signature of {s} does not verify (identity {s}, commit {s}): {s}", .{ file, identity, o.sha, trimNl(c.stderr) });
+            var tries: u32 = 1;
+            const c = while (true) : (tries += 1) {
+                const got = try io.run(a, &.{
+                    o.cosign,                             "verify-blob",                  "--bundle",                                   bundle,
+                    "--certificate-identity",             identity,                       "--certificate-oidc-issuer",                  oidc_issuer,
+                    "--certificate-github-workflow-sha",  o.sha,                          "--certificate-github-workflow-trigger",      "push",
+                    "--certificate-github-workflow-repository", o.repo,                   path,
+                });
+                // Only a failure to fetch the Sigstore trusted root is retried (a network flake, not a verdict on the signature).
+                if (got.code == 0 or tries >= cosign_tries or !isTrustedRootFetchFailure(got.stderr)) break got;
+                std.Thread.sleep(@as(u64, o.retry_ms) * tries * std.time.ns_per_ms);
+            };
+            if (c.code != 0 and isTrustedRootFetchFailure(c.stderr)) {
+                try assets.add(a, &f, "the signature of {s} could not be checked: cosign could not fetch the Sigstore trusted root in {d} tries (a network failure, not a verdict on the signature): {s}", .{ file, tries, trimNl(c.stderr) });
+            } else if (c.code != 0) try assets.add(a, &f, "the signature of {s} does not verify (identity {s}, commit {s}): {s}", .{ file, identity, o.sha, trimNl(c.stderr) });
         }
     }
 
@@ -708,6 +731,9 @@ const Fake = struct {
     rules: []const Rule,
     calls: std.ArrayList([]const u8) = .empty,
     files: std.ArrayList([]const u8) = .empty,
+    /// The first `flaky_n` calls to `cosign verify-blob` answer `flaky_out` whatever the rules say (a network flake that then clears).
+    flaky_n: usize = 0,
+    flaky_out: Out = .{ .code = 0, .stdout = "", .stderr = "" },
 
     const Rule = struct { needle: []const u8, out: Out = .{ .code = 0, .stdout = "", .stderr = "" } };
 
@@ -715,6 +741,10 @@ const Fake = struct {
         const self: *Fake = @ptrCast(@alignCast(ctx));
         const line = try std.mem.join(a, " ", argv);
         try self.calls.append(self.a, line);
+        if (self.flaky_n > 0 and std.mem.indexOf(u8, line, "verify-blob") != null) {
+            self.flaky_n -= 1;
+            return self.flaky_out;
+        }
         for (self.rules) |r| {
             if (std.mem.indexOf(u8, line, r.needle) != null) return r.out;
         }
@@ -1307,6 +1337,46 @@ test "verify: a correct release has no finding, and every check was made on ever
     try t.expectEqual(@as(usize, 1), fake.count("--bundle dist/SHA256SUMS.sigstore.json "));
     // the program is run once, as a user runs it
     try t.expectEqual(@as(usize, 1), fake.count(cli_path ++ " --version"));
+}
+
+test "verify: a Sigstore trusted-root fetch failure is retried up to 3 tries; a signature mismatch never is" {
+    // The defects: no retry (a network flake fails the release), a retry of everything (a bad signature is asked about again and again), a retry
+    // without a bound, or a fetch failure reported as a verdict on the signature.
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const tar_bytes = try tar.build(a, &sample_tar_entries);
+    const rules = verifyRules(tar_bytes, tree_ok, ok(""), "tag\n", peeled_a);
+    const r = try releaseOf(a, tar_bytes, "v0.0.1", "0.0.1");
+    var o = opts(r);
+    o.retry_ms = 1;
+    const tuf = fail(1, "WARNING: Could not fetch trusted_root.json from the TUF repository: tuf refresh failed: Get https://tuf-repo-cdn.sigstore.dev/timestamp.json: i/o timeout\nError: trusted root is required when using new bundle format");
+
+    // the fetch fails twice, then works: no finding, and the flake cost exactly two more calls (5 files + 2)
+    var fake = Fake{ .a = a, .rules = &rules, .flaky_n = 2, .flaky_out = tuf };
+    try expectClean(try verify(a, fake.io(), o));
+    try t.expectEqual(@as(usize, 7), fake.count("cosign verify-blob"));
+
+    // it fails 3 times: three tries on that file, then a finding that says it is a fetch failure, not a bad signature
+    fake = Fake{ .a = a, .rules = &rules, .flaky_n = 3, .flaky_out = tuf };
+    const f3 = try verify(a, fake.io(), o);
+    try expectFinding(f3, "could not fetch the Sigstore trusted root in 3 tries");
+    try t.expectEqual(@as(usize, 1), f3.items.len);
+    try t.expectEqual(@as(usize, 7), fake.count("cosign verify-blob"));
+
+    // the other two spellings of the same failure retry too
+    for ([_][]const u8{ "error getting live trusted root: boom", "tuf refresh failed" }) |msg| {
+        fake = Fake{ .a = a, .rules = &rules, .flaky_n = 1, .flaky_out = fail(1, msg) };
+        try expectClean(try verify(a, fake.io(), o));
+    }
+
+    // a signature mismatch is final on the first try: one call per file, each a finding
+    var bad_sig = rules;
+    bad_sig[6].out = fail(1, "Error: invalid signature when validating ASN.1 encoded signature");
+    fake = Fake{ .a = a, .rules = &bad_sig };
+    const fm = try verify(a, fake.io(), o);
+    try expectFinding(fm, "the signature of buildrules-0.0.1.tar.gz does not verify");
+    try t.expectEqual(@as(usize, 5), fake.count("cosign verify-blob"));
 }
 
 test "verify --dry checks everything but the signatures and attestations, which a pull request does not make" {
