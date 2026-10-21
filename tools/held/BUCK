@@ -1,0 +1,11 @@
+# Held scripts: steps only the repository owner runs (uploads to GitHub, anything that writes outside this tree). Each is a dry run unless given `--apply`.
+# They are shell because they drive `gh` and `curl`; a Zig check reads their text (ci/pin_mirrors_check.zig) and never runs them.
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+export_file(
+    name = "mirror-busybox.sh",
+    src = "mirror-busybox.sh",
+    visibility = ["//ci:"],
+)
+
+scrub_files()
