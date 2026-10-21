@@ -72,6 +72,8 @@ pub const Ctx = struct {
     pub fn write(self: *Ctx, path: []const u8, data: []const u8) !void {
         if (std.fs.path.dirname(path)) |d| try self.dir.makePath(d);
         const tmp = try std.fmt.allocPrint(self.a, "{s}.buildrules-tmp", .{path});
+        // A write or a rename that fails must not leave the sibling file behind (it would be in the next `git status`).
+        errdefer self.dir.deleteFile(tmp) catch {};
         try self.dir.writeFile(.{ .sub_path = tmp, .data = data });
         try self.dir.rename(tmp, path);
     }

@@ -128,6 +128,7 @@ fn runIn(ctx: *Ctx, o: Opts) !u8 {
             break :blk false;
         };
         for (diag.msgs.items) |m| _ = ctx.fail("{s}: {s}", .{ d, m });
+        if (diag.lost > 0) _ = ctx.fail("{s}: {s}", .{ d, Diag.lost_text });
         if (diag.count() > 0) {
             bad += 1;
         } else if (o.check) {

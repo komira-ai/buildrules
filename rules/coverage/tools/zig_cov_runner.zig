@@ -116,6 +116,7 @@ pub fn main() void {
             },
         }
         if (testing.allocator_instance.deinit() == .leak) leaks += 1;
+        saturateCounters();
     }
     if (failed == 0 and skipped == 0) {
         std.debug.print("All {d} tests passed.\n", .{passed});
@@ -178,5 +179,17 @@ pub fn log(
     if (@intFromEnum(message_level) <= @intFromEnum(std.log.Level.err)) log_err_count +|= 1;
     if (@intFromEnum(message_level) <= @intFromEnum(testing.log_level)) {
         std.debug.print("[" ++ @tagName(scope) ++ "] (" ++ @tagName(message_level) ++ "): " ++ format ++ "\n", args);
+    }
+}
+
+/// A block's counter is one byte that wraps: a block that ran 256 times reads as one that did not run. Between the tests every counter that is not zero is set
+/// to one, so a block that ran in one test stays a block that ran however often the next tests run it (the count itself is not reported as a count; a hit is a
+/// non-zero counter). What this cannot repair: a block that one single test runs a multiple of 256 times, which still wraps within that test.
+fn saturateCounters() void {
+    @disableInstrumentation();
+    const cs = @extern([*]u8, .{ .name = "__start___sancov_cntrs", .linkage = .weak }) orelse return;
+    const ce = @extern([*]u8, .{ .name = "__stop___sancov_cntrs", .linkage = .weak }) orelse return;
+    for (cs[0 .. ce - cs]) |*b| {
+        if (b.* != 0) b.* = 1;
     }
 }

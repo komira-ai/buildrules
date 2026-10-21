@@ -201,6 +201,7 @@ fn sync(ctx: *Ctx, o: Opts) !u8 {
     const pins_text: []const u8 = (try ctx.readOpt(contract.pins_file)) orelse "";
     const rust_pins: []const u8 = pins_toml.render(a, pins_text, &pins_diag) catch blk: {
         for (pins_diag.msgs.items) |m| _ = ctx.fail("{s}", .{m});
+        if (pins_diag.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
         problems += 1;
         break :blk "";
     };
@@ -225,6 +226,7 @@ fn sync(ctx: *Ctx, o: Opts) !u8 {
     var diag = Diag.init(a);
     const entries = cargo_lock.parse(a, "Cargo.lock", lock, &diag) catch {
         for (diag.msgs.items) |m| ctx.err.print("buildrules: {s}\n", .{m}) catch {};
+        if (diag.lost > 0) ctx.err.print("buildrules: {s}\n", .{Diag.lost_text}) catch {};
         return ctxm.exit_fail;
     };
 
@@ -360,6 +362,7 @@ fn writeIfChanged(ctx: *Ctx, path: []const u8, text: []const u8) !void {
 /// Prints every message the generator collected and returns the failing exit code.
 fn reportAll(ctx: *Ctx, diag: *Diag) u8 {
     for (diag.msgs.items) |m| ctx.err.print("buildrules: {s}\n", .{m}) catch {};
+    if (diag.lost > 0) ctx.err.print("buildrules: {s}\n", .{Diag.lost_text}) catch {};
     return ctxm.exit_fail;
 }
 

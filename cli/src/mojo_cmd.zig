@@ -201,18 +201,47 @@ fn exportPresent(ctx: *Ctx, tc: Tc) !bool {
     return std.mem.indexOf(u8, text, "name = \"" ++ contract.mojo_toolchain_file ++ "\"") != null;
 }
 
-/// sync: make sure the export is there (a BUCK file is created, or the export appended once to the one that exists); check: say it is not.
-fn ensureExport(ctx: *Ctx, tc: Tc, check_only: bool) !u8 {
-    if (!needsExport(tc) or try exportPresent(ctx, tc)) return ctxm.exit_ok;
+/// A file `sync` will write once everything it writes has been rendered.
+const Pending = struct {
+    path: []const u8,
+    text: []const u8,
+    /// What to say after writing it, when it is not the usual "wrote   <path>" of `writeIfChanged`.
+    note: ?[]const u8 = null,
+};
+
+fn pendingText(pend: []const Pending, path: []const u8) ?[]const u8 {
+    for (pend) |p| if (std.mem.eql(u8, p.path, path)) return p.text;
+    return null;
+}
+
+/// The file `path` as it will be when the pending writes are done; the last write of a path wins.
+fn queue(a: std.mem.Allocator, pend: *std.ArrayList(Pending), item: Pending) !void {
+    for (pend.items) |*p| {
+        if (std.mem.eql(u8, p.path, item.path)) {
+            p.* = item;
+            return;
+        }
+    }
+    try pend.append(a, item);
+}
+
+/// sync: make sure the export is there (queue a BUCK file, or the export appended once to the one that exists); check: say it is not. Nothing is written
+/// here: the writes of a sync happen after everything has been rendered.
+fn ensureExport(ctx: *Ctx, tc: Tc, check_only: bool, pend: *std.ArrayList(Pending)) !u8 {
+    if (!needsExport(tc)) return ctxm.exit_ok;
     const path = try exportBuckPath(ctx, tc);
+    const have: ?[]const u8 = pendingText(pend.items, path) orelse try ctx.readOpt(path);
+    if (have) |h| if (std.mem.indexOf(u8, h, "name = \"" ++ contract.mojo_toolchain_file ++ "\"") != null) return ctxm.exit_ok;
     if (check_only) return ctx.fail("{s} does not export {s}, which the :check of the packages below compares with their tables: run `buildrules mojo sync`", .{ path, contract.mojo_toolchain_file });
-    if (try ctx.readOpt(path)) |have| {
-        const sep: []const u8 = if (have.len == 0 or have[have.len - 1] == '\n') "\n" else "\n\n";
-        try ctx.write(path, try std.mem.concat(ctx.a, u8, &.{ have, sep, export_snippet }));
-        ctx.say("wrote   {s} (appended the export of {s})", .{ path, contract.mojo_toolchain_file });
+    if (have) |h| {
+        const sep: []const u8 = if (h.len == 0 or h[h.len - 1] == '\n') "\n" else "\n\n";
+        try queue(ctx.a, pend, .{
+            .path = path,
+            .text = try std.mem.concat(ctx.a, u8, &.{ h, sep, export_snippet }),
+            .note = try std.fmt.allocPrint(ctx.a, "wrote   {s} (appended the export of {s})", .{ path, contract.mojo_toolchain_file }),
+        });
     } else {
-        try ctx.write(path, export_header ++ export_snippet);
-        ctx.say("wrote   {s}", .{path});
+        try queue(ctx.a, pend, .{ .path = path, .text = export_header ++ export_snippet, .note = try std.fmt.allocPrint(ctx.a, "wrote   {s}", .{path}) });
     }
     return ctxm.exit_ok;
 }
@@ -248,7 +277,10 @@ fn walk(ctx: *Ctx, rel: []const u8, out: *std.ArrayList([]const u8)) !void {
         if (e.kind == .directory) {
             if (!isSkipped(e.name) and !(e.name.len > 0 and e.name[0] == '.')) try subdirs.append(a, try a.dupe(u8, e.name));
         } else if (e.kind == .file and std.mem.eql(u8, e.name, "BUCK")) {
-            const text = d.readFileAlloc(a, "BUCK", 8 << 20) catch continue;
+            const text = d.readFileAlloc(a, "BUCK", 8 << 20) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => continue,
+            };
             if (std.mem.indexOf(u8, text, "mojo_package(") != null) try out.append(a, try a.dupe(u8, rel));
         }
     }
@@ -323,6 +355,7 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
     const pins_text: []const u8 = (try ctx.readOpt(contract.pins_file)) orelse "";
     const mopm_pins_text: []const u8 = mopm_pins.render(a, pins_text, &pd) catch {
         for (pd.msgs.items) |m| _ = ctx.fail("{s}", .{m});
+        if (pd.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
         return ctxm.exit_fail;
     };
     if (!check_only) {
@@ -331,6 +364,9 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
         if (!ctx.exists(contract.mojo_pins_file)) try ctx.write(contract.mojo_pins_file, lockm.pins_empty);
     }
 
+    // What the sync writes from here on is collected and written at the end, once the toolchain table has been rendered too: a sync that
+    // refuses halfway leaves the files as they were. (The two pins tables above are written first on purpose: the build of the pinned mopm loads them.)
+    var pend = std.ArrayList(Pending).empty;
     var mopm_cache = std.StringHashMap(?[]const u8).init(a);
     var tcs = std.ArrayList(lockm.Tc).empty;
     for (pkgs) |pkg| {
@@ -367,6 +403,7 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
         var diag = Diag.init(a);
         const g = lockm.parseGraph(a, pkg, r.stdout, &diag) catch {
             for (diag.msgs.items) |m| _ = ctx.fail("{s}", .{m});
+            if (diag.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
             code = ctxm.exit_fail;
             continue;
         };
@@ -411,15 +448,15 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
             .graph_json = r.stdout,
         });
         try tcs.append(a, .{ .mojo = g.mojo, .toolchain = g.toolchain });
-        code |= try ensureExport(ctx, tc, check_only);
+        code |= try ensureExport(ctx, tc, check_only, &pend);
         const lock_path = try inDir(a, pkg, contract.mojo_lock_file);
         const bzl_path = try inDir(a, pkg, contract.mojo_bzl_file);
         if (check_only) {
             code |= compareOne(ctx, lock_path, text);
             code |= compareOne(ctx, bzl_path, contract.mojo_bzl_text);
         } else {
-            try writeIfChanged(ctx, lock_path, text);
-            try writeIfChanged(ctx, bzl_path, contract.mojo_bzl_text);
+            try queue(a, &pend, .{ .path = lock_path, .text = text });
+            try queue(a, &pend, .{ .path = bzl_path, .text = contract.mojo_bzl_text });
         }
     }
 
@@ -431,12 +468,19 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
                 code |= compareOne(ctx, contract.mojo_pins_file, pins);
                 code |= compareOne(ctx, contract.mopm_pins_file, mopm_pins_text);
             } else {
-                try writeIfChanged(ctx, contract.mojo_pins_file, pins);
+                try queue(a, &pend, .{ .path = contract.mojo_pins_file, .text = pins });
             }
         } else |_| {
             for (td.msgs.items) |m| _ = ctx.fail("{s}", .{m});
-            code = ctxm.exit_fail;
+            if (td.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
+            return ctxm.exit_fail;
         }
+    }
+    for (pend.items) |p| {
+        if (p.note) |n| {
+            try ctx.write(p.path, p.text);
+            ctx.say("{s}", .{n});
+        } else try writeIfChanged(ctx, p.path, p.text);
     }
     if (code == ctxm.exit_ok) {
         if (check_only) ctx.say("mojo sync --check: every generated file is up to date", .{}) else ctx.say("synced: {d} Mojo package(s)", .{pkgs.len});
@@ -480,9 +524,10 @@ fn writeIfChanged(ctx: *Ctx, path: []const u8, text: []const u8) !void {
 
 const fix = "run `buildrules mojo sync` and commit the result";
 
-/// Whether the repository has any Mojo package: `buildrules check` runs this part only then.
-pub fn hasPackages(ctx: *Ctx) bool {
-    const p = discover(ctx) catch return false;
+/// Whether the repository has any Mojo package: `buildrules check` runs this part only then. A walk that runs out of memory
+/// is an error, not "no package": the gate must not skip the Mojo packages it could not look for. (A directory or BUCK file that cannot be read is skipped.)
+pub fn hasPackages(ctx: *Ctx) !bool {
+    const p = try discover(ctx);
     return p.len > 0;
 }
 
@@ -508,7 +553,8 @@ pub fn checkAll(ctx: *Ctx) !u8 {
             }
         } else |_| {
             for (td.msgs.items) |m| _ = ctx.fail("{s}", .{m});
-            bad += td.count();
+            if (td.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
+            bad += @max(1, td.count());
         }
     }
     var pd = Diag.init(a);
@@ -521,7 +567,8 @@ pub fn checkAll(ctx: *Ctx) !u8 {
         }
     } else |_| {
         for (pd.msgs.items) |m| _ = ctx.fail("{s}", .{m});
-        bad += pd.count();
+        if (pd.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
+        bad += @max(1, pd.count());
     }
     if (bad == 0) {
         ctx.say("ok: {d} Mojo package(s) match their mopm.toml, mopm.lock, mopm-toolchain.toml, sources and tests", .{pkgs.len});
@@ -547,7 +594,8 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
     var diag = Diag.init(a);
     const l = lockm.parse(a, lock_path, text, &diag) catch {
         for (diag.msgs.items) |m| _ = ctx.fail("{s}", .{m});
-        bad.* += diag.count();
+        if (diag.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
+        bad.* += @max(1, diag.count());
         return;
     };
     if (l.schema != contract.mojo_schema) {
@@ -557,7 +605,8 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
     }
     const g = lockm.parseGraph(a, lock_path, l.graph_json, &diag) catch {
         for (diag.msgs.items) |m| _ = ctx.fail("{s}", .{m});
-        bad.* += diag.count();
+        if (diag.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
+        bad.* += @max(1, diag.count());
         return;
     };
 
