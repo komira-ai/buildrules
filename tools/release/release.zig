@@ -179,10 +179,17 @@ fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const
         return 0;
     }
     if (std.mem.eql(u8, cmd, "tag")) {
-        const g = try parseArgs(a, rest, &.{ "root", "repo", "tag", "sha" });
+        const g = try parseArgs(a, rest, &.{ "root", "repo", "tag", "sha", "output" });
         const tag = try g.need("tag");
-        const made = try cmds.createTag(a, io, .{ .root = try g.need("root"), .repo = try g.need("repo"), .tag = tag, .sha = try g.need("sha") });
-        say("release tag: {s} {s}\n", .{ tag, @tagName(made) });
+        const r = try cmds.settleTag(a, io, .{ .root = try g.need("root"), .repo = try g.need("repo"), .tag = tag, .sha = try g.need("sha") });
+        const out = try cmds.settleOutputs(a, r);
+        if (r.superseded) {
+            say("::notice title=release superseded::{s}\n", .{r.reason});
+        } else {
+            say("release tag: {s} {s}\n", .{ r.tag, @tagName(r.made.?) });
+        }
+        say("{s}", .{out});
+        if (g.get("output")) |p| try appendFile(p, out);
         return 0;
     }
     if (std.mem.eql(u8, cmd, "archive")) {
@@ -538,6 +545,24 @@ test "--exec native runs the binary for its version, and --exec none does not ru
     var idle = Says{ .says = "buildrules 0.0.7\n" };
     try t.expectEqual(@as(u8, 1), try run(a, idle.io(), "package", &args));
     try t.expectEqual(@as(usize, 0), idle.calls);
+}
+
+test "tag: the step writes the job outputs, and a superseded run says so and exits 0" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const base = try tmp.dir.realpathAlloc(a, ".");
+    // every command answers with one tag at b..b and exit 0: the fetch passes, the newest tag is v0.0.6, and the commit is an ancestor of it
+    var newer = Says{ .says = "v0.0.6\tcommit\t" ++ "b" ** 40 ++ "\t\n" };
+    const out_path = try join(a, base, "out");
+    const args = [_][]const u8{ "--root", "/w", "--repo", "o/n", "--tag", "v0.0.6", "--sha", "a" ** 40, "--output", out_path };
+    try t.expectEqual(@as(u8, 0), try run(a, newer.io(), "tag", &args));
+    const text = try tmp.dir.readFileAlloc(a, "out", 4096);
+    try t.expect(std.mem.startsWith(u8, text, "superseded=true\ntag=\nnumber=\nmade=none\nreason="));
+    // a usage error: the tag is required
+    try t.expectError(error.Usage, run(a, newer.io(), "tag", &.{ "--root", "/w", "--repo", "o/n", "--sha", "a" ** 40 }));
 }
 
 /// `args` and `--dry value`.

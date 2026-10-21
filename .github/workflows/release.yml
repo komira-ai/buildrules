@@ -18,10 +18,13 @@
 #              archive AND of the three binaries giving the same bytes, `buildrules --version` of the shipped linux-x86_64 binary printing the release version,
 #              the archive's file list equal to the commit's tracked files, and the scrub on its contents.
 #   tag        the job that creates the tag, with the release bot's token (the v* tag ruleset allows only that App; GITHUB_TOKEN here only reads): the
-#              annotated tag at that sha, made only after everything was built, tested, attested and verified, so a failure before it leaves no tag behind. A tag
-#              that exists at the sha is kept; one at another commit fails the job.
+#              annotated tag at that sha, made only after everything was built, tested, attested and verified, so a failure before it leaves no tag behind. It
+#              runs alone (concurrency group `release`) and fetches the tags again first, because two pushes that land close together both plan the same number:
+#              a commit contained in the newest release tag's commit ends the run green as superseded (publish, site and bump are skipped); a planned number
+#              that another commit took fails the job (the binaries and the archive carry it); otherwise the tag is made. A tag that exists at the sha is kept.
+#              Its outputs (`tag`, `number`, `superseded`) are what publish, site and bump use, not the plan's.
 #   site       the page of the release (the tag, the commit to pin in .buckconfig, the archive url and its sha256), as an artifact. Nothing deploys it.
-#   publish    creates the GitHub release from the verified files, once the tag exists and peels to the verified sha. A re-run creates no second
+#   publish    creates the GitHub release from the verified files, once the tag (the one `tag` made) exists and peels to the verified sha. A re-run creates no second
 #              release and replaces no asset: a file the release holds must be the same bytes or the job fails, and a missing file is added.
 #   bump       after publish: opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge,
 #              using the release bot's token for that repository alone (`contents: read` for its own token). Nothing waits for it.
@@ -370,6 +373,11 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
+    # What publish, site and bump take instead of the plan's: the tag this run ended with, or `superseded` when a release made meanwhile contains the commit.
+    outputs:
+      superseded: ${{ steps.settle.outputs.superseded }}
+      tag: ${{ steps.settle.outputs.tag }}
+      number: ${{ steps.settle.outputs.number }}
     env:
       TAG: ${{ needs.plan.outputs.tag }}
     steps:
@@ -394,19 +402,20 @@ jobs:
           repositories: buildrules
           permission-contents: write
       - name: The annotated tag of the verified commit
+        id: settle
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
-        run: tool/release tag --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA"
+        run: tool/release tag --root "$GITHUB_WORKSPACE" --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA" --output "$GITHUB_OUTPUT"
 
   publish:
     needs: [plan, tag, verify, tool]
-    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork && needs.tag.outputs.superseded != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
     env:
-      TAG: ${{ needs.plan.outputs.tag }}
+      TAG: ${{ needs.tag.outputs.tag }}
       PREVIOUS: ${{ needs.plan.outputs.previous }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -434,7 +443,7 @@ jobs:
   # forward move, and the tag of this release naming the commit.
   bump:
     needs: [plan, tag, publish, tool]
-    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork }}
+    if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork && needs.tag.outputs.superseded != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # The same environment as tag: the key is readable only by these two jobs (RELEASING.md).
@@ -442,7 +451,7 @@ jobs:
     permissions:
       contents: read
     env:
-      TAG: ${{ needs.plan.outputs.tag }}
+      TAG: ${{ needs.tag.outputs.tag }}
       INTERNAL_REPO: ${{ github.repository_owner }}/${{ vars.BUMP_REPOSITORY }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -470,13 +479,13 @@ jobs:
 
   site:
     needs: [plan, tag, verify, tool]
-    if: ${{ needs.plan.outputs.released == 'true' }}
+    if: ${{ needs.plan.outputs.released == 'true' && needs.tag.outputs.superseded != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
     env:
-      TAG: ${{ needs.plan.outputs.tag }}
+      TAG: ${{ needs.tag.outputs.tag }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

@@ -22,10 +22,10 @@ one invocation each. `ci/release_check.zig` and `ci/stages_check.zig` (part of `
 | `archive` | `git archive` of the tested commit (its sha, not a tag) under `buildrules-<planned version>/`, compressed by the tool's own gzip; checks that the linux-x86_64 tarball holds the very file the beta ran and lets through only the tarballs a user beta ran (`release record`, `release tested`); `SHA256SUMS` over the archive and the three tarballs | read |
 | `attest` | only on a push to `main`: a keyless cosign signature (`<file>.sigstore.json`) of the five files and a build provenance attestation of all five | `id-token`, `attestations` write |
 | `verify` | read-only, only on a push to `main`; checks everything below before a file is published, and builds the three binaries again to compare | read, `attestations` read |
-| `tag` | the annotated tag at that sha, made only after everything is built, tested, signed and verified, with the release bot's token (see "The tag ruleset"). A tag that exists at the sha is kept; one at another commit fails the job | read; the write is the bot's token, minted in this job and used by the tag step alone |
-| `site` | read-only; the page of the release (the pin snippet) as an artifact; nothing deploys it | read |
-| `publish` | needs `tag` and `verify`; checks the tag peels to the verified sha, then creates the GitHub release from the verified files: the archive, the three tarballs, `SHA256SUMS` and the five signature bundles | `contents: write` |
-| `bump` | needs `plan`, `tag`, `publish` and `tool`; opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge (see "The submodule bump"). Nothing waits for it | read; the write is the bot's token for the internal repository, minted in this job and used by the bump step alone |
+| `tag` | the annotated tag at that sha, made only after everything is built, tested, signed and verified, with the release bot's token (see "The tag ruleset"). It fetches the tags again first and settles the race of two pushes that planned the same number (see "Two pushes at once"); its outputs `tag`, `number` and `superseded` are what `site`, `publish` and `bump` use | read; the write is the bot's token, minted in this job and used by the tag step alone |
+| `site` | read-only; skipped when `tag` ended as superseded; the page of the release (the pin snippet) as an artifact; nothing deploys it | read |
+| `publish` | needs `tag` and `verify`; skipped when `tag` ended as superseded; takes the tag from `tag`'s output; checks the tag peels to the verified sha, then creates the GitHub release from the verified files: the archive, the three tarballs, `SHA256SUMS` and the five signature bundles | `contents: write` |
+| `bump` | needs `plan`, `tag`, `publish` and `tool`; skipped when `tag` ended as superseded; takes the tag from `tag`'s output; opens the pull request that moves the internal repository's `buildrules` submodule to the released commit, with auto-merge (see "The submodule bump"). Nothing waits for it | read; the write is the bot's token for the internal repository, minted in this job and used by the bump step alone |
 
 The order is `gate`, `plan`, `build-cli`, `beta`, `gamma`, `archive`, `attest`, `verify`, `tag`, `publish` (`tool` beside `gate`; `site` after `tag` and `verify`);
 a job runs only if the one before it succeeded. **Nothing before `tag` waits for it, so a failure in the build, the beta, the gamma, the archive, the signing or the
@@ -39,7 +39,7 @@ a push to `main`, not a fork, and a commit the plan released; and the workflow i
 artifact actions (`attest` also the cosign installer and the attestation action); `gamma` runs no buck2 itself, the stage tool does. Every action is pinned by commit, but one: the
 farm-connect action is checked out of the repository and commit that two repository variables name, the checkout is verified to be that commit before the action
 runs, and it is then used from the checkout. Two runs never tag at once (concurrency group `release`, nothing cancelled); two pushes that planned the
-same number race for the tag, and the loser fails at `tag` (the tag names the other commit) with nothing created. The workflow's own concurrency is per commit and cancels nothing. No job of the workflow carries `continue-on-error` (or only `false`), and no `run:` line
+same number are settled inside that group (see "Two pushes at once"). The workflow's own concurrency is per commit and cancels nothing. No job of the workflow carries `continue-on-error` (or only `false`), and no `run:` line
 expands a repository variable or event field inline: the values go through `env:` (`ci/release_check.zig` and `ci/stages_check.zig` refuse both).
 
 ## The tiers
@@ -390,11 +390,33 @@ upstream host that drops a request from blocking a release, and none of them can
 - **Mirrors** (`docs/pins.md`, "Mirrors"): where a pin has a host that serves the identical bytes, the map names it. `pinned_file` applies `buildrules.url_map` to every
   download it declares.
 
+## Two pushes at once
+
+The plan runs before the build, so two pushes that land within the time of a build (minutes) both plan the same number: with `v0.0.5` the newest tag, both plan
+`v0.0.6`. The binaries, the archive, the sums, the signatures and the attestations of each carry its planned number. The `tag` job is the one place the
+numbers are settled: it is alone (concurrency group `release`, nothing cancelled), and it fetches the tags again before it decides, from the tags as they are
+then (`tool/release tag`, `settleTag` in `tools/release/cmds.zig`). For the commit `C` of the run and the newest release tag `N`:
+
+| what `tag` finds | what happens |
+|---|---|
+| a tag already names `C`, and it is the planned one | a re-run: the tag is kept, and `site`, `publish` and `bump` go on with it (even when newer releases exist: `publish` still refuses a release below the newest) |
+| a tag names `C` under another number | the job fails (`TagMismatch`): the build carries the planned number |
+| `C` is contained in `N`'s commit (an ancestor of it) | the run ends **green as superseded**, with a notice naming `N`: that release carries `C`'s changes, so `site`, `publish` and `bump` are skipped and nothing is created |
+| `C` is not contained in `N`'s commit, and the planned number is the next free one | the tag is made, as before |
+| `C` is not contained, and the planned number is taken (the earlier push tagged first, at a commit that does not contain `C`) | the job fails (`NumberTaken`) with nothing created, and says so: the next free number differs from the one the build stamped |
+
+The last row is red on purpose. A tag under another number than the one the binaries print (`buildrules --version`), the archive names and the signatures would be a
+release whose files disagree with its tag, and re-stamping means building, attesting and verifying again, which the job that holds the token never does. The
+fix is cheap and safe: **re-run all jobs** of that run (not only the failed ones): the plan is computed again from the tags that exist, the commit is built and
+released under the free number. If nobody re-runs it, the next push to `main` releases it with everything else since the last tag. A tag is never moved. The
+number of `publish`, `site` and `bump` is `needs.tag.outputs.tag`, not the plan's; `ci/release_check.zig` refuses a workflow in which they read the plan's tag, or do
+not skip a superseded run.
+
 ## When something fails
 
 A red `gate`, `build-cli`, `beta`, `gamma`, `archive`, `attest` or `verify` releases nothing and **leaves no tag**, and the next green push releases everything since the last
 tag. If `tag` or a job after it fails, re-run the failed jobs of that run: `tag` keeps a tag that already names the commit (and fails, creating nothing,
-when the number names another commit), and `archive`, `verify`, `site` and `publish` are safe to repeat, `publish` adding only what is missing. A `VERSION`
+when the number is taken by another commit: re-run **all** jobs then, see "Two pushes at once"), and `archive`, `verify`, `site` and `publish` are safe to repeat, `publish` adding only what is missing. A `VERSION`
 behind the tags fails `plan` until `VERSION` is fixed.
 
 **An old run is never published after a newer one.** Before `publish` creates a release it lists the releases and refuses (the job fails and creates
