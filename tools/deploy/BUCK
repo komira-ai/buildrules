@@ -1,0 +1,100 @@
+# tools/deploy: the DEPLOY half of the release channels: the signed apt index and its upload (`apt_publish`, three jobs of release.yml per attempt) and the pull
+# request that adds the Homebrew formula to the tap (`tap`, one job). What they publish is made by the BUILD half, //tools/channels. Standard library only; the
+# tests run them against a fake `aws`, `gpg`, `curl`, `gh` and `git` whose state is a directory, so nothing here reaches a cloud, holds a key or opens a pull
+# request. Vendored from the sibling tool's release (see the headers of apt_publish.zig and tap_main.zig for the commit), as a stopgap until the `deb_package`
+# and `brew_formula` rules and the deploy of the apt repository exist.
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+_BB = "buildrules//rules/pins:busybox"
+
+# The sources of the apt publish tool, named by a glob so a new file is picked up.
+_APT_SRCS = glob(["apt_publish/*.zig"], exclude = ["apt_publish/lib.zig"])
+
+# The unit tests: the gate, the shape of the index and its ETags, the aws answers, the gpg command lines.
+zig_test(
+    name = "apt_publish_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "apt_publish/lib.zig",
+    imports = _APT_SRCS,
+    busybox = _BB,
+)
+
+# The command line, not built unless the unit tests pass.
+zig_exe(
+    name = "apt_publish",
+    exec_compatible_with = LINUX_X86_64,
+    src = "apt_publish.zig",
+    imports = _APT_SRCS,
+    unit_tests = [":apt_publish_unit"],
+    busybox = _BB,
+    visibility = ["PUBLIC"],
+)
+
+# The pull request against the tap. The program has no unit tests of its own: tap_driver runs it, against a fake `gh` and `git`.
+zig_exe(
+    name = "tap",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tap_main.zig",
+    imports = ["tap.zig", "ghtool.zig"],
+    busybox = _BB,
+    visibility = ["PUBLIC"],
+)
+
+# The programs the drivers put in place of the real ones.
+[
+    zig_exe(
+        name = "fake_" + n,
+        exec_compatible_with = LINUX_X86_64,
+        src = "drivers/fake_" + n + ".zig",
+        busybox = _BB,
+    )
+    for n in ["aws", "gpg", "curl", "gh", "git"]
+]
+
+# apt_publish against the fake aws, gpg and curl: the order of the writes, If-None-Match, If-Match and the 412 retry, the signing, the gate, and a write
+# interrupted after each of its puts.
+zig_test(
+    name = "apt_publish_driver",
+    exec_compatible_with = LINUX_X86_64,
+    src = "drivers/apt_publish_test.zig",
+    data = {"packaging/deb/" + f: "//packaging/deb:" + f for f in ["control", "copyright", "lintian-overrides"]},
+    deps = ["//tools/harness:harness"],
+    exec_tools = {
+        "APT_PUBLISH": ":apt_publish",
+        "CHANNELS": "//tools/channels:channels",
+        "FAKE_AWS": ":fake_aws",
+        "FAKE_CURL": ":fake_curl",
+        "FAKE_GPG": ":fake_gpg",
+    },
+    busybox = _BB,
+    visibility = ["//ci:"],
+)
+
+# tap against the fake gh and git, with planted defects it must refuse: the pull request the tap's guard admits, monotonic, idempotent, no force-push.
+zig_test(
+    name = "tap_driver",
+    exec_compatible_with = LINUX_X86_64,
+    src = "drivers/tap_test.zig",
+    data = {"tools/channels/testdata/tap_guard_buildrules.rb": "//tools/channels:tap_guard_buildrules.rb"},
+    deps = ["//tools/harness:harness"],
+    exec_tools = {
+        "FAKE_GH": ":fake_gh",
+        "FAKE_GIT": ":fake_git",
+        "TAP": ":tap",
+    },
+    busybox = _BB,
+    visibility = ["//ci:"],
+)
+
+# The coverage of the sources the unit tests compile (rules/coverage/README.md, "Zig coverage") and the floor it is held to. The drivers run programs and are
+# not counted; the unit tests are of the gate, the index state, the aws answers and the gpg command lines.
+zig_coverage(
+    blocks = False,
+    test_targets = [":apt_publish_unit"],
+    expect = ["tools/deploy/" + f for f in _APT_SRCS],
+)
+
+scrub_files()

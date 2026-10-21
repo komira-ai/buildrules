@@ -4,8 +4,9 @@ Part 2 of 2. Part 1 ([why.md](why.md)) is the argument and the design. This part
 get started, configure, and examples per language.
 
 Everything here is version 0 and runs on **linux x86_64 only**. It describes the repository at its
-current `main`. Items marked **planned** do not exist yet: Arm and macOS hosts for the rules, a Homebrew
-formula and an apt repository.
+current `main`. Items marked **planned** do not exist yet: Arm and macOS hosts for the rules. A Homebrew
+formula and an apt repository are made by every release and are published only **after
+setup** (RELEASING.md): until then there is none.
 
 ## 1. Getting started
 
@@ -39,8 +40,9 @@ checks the keyless signature of the tarball with `cosign verify-blob` (it stops 
 installed), and `--releases-url URL` reads releases from a mirror. The macOS program is for Apple
 silicon: on an Intel Mac the script stops and says so before it asks for anything.
 
-Or by hand: a release carries the command line as a static program for three platforms, and a source
-archive (a Homebrew formula and an apt repository are **planned**). Pick a release from the
+Or by hand: a release carries the command line as a static program for three platforms, as a Debian package
+for the two Linux ones, and a source archive (the Homebrew formula and the apt repository come
+**after setup**, below). Pick a release from the
 [releases page](https://github.com/komira-ai/buildrules/releases). To use a program, unpack the
 tarball of your platform (`linux-x86_64`, `linux-aarch64`, or `macos-arm64`), check it,
 and put `buildrules` on your `PATH`:
@@ -59,6 +61,20 @@ tar -xzf "buildrules-cli-$v-$t.tar.gz"
 build provenance attestation and a signature, checked with `gh attestation verify` as for the source
 archive below. The macOS program (Apple silicon: there is no program for an Intel Mac) is not code-signed or notarised, and only the linux x86_64 program
 is run by the release's user beta. The rules themselves run on a linux x86_64 farm or machine.
+
+**Homebrew and apt (after setup).** Each release also builds the Homebrew formula (a pull request in the
+organisation's tap) and the Debian packages `buildrules_<version>_amd64.deb` and `..._arm64.deb`, which are
+files of the release, checked like the tarballs. The tap and the apt repository are published only once
+their owner has made the settings (RELEASING.md, "The Homebrew tap" and "The apt repository"); until then
+there is no formula to install and no repository to add. After setup:
+
+```sh
+brew install OWNER/tap/buildrules
+sudo apt install buildrules     # after adding the repository and its key, RELEASING.md
+```
+
+`OWNER` is the organisation that holds the repository. To install the package of a release by hand
+before then, `sudo apt install "./buildrules_${v}_amd64.deb"` (`arm64` on an Arm machine) after the checks above.
 
 Or build the command line from source with Buck2. Check the source archive:
 
@@ -368,7 +384,7 @@ named chains of steps. `dist` is the directory the build script writes. Any othe
 
 ```toml
 [toolchain]
-mopm = "0.0.1"     # an exact release buildrules pins, or one buildrules-pins.toml supplies
+mopm = "0.0.15"     # an exact release buildrules pins, or one buildrules-pins.toml supplies
 mojo = "1.0.0"     # an exact release mopm pins a toolchain for
 ```
 
@@ -593,7 +609,7 @@ buck2 build //hello:ci //hello:coverage
 buildrules mojo check             # offline gate; `buildrules check` also runs it
 ```
 
-Targets: `:lib` (the `.mojoc`), `:test` and one `:<stem>` per test file, `:build` (library and
+Targets: `:lib` (the `.mojoc`, which exists only if every test of the package passed), `:lib_ungated` (the same file before the tests), `:test` and one `:<stem>` per test file, `:build` (library and
 binaries), `:coverage` (line coverage under kcov; red if a library source is in no report), `:ci`,
 `:check`. A workspace member is a package with its own BUCK file. Native libraries are declared with
 `natives = {"libx.so.1": "//path:target"}`. `mopm` is separate software: see <https://mopm.dev> for
@@ -608,7 +624,7 @@ shows which it is. Against a stand-in, point the download at a copy of its tarba
 `buildrules-pins.toml`:
 
 ```toml
-[mopm."0.0.2"]   # a version buildrules does not pin; one it pins (0.0.1 today) is refused here
+[mopm."0.0.2"]   # a version buildrules does not pin; one it pins (0.0.15 today) is refused here
 url = "<release url>"
 sha256 = "<64 hex>"
 size = <bytes>

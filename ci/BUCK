@@ -117,7 +117,7 @@ actionlint_check(
     name = "workflow_lint",
     exec_compatible_with = LINUX_X86_64,
     actionlint = "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
-    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml", "//:site.yml", "//:site-publish.yml"],
+    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml", "//:site.yml", "//:site-publish.yml", "//:advisories.yml"],
 )
 
 zig_test(
@@ -187,7 +187,28 @@ zig_test(
     },
 )
 
-group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", "//ci/negative:negative_check"])
+# The advisory workflow (.github/workflows/advisories.yml): actionlint accepts it (above), and ci/advisories_check.zig holds it to a schedule and a manual trigger and nothing else
+# (never a pull request or a push), its read-only token plus issues write in the one job, no third-party action, the OSV-Scanner release of rules/pins/pins.bzl (url and
+# sha256 compared with the table, and the file the farm fetched hashed against the workflow's sha256), and report-only: a finding never fails the job. It reuses the
+# rules of workflow_check.zig and the job parser of release_check.zig, and plants a defect for each of its own.
+zig_test(
+    name = "advisories_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "advisories_check.zig",
+    imports = ["workflow_check.zig", "release_check.zig"],
+    data = {
+        ".github/workflows/advisories.yml": "//:advisories.yml",
+        "rules/pins/pins.bzl": "//rules/pins:pins.bzl",
+        "tools/osv-scanner": "//rules/pins:osv-scanner_linux_amd64",
+        # the tests of the two files this one imports run here too
+        ".github/workflows/release.yml": "//:release.yml",
+        ".github/workflows/ci.yml": "//:ci.yml",
+        "tools/buck2": "//:buck2.pin",
+        "ci/BUCK": "BUCK",
+    },
+)
+
+group(name = "workflow", deps = [":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", "//ci/negative:negative_check"])
 
 # The coverage of every package with Zig unit tests (rules/coverage/README.md, "Zig coverage"), each held to its floor (`coverage_floor.txt` beside its
 # BUCK file) both ways: a fall fails, and so does a rise the floor has not been raised to. Building this builds the tests again under kcov and with block
@@ -203,6 +224,8 @@ group(name = "floors", deps = [
     "//rules/node:coverage_floor",
     "//rules/rust:coverage_floor",
     "//rules/rust:coverage_crate_patch_floor",
+    "//tools/channels:coverage_floor",
+    "//tools/deploy:coverage_floor",
     "//tools/release:coverage_floor",
     "//tools/scrub:coverage_floor",
     "//tools/stage:coverage_floor",
@@ -215,6 +238,7 @@ group(name = "floors", deps = [
 # (`buck2 bxl //ci:completeness.bxl:check`) fails when a target of the tree is in neither this closure, //ci:mojo's, nor EXCLUDED in ci/all.bzl.
 group(name = "all", deps = [
     ":matrix",
+    "//ci/mojo_gate:consumer_of_green",
     ":workflow",
     ":floors",
     "//cli:buildrules",
@@ -235,6 +259,16 @@ group(name = "all", deps = [
     "//tools/scrub:scrub",
     "//tools/release:release",
     "//tools/stage:stage",
+    "//tools/channels:channels",
+    "//tools/channels:channels_cli",
+    "//tools/deploy:apt_publish",
+    "//tools/deploy:apt_publish_driver",
+    "//tools/deploy:tap",
+    "//tools/deploy:tap_driver",
+    "//tools/stage:stage_linux_aarch64",
+    "//tools/stage:stage_macos_arm64",
+    "//tools/stage:linux_aarch64_is_aarch64_linux_musl",
+    "//tools/stage:macos_arm64_is_aarch64_macos",
     "//tools/install:install_script_test",
     "//beta:beta_check",
     "//rules/gate:gate",

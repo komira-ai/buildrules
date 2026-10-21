@@ -309,7 +309,7 @@ test "workspace: member directories are the listed ones that have a Cargo.toml a
     try t.expectEqualStrings("crates/a", got[0]);
     try t.expectEqualStrings("crates/b", got[1]);
     try t.expectEqualStrings("tools/x", got[2]);
-    for ([_][]const u8{ "crates/*/x", "*", "a?b", "[ab]", "crates/*x", "c*/*" }) |pat| {
+    for ([_][]const u8{ "crates/*/x", "*", "a?b", "[ab]", "crates/*x", "c*/*", "c[ab]/*", "c?/*" }) |pat| {
         const doc = try std.fmt.allocPrint(h.a(), "[workspace]\nmembers = [\"{s}\"]\n", .{pat});
         try t.expectError(error.UnsupportedMemberPattern, ws.memberDirs(&h.ctx, doc));
     }

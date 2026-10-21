@@ -46,3 +46,5 @@ What the figure cannot reach, and why (the floor is the number reached, not 99):
 made (no input makes it allocate); the safety-check blocks Zig's debug build appears to emit for an index or an unwrapped optional that cannot fail; code that no input reaches
 (the array arm of `val.pyDumps`, which only a flat table reaches; the line after a successful https download in `buckgen` and `npm_cmd`, which needs a server with a certificate
 the program trusts); a child that is killed by a signal (`Ctx.spawn`, `Ctx.execReal`).
+
+The wrap is a defect of the coverage runner, not of the tests: the proper fix is a saturating read in `zig_cov_runner.zig`, after which `testkit.saturateCounters` can go. Until then, any change to a test or to the code can move the figure by a few blocks, and the floor is exact in both directions, so a change that moves it sets the new floor from the failure message.

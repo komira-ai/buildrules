@@ -1,0 +1,3 @@
+Builds, tests and releases a repository with pinned toolchains.
+
+A static binary: it needs nothing else installed.

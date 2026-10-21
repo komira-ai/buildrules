@@ -54,6 +54,9 @@ What both figures leave out:
 - **Code the compiler emitted none for.** Zig analyses what is referenced, so a function no test reaches has no lines and no blocks, and the percentage is an
   upper bound. `expect` names a package's own sources; a file in it that no test compiled fails the summary (`... is in no report`), and the files a package
   leaves out of `expect` (an entry point no test imports, a file of constants) say why in its BUCK file.
+- **A block that one test runs exactly 255 more times (after an earlier test left its counter at 1).** The counters are one byte and wrap. The runner sets every non-zero counter to one between the tests, so a block that ran in
+  one test is still a block that ran after the next tests run it (a counter that wrapped to zero used to read as a block that did not run); a single test that runs one block
+  exactly 255 more times (the counter is 1 when the test starts, and 1 + 255 wraps to 0; 511 more, and so on) still reads it as unrun.
 - **Code that runs in another process.** The counters are the test executable's own: a child it forks or executes keeps its own copy, written nowhere. kcov follows
   a fork, so the line figure has it; the branch figure does not. `rules/gate`'s tests run the code under test in forked children, so its branch figure is a floor far below the truth.
 - **The process tests.** A test that runs a built executable (`*_exe_test`, `env_tools`) measures the executable's behaviour, not the sources it was built from; they are not in

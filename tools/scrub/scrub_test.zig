@@ -120,6 +120,24 @@ test "scrub: an author's address is allowed only in a file named package-lock.js
     try t.expectEqual(@as(usize, 1), (try hitsOf(a, "README.md", line)).len);
 }
 
+test "scrub: the maintainer address of the .deb packages is allowed, with its reason, and only that address, whole" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const own = "buildrules@" ++ "users.noreply." ++ "github.com";
+    const line = "Maintainer: buildrules authors <" ++ own ++ ">";
+    const hs = try hitsOf(a, "packaging/deb/control", line);
+    try t.expect(hs.len == 1 and hs[0].allowed != null);
+    try t.expectEqualStrings(S.why_maintainer, hs[0].allowed.?);
+    // Another address, a longer local part, another host, or a second address on the same line is still a hit.
+    try t.expectEqual(@as(usize, 1), try bad(a, "Maintainer: x <someone@" ++ "users.noreply." ++ "github.com>"));
+    try t.expectEqual(@as(usize, 1), try bad(a, "Maintainer: x <not-" ++ own ++ ">"));
+    try t.expectEqual(@as(usize, 1), try bad(a, "Maintainer: x <" ++ own ++ ".evil.org>"));
+    try t.expectEqual(@as(usize, 1), try bad(a, "<" ++ own ++ "> and <other" ++ "@example.org>"));
+    try t.expectEqual(@as(usize, 1), try bad(a, "<other" ++ "@example.org> and <" ++ own ++ ">"));
+    try t.expectEqual(@as(usize, 0), try bad(a, "<" ++ own ++ "> <" ++ own ++ ">"));
+}
+
 test "scrub: binary files are recognised and a clean text has no hit" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();

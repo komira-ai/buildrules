@@ -5,5 +5,6 @@ test {
     _ = @import("io.zig");
     _ = @import("beta.zig");
     _ = @import("gamma.zig");
+    _ = @import("native.zig");
     _ = @import("stage.zig");
 }

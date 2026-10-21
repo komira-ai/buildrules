@@ -10,7 +10,7 @@ export const how: Page = {
   lead: 'Install, initialize, build. [Configuration](/how/configure/) and [Examples](/how/examples/) are the next two pages; [Why buildrules](/why/) is the design.',
   blocks: [
     info('Everything here is version 0 and runs on linux x86_64 only. It describes the repository at its current `main`. The longer text is `docs/how.md` in the repository.'),
-    planned('Not built yet: Arm and macOS hosts for the rules, a Homebrew formula and an apt repository.'),
+    planned('Not built yet: Arm and macOS hosts for the rules. A Homebrew formula and an apt repository are made by every release and published only after setup (RELEASING.md): until then there is none.'),
     h2('What you need'),
     ul(
       'Linux on x86_64 with glibc 2.34 or newer, and `libgcc_s.so.1` and `libz.so.1` (the Rust compiler loads them; buildrules does not pin them yet).',
@@ -23,7 +23,7 @@ export const how: Page = {
     code('curl -fsSL https://buildrules.dev/install.sh | sh', 'shell'),
     planned('The site is not published yet, so https://buildrules.dev/install.sh answers only after the repository owner has published it ([what is not done](/why/#what-is-not-done)). Until then run the script from a checkout of the repository: `sh site/static/install.sh`.'),
     p('Options follow `sh -s --` when the script is piped: `--version V` installs that release instead of the latest, `--prefix DIR` installs `DIR/bin/buildrules` instead of under `~/.buildrules`, `--verify` also checks the keyless signature of the tarball with `cosign verify-blob` (it stops if `cosign` is not installed), and `--releases-url URL` reads releases from a mirror. The macOS program is for Apple silicon: on an Intel Mac the script stops and says so before it asks for anything.'),
-    p('Or by hand: a release carries the command line as a static program for three platforms, and a source archive. Pick a release from the [releases page](https://github.com/komira-ai/buildrules/releases). To use a program, unpack the tarball of your platform (`linux-x86_64`, `linux-aarch64`, or `macos-arm64`), check it, and put `buildrules` on your `PATH`:'),
+    p('Or by hand: a release carries the command line as a static program for three platforms, as a Debian package for the two Linux ones, and a source archive. Pick a release from the [releases page](https://github.com/komira-ai/buildrules/releases). To use a program, unpack the tarball of your platform (`linux-x86_64`, `linux-aarch64`, or `macos-arm64`), check it, and put `buildrules` on your `PATH`:'),
     code(
       [
         'v=0.0.1     # the release you chose',
@@ -37,7 +37,16 @@ export const how: Page = {
       'shell',
     ),
     p('`--version` prints `buildrules <version>`, the number of the release. Each tarball carries a build provenance attestation and a signature, checked with `gh attestation verify` as for the source archive below. The macOS program (Apple silicon: there is no program for an Intel Mac) is not code-signed or notarised, and only the linux x86_64 program is run by the release\'s user beta. The rules themselves run on a linux x86_64 farm or machine.'),
-    planned('A Homebrew formula and an apt repository are planned.'),
+    planned('A Homebrew formula and an apt repository are published only after setup (RELEASING.md); until then there is none to install from.'),
+    p('Each release also builds the Homebrew formula (a pull request in the organisation\'s tap) and the Debian packages `buildrules_<version>_amd64.deb` and `..._arm64.deb`, which are files of the release, checked like the tarballs. After setup, with `OWNER` the organisation that holds the repository:'),
+    code(
+      [
+        'brew install OWNER/tap/buildrules',
+        'sudo apt install buildrules     # after adding the repository and its key, RELEASING.md',
+      ].join('\n'),
+      'shell',
+    ),
+    p('To install the package of a release by hand before then: `sudo apt install "./buildrules_${v}_amd64.deb"` (`arm64` on an Arm machine), after the checks above.'),
     p('Or build the command line from source with Buck2. Check the source archive:'),
     code(
       [
@@ -240,7 +249,7 @@ export const howConfigure: Page = {
     code('"buildrules": {\n  "steps":   { "typecheck": "tsc-check" },\n  "actions": { "ci": ["typecheck", "test", "build"] },\n  "dist":    "dist"\n}', 'package.json'),
     p('`steps` renames the script a step runs (by default, the script of the step\'s own name). `actions` are named chains of steps. `dist` is the directory the build script writes. Any other key is refused.'),
     h2('Mojo toolchain'),
-    code('[toolchain]\nmopm = "0.0.1"     # an exact release buildrules pins, or one buildrules-pins.toml supplies\nmojo = "1.0.0"     # an exact release mopm pins a toolchain for', 'mopm-toolchain.toml'),
+    code('[toolchain]\nmopm = "0.0.15"     # an exact release buildrules pins, or one buildrules-pins.toml supplies\nmojo = "1.0.0"     # an exact release mopm pins a toolchain for', 'mopm-toolchain.toml'),
     p('It is required, and found by walking up from the package directory. Without it, `mojo sync`, `mojo check` and package analysis stop and print a minimal example. buildrules does not pin a Mojo compiler: mopm\'s unit graph names the compiler packages, and `sync` records them.'),
     h2('Mirrors'),
     p('`-c buildrules.url_map="<from-prefix>=<to-prefix> ..."`, or the same under `[buildrules]` in `.buckconfig.local`, replaces the leading part of a pinned download\'s URL and nothing else. The sha256 and size are still checked, so a mirror cannot change the bytes. `docs/pins.md` lists mirrors that were verified byte-identical, and which pins have none.'),
@@ -385,7 +394,7 @@ export const howExamples: Page = {
     ),
     p('The targets are `:lib` (the `.mojoc`), `:test` and one `:<stem>` per test file, `:build` (library and binaries), `:coverage` (line coverage under kcov; red if a library source is in no report), `:ci` and `:check`. A workspace member is a package with its own `BUCK` file. Native libraries are declared with `natives = {"libx.so.1": "//path:target"}`. `mopm` is separate software: see [mopm.dev](https://mopm.dev) for its install and the registry.'),
     info('Which mopm this flow downloads is the mopm row of `rules/mopm/pins.bzl`. A row marked `release_pending` is a stand-in: its sha256 and size are those of a development build, not of the published mopm release at the same URL, so the download fails the hash check, a fresh clone cannot run this flow end to end, and the `beta/mojo` leg is skipped. A row without that mark is the published release, and the leg runs. The file shows which it is. Against a stand-in, point the download at a copy of its tarball with `buildrules.url_map`; with either, you can pin a different mopm version you supply yourself in `buildrules-pins.toml`.'),
-    code('[mopm."0.0.2"]   # a version buildrules does not pin; one it pins (0.0.1 today) is refused here\nurl = "<release url>"\nsha256 = "<64 hex>"\nsize = <bytes>', 'buildrules-pins.toml'),
+    code('[mopm."0.0.2"]   # a version buildrules does not pin; one it pins (0.0.15 today) is refused here\nurl = "<release url>"\nsha256 = "<64 hex>"\nsize = <bytes>', 'buildrules-pins.toml'),
     p('Mojo builds with the one Mojo version that mopm pins: one Mojo version per repository.'),
     h2('Several languages in one repository'),
     p('`beta/mixed` is a Rust package, a C program, a Zig program and a Node package in one repository:'),

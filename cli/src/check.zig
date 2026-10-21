@@ -66,7 +66,8 @@ fn check(ctx: *Ctx) !u8 {
             table = l;
         } else |_| {
             for (diag.msgs.items) |m| _ = ctx.fail("{s}", .{m});
-            bad += diag.count();
+            if (diag.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
+            bad += @max(1, diag.count());
         }
     } else {
         _ = ctx.fail("{s} is missing: {s}", .{ contract.lock_file, fix });
@@ -159,7 +160,8 @@ fn check(ctx: *Ctx) !u8 {
             }
         } else |_| {
             for (pd.msgs.items) |m| _ = ctx.fail("{s}", .{m});
-            bad += pd.count();
+            if (pd.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
+            bad += @max(1, pd.count());
         }
     }
 
@@ -192,7 +194,7 @@ fn check(ctx: *Ctx) !u8 {
     }
 
     // The Mojo packages, when the repository has any: the same gate as `buildrules mojo check`.
-    if (mojo_cmd.hasPackages(ctx)) {
+    if (try mojo_cmd.hasPackages(ctx)) {
         if ((try mojo_cmd.checkAll(ctx)) != ctxm.exit_ok) bad += 1;
     }
 

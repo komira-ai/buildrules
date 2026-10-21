@@ -14,6 +14,7 @@ const mini_test = @embedFile("fixtures/zig_cover/mini_test.zig");
 const fail_test = @embedFile("fixtures/zig_cover/fail_test.zig");
 const leak_test = @embedFile("fixtures/zig_cover/leak_test.zig");
 const log_test = @embedFile("fixtures/zig_cover/log_test.zig");
+const wrap_test = @embedFile("fixtures/zig_cover/wrap_test.zig");
 const runner = @embedFile("zig_cov_runner.zig");
 
 fn tool(a: std.mem.Allocator, name: []const u8) ![]const u8 {
@@ -234,4 +235,18 @@ test "a file asked for that the executable holds no code of is refused, with no 
     const r = try cover(arena.allocator(), "PINNED_ZIG", "const std = @import(\"std\");\ntest \"nothing of mini.zig is reached\" {\n    try std.testing.expect(true);\n}\n", &BLOCKS);
     try std.testing.expect(r.code != 0);
     try std.testing.expect(r.lines == null and r.blocks == null);
+}
+
+test "a block that ran 256 times, over several tests, is a block that ran (the 8-bit counters wrap; the runner keeps them from wrapping to zero)" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const r = try cover(arena.allocator(), "PINNED_ZIG", wrap_test, &BLOCKS);
+    if (r.code != 0) {
+        std.debug.print("exit {d}; stderr:\n{s}\n", .{ r.code, r.stderr });
+        return error.TestUnexpectedResult;
+    }
+    const totals = try blockTotals(r.blocks orelse return error.TestUnexpectedResult);
+    // The same five blocks and the same four hit as in the passing run of mini_test.zig: the zero arm is the one that did not run.
+    try std.testing.expectEqual(@as(usize, 5), totals.total);
+    try std.testing.expectEqual(@as(usize, 4), totals.hit);
 }

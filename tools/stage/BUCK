@@ -3,7 +3,7 @@
 # action; `.github/workflows/beta.yml` and `release.yml` run it from the artifact their tool job builds.
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
-load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_module", "zig_test")
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 
 _SRCS = [
@@ -12,6 +12,7 @@ _SRCS = [
     "io.zig",
     "beta.zig",
     "gamma.zig",
+    "native.zig",
     "stage.zig",
 ]
 
@@ -43,12 +44,47 @@ zig_exe(
         "io.zig",
         "beta.zig",
         "gamma.zig",
+        "native.zig",
     ],
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
     unit_tests = [":stage_unit", "buildrules//rules/pins:zig_next_version"],
     visibility = ["PUBLIC"],
 )
+
+# The same program for the hosts the beta's native legs run on (beta.yml, `beta_arm` and `beta_macos`; tools/stage/native.zig). They are built on the linux
+# x86_64 execution platform, as the command line is (cli/BUCK): zig cross-compiles a program that needs no SDK. Only `target` differs, and the
+# same tests gate each.
+_NATIVE = {
+    "linux_aarch64": "aarch64-linux-musl",
+    "macos_arm64": "aarch64-macos",
+}
+
+[
+    zig_exe(
+        name = "stage_" + name,
+        exec_compatible_with = LINUX_X86_64,
+        src = "stage.zig",
+        imports = [
+            "steps.zig",
+            "farm.zig",
+            "io.zig",
+            "beta.zig",
+            "gamma.zig",
+            "native.zig",
+        ],
+        busybox = "buildrules//rules/pins:busybox",
+        zig = "buildrules//rules/pins:zig_next",
+        target = triple,
+        unit_tests = [":stage_unit", "buildrules//rules/pins:zig_next_version"],
+        visibility = ["PUBLIC"],
+    )
+    for name, triple in _NATIVE.items()
+]
+
+zig_exe_target_test(name = "linux_aarch64_is_aarch64_linux_musl", exe = ":stage_linux_aarch64", expect = "aarch64-linux-musl", same_tests_as = ":stage", visibility = ["PUBLIC"])
+
+zig_exe_target_test(name = "macos_arm64_is_aarch64_macos", exe = ":stage_macos_arm64", expect = "aarch64-macos", same_tests_as = ":stage", visibility = ["PUBLIC"])
 
 # Read by the buildrules.dev site tests (site/BUCK), which check the Releases section against the stage tool's messages.
 export_file(

@@ -32,8 +32,8 @@ Four ideas carry the design:
 Status: version 0, linux x86_64 only for the rules. The public repository's releases hold a
 source archive and the command line for three platforms (section 8). Section 9 lists what is not done.
 
-Planned and not built: Arm and macOS (and Windows) hosts for the rules, a Homebrew formula, an apt
-repository, and Python rules.
+Planned and not built: Arm and macOS (and Windows) hosts for the rules, and Python rules.
+A Homebrew formula and an apt repository are made by every release and published only after setup (RELEASING.md).
 
 ## 2. The problem
 
@@ -346,7 +346,7 @@ download. Where the tools come from:
 | Zig | `rules/pins/pins.bzl` | 0.12.0 (default), 0.15.2 |
 | busybox (the shell and file utilities) | `rules/pins/pins.bzl` | 1.35.0, static |
 | Node.js | `rules/node/pins.bzl` | 24.21.0, linux x64 |
-| mopm | `rules/mopm/pins.bzl` | 0.0.1 (a stand-in only if the row is marked `release_pending`; see section 5.5) |
+| mopm | `rules/mopm/pins.bzl` | 0.0.15 (a stand-in only if the row is marked `release_pending`; see section 5.5) |
 | Mojo | not pinned by buildrules: named by mopm's graph | the one version mopm pins |
 | libgcc, libstdcxx (conda-forge) | `rules/pins/pins.bzl` | 15.3.0 |
 
@@ -472,14 +472,14 @@ described in `RELEASING.md`) runs these stages in order, each only if the previo
 |---|---|
 | gate | the whole tree (`//ci:all`) and the completeness check, in local mode on a runner |
 | plan | decides whether this commit is released and the version; creates nothing; the one place a repository variable can freeze every release |
-| build-cli | builds the command line for the three release targets from the tested commit with the planned version stamped in, and packages the three tarballs |
+| build-cli | builds the command line for the three release targets from the tested commit with the planned version stamped in, and packages the three tarballs and, from the two Linux binaries, the two Debian packages |
 | beta | hello-world repositories per language, consuming the candidate commit as a user would and run with the linux x86_64 command line that build-cli built, each built twice in two directories |
 | gamma | the maintainers' own repositories built on the farm with the candidate; fails the release if no farm is configured |
-| archive | a deterministic source archive of the tested commit, the three tarballs (the one the beta ran is checked to hold the very file it ran), and `SHA256SUMS` over the three files |
-| attest | a keyless signature and a GitHub build provenance attestation of each of the five files |
-| verify | read-only: the sums match; the checkout is the tested commit; the attestations and signatures verify, pinned to this workflow, commit and `refs/heads/main`; rebuilding the archive and the three binaries gives the same bytes; the shipped program prints the release version; the file list equals the commit's tree; the public-repository scrub passes |
+| archive | a deterministic source archive of the tested commit, the three tarballs (the one the beta ran is checked to hold the very file it ran), the two Debian packages (each checked to hold the program of the tarball of its architecture), and `SHA256SUMS` over the six files |
+| attest | a keyless signature and a GitHub build provenance attestation of each of the seven files |
+| verify | read-only: the sums match; the checkout is the tested commit; the attestations and signatures verify, pinned to this workflow, commit and `refs/heads/main`; rebuilding the archive, the three binaries and the two Debian packages gives the same bytes; the shipped program prints the release version; the file list equals the commit's tree; the public-repository scrub passes |
 | tag | the annotated tag, made only after everything is built, signed and verified |
-| publish | the GitHub release, from the verified files: ten in all |
+| publish | the GitHub release, from the verified files: fourteen in all |
 | bump | after `publish`: opens a pull request, with auto-merge, in a downstream repository named by a repository variable, moving its `buildrules` submodule to the released commit; nothing waits for it, and a failed bump un-releases nothing |
 
 Two properties are deliberate:
@@ -506,10 +506,10 @@ existing tag plus one. An old run is never published after a newer one.
 
 What a release holds: `buildrules-<version>.tar.gz`, the command line as
 `buildrules-cli-<version>-<target>.tar.gz` for `linux-x86_64`, `linux-aarch64` and `macos-arm64`,
-`SHA256SUMS` over those four files, a keyless signature and a build provenance
-attestation of each of those five files, and notes. The archive is reproducible with one stated
+`buildrules_<version>_<arch>.deb` for the two Linux ones, `SHA256SUMS` over those six files, a keyless
+signature and a build provenance attestation of each of those seven files, and notes. The archive is reproducible with one stated
 dependence: the tar bytes are git's, so the archive is made once and verified against a second build
-with the same git on the same runner. The three tarballs are built twice, on two runners, and must be the
+with the same git on the same runner. The three tarballs and the two Debian packages are built twice, on two runners, and must be the
 same bytes. A consumer relies on the published file and its sha256, not on remaking it. The user beta
 runs the linux x86_64 program only; the other two are built from the same source behind the same
 tests and checked for their file header and their version, and are not yet run on their own
@@ -538,8 +538,9 @@ channels are planned (section 9).
 ### Limits today (built behaviour)
 
 - **Linux x86_64 only**, for clients and workers. macOS, Windows and Arm are *planned*; nothing is
-  built for them. `beta.yml` declares the Arm (`ubuntu-24.04-arm`) and macOS (`macos-14`) legs and
-  skips them, with the reason in the job name.
+  built for them. `beta.yml` runs the command line of each (`ubuntu-24.04-arm`, `macos-14`) natively on a
+  hello-world repository, up to the build: its version, `init`, Buck2 loading the candidate. It cannot
+  build there: no toolchain of the rules runs on those hosts.
 - **Rust:** crates.io only; the workspace root is the repository root and must be a virtual workspace;
   every package listed in `members` (a glob other than `dir/*` is refused); doctests not run;
   `:coverage` refuses; lto, rpath, incremental and split-debuginfo refused; `sync` needs the network
@@ -557,11 +558,12 @@ channels are planned (section 9).
 
 ### Not done, so you know
 
-- A Homebrew formula, an apt repository: none exist for buildrules (both planned). The release
-  binaries of the command line are installed with the install script or unpacked by hand (part 2), and
-  only the linux x86_64 one is run by a user beta.
-- Arm and macOS hosts (planned): their beta legs, which `beta.yml` declares and skips, and execution
-  platforms for the Arm instruction-set levels.
+- A Homebrew formula and an apt repository: the release builds the formula and the Debian packages
+  and publishes them only after setup (the tap's guard and the apt settings, RELEASING.md), so none
+  exists for buildrules yet. The release binaries of the command line are installed with the install
+  script or unpacked by hand (part 2), and only the linux x86_64 one is run by a user beta.
+- Arm and macOS hosts (planned): a build on them (their beta legs run the command line natively up to
+  the build, and no further), and execution platforms for the Arm instruction-set levels.
 - A published, deployed `buildrules.dev` (the site is built and tested; its hosting stack is a step
   the repository owner runs).
 

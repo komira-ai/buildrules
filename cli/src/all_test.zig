@@ -8,6 +8,7 @@ test {
     _ = @import("cargo_cmd_test.zig");
     _ = @import("contract_test.zig");
     _ = @import("ctx_test.zig");
+    _ = @import("failclosed_test.zig");
     _ = @import("fetch_test.zig");
     _ = @import("growth_test.zig");
     _ = @import("init_test.zig");

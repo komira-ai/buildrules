@@ -8,6 +8,7 @@ test {
     _ = @import("cmds.zig");
     _ = @import("bump_test.zig");
     _ = @import("binhdr");
+    _ = @import("debs_test.zig");
     _ = @import("binaries.zig");
     _ = @import("release.zig");
 }

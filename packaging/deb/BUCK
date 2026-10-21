@@ -1,0 +1,14 @@
+# The metadata of the .deb of the command line (tools/channels `deb-package --packaging packaging/deb`): the control fields, the copyright file and the
+# lintian overrides. The release job and the tests read the three files by their paths.
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+[
+    export_file(
+        name = f,
+        src = f,
+        visibility = ["//tools/channels:", "//tools/deploy:", "//tools/release:"],
+    )
+    for f in ["control", "copyright", "lintian-overrides"]
+]
+
+scrub_files()

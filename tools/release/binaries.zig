@@ -5,8 +5,10 @@
 //!   package   one binary and the LICENSE into its tarball, after checking the file header is the target's (binhdr.zig) and that it says it is version V
 //!   record    the sha256 of a tarball the user beta ran, to a file beside the others
 //!   tested    refuses unless every tarball the user beta ran is, byte for byte, the tarball to be attested
-//!   sums      SHA256SUMS over the source archive and the three tarballs, then read back
-//!   sign      a keyless `cosign sign-blob` bundle per file (the four and SHA256SUMS), none empty, none stale
+//!   debs      `buildrules_<V>_amd64.deb` and `buildrules_<V>_arm64.deb` from the same binaries (`channels deb-package`, tools/channels), and `checkDebs`: each .deb
+//!             is the package of its version and architecture and holds, byte for byte, the program inside the tarball of its target (debs.zig)
+//!   sums      SHA256SUMS over the source archive, the three tarballs and the two .debs, then read back
+//!   sign      a keyless `cosign sign-blob` bundle per file (the six and SHA256SUMS), none empty, none stale
 //!
 //! A program that is not run here (the macOS binary on a Linux runner) is not run by `package`: its header and its stamped version text are
 //! checked, and the beta legs that do run it on its own platform are what prove it works. Nothing here uploads anything. The commands it runs go through
@@ -18,6 +20,7 @@ const assets = @import("assets.zig");
 const gz = @import("gz.zig");
 const tar = @import("tar.zig");
 const binhdr = @import("binhdr");
+const debs = @import("debs.zig");
 
 pub const targets = binhdr.targets;
 
@@ -179,6 +182,70 @@ pub fn packageAll(a: std.mem.Allocator, io: cmds.Io, o: PackageAllOpts) ![]Packa
     return done.toOwnedSlice(a);
 }
 
+// ---- debs -------------------------------------------------------------------------------------------------------------------------------
+
+pub const PackageDebsOpts = struct {
+    /// `0.0.7`
+    version: []const u8,
+    /// A directory holding `<target>/buildrules` for each release target (what `//cli:release_binaries` builds): the binaries the tarballs were packaged from.
+    bins: []const u8,
+    /// The `channels` program (tools/channels), which writes the package.
+    channels: []const u8,
+    /// The directory of the package metadata: `control`, `copyright` and `lintian-overrides` (packaging/deb).
+    packaging: []const u8,
+    out: []const u8,
+};
+
+/// One .deb for each target that has one, `<out>/buildrules_<V>_<arch>.deb`, written by `channels deb-package` from `<bins>/<target>/buildrules`. A `channels`
+/// that fails, or that leaves no file or an empty one, is an error: a deb that is not there would be a release without it.
+pub fn packageDebs(a: std.mem.Allocator, io: cmds.Io, o: PackageDebsOpts) ![]Packaged {
+    if (!try goodVersion(a, o.version)) {
+        std.debug.print("release debs: `{s}` is not MAJOR.MINOR.PATCH (no leading v)\n", .{o.version});
+        return error.BadVersion;
+    }
+    try std.fs.cwd().makePath(o.out);
+    var done = std.ArrayList(Packaged).empty;
+    for (debs.debs) |d| {
+        const binary = try join(a, try join(a, o.bins, d.target), "buildrules");
+        const file = try debs.name(a, o.version, d.arch);
+        const path = try join(a, o.out, file);
+        const r = try io.run(a, &.{ o.channels, "deb-package", "--binary", binary, "--name", debs.package_name, "--version", o.version, "--arch", d.arch, "--packaging", o.packaging, "--out", path });
+        if (r.code != 0) {
+            std.debug.print("release debs: `channels deb-package` failed for {s} (exit {d}): {s}\n", .{ file, r.code, r.stderr });
+            return error.ChannelsFailed;
+        }
+        const bytes = std.fs.cwd().readFileAlloc(a, path, 1 << 30) catch |e| {
+            std.debug.print("release debs: `channels deb-package` wrote no {s}: {s}\n", .{ path, @errorName(e) });
+            return error.NoDeb;
+        };
+        if (bytes.len == 0) {
+            std.debug.print("release debs: {s} is empty\n", .{path});
+            return error.NoDeb;
+        }
+        try done.append(a, .{ .name = file, .sha256 = assets.sha256Hex(bytes) });
+    }
+    return done.toOwnedSlice(a);
+}
+
+/// Refuses unless `dist_dir` holds, for each target that has a .deb, the tarball of the source archive's version and the .deb of that version, and the .deb is
+/// the package of its version and architecture and holds exactly the `buildrules` that tarball holds (debs.zig). This is what lets the release attest a .deb
+/// "like the tarball": the very program the user beta ran, in the other packaging.
+pub fn checkDebs(a: std.mem.Allocator, dist_dir: []const u8) !void {
+    const d = try collect(a, dist_dir);
+    for (debs.debs) |want| {
+        const tar_name = try assetName(a, d.version, want.target);
+        const deb_name = try debs.name(a, d.version, want.arch);
+        const binary = binaryOf(a, tar_name, try readFile(a, try join(a, dist_dir, tar_name))) catch |e| {
+            std.debug.print("release debs: cannot read the binary inside {s}: {s}\n", .{ tar_name, @errorName(e) });
+            return e;
+        };
+        debs.check(a, try readFile(a, try join(a, dist_dir, deb_name)), d.version, want.arch, binary) catch |e| {
+            std.debug.print("release debs: {s} is not the package of {s}'s program for {s}: {s}\n", .{ deb_name, tar_name, want.arch, @errorName(e) });
+            return e;
+        };
+    }
+}
+
 // ---- record, tested -----------------------------------------------------------------------------------------------------------------------
 
 /// The bytes of the file `buildrules-cli-<V>-<target>/buildrules` inside a tarball `package` wrote.
@@ -302,12 +369,12 @@ pub fn testedFor(a: std.mem.Allocator, dist_dir: []const u8, tested_dir: []const
 pub const Dist = struct {
     /// `0.0.7`
     version: []const u8,
-    /// The source archive and the three tarballs, sorted by name.
+    /// The source archive, the three tarballs and the two .debs, sorted by name.
     files: []const []const u8,
 };
 
-/// The release files of `dist_dir`: exactly one source archive `buildrules-<V>.tar.gz` and one tarball per target, all of the version V. Any
-/// other `buildrules-*.tar.gz` is refused (a stray or stale file would be signed).
+/// The release files of `dist_dir`: exactly one source archive `buildrules-<V>.tar.gz`, one tarball per target and one .deb per architecture, all of the version
+/// V. Any other `buildrules-*.tar.gz` or `buildrules_*.deb` is refused (a stray or stale file would be signed).
 pub fn collect(a: std.mem.Allocator, dist_dir: []const u8) !Dist {
     var dir = std.fs.cwd().openDir(dist_dir, .{ .iterate = true }) catch |e| {
         std.debug.print("release: cannot open {s}: {s}\n", .{ dist_dir, @errorName(e) });
@@ -318,6 +385,14 @@ pub fn collect(a: std.mem.Allocator, dist_dir: []const u8) !Dist {
     var source: ?[]const u8 = null;
     var it = dir.iterate();
     while (try it.next()) |e| {
+        if (std.mem.startsWith(u8, e.name, "buildrules_") and std.mem.endsWith(u8, e.name, ".deb")) {
+            if (debs.parseName(e.name) == null) {
+                std.debug.print("release: {s} is not a buildrules_<V>_<arch>.deb\n", .{e.name});
+                return error.StrayDeb;
+            }
+            try names.append(a, try a.dupe(u8, e.name));
+            continue;
+        }
         if (!std.mem.startsWith(u8, e.name, "buildrules-") or !std.mem.endsWith(u8, e.name, tar_suffix)) continue;
         const name = try a.dupe(u8, e.name);
         if (std.mem.startsWith(u8, name, cli_prefix)) {
@@ -355,8 +430,19 @@ pub fn collect(a: std.mem.Allocator, dist_dir: []const u8) !Dist {
             return error.MissingTarball;
         }
     }
-    if (names.items.len != targets.len + 1) {
-        std.debug.print("release: {s} holds {d} release tarballs, expected {d}\n", .{ dist_dir, names.items.len, targets.len + 1 });
+    for (debs.debs) |d| {
+        const want = try debs.name(a, v, d.arch);
+        var n: usize = 0;
+        for (names.items) |have| {
+            if (std.mem.eql(u8, have, want)) n += 1;
+        }
+        if (n != 1) {
+            std.debug.print("release: {s} holds no {s} (every .deb must be of the source archive's version {s})\n", .{ dist_dir, want, v });
+            return error.MissingDeb;
+        }
+    }
+    if (names.items.len != targets.len + 1 + debs.debs.len) {
+        std.debug.print("release: {s} holds {d} release files, expected {d}\n", .{ dist_dir, names.items.len, targets.len + 1 + debs.debs.len });
         return error.StrayTarball;
     }
     std.mem.sort([]const u8, names.items, {}, lessThan);
@@ -377,12 +463,12 @@ pub fn checkSums(a: std.mem.Allocator, dist_dir: []const u8, files: []const []co
     const have = try readFile(a, try join(a, dist_dir, cmds.sums_name));
     const want = try sumsText(a, dist_dir, files);
     if (!std.mem.eql(u8, have, want)) {
-        std.debug.print("release: {s} is not the sha256 of exactly the {d} release tarballs, in name order\n", .{ cmds.sums_name, files.len });
+        std.debug.print("release: {s} is not the sha256 of exactly the {d} release files, in name order\n", .{ cmds.sums_name, files.len });
         return error.WrongSums;
     }
 }
 
-/// Writes `<dist>/SHA256SUMS` over the source archive and the three tarballs, then reads it back. If the file exists (the archive step wrote the
+/// Writes `<dist>/SHA256SUMS` over the source archive, the three tarballs and the two .debs, then reads it back. If the file exists (the archive step wrote the
 /// source archive's line), the line of the source archive in it must be the one computed now.
 pub fn sums(a: std.mem.Allocator, dist_dir: []const u8) !Dist {
     const d = try collect(a, dist_dir);
@@ -401,13 +487,13 @@ pub fn sums(a: std.mem.Allocator, dist_dir: []const u8) !Dist {
     return d;
 }
 
-/// `cosign sign-blob --yes --bundle <file>.sigstore.json <file>` for the four release files and SHA256SUMS, after SHA256SUMS is checked. A bundle that
+/// `cosign sign-blob --yes --bundle <file>.sigstore.json <file>` for the six release files and SHA256SUMS, after SHA256SUMS is checked. A bundle that
 /// exists beforehand is refused (a command that wrote nothing would pass on it), and one that is empty afterwards is refused.
 pub fn sign(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign: []const u8) !usize {
     return signWith(a, io, dist_dir, cosign, false);
 }
 
-/// `sign`, or with `dry` the dry run (the release workflow no longer asks for it): every check `sign` makes before it signs (the four release files and a SHA256SUMS that is exactly their
+/// `sign`, or with `dry` the dry run (the release workflow no longer asks for it): every check `sign` makes before it signs (the six release files and a SHA256SUMS that is exactly their
 /// sha256, no stray tarball, no bundle already there) and the list of files it would sign, and then no `cosign` is run and no bundle is written. The count is the
 /// number of files that would be signed.
 pub fn signWith(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign: []const u8, dry: bool) !usize {
@@ -450,10 +536,11 @@ pub fn signWith(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign:
 // ---- tests ------------------------------------------------------------------------------------------------------------------------------
 
 const t = std.testing;
+const debs_sample = @import("debs_test.zig");
 
 const V = "0.0.7";
 
-/// A tmp dir holding the files of a release of version `V`; each tarball's bytes are its own name (distinct), the source archive too.
+/// A tmp dir holding the files of a release of version `V`; each tarball's and each .deb's bytes are its own name (distinct), the source archive too.
 const Dir = struct {
     tmp: t.TmpDir,
     path: []const u8,
@@ -472,6 +559,10 @@ const Dir = struct {
         try self.put("buildrules-" ++ V ++ ".tar.gz", "source archive");
         for (targets) |tg| {
             const n = try assetName(a, V, tg);
+            try self.put(n, n);
+        }
+        for (debs.debs) |d| {
+            const n = try debs.name(a, V, d.arch);
             try self.put(n, n);
         }
     }
@@ -799,7 +890,7 @@ test "tested refuses records of two versions and a malformed record" {
     try t.expectError(error.BadRecord, tested(a, dir.path, rec));
 }
 
-test "sums lists the source archive and the three tarballs in name order, and reads the file back" {
+test "sums lists the source archive, the three tarballs and the two debs in name order, and reads the file back" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -819,8 +910,9 @@ test "sums lists the source archive and the three tarballs in name order, and re
         try t.expect(std.mem.lessThan(u8, prev, line[66..]));
         prev = line[66..];
     }
-    try t.expectEqual(@as(usize, 4), lines);
+    try t.expectEqual(@as(usize, 6), lines);
     try t.expect(std.mem.indexOf(u8, text, assets.sha256Hex("source archive")[0..]) != null);
+    for (debs.debs) |dd| try t.expect(std.mem.indexOf(u8, text, try debs.name(a, V, dd.arch)) != null);
     // a second run is the same file
     _ = try sums(a, dir.path);
     try t.expectEqualStrings(text, try dir.tmp.dir.readFileAlloc(a, "SHA256SUMS", 1 << 20));
@@ -864,7 +956,7 @@ test "sums refuses when the archive step's SHA256SUMS lists another digest for t
     try dir.release(a);
     try dir.put("SHA256SUMS", "d" ** 64 ++ "  buildrules-" ++ V ++ ".tar.gz\n");
     try t.expectError(error.WrongSums, sums(a, dir.path));
-    // the digest the archive step would have written is accepted, and replaced by the four lines
+    // the digest the archive step would have written is accepted, and replaced by the six lines
     try dir.put("SHA256SUMS", try std.fmt.allocPrint(a, "{s}  buildrules-{s}.tar.gz\n", .{ assets.sha256Hex("source archive"), V }));
     _ = try sums(a, dir.path);
 }
@@ -896,7 +988,7 @@ test "checkSums refuses a file that is not exactly the sha256 of the release fil
     try t.expectError(error.WrongSums, checkSums(a, dir.path, d.files));
 }
 
-test "sign runs cosign sign-blob on the four files and SHA256SUMS, and leaves a bundle for each" {
+test "sign runs cosign sign-blob on the six files and SHA256SUMS, and leaves a bundle for each" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -905,13 +997,14 @@ test "sign runs cosign sign-blob on the four files and SHA256SUMS, and leaves a 
     try dir.release(a);
     _ = try sums(a, dir.path);
     var fake = FakeCosign{ .a = a };
-    try t.expectEqual(@as(usize, 5), try sign(a, fake.io(), dir.path, "cosign"));
-    try t.expectEqual(@as(usize, 5), fake.calls.items.len);
+    try t.expectEqual(@as(usize, 7), try sign(a, fake.io(), dir.path, "cosign"));
+    try t.expectEqual(@as(usize, 7), fake.calls.items.len);
     for (fake.calls.items) |c| try t.expect(std.mem.startsWith(u8, c, "cosign sign-blob --yes --bundle "));
     for (targets) |tg| {
         const n = try std.fmt.allocPrint(a, "buildrules-cli-{s}-{s}.tar.gz.sigstore.json", .{ V, tg });
         _ = try dir.tmp.dir.statFile(n);
     }
+    for (debs.debs) |dd| _ = try dir.tmp.dir.statFile(try std.fmt.allocPrint(a, "buildrules_{s}_{s}.deb.sigstore.json", .{ V, dd.arch }));
     _ = try dir.tmp.dir.statFile("buildrules-" ++ V ++ ".tar.gz.sigstore.json");
     _ = try dir.tmp.dir.statFile("SHA256SUMS.sigstore.json");
 }
@@ -1056,7 +1149,7 @@ test "sign --dry makes every check of sign and signs nothing" {
     try dir.release(a);
     _ = try sums(a, dir.path);
     var fake = FakeCosign{ .a = a };
-    try t.expectEqual(@as(usize, 5), try signWith(a, fake.io(), dir.path, "cosign", true));
+    try t.expectEqual(@as(usize, 7), try signWith(a, fake.io(), dir.path, "cosign", true));
     try t.expectEqual(@as(usize, 0), fake.calls.items.len);
     try t.expectError(error.FileNotFound, dir.tmp.dir.statFile("SHA256SUMS.sigstore.json"));
     // the same refusals: a stale bundle, sums that no longer match, a stray tarball, and a missing tarball
@@ -1145,4 +1238,235 @@ test "out of memory: package, record, tested and sums fail, and never report suc
         }
     };
     try sweepOutOfMemory(Sums_{ .dir = dir.path });
+}
+
+// ---- debs ---------------------------------------------------------------------------------------------------------------------------------
+
+/// A scripted `channels`: `deb-package` writes the package a real one would (debs.sample) from the binary it is given, unless told to fail, to write nothing,
+/// to write an empty file, or to pack another program than the one it was given.
+const FakeChannels = struct {
+    a: std.mem.Allocator,
+    calls: std.ArrayList([]const u8) = .empty,
+    fail: bool = false,
+    silent: bool = false,
+    empty: bool = false,
+    /// Pack this instead of the binary named by --binary (a defect: the .deb holds another program than the tarball).
+    other_binary: []const u8 = "",
+    /// Label this architecture instead of --arch (a defect: the .deb says it is another package than its name).
+    other_arch: []const u8 = "",
+
+    fn flag(argv: []const []const u8, name: []const u8) []const u8 {
+        for (argv, 0..) |x, i| {
+            if (std.mem.eql(u8, x, name) and i + 1 < argv.len) return argv[i + 1];
+        }
+        return "";
+    }
+
+    fn run(ctx: *anyopaque, a: std.mem.Allocator, argv: []const []const u8) anyerror!cmds.Out {
+        const self: *FakeChannels = @ptrCast(@alignCast(ctx));
+        try self.calls.append(self.a, try std.mem.join(self.a, " ", argv));
+        if (argv.len < 2 or !std.mem.eql(u8, argv[1], "deb-package")) {
+            std.debug.print("unscripted command: {s}\n", .{try std.mem.join(a, " ", argv)});
+            return error.UnscriptedCommand;
+        }
+        if (self.fail) return .{ .code = 1, .stdout = "", .stderr = "boom" };
+        if (self.silent) return .{ .code = 0, .stdout = "", .stderr = "" };
+        const out = flag(argv, "--out");
+        if (self.empty) {
+            try std.fs.cwd().writeFile(.{ .sub_path = out, .data = "" });
+            return .{ .code = 0, .stdout = "", .stderr = "" };
+        }
+        const binary = if (self.other_binary.len != 0) self.other_binary else try std.fs.cwd().readFileAlloc(a, flag(argv, "--binary"), 1 << 20);
+        const arch = if (self.other_arch.len != 0) self.other_arch else flag(argv, "--arch");
+        try std.fs.cwd().writeFile(.{ .sub_path = out, .data = try debs_sample.sample(a, flag(argv, "--version"), arch, binary) });
+        return .{ .code = 0, .stdout = "", .stderr = "" };
+    }
+
+    fn write(_: *anyopaque, _: []const u8, _: []const u8) anyerror!void {}
+
+    fn io(self: *FakeChannels) cmds.Io {
+        return .{ .ctx = self, .run_fn = run, .write_fn = write };
+    }
+};
+
+/// A fixture with the three binaries of `bins/<target>/buildrules` (each says its version and differs from the others), a source archive, and the three
+/// tarballs `packageAll` made of the binaries, all in `dist`.
+fn debDist(a: std.mem.Allocator, fx: *Fixture) !PackageDebsOpts {
+    const tail = "\x00" ++ V ++ "\x00";
+    try fx.dir.tmp.dir.makePath("bins/linux-x86_64");
+    try fx.dir.tmp.dir.makePath("bins/linux-aarch64");
+    try fx.dir.tmp.dir.makePath("bins/macos-arm64");
+    try fx.dir.put("bins/linux-x86_64/buildrules", try elfBytes(a, 62, 1, tail));
+    try fx.dir.put("bins/linux-aarch64/buildrules", try elfBytes(a, 183, 1, tail));
+    try fx.dir.put("bins/macos-arm64/buildrules", try machoBytes(a, 0x0100000c, tail));
+    _ = try packageAll(a, fx.fake.io(), .{ .version = V, .bins = try join(a, fx.dir.path, "bins"), .license = try join(a, fx.dir.path, "LICENSE"), .out = fx.out, .native = &.{"linux-x86_64"} });
+    try fx.dir.tmp.dir.writeFile(.{ .sub_path = "out/buildrules-" ++ V ++ ".tar.gz", .data = "source archive" });
+    return .{ .version = V, .bins = try join(a, fx.dir.path, "bins"), .channels = "channels", .packaging = "packaging/deb", .out = fx.out };
+}
+
+test "debs: channels deb-package runs for each architecture on the binary of its target, and the files are named for the version and the architecture" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fx = try Fixture.make(a);
+    defer fx.dir.tmp.cleanup();
+    const o = try debDist(a, &fx);
+    var ch = FakeChannels{ .a = a };
+    const done = try packageDebs(a, ch.io(), o);
+    try t.expectEqual(@as(usize, 2), done.len);
+    try t.expectEqualStrings("buildrules_" ++ V ++ "_amd64.deb", done[0].name);
+    try t.expectEqualStrings("buildrules_" ++ V ++ "_arm64.deb", done[1].name);
+    try t.expectEqual(@as(usize, 2), ch.calls.items.len);
+    // the binary of the target, the name, the version, the architecture and the metadata directory, each as its own word
+    const x86 = try std.fmt.allocPrint(a, "channels deb-package --binary {s}/bins/linux-x86_64/buildrules --name buildrules --version {s} --arch amd64 --packaging packaging/deb --out {s}/buildrules_{s}_amd64.deb", .{ fx.dir.path, V, fx.out, V });
+    try t.expectEqualStrings(x86, ch.calls.items[0]);
+    try t.expect(std.mem.indexOf(u8, ch.calls.items[1], "bins/linux-aarch64/buildrules --name buildrules --version " ++ V ++ " --arch arm64 ") != null);
+    // the digests returned are the digests of the files written
+    for (done) |p| {
+        const bytes = try fx.dir.tmp.dir.readFileAlloc(a, try join(a, "out", p.name), 1 << 20);
+        try t.expectEqualSlices(u8, &assets.sha256Hex(bytes), &p.sha256);
+    }
+    // the same inputs, the same bytes
+    const again = try packageDebs(a, ch.io(), o);
+    try t.expectEqualSlices(u8, &done[0].sha256, &again[0].sha256);
+}
+
+test "debs: a channels that fails, writes nothing or writes an empty file, a missing binary and a bad version are refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fx = try Fixture.make(a);
+    defer fx.dir.tmp.cleanup();
+    const o = try debDist(a, &fx);
+    var failing = FakeChannels{ .a = a, .fail = true };
+    try t.expectError(error.ChannelsFailed, packageDebs(a, failing.io(), o));
+    var silent = FakeChannels{ .a = a, .silent = true };
+    try t.expectError(error.NoDeb, packageDebs(a, silent.io(), o));
+    var hollow = FakeChannels{ .a = a, .empty = true };
+    try t.expectError(error.NoDeb, packageDebs(a, hollow.io(), o));
+    var ch = FakeChannels{ .a = a };
+    try fx.dir.tmp.dir.deleteFile("bins/linux-aarch64/buildrules");
+    try t.expectError(error.FileNotFound, packageDebs(a, ch.io(), o)); // the fake reads the binary it is given, as the real one does
+    for ([_][]const u8{ "v0.0.7", "0.0", "0.0.7-rc1", "" }) |bad| {
+        var b = o;
+        b.version = bad;
+        try t.expectError(error.BadVersion, packageDebs(a, ch.io(), b));
+    }
+}
+
+test "checkDebs accepts the debs made from the binaries the tarballs hold" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fx = try Fixture.make(a);
+    defer fx.dir.tmp.cleanup();
+    const o = try debDist(a, &fx);
+    var ch = FakeChannels{ .a = a };
+    _ = try packageDebs(a, ch.io(), o);
+    try checkDebs(a, fx.out);
+}
+
+test "checkDebs refuses a .deb that holds another program than its tarball, another package, or no package at all" {
+    // The defects: a .deb built from a binary that was not the one packaged and tested; a .deb that says it is another version or architecture than
+    // its name; a file named like a .deb that is not one.
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fx = try Fixture.make(a);
+    defer fx.dir.tmp.cleanup();
+    const o = try debDist(a, &fx);
+    var ch = FakeChannels{ .a = a };
+    _ = try packageDebs(a, ch.io(), o);
+    try checkDebs(a, fx.out);
+
+    var other = FakeChannels{ .a = a, .other_binary = "another program" };
+    _ = try packageDebs(a, other.io(), o);
+    try t.expectError(error.WrongBinary, checkDebs(a, fx.out));
+
+    var mislabelled = FakeChannels{ .a = a, .other_arch = "i386" };
+    _ = try packageDebs(a, mislabelled.io(), o);
+    try t.expectError(error.WrongControl, checkDebs(a, fx.out));
+
+    _ = try packageDebs(a, ch.io(), o);
+    try checkDebs(a, fx.out);
+    try fx.dir.put("out/buildrules_" ++ V ++ "_arm64.deb", "not a deb");
+    try t.expectError(error.NotADeb, checkDebs(a, fx.out));
+
+    // the tarball changed after the deb was made: the deb holds the program the tarball no longer does
+    _ = try packageDebs(a, ch.io(), o);
+    try fx.dir.put("bins/linux-aarch64/buildrules", try elfBytes(a, 183, 1, "\x00" ++ V ++ "\x00 but rebuilt"));
+    _ = try package(a, fx.fake.io(), .{ .version = V, .target = "linux-aarch64", .binary = try join(a, fx.dir.path, "bins/linux-aarch64/buildrules"), .license = try join(a, fx.dir.path, "LICENSE"), .out = fx.out, .exec = .none });
+    try t.expectError(error.WrongBinary, checkDebs(a, fx.out));
+}
+
+test "checkDebs refuses a release without a .deb, with a .deb of another version, or with a stray one" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fx = try Fixture.make(a);
+    defer fx.dir.tmp.cleanup();
+    const o = try debDist(a, &fx);
+    try t.expectError(error.MissingDeb, checkDebs(a, fx.out));
+    var ch = FakeChannels{ .a = a };
+    _ = try packageDebs(a, ch.io(), o);
+    try fx.dir.tmp.dir.deleteFile("out/buildrules_" ++ V ++ "_arm64.deb");
+    try t.expectError(error.MissingDeb, checkDebs(a, fx.out));
+    try fx.dir.put("out/buildrules_0.0.6_arm64.deb", "last release's");
+    try t.expectError(error.MissingDeb, checkDebs(a, fx.out));
+    _ = try packageDebs(a, ch.io(), o);
+    try t.expectError(error.StrayTarball, checkDebs(a, fx.out));
+    try fx.dir.tmp.dir.deleteFile("out/buildrules_0.0.6_arm64.deb");
+    try fx.dir.put("out/buildrules_" ++ V ++ "_i386.deb", "an architecture this release has no deb for");
+    try t.expectError(error.StrayDeb, checkDebs(a, fx.out));
+}
+
+test "sums and sign refuse a release whose .debs are missing, stray or of another version, and sign nothing" {
+    // The defect: a release signed and published as complete without its .debs, or carrying last release's.
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var dir = try Dir.make(a);
+    defer dir.tmp.cleanup();
+    try dir.release(a);
+    try dir.tmp.dir.deleteFile("buildrules_" ++ V ++ "_amd64.deb");
+    try t.expectError(error.MissingDeb, sums(a, dir.path));
+    try dir.put("buildrules_" ++ V ++ "_amd64.deb", "back");
+    _ = try sums(a, dir.path);
+    try dir.put("buildrules_0.0.6_amd64.deb", "stale");
+    try t.expectError(error.StrayTarball, sums(a, dir.path));
+    var fake = FakeCosign{ .a = a };
+    try t.expectError(error.StrayTarball, sign(a, fake.io(), dir.path, "cosign"));
+    try t.expectEqual(@as(usize, 0), fake.calls.items.len);
+    try dir.tmp.dir.deleteFile("buildrules_0.0.6_amd64.deb");
+    try dir.put("buildrules_" ++ V ++ "_ppc64.deb", "no such architecture");
+    try t.expectError(error.StrayDeb, sums(a, dir.path));
+}
+
+test "out of memory: the .debs are made and checked, or the step fails, and never reports success" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fx = try Fixture.make(a);
+    defer fx.dir.tmp.cleanup();
+    const o = try debDist(a, &fx);
+    var ch = FakeChannels{ .a = a };
+
+    const Debs_ = struct {
+        o: PackageDebsOpts,
+        ch: *FakeChannels,
+        fn call(self: @This(), x: std.mem.Allocator) !bool {
+            const done = try packageDebs(x, self.ch.io(), self.o);
+            return done.len == debs.debs.len;
+        }
+    };
+    try sweepOutOfMemory(Debs_{ .o = o, .ch = &ch });
+
+    const Check_ = struct {
+        dir: []const u8,
+        fn call(self: @This(), x: std.mem.Allocator) !bool {
+            try checkDebs(x, self.dir);
+            return true;
+        }
+    };
+    try sweepOutOfMemory(Check_{ .dir = fx.out });
 }

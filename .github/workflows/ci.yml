@@ -63,6 +63,35 @@ jobs:
           ./buck2 build --console simple -c buildrules_re.mode=local \
             //ci:all
 
+      # The .deb of the command line (tools/channels, packaging/deb) as the release makes it, from the unstamped linux-x86_64 binary: dpkg reads it and lintian
+      # finds no error. A pull request proves this here; the release builds the same package from the stamped binaries (release.yml, build-cli). Lintian is the
+      # runner's own, installed from its distribution (the one tool of the build that is not pinned).
+      - name: Build the channels program
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out ci-channels //tools/channels:channels
+
+      - name: Build the linux-x86_64 command line
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out ci-buildrules //cli:buildrules_linux_x86_64
+
+      - run: chmod +x ci-channels
+
+      - name: Package it as a .deb
+        run: ./ci-channels deb-package --binary ci-buildrules --name buildrules --version 0.0.0 --arch amd64 --packaging packaging/deb --out ci-debs/buildrules_0.0.0_amd64.deb
+
+      - name: dpkg-deb reads the control file
+        run: dpkg-deb --info ci-debs/buildrules_0.0.0_amd64.deb
+
+      - name: dpkg-deb reads the contents
+        run: dpkg-deb --contents ci-debs/buildrules_0.0.0_amd64.deb
+
+      - name: Refresh the package lists
+        run: sudo apt-get update -qq
+
+      - name: Install lintian
+        run: sudo apt-get install -y -qq lintian
+
+      - name: lintian finds no error, every tag printed
+        run: lintian --fail-on error --tag-display-limit 0 ci-debs/buildrules_0.0.0_amd64.deb
+
       - name: Stop buck2
         if: always()
         run: ./buck2 kill
