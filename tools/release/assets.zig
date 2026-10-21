@@ -173,9 +173,34 @@ pub const Plan = union(enum) {
 
 pub const PlanError = error{ AssetDiffers, AssetDigestUnknown, OutOfMemory };
 
+/// The end of the name of a Sigstore bundle: `<file>.sigstore.json` is the signature of `<file>`.
+pub const bundle_suffix = ".sigstore.json";
+
+/// The digest the release reports for `name`, or null when the release holds no such asset or reports no digest.
+fn heldDigest(have: []const Asset, name: []const u8) ?[]const u8 {
+    for (have) |h| {
+        if (std.mem.eql(u8, h.name, name)) return h.sha256;
+    }
+    return null;
+}
+
+/// True when `o` is a signature bundle that differs from the held one only because every signing makes a new one (a fresh certificate and a
+/// new transparency-log entry), which is so when the file it signs is held with exactly our bytes: the held bundle then already signs the
+/// bytes we have, and is kept. A bundle whose file is missing, unreported or different is a real difference.
+fn bundleOfSameBytes(have: []const Asset, ours: []const File, o: File) bool {
+    if (!std.mem.endsWith(u8, o.name, bundle_suffix)) return false;
+    const signed = o.name[0 .. o.name.len - bundle_suffix.len];
+    const held = heldDigest(have, signed) orelse return false;
+    for (ours) |f| {
+        if (std.mem.eql(u8, f.name, signed)) return std.mem.eql(u8, f.sha256, held);
+    }
+    return false;
+}
+
 /// What the publish job does. `existing` is null when no release has the tag. A file the release already holds must be the same bytes
 /// (its reported digest equals ours) or the job fails and changes nothing: no asset is replaced, and a digest GitHub does not report is
-/// not taken to match.
+/// not taken to match. The one exception is a signature bundle (`bundleOfSameBytes`): signing the same bytes again gives other bundle bytes,
+/// so a re-run of a released commit keeps the bundle the release holds instead of failing.
 pub fn publishPlan(a: std.mem.Allocator, existing: ?[]const Asset, ours: []const File) PlanError!Plan {
     const have = existing orelse return .create;
     var missing = std.ArrayList([]const u8).empty;
@@ -189,7 +214,7 @@ pub fn publishPlan(a: std.mem.Allocator, existing: ?[]const Asset, ours: []const
             continue;
         };
         const d = h.sha256 orelse return error.AssetDigestUnknown;
-        if (!std.mem.eql(u8, d, o.sha256)) return error.AssetDiffers;
+        if (!std.mem.eql(u8, d, o.sha256) and !bundleOfSameBytes(have, ours, o)) return error.AssetDiffers;
     }
     if (missing.items.len == 0) return .nothing;
     return .{ .upload = try missing.toOwnedSlice(a) };
@@ -387,6 +412,59 @@ test "a release that exists is never changed: same bytes, a missing file added, 
     try t.expectError(error.AssetDiffers, publishPlan(a, &.{ .{ .name = "x.tar.gz", .sha256 = "ab" }, .{ .name = "SHA256SUMS", .sha256 = "bb" } }, &ours));
     try t.expectError(error.AssetDiffers, publishPlan(a, &.{.{ .name = "SHA256SUMS", .sha256 = "ff" }}, &ours));
     try t.expectError(error.AssetDigestUnknown, publishPlan(a, &.{.{ .name = "x.tar.gz", .sha256 = null }}, &ours));
+}
+
+test "a re-run of a released commit: other signature bundles over the same bytes are kept, nothing else may differ" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const ours = [_]File{
+        .{ .name = "x.tar.gz", .sha256 = "aa" },
+        .{ .name = "SHA256SUMS", .sha256 = "bb" },
+        .{ .name = "x.tar.gz" ++ bundle_suffix, .sha256 = "n1" },
+        .{ .name = "SHA256SUMS" ++ bundle_suffix, .sha256 = "n2" },
+    };
+    // the shape of v0.0.11: the files are the same, every bundle is a new signing
+    const held = [_]Asset{
+        .{ .name = "x.tar.gz", .sha256 = "aa" },
+        .{ .name = "SHA256SUMS", .sha256 = "bb" },
+        .{ .name = "x.tar.gz" ++ bundle_suffix, .sha256 = "o1" },
+        .{ .name = "SHA256SUMS" ++ bundle_suffix, .sha256 = "o2" },
+    };
+    try t.expect((try publishPlan(a, &held, &ours)) == .nothing);
+    // a missing bundle is still added, next to a kept one
+    const up = try publishPlan(a, held[0..3], &ours);
+    try t.expectEqual(@as(usize, 1), up.upload.len);
+    try t.expectEqualStrings("SHA256SUMS" ++ bundle_suffix, up.upload[0]);
+    // a different file is refused, whatever its bundle
+    try t.expectError(error.AssetDiffers, publishPlan(a, &.{
+        .{ .name = "x.tar.gz", .sha256 = "ab" },
+        .{ .name = "SHA256SUMS", .sha256 = "bb" },
+        .{ .name = "x.tar.gz" ++ bundle_suffix, .sha256 = "o1" },
+        .{ .name = "SHA256SUMS" ++ bundle_suffix, .sha256 = "o2" },
+    }, &ours));
+    // a bundle whose file the release does not hold may sign other bytes: refused
+    try t.expectError(error.AssetDiffers, publishPlan(a, &.{
+        .{ .name = "x.tar.gz" ++ bundle_suffix, .sha256 = "o1" },
+    }, &ours));
+    // a bundle whose file has no reported digest: refused (the file is met first)
+    try t.expectError(error.AssetDigestUnknown, publishPlan(a, &.{
+        .{ .name = "x.tar.gz", .sha256 = null },
+        .{ .name = "x.tar.gz" ++ bundle_suffix, .sha256 = "o1" },
+    }, &ours));
+    // a file that is not a bundle never gets the allowance, even with a bundle-looking sibling
+    try t.expectError(error.AssetDiffers, publishPlan(a, &.{
+        .{ .name = "x.tar.gz", .sha256 = "aa" },
+        .{ .name = "SHA256SUMS", .sha256 = "ff" },
+    }, &ours));
+    // the allowance itself (the loop would refuse the file later, so it is asked directly): same bytes yes, other bytes no
+    try t.expect(bundleOfSameBytes(&held, &ours, ours[2]));
+    try t.expect(!bundleOfSameBytes(&.{ .{ .name = "x.tar.gz", .sha256 = "ab" }, .{ .name = "x.tar.gz" ++ bundle_suffix, .sha256 = "o1" } }, &ours, ours[2]));
+    try t.expect(!bundleOfSameBytes(&held, &ours, ours[0]));
+    // a bundle name over a file we do not ship is not covered either
+    try t.expectError(error.AssetDiffers, publishPlan(a, &.{
+        .{ .name = "z" ++ bundle_suffix, .sha256 = "o1" },
+    }, &.{.{ .name = "z" ++ bundle_suffix, .sha256 = "n1" }}));
 }
 
 test "the assets of a release come from the API's name and digest" {
