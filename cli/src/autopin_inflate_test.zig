@@ -387,3 +387,69 @@ test "a fixed block with a distance that has extra bits is cut at every byte and
     var n: usize = 0;
     while (n < s.len) : (n += 1) try failsWith(error.Invalid, inf(a, s[0..n], 100));
 }
+
+/// The three-bit lengths of the code-length alphabet in the order of the header (16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1),
+/// for a code with symbol 18 at `len18`, symbol 2 at `len2` and symbol 1 at `len1`.
+fn clLengths(len18: u32, len2: u32, len1: u32) [18][2]u32 {
+    var f: [18][2]u32 = undefined;
+    for (&f) |*x| x.* = .{ 0, 3 };
+    f[2] = .{ len18, 3 };
+    f[15] = .{ len2, 3 };
+    f[17] = .{ len1, 3 };
+    return f;
+}
+
+test "a dynamic literal code that is incomplete (two codes of length 2) is refused, though the stream is otherwise inflatable" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    // Code-length code: 18 -> "0", 1 -> "10", 2 -> "11". Literal lengths: sym 0 and sym 256 have length 2 (two of four slots), the rest 0.
+    // Distance: one code of length 1 (allowed). Data: literal 0, then the end of block, which the incomplete code would decode.
+    const cl = clLengths(1, 2, 2);
+    var f = std.ArrayList([2]u32).empty;
+    try f.appendSlice(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 0, 5 }, .{ 0, 5 }, .{ 14, 4 } });
+    try f.appendSlice(a, &cl);
+    try f.appendSlice(a, &.{ .{ 3, 2 }, .{ 0, 1 }, .{ 127, 7 }, .{ 0, 1 }, .{ 106, 7 }, .{ 3, 2 }, .{ 1, 2 }, .{ 0, 2 }, .{ 2, 2 } });
+    try failsWith(error.Invalid, inf(a, try bitsOf(a, f.items), 100));
+}
+
+test "a dynamic distance code that is incomplete (two codes of length 2) is refused; with a complete one the same stream inflates" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    // Literal lengths: sym 0 and sym 256 have length 1 (complete). Distance lengths (HDIST 1, two symbols): 2 and 2, or 1 and 1.
+    // Code-length code: 18 -> "0", 1 -> "10", 2 -> "11".
+    const cl = clLengths(1, 2, 2);
+    const incomplete = [_][2]u32{ .{ 3, 2 }, .{ 3, 2 } };
+    const complete = [_][2]u32{ .{ 1, 2 }, .{ 1, 2 } };
+    for ([_][]const [2]u32{ &incomplete, &complete }, 0..) |dist, i| {
+        var f = std.ArrayList([2]u32).empty;
+        try f.appendSlice(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 0, 5 }, .{ 1, 5 }, .{ 14, 4 } });
+        try f.appendSlice(a, &cl);
+        try f.appendSlice(a, &.{ .{ 1, 2 }, .{ 0, 1 }, .{ 127, 7 }, .{ 0, 1 }, .{ 106, 7 }, .{ 1, 2 } });
+        try f.appendSlice(a, dist);
+        try f.appendSlice(a, &.{ .{ 0, 1 }, .{ 1, 1 } });
+        const got = inf(a, try bitsOf(a, f.items), 100);
+        if (i == 0) try failsWith(error.Invalid, got) else try t.expectEqualSlices(u8, &.{0}, try got);
+    }
+}
+
+test "a dynamic header that claims 287 literal codes, or 31 distance codes, is refused though the stream is otherwise inflatable" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    // Code-length code: 1 -> "0", 18 -> "1". The lengths are one used symbol, the zeros that fill the alphabet, the end of block, and a distance code.
+    const cl = clLengths(1, 0, 1);
+    // HLIT 30 (287 literal codes), HDIST 0: 255 zeros after symbol 0, symbol 256 of length 1, 30 more zeros, one distance code of length 1.
+    var lit = std.ArrayList([2]u32).empty;
+    try lit.appendSlice(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 30, 5 }, .{ 0, 5 }, .{ 14, 4 } });
+    try lit.appendSlice(a, &cl);
+    try lit.appendSlice(a, &.{ .{ 0, 1 }, .{ 1, 1 }, .{ 127, 7 }, .{ 1, 1 }, .{ 106, 7 }, .{ 0, 1 }, .{ 1, 1 }, .{ 19, 7 }, .{ 0, 1 }, .{ 0, 1 }, .{ 1, 1 } });
+    try failsWith(error.Invalid, inf(a, try bitsOf(a, lit.items), 100));
+    // HLIT 0, HDIST 30 (31 distance codes): sym 0 and sym 256 of length 1, then 31 zeros.
+    var dist = std.ArrayList([2]u32).empty;
+    try dist.appendSlice(a, &.{ .{ 1, 1 }, .{ 2, 2 }, .{ 0, 5 }, .{ 30, 5 }, .{ 14, 4 } });
+    try dist.appendSlice(a, &cl);
+    try dist.appendSlice(a, &.{ .{ 0, 1 }, .{ 1, 1 }, .{ 127, 7 }, .{ 1, 1 }, .{ 106, 7 }, .{ 0, 1 }, .{ 1, 1 }, .{ 20, 7 }, .{ 0, 1 }, .{ 1, 1 } });
+    try failsWith(error.Invalid, inf(a, try bitsOf(a, dist.items), 100));
+}
