@@ -180,23 +180,46 @@ test "event: the compute run's own event is read, with its attempt and the pull 
     try t.expectEqual(@as(i64, 7), e.pull_requests[0]);
 }
 
-test "event: a run that did not succeed, was not a pull_request, or is of another workflow file is refused" {
+test "event: a run that did not succeed is refused" {
     var ar = arena();
     defer ar.deinit();
-    const a = ar.allocator();
-    try refusedWith(try ev(a, "\"conclusion\":\"success\"", "\"conclusion\":\"cancelled\""), "did not succeed");
-    try refusedWith(try ev(a, "\"event\":\"pull_request\"", "\"event\":\"pull_request_target\""), "pull_request event");
-    try refusedWith(try ev(a, ".github/workflows/autopin-compute.yml", ".github/workflows/autopin-compute.yml.evil"), "compute workflow file");
+    try refusedWith(try ev(ar.allocator(), "\"conclusion\":\"success\"", "\"conclusion\":\"cancelled\""), "did not succeed");
 }
 
-test "event: a run of a fork, or by someone other than Dependabot, is refused" {
+test "event: a run started by something other than a pull_request event is refused" {
     var ar = arena();
     defer ar.deinit();
-    const a = ar.allocator();
-    try refusedWith(try ev(a, "\"head_repository\":{\"id\":42", "\"head_repository\":{\"id\":43"), "fork");
-    try refusedWith(try ev(a, "\"full_name\":\"acme/demo\"},\"actor\"", "\"full_name\":\"mallory/demo\"},\"actor\""), "fork");
-    try refusedWith(try ev(a, "\"actor\":{\"login\":\"dependabot[bot]\"}", "\"actor\":{\"login\":\"dependabot-preview[bot]\"}"), "actor is not Dependabot");
-    try refusedWith(try ev(a, "\"triggering_actor\":{\"login\":\"dependabot[bot]\"}", "\"triggering_actor\":{\"login\":\"alice\"}"), "triggering actor");
+    try refusedWith(try ev(ar.allocator(), "\"event\":\"pull_request\"", "\"event\":\"pull_request_target\""), "pull_request event");
+}
+
+test "event: a run of another workflow file is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    try refusedWith(try ev(ar.allocator(), ".github/workflows/autopin-compute.yml", ".github/workflows/autopin-compute.yml.evil"), "compute workflow file");
+}
+
+test "event: a run whose repository id is another is refused (a fork)" {
+    var ar = arena();
+    defer ar.deinit();
+    try refusedWith(try ev(ar.allocator(), "\"head_repository\":{\"id\":42", "\"head_repository\":{\"id\":43"), "fork");
+}
+
+test "event: a run whose repository name is another is refused (a fork)" {
+    var ar = arena();
+    defer ar.deinit();
+    try refusedWith(try ev(ar.allocator(), "\"full_name\":\"acme/demo\"},\"actor\"", "\"full_name\":\"mallory/demo\"},\"actor\""), "fork");
+}
+
+test "event: a run whose actor is not Dependabot is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    try refusedWith(try ev(ar.allocator(), "\"actor\":{\"login\":\"dependabot[bot]\"}", "\"actor\":{\"login\":\"dependabot-preview[bot]\"}"), "actor is not Dependabot");
+}
+
+test "event: a run whose triggering actor is not Dependabot is refused (a re-run by a person)" {
+    var ar = arena();
+    defer ar.deinit();
+    try refusedWith(try ev(ar.allocator(), "\"triggering_actor\":{\"login\":\"dependabot[bot]\"}", "\"triggering_actor\":{\"login\":\"alice\"}"), "triggering actor");
 }
 
 test "event: missing or malformed fields are refused" {

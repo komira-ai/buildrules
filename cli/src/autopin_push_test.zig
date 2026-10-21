@@ -302,3 +302,14 @@ test "push: a plan that cannot be read fails" {
     env.h.tmp.dir.deleteFile("plan/plan.json") catch {};
     try t.expectEqual(@as(u8, 1), runPush(&env, &.{}).code);
 }
+
+test "push: a plan file under .github is refused even when a SETS directory is named so" {
+    var env = try setup();
+    defer finish(&env);
+    try writePlan(env.h, &.{".github/x/pins.lock.bzl"});
+    try env.h.put("plan/.github/x/pins.lock.bzl", "x\n");
+    const r = runPush(&env, &.{ "--set", ".github/x=pins-lock" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "the plan is not acceptable"));
+    try t.expectEqual(@as(usize, 0), env.fake.log.items.len);
+}
