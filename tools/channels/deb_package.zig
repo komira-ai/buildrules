@@ -160,7 +160,7 @@ pub const DataError = error{ ConffilePath, ReservedPath, BadMode };
 
 /// The .deb of a data-only package (a keyring, say): Architecture `all`, the given files, the copyright and a `changelog.gz`, and nothing else.
 /// There is no way to give it a maintainer script (the control archive is the control file and the md5sums, always), and no conffile (the control
-/// archive has no `conffiles`, and a path below `etc/` is refused rather than left to dpkg's rules). A mode with a bit outside 0755 (setuid, group or
+/// The same inputs give the same bytes.
 /// other write) is refused. The same inputs give the same bytes.
 pub fn buildData(a: Allocator, in: DataInputs) ![]u8 {
     const version = try debVersion(a, in.version);
@@ -171,7 +171,7 @@ pub fn buildData(a: Allocator, in: DataInputs) ![]u8 {
     var files = std.ArrayList(deb.File).init(a);
     for (in.files) |f| {
         if (f.data.len == 0) return error.EmptyFile;
-        if (f.mode & ~@as(u32, 0o755) != 0) return error.BadMode;
+        if (f.mode != 0o644 and f.mode != 0o755) return error.BadMode;
         if (std.mem.eql(u8, f.path, "etc") or std.mem.startsWith(u8, f.path, "etc/")) return error.ConffilePath;
         if (std.mem.eql(u8, f.path, copyright_path) or std.mem.eql(u8, f.path, changelog_path)) return error.ReservedPath;
         try files.append(.{ .path = f.path, .data = f.data, .mode = f.mode });
@@ -363,6 +363,7 @@ test "a data package is Architecture all with exactly its files, the copyright a
             try t.expectEqual(@as(u32, 0), m.gid);
         } else {
             try t.expect(std.mem.eql(u8, m.path, "./usr/share/doc/sample-keyring/copyright") or std.mem.eql(u8, m.path, "./usr/share/doc/sample-keyring/changelog.gz"));
+            try t.expectEqual(@as(u32, 0o644), m.mode);
         }
     }
     try t.expectEqual(@as(usize, 3), files);
@@ -403,6 +404,14 @@ test "a data package refuses what would make it more than data" {
     const suid = [_]DataFile{.{ .path = "usr/bin/x", .data = "x", .mode = 0o4755 }};
     in.files = &suid;
     try t.expectError(error.BadMode, buildData(a, in));
+    for ([_]u32{ 0o600, 0o700, 0o555, 0o444, 0o664, 0o775, 0o666, 0o000, 0o4755, 0o1755 }) |bad| {
+        const one = [_]DataFile{.{ .path = "usr/share/x", .data = "x", .mode = bad }};
+        in.files = &one;
+        try t.expectError(error.BadMode, buildData(a, in));
+    }
+    const ok755 = [_]DataFile{.{ .path = "usr/bin/x", .data = "x", .mode = 0o755 }};
+    in.files = &ok755;
+    _ = try buildData(a, in);
     const gw = [_]DataFile{.{ .path = "usr/share/x", .data = "x", .mode = 0o664 }};
     in.files = &gw;
     try t.expectError(error.BadMode, buildData(a, in));
