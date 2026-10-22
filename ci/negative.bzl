@@ -7,6 +7,9 @@ Make the fixture valid (give it `exec_compatible_with = test_exec_compatible_wit
 control's own error. ci/negative_check.zig holds the wiring of this file to the fixtures, in //ci:all.
 """
 
+load("//examples/mojo/sys_app:buildrules.mojo.lock.bzl", SYS_APP_GRAPH = "GRAPH")
+load("//examples/mojo/ws:buildrules.mojo.lock.bzl", WS_GRAPH = "GRAPH")
+
 PLATFORM = "buildrules//platforms:linux_x86_64_v3"
 FIXTURE = "//ci/negative:v3_test_without_isa_property"
 CONTROL = "//ci/negative:v3_test_with_isa_property"
@@ -57,7 +60,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx)
+    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
@@ -122,6 +125,12 @@ BRANCH_PACKAGES = [
     ("//examples/mojo/sys_app", "test_sys_app"),
 ]
 
+# The packages whose tests link native libraries, with their committed graphs: what `__pgo` is held to (`native_link_problems`).
+NATIVE_PACKAGES = [
+    ("//examples/mojo/sys_app", "test_sys_app", SYS_APP_GRAPH),
+    ("//examples/mojo/ws", "test_app", WS_GRAPH),
+]
+
 def coverage_branch_wiring_problems(ctx):
     """Every example package against the branch coverage targets of its test: a list of strings, empty when all are there and `:coverage` waits for them."""
     problems = []
@@ -133,6 +142,42 @@ def coverage_branch_wiring_problems(ctx):
         waits = (stem + "__info") in [t.label.name for t in q.eval("deps({}:coverage, 1)".format(package))]
         if len(have) != len(mine) or not waits:
             problems.append("{} has {} of the {} branch coverage targets of {} and its :coverage {} wait for {}__info: its branch figure is not made".format(package, len(have), len(mine), stem, "does" if waits else "does not", stem))
+    return problems
+
+def _test_natives(graph):
+    """(soname list in the graph's order, soname -> what it needs) of the test unit of a package's committed graph."""
+    for u in graph["units"]:
+        if u["kind"] == "test":
+            return [n["soname"] for n in u["natives"]], {n["soname"]: n["needs"] for n in u["natives"] if n.get("needs")}
+    return [], {}
+
+def native_link_problems(ctx):
+    """Every way the instrumented link of a package whose tests link native libraries is not given the graph's natives: a list of strings, empty when it is.
+    `mojo_package` must hand `__pgo` the graph's list and each library's `needs` (the order check reads them), and the action must pass the libraries to
+    `cov_branch link` as `--native` flags in the graph's order, which is the order of the ordinary link."""
+    problems = []
+    for package, stem, graph in NATIVE_PACKAGES:
+        label = "{}:{}__pgo".format(package, stem)
+        want, want_needs = _test_natives(graph)
+        node = ctx.configured_targets(label, target_platform = GATE_PLATFORM)
+        attrs = node.attrs_eager()
+        got = list(attrs.native_sonames.value())
+        if got != want:
+            problems.append("{}: native_sonames is {}, the graph's natives of the test are {}".format(label, got, want))
+        got_needs = {k: list(v) for k, v in attrs.native_needs.value().items()}
+        if got_needs != want_needs:
+            problems.append("{}: native_needs is {}, the graph's `needs` are {}: the order check has nothing to hold".format(label, got_needs, want_needs))
+        emitted = []
+        for action in ctx.aquery().all_actions(node):
+            # The command prints as `[arg, arg, ...]`; an action that runs no command has none.
+            if not hasattr(action.attrs, "cmd"):
+                continue
+            cmd = str(action.attrs.cmd).lstrip("[").rstrip("]").split(", ")
+            emitted += [cmd[i + 1].split("/")[-1] for i in range(len(cmd) - 1) if cmd[i] == "--native"]
+        if emitted != want:
+            problems.append("{}: the link action passes --native {} in this order, the graph's order is {}".format(label, emitted, want))
+        if not want:
+            problems.append("{}: the graph's test links no native library, so there is nothing to hold here".format(label))
     return problems
 
 def _built_with_why(ctx, label):

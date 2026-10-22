@@ -102,6 +102,12 @@ link, and `mojo_package` gives `__pgo` nothing else to decide from:
 - **A symbol both define.** An archive member is taken only for a symbol that is still undefined, so a library that defines a symbol the instrumented object defines too is passed over
   without a message, and the run measures a program that is not the test (the object's copy of the symbol runs, or the library's, whichever the linker found first). `cov_branch link`
   lists both with `llvm-nm` and fails, naming the library and the first five symbols. Weak definitions are left out: a weak symbol is meant to be replaced.
+  Limits of the check, each a difference from the ordinary link or a case it does not cover:
+  - a strong definition in a native against a weak definition in the object is not flagged (the ordinary link does not flag it either);
+  - a shared native that defines a symbol the object defines too is refused, which is stricter than the ordinary link (the executable's definition simply wins there);
+  - a thin archive is not supported: its members live in other files, which `llvm-nm` on the archive may not list as the linker would read them.
+  The wiring itself is held by `ci/negative.bzl` (`native_link_problems`): for `ws` and `sys_app`, `__pgo`'s `native_sonames` and `native_needs` are the committed graph's, and the
+  link action's `--native` flags are in the graph's order.
 
 ## cov_branch run
 
