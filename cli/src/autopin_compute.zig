@@ -18,6 +18,9 @@ const Diag = @import("diag.zig").Diag;
 const Ctx = ctxm.Ctx;
 
 pub const max_new_rows: usize = 200;
+/// The caps `capped` enforces now: compute keeps the two constants, `verify-pins` (which downloads every row) widens them.
+pub var row_cap: usize = max_new_rows;
+pub var total_cap: u64 = max_total_bytes;
 pub const max_total_bytes: u64 = 512 << 20;
 
 pub const usage_text =
@@ -64,12 +67,12 @@ pub fn fetchWith(a: std.mem.Allocator, url: []const u8, allow_http_loopback: boo
 /// `table_mod.max_size`, `max_total_bytes` together.
 pub fn capped(a: std.mem.Allocator, url: []const u8) anyerror!fetch.Digest.Result {
     if (!std.mem.startsWith(u8, url, lock_mod.registry)) return error.HostNotAllowed;
-    if (fetched_rows >= max_new_rows) return error.TooManyNewPackages;
+    if (fetched_rows >= row_cap) return error.TooManyNewPackages;
     fetched_rows += 1;
     const d = try fetcher(a, url);
     if (d.size > table_mod.max_size) return error.TarballTooLarge;
     fetched_bytes += d.size;
-    if (fetched_bytes > max_total_bytes) return error.TotalTooLarge;
+    if (fetched_bytes > total_cap) return error.TotalTooLarge;
     return d;
 }
 
