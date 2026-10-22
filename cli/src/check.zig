@@ -195,7 +195,7 @@ fn check(ctx: *Ctx) !u8 {
 
     // The Mojo packages, when the repository has any: the same gate as `buildrules mojo check`.
     if (try mojo_cmd.hasPackages(ctx)) {
-        if ((try mojo_cmd.checkAll(ctx)) != ctxm.exit_ok) bad += 1;
+        if ((try mojo_cmd.checkAll(ctx, null)) != ctxm.exit_ok) bad += 1;
     }
 
     if (bad == 0) {

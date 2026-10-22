@@ -9,7 +9,6 @@ ci/planted/BUCK	busybox	1
 ci/workflow_check.zig	shell-word	7
 ci/workflow_lint.bzl	busybox	4
 ci/workflow_lint.bzl	heredoc	1
-cli/version.bzl	busybox	3
 rules/core/test_runtime.bzl	busybox	2
 rules/core/tests/BUCK	busybox	1
 rules/core/url_map.bzl	busybox	1
@@ -82,6 +81,10 @@ site/tools/content/concepts.ts	busybox	1
 site/tools/content/rules.ts	busybox	1
 site/tools/content/why.ts	busybox	1
 site/tools/inline.ts	heredoc	1
+tools/bootstrap/BUCK	busybox	1
+tools/bootstrap/src/real.zig	busybox	1
+tools/bootstrap/src/real_test.zig	busybox	2
+tools/bootstrap/src/xz_speed_test.zig	busybox	3
 tools/channels/BUCK	busybox	3
 tools/deploy/BUCK	busybox	7
 tools/release/BUCK	busybox	3

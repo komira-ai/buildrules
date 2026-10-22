@@ -33,8 +33,17 @@ pub const mojo_schema: u32 = 1;
 /// Found by walking up from a package; required, with no default (docs/contract.md, section 12).
 pub const mojo_toolchain_file = "mopm-toolchain.toml";
 /// Written by `buildrules mojo sync` from the graphs and from buildrules-pins.toml; loaded by toolchains/BUCK.
-pub const mojo_pins_file = "toolchains/mojo_pins.bzl";
-pub const mopm_pins_file = "toolchains/mopm_pins.bzl";
+pub const toolchains_dir = "toolchains";
+pub const mojo_pins_name = "mojo_pins.bzl";
+pub const mopm_pins_name = "mopm_pins.bzl";
+/// The default places; the `toolchains` cell of .buckconfig (`[cells] toolchains = DIR`) moves the directory (mojo_cmd.zig, `resolveTables`).
+pub const mojo_pins_file = toolchains_dir ++ "/" ++ mojo_pins_name;
+pub const mopm_pins_file = toolchains_dir ++ "/" ++ mopm_pins_name;
+/// The section and key of .buckconfig that name the toolchains directory: the cell itself.
+pub const buckconfig_section = "cells";
+/// Buck's older name for the same section.
+pub const buckconfig_alias_section = "repositories";
+pub const buckconfig_toolchains_key = "toolchains";
 pub const mojo_defs_label = "@buildrules//rules/mojo:defs.bzl";
 
 pub const mojo_bzl_text =

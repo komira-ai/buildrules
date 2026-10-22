@@ -53,7 +53,11 @@ What both figures leave out:
 
 - **Code the compiler emitted none for.** Zig analyses what is referenced, so a function no test reaches has no lines and no blocks, and the percentage is an
   upper bound. `expect` names a package's own sources; a file in it that no test compiled fails the summary (`... is in no report`), and the files a package
-  leaves out of `expect` (an entry point no test imports, a file of constants) say why in its BUCK file.
+  leaves out of `expect` (an entry point no test imports, a file of constants) say why in its BUCK file. One exception, for Mojo: its report omits a source
+  with no executable line, so `mojo_package` also gives `cov_summary` the text of each source (`--src <expected path>=<file>`), and an expected source that no
+  report names but that holds nothing beyond comments, docstrings and `import` / `from ... import` statements (a re-export `__init__.mojo`) is listed as `0/0`
+  instead of refused. Any other statement (a function, a struct, an assignment, a `;`, an indented line) leaves the source refused: a file the report merely
+  missed is told from a file with nothing to run by reading it (`hasNoStatements` in `tools/cov_summary.zig`, strict by construction).
 - **A block that one test runs exactly 255 more times (after an earlier test left its counter at 1).** The counters are one byte and wrap. The runner sets every non-zero counter to one between the tests, so a block that ran in
   one test is still a block that ran after the next tests run it (a counter that wrapped to zero used to read as a block that did not run); a single test that runs one block
   exactly 255 more times (the counter is 1 when the test starts, and 1 + 255 wraps to 0; 511 more, and so on) still reads it as unrun.

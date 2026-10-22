@@ -438,6 +438,23 @@ live there; the targets above are fixed and `mojo_package` takes policy as argum
 | `toolchains/mojo_pins.bzl` | `mojo sync` | yes | `toolchains/BUCK` (`mojo_toolchains(MOJO_TOOLCHAINS)`) |
 | `toolchains/mopm_pins.bzl` | `mojo sync` | yes | `toolchains/BUCK` (`mopm_toolchains(extra = EXTRA_MOPM_VERSIONS)`) |
 
+The two `toolchains/` files are in the directory of the `toolchains` cell: `[cells] toolchains = DIR` in the root `.buckconfig`, read by `mojo sync`,
+`mojo check` and `buildrules check` alike, and `toolchains/` when there is no such line. The cell is the one place the path is configured, so the tables
+cannot land where the cell does not look. `DIR` is relative to the root and must be an existing directory inside it, symbolic links followed, and not inside a
+Mojo package's directory (compared by real path); anything else is refused (exit 1, nothing written). The default is not checked, so a repository that has
+no such line behaves as before. Four rules, each the reading of Buck's own configuration that the committed tables need:
+- A toolchains directory inside a package at the repository root is accepted: every directory is inside such a package, and refusing it would refuse the
+  default. Only a package in a subdirectory holds its toolchains directory out.
+- A root `.buckconfig` with an include line (`<file:...>`, `<?file:...>`) is refused: includes are not followed, so a cell path they hold would be missed.
+- `.buckconfig.local` may not set the toolchains cell (under `[cells]` or `[repositories]`): buck2 honours it, but the pins are committed and so must their
+  location be. Exit 1; declare the cell in the committed `.buckconfig`.
+- `[repositories]` is Buck's older name for `[cells]`, and is read only when no `[cells]` section exists at all, in `.buckconfig` or `.buckconfig.local`
+  (whatever that section holds, as buck2 does: with `[cells] root = .` and `[repositories] toolchains = x` there is no toolchains cell). A header may be followed
+  by a `#` comment (`[cells] # x`); buck2 rejects a `;` there, so that is not a section header.
+
+`--toolchains DIR` on `mojo sync` and `mojo check` is an assertion only: it must name that same directory, else exit 1 with both paths. `rust_pins.bzl` is
+not covered by this.
+
 `mopm-toolchain.toml` is found by walking up from the package directory to the nearest one, as rustup finds `rust-toolchain.toml`:
 
 ```toml
@@ -529,7 +546,7 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 | the two copies of the closure hash in the table differ | analysis; `mojo check` | `the table records toolchain closure A but its unit graph pins B: the file was edited by hand` |
 | the table's Mojo is not the graph's, or mopm-toolchain.toml names another | analysis; `mojo check`; `mojo sync` (mopm exit 4) | `the table says Mojo 1.1.0 but its unit graph is for Mojo 1.0.0`; `mopm has no pinned toolchain for mojo 1.1.0` |
 | a native library other than the pinned one | `mopm unit build` | `native library X has sha256 B, but the graph declares A` |
-| a library source no test compiled | `:coverage` | `<file> is in no report: no test compiled it, or kcov could not open it` |
+| a library source no test compiled, that has any statement beyond comments, docstrings and imports (a re-export-only `__init__.mojo` has none, is omitted by the report, and is listed `0/0`) | `:coverage` | `<file> is in no report: no test compiled it, or kcov could not open it` |
 | `toolchains/mojo_pins.bzl` edited without a sync (a `cc_target`, a hash, a component) | `:check` at analysis; `mojo check` | `toolchains/mojo_pins.bzl and the table's unit graph disagree about the Mojo 1.0.0 toolchain (cc_target)` |
 | `mopm-toolchain.toml` says another Mojo than the table was made for | `:check` (the file's hash); `mojo check` | `examples/mojo/mopm-toolchain.toml is not what the Mojo table was made from (sha256 A, the table says B): run `buildrules mojo sync``  |
 | a test at an ISA level on a platform without it | analysis | as section 11 |

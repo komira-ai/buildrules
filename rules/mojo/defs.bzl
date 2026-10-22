@@ -390,6 +390,7 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
         check = ":check",
         expect = [_join(here_repo, own_lib["root"], s["path"][len(own_lib["root"]) + 1:]) for s in own_lib["srcs"]] if own_lib and covs else [],
         reports = covs,
+        srcs = {_join(here_repo, own_lib["root"], s["path"][len(own_lib["root"]) + 1:]): _join(project, s["path"]) for s in own_lib["srcs"]} if own_lib and covs else {},
         visibility = visibility,
     )
     mojo_group(name = name_once("build"), deps = builds, check = ":check", visibility = visibility)

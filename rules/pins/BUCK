@@ -6,6 +6,7 @@ load("//rules/core:pinned_file.bzl", "pinned_file")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/zig:zig.bzl", "zig_dist", "zig_test")
 load("//rules:matrix.bzl", "group")
+load(":bootstrap.bzl", "UNPACK_PINS")
 load(":hosts.bzl", "HOST_PINS", "host_downloads")
 load(":pins.bzl", "PINS", "strip_prefix")
 
@@ -95,6 +96,28 @@ group(
     name = "host_downloads",
     deps = [":host_downloads_" + h.replace("-", "_") for h in HOST_PINS],
     visibility = ["PUBLIC"],
+)
+
+# ---- unpack, the program that unpacks the rest (bootstrap.bzl) --------------------------------------------------------------------------------------------------
+# One pinned release asset per host. They are defined here and used by no default target: the asset is uploaded by the repository owner (tools/held/publish_unpack.zig),
+# and a machine without it cached cannot fetch it before then. //ci:unpack_pin_check holds the rows to the programs the tree builds.
+[
+    pinned_file(
+        name = "bootstrap_unpack_" + host.replace("-", "_"),
+        url = row["url"],
+        sha256 = row["sha256"],
+        size_bytes = row["size"],
+        executable = True,
+        visibility = ["PUBLIC"],
+    )
+    for host, row in UNPACK_PINS.items()
+]
+
+# Read by tools/bootstrap:pin_check_unit, and by the buildrules.dev site tests.
+export_file(
+    name = "bootstrap.bzl",
+    src = "bootstrap.bzl",
+    visibility = ["//tools/bootstrap:", "//ci:", "//site:"],
 )
 
 scrub_files()
