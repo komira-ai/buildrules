@@ -65,7 +65,8 @@ repository whose tag is `UNPACK_TAG` in `rules/pins/bootstrap.bzl`; the rows the
 The rows are the bytes the source makes. The build is reproducible, so `//tools/bootstrap:pin_check_unit` (in `//ci:all`) builds the program for each host from the tree and requires
 the sha256 and size of the row to be its: a source change without new rows is red, and the red text names the values to write. A release asset is never replaced; the new programs go under
 the next tag (`unpack-2`, ...) and `UNPACK_TAG` and the rows change together. `tools/held/publish_unpack.zig` builds the three, checks them against the rows, and uploads them: a dry run
-unless `--apply --work DIR`, which only the repository owner runs. Until the assets exist the rows cannot be fetched on a machine whose cache lacks them, so no default target uses them
+unless `--apply --work DIR`. The tag ruleset lets only the release bot create a tag, so it runs as the dispatch workflow `.github/workflows/publish-unpack.yml`
+(`tools/bootstrap/README.md`, "Publishing"), by hand and from `main` only, and the bot's token is minted in its apply step alone. Until the assets exist the rows cannot be fetched on a machine whose cache lacks them, so no default target uses them
 (`//rules/pins:bootstrap_unpack_<host>`), and no rule runs `unpack` yet: moving the zig, Rust and Node unpacking onto it is the next work.
 
 macOS cannot be built or run on the farm. The `unpack_macos` job of `ci.yml` (GitHub's `macos-14` runner) builds the program with the pinned zig for macOS, runs its unit tests natively,

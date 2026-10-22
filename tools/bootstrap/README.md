@@ -37,6 +37,23 @@ are zstd-compressed tars, which `unpack` does not read, and the two copies hold 
 `real_test.zig` runs the built `unpack` on the pinned zig tarball (against the zig distribution the build unpacks today), the pinned actionlint tarball (against busybox), and a conda package.
 `xz_speed_test.zig` times the real xz tarball against busybox's `xzcat`. `pin_check_test.zig` holds the pins to the built programs (docs/pins.md, "unpack").
 
+## Publishing
+
+The three programs are the assets of the release `UNPACK_TAG` of `rules/pins/bootstrap.bzl`. A person cannot create that tag (the tag ruleset lets only the release bot create one), so the
+release is made by the dispatch workflow `.github/workflows/publish-unpack.yml`, which runs `tools/held/publish_unpack.zig` on a hosted runner (local mode):
+
+```
+gh workflow run publish-unpack.yml -R OWNER/REPO -f apply=false     # builds the programs, checks them against the pins, reads the release; changes nothing
+gh workflow run publish-unpack.yml -R OWNER/REPO -f apply=true      # the same, then creates the release, uploads the assets it lacks, downloads and verifies each
+```
+
+(`OWNER/REPO` are the two path segments of `https://github.com/komira-ai/buildrules`; the scrub of this repository allows the project's name only in that address.)
+
+Run it with `apply=false` first and read the job's output: it says what `apply=true` would do. The workflow runs only from `main` and only when dispatched. The release bot's token (the mint
+step of release.yml's `tag` job, for this repository alone with `contents: write`) is minted only when `apply` is true, after the dry run has passed, and only the last step holds it. The
+release points at the commit the programs were built from, and nothing is ever replaced or deleted: a second `apply=true` only verifies what is there. If the programs the tree builds are
+not the pinned ones, nothing is uploaded and the output names the values to write (the new programs go under the next tag). `ci/publish_unpack_check.zig` holds the workflow to all of this.
+
 ## Limits, and what a failure leaves behind
 
 - **Memory.** The archive is read into memory (at most 1 GiB, refused above). gzip and zip are decoded through a 64 KiB window, so a tar.gz costs about its own size: rustc 1.95.0 (`.tar.gz`, 128 MiB) peaks at 129 MiB. The standard library's xz decoder decodes a whole xz block before it
