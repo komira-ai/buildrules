@@ -292,3 +292,18 @@ test "verify-pins: only the registry host is fetched from, and the caps are comp
     try t.expectError(error.TarballTooLarge, compute.capped(a, reg ++ "x/-/x-1.0.0.tgz"));
     compute.resetCounters();
 }
+
+test "verify-pins: the caps compute uses are put back afterwards (compute still takes 200 new rows and 512 MiB)" {
+    const f = try setup("pins-lock");
+    defer teardown(f);
+    try t.expectEqual(@as(usize, 200), compute.row_cap);
+    try t.expectEqual(@as(u64, 512 << 20), compute.total_cap);
+    try t.expectEqual(@as(u8, 0), verify(f, "pins-lock").code);
+    try t.expectEqual(@as(usize, 200), compute.row_cap);
+    try t.expectEqual(@as(u64, 512 << 20), compute.total_cap);
+    // Also when the run fails.
+    f.reg.served = &.{};
+    try t.expectEqual(@as(u8, 1), verify(f, "pins-lock").code);
+    try t.expectEqual(@as(usize, 200), compute.row_cap);
+    try t.expectEqual(@as(u64, 512 << 20), compute.total_cap);
+}

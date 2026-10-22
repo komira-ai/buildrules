@@ -4,6 +4,12 @@
 //! of the bytes with the lock's integrity (and the row's), the sha256 and the size with the row's. The lock is read as strictly as
 //! `compute` reads it and the table is bound to it first, so a row is only fetched from a URL derived from its name and version.
 //! A pull request's text only reaches the log through `oneLine`.
+//!
+//! NOT checked here (a limit of this command, stated rather than hidden): that a package a lock marks `inBundle` is really inside its
+//! parent's tarball. `autopin_lock` believes the flag only when the parent lists the child in `bundleDependencies`; if the listed child
+//! is missing from the tarball, npm fetches it from the registry by name and version, and nothing here pins that fetch. Looking inside the
+//! tarball needs the gzip stream inflated and a tar reader with caps; a real bundling package (aws-cdk-lib) is large, more than a strict
+//! reader should hold in memory, so it needs a streaming reader and is left to a follow-up.
 
 const std = @import("std");
 const compute = @import("autopin_compute.zig");
