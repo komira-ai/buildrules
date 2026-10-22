@@ -498,13 +498,17 @@ pub const sign_timeout = "90s";
 pub const SignRetry = struct {
     base_ms: u32 = 5000,
     waits: ?*cmds.Waits = null,
+    /// No new try is started once this long has passed since `signRetry` began (a try in flight is not cut short, cosign's own `--timeout` bounds it). The whole
+    /// step then fits the attest job's 15 minutes: 10 minutes of tries plus the one in flight (90 s) and the backoff.
+    budget_ms: i64 = 600_000,
 };
 
 /// The argv of one `cosign sign-blob`, and nothing in it can ask a person for anything:
 ///   --yes                           no confirmation prompt
-///   --oidc-provider github-actions  the token comes from the Actions OIDC endpoint and from no other provider
-///   --fulcio-auth-flow token        when that endpoint hands back no token, cosign fails at once; unset, it falls back to the OAuth device flow
-///                                   ("Non-interactive mode detected, using device flow") and waits for a human until the device code expires
+///   --fulcio-auth-flow token        the real guard: when the Actions endpoint hands back no token, cosign fails at once; unset, it falls back to the OAuth
+///                                   device flow ("Non-interactive mode detected, using device flow") and waits for a human until the device code expires
+///   --oidc-provider github-actions  defence in depth only: cosign v3.0.6's `sign-blob` ignores it (cmd/cosign/cli/signblob.go builds its KeyOpts without
+///                                   OIDCProvider; only sign, attest and attest-blob set it). Kept so that a cosign that honours it takes the Actions token alone
 ///   --timeout 90s                   cosign's own deadline for the whole call
 fn signArgv(cosign: []const u8, bundle: []const u8, file: []const u8) [12][]const u8 {
     return .{
@@ -527,7 +531,6 @@ fn signArgv(cosign: []const u8, bundle: []const u8, file: []const u8) [12][]cons
 /// the file or the identity. Only these retry; any other refusal is final.
 fn isTransientSignFailure(stderr: []const u8) bool {
     const markers = [_][]const u8{
-        "error fetching GitHub OIDC token",
         "fetching ambient OIDC credentials",
         "i/o timeout",
         "context deadline exceeded",
@@ -575,6 +578,7 @@ pub fn signWith(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign:
 
 /// `signWith`, with the delays between the tries of one file given (a test passes a recording seam).
 pub fn signRetry(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign: []const u8, dry: bool, retry: SignRetry) !usize {
+    const began = std.time.milliTimestamp();
     const d = try collect(a, dist_dir);
     try checkSums(a, dist_dir, d.files);
     var all = std.ArrayList([]const u8).empty;
@@ -599,6 +603,7 @@ pub fn signRetry(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign
         const r = while (true) : (tries += 1) {
             const got = try io.run(a, &argv);
             if (got.code == 0 or tries >= sign_tries or !isTransientSignFailure(got.stderr)) break got;
+            if (std.time.milliTimestamp() - began >= retry.budget_ms) break got;
             std.debug.print("release sign: cosign sign-blob failed for {s} (try {d} of {d}), trying again: {s}\n", .{ n, tries, sign_tries, got.stderr });
             backoff(retry, tries);
         };
@@ -1149,7 +1154,7 @@ test "sign tries a call again when the network failed it, with growing delays, a
     _ = try sums(a, dir.path);
     const seen = "Generating ephemeral keys...\nerror fetching GitHub OIDC token (will retry): Get \"https://example.invalid/idtoken\": dial tcp 192.0.2.1:443: i/o timeout\n";
     var flaky = FakeCosign{ .a = a, .flaky = "macos-arm64", .flaky_n = 2, .flaky_stderr = seen };
-    const s = try signSummary(a, &dir, &flaky, "macos-arm64");
+    const s = try signSummary(a, &dir, &flaky, "macos-arm64", 600_000);
     // two failed calls and the third that signs; the delays are 7 ms and 14 ms
     try t.expectEqualStrings("signed on=3 waits=2 sum=21", s);
 }
@@ -1166,19 +1171,22 @@ test "sign gives up after three tries of a network failure, and tries a refusal 
     var down = FakeCosign{ .a = a, .flaky = "linux-x86_64", .flaky_n = 100, .flaky_stderr = "Error: signing: getting keypair and token: context deadline exceeded" };
     var refused = FakeCosign{ .a = a, .flaky = "linux-x86_64", .flaky_n = 100, .flaky_stderr = "Error: signing: getting keypair and token: oidc: malformed jwt" };
     var boom = FakeCosign{ .a = a, .fail = "linux-x86_64" };
-    const got = try std.fmt.allocPrint(a, "{s}\n{s}\n{s}", .{
-        try signSummary(a, &dir, &down, "linux-x86_64"),
-        try signSummary(a, &dir, &refused, "linux-x86_64"),
-        try signSummary(a, &dir, &boom, "linux-x86_64"),
+    var spent = FakeCosign{ .a = a, .flaky = "linux-x86_64", .flaky_n = 100, .flaky_stderr = "Error: signing: getting keypair and token: context deadline exceeded" };
+    const got = try std.fmt.allocPrint(a, "{s}\n{s}\n{s}\n{s}", .{
+        try signSummary(a, &dir, &down, "linux-x86_64", 600_000),
+        try signSummary(a, &dir, &refused, "linux-x86_64", 600_000),
+        try signSummary(a, &dir, &boom, "linux-x86_64", 600_000),
+        // a network failure, but the time budget of the whole step is used up: no second try
+        try signSummary(a, &dir, &spent, "linux-x86_64", 0),
     });
-    try t.expectEqualStrings("CosignFailed on=3 waits=2 sum=21\nCosignFailed on=1 waits=0 sum=0\nCosignFailed on=1 waits=0 sum=0", got);
+    try t.expectEqualStrings("CosignFailed on=3 waits=2 sum=21\nCosignFailed on=1 waits=0 sum=0\nCosignFailed on=1 waits=0 sum=0\nCosignFailed on=1 waits=0 sum=0", got);
 }
 
 /// Signs `dir` with `fake` (delays of 7 ms and 14 ms) and says, in one line, how it ended, how many calls the fake saw on files whose name contains `part`, and
 /// the delays it was asked to wait. Clears the bundles after, so the next run starts clean.
-fn signSummary(a: std.mem.Allocator, dir: *Dir, fake: *FakeCosign, part: []const u8) ![]const u8 {
+fn signSummary(a: std.mem.Allocator, dir: *Dir, fake: *FakeCosign, part: []const u8, budget_ms: i64) ![]const u8 {
     var w = cmds.Waits{};
-    const res = signRetry(a, fake.io(), dir.path, "cosign", false, .{ .base_ms = 7, .waits = &w });
+    const res = signRetry(a, fake.io(), dir.path, "cosign", false, .{ .base_ms = 7, .waits = &w, .budget_ms = budget_ms });
     var on: usize = 0;
     for (fake.calls.items) |c| {
         if (std.mem.indexOf(u8, c, part) != null) on += 1;
@@ -1192,9 +1200,11 @@ fn signSummary(a: std.mem.Allocator, dir: *Dir, fake: *FakeCosign, part: []const
 
 test "backoff waits base_ms times the try, records it when asked, and records nothing otherwise" {
     var w = cmds.Waits{};
-    backoff(.{ .base_ms = 2, .waits = &w }, 3);
+    const before = std.time.milliTimestamp();
+    backoff(.{ .base_ms = 10, .waits = &w }, 3);
+    const slept = std.time.milliTimestamp() - before;
     backoff(.{ .base_ms = 0 }, 1);
-    try t.expect(w.n == 1 and w.ms[0] == 6);
+    try t.expect(w.n == 1 and w.ms[0] == 30 and slept >= 25);
 }
 
 test "isTransientSignFailure: the shape of the failed release run retries, a device-flow wait on its own does not" {
@@ -1218,6 +1228,8 @@ test "isTransientSignFailure: the shape of the failed release run retries, a dev
     try t.expect(!anyTransient(&.{
         "Error: signing: error obtaining token: expired_token",
         "Error: signing: [400] createSigningCertificate",
+        // cosign prints this line even when its own retry then succeeds; it says nothing by itself
+        "error fetching GitHub OIDC token (will retry): Get \"https://x\": 401 Unauthorized\nError: signing: [400] createSigningCertificate",
         "boom",
         "",
     }));
