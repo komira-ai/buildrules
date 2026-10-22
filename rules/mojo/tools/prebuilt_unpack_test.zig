@@ -530,6 +530,68 @@ test "the order of --native is the order of the options, kept" {
     try t.expectEqualStrings("libbase_sys.a", o.natives[1].soname);
 }
 
+test "run: --native-from holds the package's library to the bytes of a file the caller has, after the lock's own" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const c = try conda(a, &.{ .{ .name = "lib/mojo/p.mojoc", .body = m1 }, .{ .name = "lib/libprobe_sys.a", .body = libp }, .{ .name = "lib/libbase_sys.a", .body = libb } });
+    try tmp.dir.writeFile(.{ .sub_path = "built.a", .data = libb });
+    const r = try runWith(a, tmp.dir, c, &.{ "--natives", "n", "--native", try nativeArg(a, "libprobe_sys.a", libp), "--native-from", "libbase_sys.a=built.a" });
+    try t.expect(r.err == null);
+    try t.expectEqualStrings(libp, try read(a, tmp.dir, "n/libprobe_sys.a"));
+    try t.expectEqualStrings(libb, try read(a, tmp.dir, "n/libbase_sys.a"));
+}
+
+test "run: --native-from refuses a package whose library is not the file's bytes, naming both hashes, and writes nothing" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const c = try conda(a, &.{ .{ .name = "lib/mojo/p.mojoc", .body = m1 }, .{ .name = "lib/libbase_sys.a", .body = libb } });
+    try tmp.dir.writeFile(.{ .sub_path = "built.a", .data = libp });
+    const r = try runWith(a, tmp.dir, c, &.{ "--natives", "n", "--native-from", "libbase_sys.a=built.a" });
+    try t.expect(r.err.? == error.Sha256Mismatch);
+    try t.expect(std.mem.indexOf(u8, r.why, "lib/libbase_sys.a hashes to ") != null);
+    try t.expect(std.mem.indexOf(u8, r.why, &sha(libb)) != null);
+    try t.expect(std.mem.indexOf(u8, r.why, &sha(libp)) != null);
+    try t.expect(absent(tmp.dir, "out.mojoc"));
+    try t.expect(absent(tmp.dir, "n"));
+    // A library the package does not hold at all is refused, and so is a file that is not there.
+    const none = try conda(a, &.{.{ .name = "lib/mojo/p.mojoc", .body = m1 }});
+    const r2 = try runWith(a, tmp.dir, none, &.{ "--natives", "n", "--native-from", "libbase_sys.a=built.a" });
+    try t.expect(r2.err.? == error.NoMember);
+    const r3 = try runWith(a, tmp.dir, c, &.{ "--natives", "n", "--native-from", "libbase_sys.a=missing.a" });
+    try t.expect(r3.err.? == error.FileNotFound);
+    try t.expect(std.mem.indexOf(u8, r3.why, "cannot read missing.a") != null);
+}
+
+test "the command line: --native-from needs a soname, a file, a directory, and names a library once" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    const bad = [_]struct { args: []const []const u8, want: anyerror }{
+        .{ .args = &.{ "p.conda", "p", "o", "--natives", "n", "--native-from", "libx.a" }, .want = error.BadNative },
+        .{ .args = &.{ "p.conda", "p", "o", "--natives", "n", "--native-from", "libx.a=" }, .want = error.BadNative },
+        .{ .args = &.{ "p.conda", "p", "o", "--natives", "n", "--native-from", "x.a=f" }, .want = error.BadSoname },
+        .{ .args = &.{ "p.conda", "p", "o", "--native-from", "libx.a=f" }, .want = error.BadUsage },
+        .{ .args = &.{ "p.conda", "p", "o", "--natives", "n", "--native-from", "libx.a=f", "--native-from", "libx.a=g" }, .want = error.DuplicateNative },
+        .{ .args = &.{ "p.conda", "p", "o", "--natives", "n", "--native", "libx.a=" ++ ("0" ** 64), "--native-from", "libx.a=f" }, .want = error.DuplicateNative },
+    };
+    for (bad) |c| {
+        try t.expectError(c.want, U.parseArgs(a, c.args, &why));
+        try t.expect(why.len != 0);
+        why = "";
+    }
+    const ok = try U.parseArgs(a, &.{ "p.conda", "p", "o", "--natives", "n", "--native-from", "libx.a=dir/f.a" }, &why);
+    try t.expectEqual(@as(usize, 1), ok.files.len);
+    try t.expectEqualStrings("libx.a", ok.files[0].soname);
+    try t.expectEqualStrings("dir/f.a", ok.files[0].path);
+}
+
 test "every allocation failing in turn is an error and leaks nothing" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -648,4 +710,37 @@ test "every refusal of run is still a refusal when the allocation that words it 
     try sweepError(tmp.dir, &.{ "p.conda", "p", "isdir" }, error.IsDir);
     try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--natives", "f/d", "--native", good }, error.NotDir);
     try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--natives", "g", "--native", good }, error.IsDir);
+    // The same with the library held to the bytes of a file the caller has.
+    try tmp.dir.writeFile(.{ .sub_path = "built.a", .data = libb });
+    try tmp.dir.writeFile(.{ .sub_path = "other.a", .data = "other" });
+    try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--natives", "n", "--native-from", "libbase_sys.a" }, error.BadNative);
+    try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--natives", "n", "--native-from", "libbase_sys.a=" }, error.BadNative);
+    try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--natives", "n", "--native-from", "x.a=built.a" }, error.BadSoname);
+    try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--natives", "n", "--native", good, "--native-from", "libbase_sys.a=built.a" }, error.DuplicateNative);
+    try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--natives", "n", "--native-from", "libbase_sys.a=missing.a" }, error.FileNotFound);
+    try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--natives", "n", "--native-from", "libbase_sys.a=other.a" }, error.Sha256Mismatch);
+}
+
+test "run: every allocation failing in turn is an error with --native-from too" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const c = try conda(a, &.{ .{ .name = "lib/mojo/p.mojoc", .body = m1 }, .{ .name = "lib/libbase_sys.a", .body = libb }, .{ .name = "lib/libprobe_sys.a", .body = libp } });
+    try tmp.dir.writeFile(.{ .sub_path = "p.conda", .data = c });
+    try tmp.dir.writeFile(.{ .sub_path = "built.a", .data = libp });
+    const args = [_][]const u8{ "p.conda", "p", "out.mojoc", "--natives", "n", "--native", try nativeArg(a, "libbase_sys.a", libb), "--native-from", "libprobe_sys.a=built.a" };
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        var inner = std.heap.ArenaAllocator.init(t.allocator);
+        defer inner.deinit();
+        var fa = t.FailingAllocator.init(inner.allocator(), .{ .fail_index = i });
+        var why: []const u8 = "";
+        if (U.run(fa.allocator(), tmp.dir, &args, &why)) |_| {
+            try t.expect(!fa.has_induced_failure);
+            return;
+        } else |e| try t.expectEqual(error.OutOfMemory, e);
+    }
+    return error.SweepDidNotEnd;
 }

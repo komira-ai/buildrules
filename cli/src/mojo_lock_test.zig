@@ -158,7 +158,8 @@ test "parseGraph: a graph that is not mopm's format is refused, one reason each"
         .{ .text = "[]", .needle = "the unit graph is not a JSON object" },
         .{ .text = "\"x\"", .needle = "the unit graph is not a JSON object" },
         .{ .text = "{}", .needle = "no `unit_graph` format number" },
-        .{ .text = "{\"unit_graph\": 2}", .needle = "unit_graph format is not 1" },
+        .{ .text = "{\"unit_graph\": 3}", .needle = "unit_graph format is not 1 or 2" },
+        .{ .text = "{\"unit_graph\": 0}", .needle = "unit_graph format is not 1 or 2" },
         .{ .text = "{\"unit_graph\": \"1\"}", .needle = "unit_graph format is not 1" },
         .{ .text = "{\"unit_graph\": 1}", .needle = "no `toolchain` object" },
         .{ .text = "{\"unit_graph\": 1, \"toolchain\": 5}", .needle = "no `toolchain` object" },
@@ -180,6 +181,55 @@ test "parseGraph: a graph that is not mopm's format is refused, one reason each"
         };
         try kit.sweepOomRefusal(Call{ .text = c.text });
     }
+}
+
+const native_head = "{\"unit_graph\": 1, \"toolchain\": {}, \"units\": [";
+const native_unit = "{\"id\": \"native:cshim/shim\", \"kind\": \"native\", \"package\": \"cshim\", \"soname\": \"libshim.a\", \"srcs\": [{\"path\": \"native/shim.c\", \"sha256\": \"ab\"}]}";
+const lib_unit = "{\"id\": \"cshim@0.1.0#mojo1.0.0/lib\", \"package\": \"cshim\", \"kind\": \"lib\", \"root\": \"src/cshim\", \"natives\": [" ++
+    "{\"id\": \"shim\", \"soname\": \"libshim.a\", \"package\": \"cshim\", \"kind\": \"static\", \"built\": \"native:cshim/shim\"}]}";
+
+test "parseGraph: a native a member builds is a unit of the graph, and an entry that says built finds it" {
+    var e = Env.init();
+    defer e.deinit();
+    const a = e.a();
+    var d = Diag.init(a);
+    const g = try lockm.parseGraph(a, "g", native_head ++ lib_unit ++ ", " ++ native_unit ++ "]}", &d);
+    try t.expectEqual(@as(usize, 2), g.units.len);
+    try t.expectEqual(@as(usize, 1), g.units[0].built.len);
+    try t.expectEqualStrings("libshim.a", g.units[0].built[0].soname);
+    try t.expectEqualStrings("native:cshim/shim", g.units[0].built[0].unit);
+    try t.expectEqual(@as(usize, 0), d.count());
+    // A prebuilt entry (no `built`), an empty one and a non-object are no native unit's business.
+    const plain = native_head ++ "{\"id\": \"u\", \"natives\": [{\"soname\": \"liba.a\", \"sha256\": \"ab\"}, {\"built\": \"\"}, 5, {\"built\": 7}]}]}";
+    const p = try lockm.parseGraph(a, "g", plain, &d);
+    try t.expectEqual(@as(usize, 0), p.units[0].built.len);
+}
+
+test "parseGraph: an entry built by a native unit the graph does not have is refused, naming the unit, the library and the missing unit" {
+    var e = Env.init();
+    defer e.deinit();
+    const a = e.a();
+    var d = Diag.init(a);
+    try t.expectError(error.Invalid, lockm.parseGraph(a, "g", native_head ++ lib_unit ++ "]}", &d));
+    try expectMsg(&d, "cshim@0.1.0#mojo1.0.0/lib links the native library libshim.a, built by native:cshim/shim, but the graph has no such native unit");
+    // A native unit with another id is not the one named.
+    var d2 = Diag.init(a);
+    const other = "{\"id\": \"native:cshim/other\", \"package\": \"cshim\"}";
+    try t.expectError(error.Invalid, lockm.parseGraph(a, "g", native_head ++ lib_unit ++ ", " ++ other ++ "]}", &d2));
+    try expectMsg(&d2, "built by native:cshim/shim");
+    // An entry without a soname is still refused.
+    var d3 = Diag.init(a);
+    const nameless = "{\"id\": \"u\", \"natives\": [{\"built\": \"native:x/y\"}]}";
+    try t.expectError(error.Invalid, lockm.parseGraph(a, "g", native_head ++ nameless ++ "]}", &d3));
+    try expectMsg(&d3, "built by native:x/y");
+    const Call = struct {
+        pub fn call(_: @This(), x: std.mem.Allocator) !bool {
+            var dd = Diag.init(x);
+            _ = lockm.parseGraph(x, "g", native_head ++ lib_unit ++ "]}", &dd) catch return false;
+            return true;
+        }
+    };
+    try kit.sweepOomRefusal(Call{});
 }
 
 const GraphCall = struct {

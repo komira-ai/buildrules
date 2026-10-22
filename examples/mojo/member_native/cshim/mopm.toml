@@ -1,0 +1,13 @@
+[package]
+name = "cshim"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[native.shim]
+kind = "static"
+srcs = ["native/*.c"]
+hdrs = ["native/*.h"]
+
+[targets]
+lib = { path = "src/cshim" }
+tests = ["tests"]

@@ -3,6 +3,7 @@ load("@buildrules//ci/mojo_gate:fixture.bzl", "gate_fixture_lib")
 load("@buildrules//rules:isa.bzl", "test_exec_compatible_with")
 load("@buildrules//rules/core:run_check.bzl", "run_check")
 load("@buildrules//rules/cxx:defs.bzl", "c_check")
+load("@buildrules//rules/cxx:native.bzl", "native_static")
 load("@buildrules//rules/mojo:same.bzl", "mojo_same")
 load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
 load("@buildrules//rules/rust:cargo.bzl", "cargo_table_check")
@@ -114,6 +115,38 @@ mojo_test_run_rule(
     bin = ":mojo_test_exe",
     toolchain = ":mojo_toolchain",
     exec_compatible_with = test_exec_compatible_with(),
+)
+
+# A native library (rules/cxx/native.bzl) that is not as a library other people link must be. Each is a `native_static` whose archive check must refuse it,
+# naming what is wrong. The check is left an output of the target (`validate = False`): the failure of a validation ends the whole bxl command, and a failed
+# action of the target is what ci/negative.bzl counts. (Control: `native_good`, the same rule on a library that is as it must be.)
+native_static(
+    name = "native_good",
+    srcs = ["native/good.c"],
+    soname = "libplanted_good.a",
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_static(
+    name = "native_with_an_undefined_symbol",
+    srcs = ["native/undefined.c"],
+    soname = "libplanted_undefined.a",
+    validate = False,
+)
+
+native_static(
+    name = "native_newer_than_the_floor",
+    srcs = ["native/newer_than_floor.c"],
+    soname = "libplanted_newer.a",
+    validate = False,
+)
+
+native_static(
+    name = "native_with_debug_info",
+    srcs = ["native/debug_info.c"],
+    soname = "libplanted_debug.a",
+    validate = False,
 )
 
 scrub_files()

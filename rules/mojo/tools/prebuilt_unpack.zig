@@ -1,6 +1,9 @@
 //! prebuilt_unpack: the `.mojoc` of a registry package, and its static native libraries, out of its `.conda`.
 //!
-//! usage: prebuilt_unpack <package.conda> <name> <out.mojoc> [--natives <out-dir> [--native <soname>=<sha256>]...]
+//! usage: prebuilt_unpack <package.conda> <name> <out.mojoc> [--natives <out-dir> [--native <soname>=<sha256>]... [--native-from <soname>=<file>]...]
+//!
+//! `--native-from` is `--native` with the digest taken from a file the caller has: the package this build just packed must hold exactly
+//! the library the build made (rules/mojo/pack.bzl, `mojo_conda_holds`).
 //!
 //! A registry package is a `.conda` holding `lib/mojo/<name>.mojoc` (and `lib/mojo/<name>.mopm.json`), written by
 //! `mopm pack` (spec/package-metadata.schema.json). The zip walk and the zstd/tar reading are those of
@@ -162,47 +165,74 @@ pub fn parseNative(arg: []const u8) error{ BadNative, BadSoname }!Native {
     return .{ .soname = arg[0..eq], .sha256 = sha };
 }
 
+/// A static native library the caller has the file of (a package that was just built): the member must be that file's bytes.
+pub const NativeFile = struct { soname: []const u8, path: []const u8 };
+
 pub const Options = struct {
     conda: []const u8,
     name: []const u8,
     out: []const u8,
     natives_dir: ?[]const u8 = null,
     natives: []const Native = &.{},
+    files: []const NativeFile = &.{},
 };
 
-const usage = "usage: prebuilt_unpack <package.conda> <name> <out.mojoc> [--natives <out-dir> [--native <soname>=<sha256>]...]";
+const usage = "usage: prebuilt_unpack <package.conda> <name> <out.mojoc> [--natives <out-dir> [--native <soname>=<sha256>]... [--native-from <soname>=<file>]...]";
 
 /// The command line, or `BadUsage` / `BadNative` / `BadSoname` / `DuplicateNative` with the reason in `why.*`.
 pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8, why: *[]const u8) Error!Options {
     if (args.len < 3) return refuse(why, error.BadUsage, usage);
     var o = Options{ .conda = args[0], .name = args[1], .out = args[2] };
     var natives = std.ArrayList(Native).empty;
+    var files = std.ArrayList(NativeFile).empty;
     var i: usize = 3;
     while (i < args.len) : (i += 1) {
         const flag = args[i];
         const is_dir = std.mem.eql(u8, flag, "--natives");
         const is_native = std.mem.eql(u8, flag, "--native");
-        if ((!is_dir and !is_native) or i + 1 >= args.len) return refuse(why, error.BadUsage, usage);
+        const is_from = std.mem.eql(u8, flag, "--native-from");
+        if ((!is_dir and !is_native and !is_from) or i + 1 >= args.len) return refuse(why, error.BadUsage, usage);
         i += 1;
         if (is_dir) {
             if (o.natives_dir != null) return refuse(why, error.BadUsage, usage);
             o.natives_dir = args[i];
             continue;
         }
-        const n = parseNative(args[i]) catch |e| {
-            why.* = try std.fmt.allocPrint(a, "--native {s}: expected <soname>=<64 lowercase hex digits> with a soname lib<stem>.a ({s})", .{ args[i], @errorName(e) });
-            return e;
-        };
-        for (natives.items) |m| {
-            if (std.mem.eql(u8, m.soname, n.soname)) {
-                why.* = try std.fmt.allocPrint(a, "--native names {s} twice", .{n.soname});
-                return error.DuplicateNative;
+        var soname: []const u8 = "";
+        if (is_from) {
+            const eq = std.mem.indexOfScalar(u8, args[i], '=') orelse {
+                why.* = try std.fmt.allocPrint(a, "--native-from {s}: expected <soname>=<file>", .{args[i]});
+                return error.BadNative;
+            };
+            soname = args[i][0..eq];
+            checkSoname(soname) catch |e| {
+                why.* = try std.fmt.allocPrint(a, "--native-from {s}: the soname must be lib<stem>.a ({s})", .{ args[i], @errorName(e) });
+                return e;
+            };
+            if (eq + 1 == args[i].len) {
+                why.* = try std.fmt.allocPrint(a, "--native-from {s}: expected <soname>=<file>", .{args[i]});
+                return error.BadNative;
             }
+            try files.append(a, .{ .soname = soname, .path = args[i][eq + 1 ..] });
+        } else {
+            const n = parseNative(args[i]) catch |e| {
+                why.* = try std.fmt.allocPrint(a, "--native {s}: expected <soname>=<64 lowercase hex digits> with a soname lib<stem>.a ({s})", .{ args[i], @errorName(e) });
+                return e;
+            };
+            soname = n.soname;
+            try natives.append(a, n);
         }
-        try natives.append(a, n);
+        var named: usize = 0;
+        for (natives.items) |m| named += @intFromBool(std.mem.eql(u8, m.soname, soname));
+        for (files.items) |m| named += @intFromBool(std.mem.eql(u8, m.soname, soname));
+        if (named > 1) {
+            why.* = try std.fmt.allocPrint(a, "--native names {s} twice", .{soname});
+            return error.DuplicateNative;
+        }
     }
-    if (natives.items.len != 0 and o.natives_dir == null) return refuse(why, error.BadUsage, usage);
+    if ((natives.items.len != 0 or files.items.len != 0) and o.natives_dir == null) return refuse(why, error.BadUsage, usage);
     o.natives = natives.items;
+    o.files = files.items;
     return o;
 }
 
@@ -228,15 +258,28 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, args: []const []const u8, why:
         why.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ o.conda, @errorName(e) });
         return e;
     };
-    const names = try a.alloc([]const u8, 1 + o.natives.len);
+    // The libraries to hold the package to: the lock's values, then the hashes of the files the caller has.
+    var wanted = std.ArrayList(Native).empty;
+    try wanted.appendSlice(a, o.natives);
+    for (o.files) |f| {
+        const bytes = cwd.readFileAlloc(a, f.path, 1 << 30) catch |e| {
+            why.* = try std.fmt.allocPrint(a, "cannot read {s}: {s}", .{ f.path, @errorName(e) });
+            return e;
+        };
+        var d: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(bytes, &d, .{});
+        try wanted.append(a, .{ .soname = f.soname, .sha256 = d });
+    }
+    const natives = wanted.items;
+    const names = try a.alloc([]const u8, 1 + natives.len);
     names[0] = try std.fmt.allocPrint(a, "lib/mojo/{s}.mojoc", .{o.name});
-    for (o.natives, 1..) |n, i| names[i] = try std.fmt.allocPrint(a, "lib/{s}", .{n.soname});
+    for (natives, 1..) |n, i| names[i] = try std.fmt.allocPrint(a, "lib/{s}", .{n.soname});
     var bad: []const u8 = "";
     const bodies = members(a, pkg, names, &bad) catch |e| {
         why.* = try std.fmt.allocPrint(a, "{s}: {s}: {s}", .{ o.conda, bad, @errorName(e) });
         return e;
     };
-    for (o.natives, 1..) |n, i| {
+    for (natives, 1..) |n, i| {
         const got = hex(bodies[i]);
         const want = std.fmt.bytesToHex(n.sha256, .lower);
         if (!std.mem.eql(u8, &got, &want)) {
@@ -253,7 +296,7 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, args: []const []const u8, why:
             why.* = try std.fmt.allocPrint(a, "cannot create {s}: {s}", .{ dir, @errorName(e) });
             return e;
         };
-        for (o.natives, 1..) |n, i| {
+        for (natives, 1..) |n, i| {
             const path = try std.fs.path.join(a, &.{ dir, n.soname });
             cwd.writeFile(.{ .sub_path = path, .data = bodies[i] }) catch |e| {
                 why.* = try std.fmt.allocPrint(a, "cannot write {s}: {s}", .{ path, @errorName(e) });

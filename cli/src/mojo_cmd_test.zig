@@ -700,7 +700,7 @@ test "sync: a graph mopm printed that is not a graph, or that cannot be embedded
     const cases = [_]struct { text: []const u8, needle: []const u8 }{
         .{ .text = "not json", .needle = "pkgs/base: the GRAPH_JSON block is not JSON" },
         .{ .text = "[]", .needle = "the unit graph is not a JSON object" },
-        .{ .text = "{\"unit_graph\": 2}", .needle = "unit_graph format is not 1" },
+        .{ .text = "{\"unit_graph\": 3}", .needle = "unit_graph format is not 1 or 2" },
         .{ .text = "{\"unit_graph\": 1, \"toolchain\": {}}", .needle = "no `units` array" },
     };
     for (cases) |c| {
@@ -713,6 +713,25 @@ test "sync: a graph mopm printed that is not a graph, or that cannot be embedded
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "mopm's graph holds ''' and cannot be embedded in a table"));
     try t.expect(!h.has("pkgs/base/buildrules.mojo.lock.bzl"));
+}
+
+test "sync: a native a member builds is written with the graph, and an entry built by a native unit the graph does not have is refused with a message that names it" {
+    const h = try fresh();
+    defer h.destroy();
+    const plain = "\"deps\": [],\n      \"natives\": [],";
+    const with_entry = "\"deps\": [],\n      \"natives\": [{\"id\": \"shim\", \"soname\": \"libshim.a\", \"package\": \"base\", \"kind\": \"static\", \"built\": \"native:base/shim\"}],";
+    const dangling = try std.mem.replaceOwned(u8, h.a(), fx.graph, plain, with_entry);
+    try t.expect(!std.mem.eql(u8, dangling, fx.graph));
+    const bad = syncWithGraph(h, dangling);
+    try t.expectEqual(@as(u8, 1), bad.code);
+    try t.expect(kit.contains(bad.err, "base@0.1.0#mojo1.0.0/lib links the native library libshim.a, built by native:base/shim, but the graph has no such native unit"));
+    try t.expect(!h.has("pkgs/base/buildrules.mojo.lock.bzl"));
+    // With the unit in the graph, the same entry is fine, and the graph is written as mopm printed it.
+    const unit = "\"units\": [\n    {\"id\": \"native:base/shim\", \"kind\": \"native\", \"package\": \"base\", \"soname\": \"libshim.a\"},";
+    const whole = try std.mem.replaceOwned(u8, h.a(), dangling, "\"units\": [", unit);
+    const ok = syncWithGraph(h, whole);
+    try t.expectEqual(@as(u8, 0), ok.code);
+    try t.expect(kit.contains(h.read("pkgs/base/buildrules.mojo.lock.bzl"), "{\"id\": \"native:base/shim\", \"kind\": \"native\""));
 }
 
 test "sync: a toolchain in a graph that a table may not carry is refused, and so is a missing mopm.lock" {

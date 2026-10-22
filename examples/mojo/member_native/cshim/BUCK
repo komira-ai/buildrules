@@ -1,0 +1,19 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:pack.bzl", "mojo_conda_holds")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A member package with a C shim of its own (`[native.shim]` in mopm.toml). The macro builds it: `:native_shim_cxx` (the sources, compiled by the pinned zig) and
+# `:native_shim` (`libshim.a`, behind the archive checks), links the archive into the library's, the test's and every dependent's builds, and makes `:conda`,
+# which packs the archive as `lib/libshim.a`.
+mojo_package(path = ".")
+
+# The `.conda` holds the archive that was built and tested: unpacked, `lib/libshim.a` is exactly the bytes of `:native_shim`. (A `.conda` that lost the archive,
+# or held another one, is red.)
+mojo_conda_holds(
+    name = "conda_holds",
+    conda = ":conda",
+    natives = {"libshim.a": ":native_shim"},
+    package = "cshim",
+)
+
+scrub_files()

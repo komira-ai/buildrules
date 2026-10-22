@@ -1,0 +1,11 @@
+[package]
+name = "cshim_user"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[dependencies]
+cshim = { path = "cshim" }
+
+[targets]
+lib = { path = "src/cshim_user" }
+tests = ["tests"]

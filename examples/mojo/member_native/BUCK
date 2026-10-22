@@ -1,0 +1,7 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# cshim_user -> cshim: two members. cshim has a C shim of its own; this package's tests link cshim's archive without a line in this file.
+mojo_package(path = ".")
+
+scrub_files()

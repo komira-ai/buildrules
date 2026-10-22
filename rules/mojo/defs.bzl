@@ -19,8 +19,13 @@ its `:lib` is what the units here import. A registry dependency is a sha256-pinn
 by mopm, fetched and unpacked here. Native libraries are declared inputs and mopm checks each against the sha256 in the graph before it compiles
 anything. The static libraries (`lib<stem>.a`) of a registry package come from the lock: the `.conda` that holds the `.mojoc` holds them too,
 `prebuilt_unpack` takes each out after hashing it against the lock's value, and a unit links them in the graph's order (a library before every
-library it needs) with nothing written in the BUCK file. Any other native library (a shared one, a workspace member's) is an entry of
-`natives = {"<soname>": "<target>"}`; one the lock provides may not also be named there.
+library it needs) with nothing written in the BUCK file. A workspace member's own `[native.<id>] kind = "static"` is a native unit of the graph
+(`native:<package>/<id>`): its package builds it from its C sources, `:native_<id>_cxx` (a `cxx_library`) and `:native_<id>` (its `native_archive`, rules/cxx/native.bzl),
+and every unit that links it has an entry with `built` that this macro maps to that target, again with nothing written in the BUCK file. A package that builds natives
+also gets `:conda`, with the archives packed as `lib<id>.a`. The names `:native_<id>` and `:native_<id>_cxx` are stable: a repository that lists libraries by target can name
+them. Any other native library (a shared one) is an entry of `natives = {"<soname>": "<target>"}`; one the lock or the graph provides may not also be named there.
+Every library target carries `MojoNativeArchiveInfo` (its natives in link order, and their files), which a label that adopts the package hands to a dependent
+that links through other rules.
 
 The gate. `:lib` is a copy of `:lib_ungated` made by an action that takes the marker of every test run as an input, and a test run writes
 its marker only when the test passed. A failing test therefore leaves `:lib` unbuildable, and so every target that imports it (a
@@ -34,8 +39,10 @@ load("//rules:isa.bzl", "ISA_LEVELS", "isa_select", "required_isa", "test_exec_c
 load("//rules/core:pinned_file.bzl", "pinned_file")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/core:url_map.bzl", "mapped_url")
+load("//rules/cxx:native.bzl", "native_static")
 load("//rules/mopm:pins.bzl", "vname")
 load(":check.bzl", "mojo_check_rule", "mojo_table_rule", "mojo_workspace_rule")
+load(":pack.bzl", "mojo_conda")
 load(":unit.bzl", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_gated_lib_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
 
 SCHEMA = 1
@@ -102,8 +109,8 @@ def _check_table(t):
     if t.get("SCHEMA") != SCHEMA:
         fail("buildrules.mojo.lock.bzl has SCHEMA {} but these rules read {}: run `buildrules mojo sync` with a matching buildrules".format(t.get("SCHEMA"), SCHEMA))
     g = t["GRAPH"]
-    if g["unit_graph"] != 1:
-        fail("the committed unit graph is format {}; these rules read format 1".format(g["unit_graph"]))
+    if g["unit_graph"] not in (1, 2):
+        fail("the committed unit graph is format {}; these rules read formats 1 and 2 (2 adds the native unit of a member's own library)".format(g["unit_graph"]))
     if g["mojo"] != t["MOJO"] or g["toolchain"]["mojo"] != t["MOJO"]:
         fail("the table says Mojo {} but its unit graph is for Mojo {}: run `buildrules mojo sync`".format(t["MOJO"], g["mojo"]))
     if g["toolchain"]["closure_sha256"] != t["CLOSURE_SHA256"]:
@@ -114,19 +121,35 @@ def own_static_natives(unit):
     unit of a prebuilt package lists its whole closure's natives; these are the ones of `unit["package"]` itself, which come out of its `.conda`."""
     return {n["soname"]: n["sha256"] for n in unit["natives"] if n.get("kind") == "static" and n["package"] == unit["package"]}
 
-def native_wiring(unit, prebuilt_packages, user_natives, here, refuse = fail):
+def is_native_unit(uid):
+    """A native unit of the graph (`native:<package>/<id>`): a static library a workspace member builds from its own C sources."""
+    return uid.startswith("native:")
+
+def native_unit_id(uid):
+    """The id of the native in its member's manifest (`[native.<id>]`) out of the unit id `native:<package>/<id>`."""
+    return uid[len("native:"):].partition("/")[2]
+
+def native_wiring(unit, prebuilt_packages, user_natives, here, refuse = fail, built = {}):
     """Where each native library of `unit` comes from: `(sonames, labels)`, `sonames` in the order mopm's graph lists them (a library before every
     library it needs: the order of the link line) and `labels` the target for each. A static library of a registry package of the graph is the
-    sub-target `:prebuilt_<package>[<soname>]` of the unpacked `.conda`, so the lock alone gives it; every other native (a shared library,
-    a workspace member's) is a user's `natives = {soname: target}` entry. A library the lock provides that `user_natives` also names is refused:
-    two sources for one file. `refuse` is `fail` in a build; a test passes a recorder (rules/rust/refusal.bzl)."""
+    sub-target `:prebuilt_<package>[<soname>]` of the unpacked `.conda`, so the lock alone gives it; a library a workspace member builds (an entry
+    with `built`, the id of a native unit) is `built[<that id>]`, the target of the member's `native_static`; every other native (a shared library)
+    is a user's `natives = {soname: target}` entry. A library the lock or the graph provides that `user_natives` also names is refused: two sources
+    for one file. `refuse` is `fail` in a build; a test passes a recorder (rules/rust/refusal.bzl)."""
     sonames = []
     labels = {}
     for n in unit["natives"]:
         soname = n["soname"]
         sonames.append(soname)
         owner = n["package"]
-        if n.get("kind") == "static" and owner in prebuilt_packages:
+        if n.get("built"):
+            if n["built"] not in built:
+                refuse("{}: {} links the native library {}, built by {}, and the graph has no such native unit".format(here, unit["id"], soname, n["built"]))
+            elif soname in user_natives:
+                refuse("{}: the native library {} is built by the member {} ({}); remove it from mojo_package(natives = {{...}})".format(here, soname, owner, n["built"]))
+            else:
+                labels[soname] = built[n["built"]]
+        elif n.get("kind") == "static" and owner in prebuilt_packages:
             if soname in user_natives:
                 refuse("{}: the native library {} comes from the lock (the registry package {}); remove it from mojo_package(natives = {{...}})".format(here, soname, owner))
             labels[soname] = ":prebuilt_{}[{}]".format(owner, soname)
@@ -198,7 +221,7 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
     # lays out this package's files with its members' (each member's own `:workspace`, for the outermost members: a member holds its members).
     member_dirs = {}
     for mu in graph["units"]:
-        if mu["kind"] == "lib" and mu["package"] != root:
+        if mu["kind"] == "lib" and mu["package"] != root and not is_native_unit(mu["id"]):
             suffix = "src/" + mu["package"]
             if mu["root"] != suffix and not mu["root"].endswith("/" + suffix):
                 fail("{}: {} lives in {}, not <dir>/{}: a workspace member's library must be its package directory's src/<name>".format(here, mu["id"], mu["root"], suffix))
@@ -242,12 +265,15 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
         # of this unit: they change when the dependency changes, and what this unit is built from is the dependency's `.mojoc`, an input
         # of the action by its digest. mopm's `key` hashes every dependency's key, so it moves with any edit below the unit; Buck2's own
         # action key replaces it, and a rebuild that leaves a dependency's `.mojoc` as it was stops there (docs/contract.md, section 12).
+        # The native units a `built` entry of the unit names stay whole (but for their `key`): the archive is the unit's input, and the
+        # entry has to name a unit of the graph it is given.
         cut = []
-        for i in sorted(_closure(units, uid) + [uid]):
+        wanted = {n["built"]: True for n in units[uid]["natives"] if n.get("built")}
+        for i in sorted(_closure(units, uid) + [uid] + [b for b in wanted.keys() if b in units]):
             u = units[i]
-            if i == uid:
+            if i == uid or is_native_unit(i):
                 u = {k: v for k, v in u.items() if k != "key"}
-                if profile:
+                if profile and i == uid:
                     u["profile"] = profile
             else:
                 u = {k: v for k, v in u.items() if k in _DEP_FIELDS}
@@ -260,10 +286,47 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
             "units": cut,
         })
 
+    def member_of(package):
+        # The directory (relative to this package's) of the workspace member `package`: where its library lives.
+        for mu in graph["units"]:
+            if mu["kind"] == "lib" and mu["package"] == package and not is_native_unit(mu["id"]):
+                suffix = "src/" + package
+                r = mu["root"]
+                if r != suffix and not r.endswith("/" + suffix):
+                    fail("{}: {} lives in {}, not <dir>/{}: a workspace member's library must be its package directory's src/<name>".format(here, mu["id"], r, suffix))
+                return r[:-len(suffix)].rstrip("/")
+        fail("{}: the graph has no library of the package {}".format(here, package))
+
+    def native_label(uid):
+        # The archive target of a native unit: this package's own (`:native_<id>`), or the member's (its `native_static`, in the member's package).
+        # The names are the contract with a repository that lists a library by its target (docs/contract.md, section 12).
+        nid = native_unit_id(uid)
+        u = units[uid]
+        if u["package"] == root:
+            return ":native_" + nid
+        return "//" + _join(here, project, member_of(u["package"])) + ":native_" + nid
+
+    native_units = [uid for uid in sorted(units.keys()) if is_native_unit(uid)]
+    built_labels = {uid: native_label(uid) for uid in native_units}
+
+    def target_of_soname(soname):
+        # The target that provides `soname` to a native unit that needs it: a member's archive, a registry package's, or a library of `natives = {...}`.
+        for uid in sorted(units.keys()):
+            for n in units[uid].get("natives", []):
+                if n["soname"] != soname:
+                    continue
+                if n.get("built"):
+                    return built_labels.get(n["built"])
+                if n.get("kind") == "static" and n["package"] in prebuilt_packages:
+                    return ":prebuilt_{}[{}]".format(n["package"], soname)
+                if soname in natives:
+                    return natives[soname]
+        return None
+
     def common(uid, kind, product, profile = None):
         u = units[uid]
         cl = _closure(units, uid)
-        sonames, native_labels = native_wiring(u, prebuilt_packages, natives, here)
+        sonames, native_labels = native_wiring(u, prebuilt_packages, natives, here, built = built_labels)
         return dict(
             deps = [label_of(d, ":lib_ungated" if kind == "test" else ":lib") for d in u["deps"]],
             graph = slice_of(uid, profile),
@@ -285,6 +348,47 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
             visibility = visibility,
         )
 
+    # The package's own native libraries (`[native.<id>]` of its manifest, a native unit of the graph): the sources compiled by the pinned zig at the
+    # platform baseline into `:native_<id>_cxx`, and the archive of it, `:native_<id>`, behind the checks of rules/cxx/archive. Every unit that links the
+    # library (this package's, and every dependent member's) lists it in `natives` with `built`, and `native_wiring` maps that to the target.
+    own_native_ids = {}
+    here_repo = _join(here, project)
+    for uid in native_units:
+        u = units[uid]
+        if u["package"] != root:
+            continue
+        nid = native_unit_id(uid)
+        if u.get("kind") == "shared":
+            fail("{}: {} is a shared library; a member's native library is static".format(here, uid))
+        srcs = [s["path"] for s in u.get("srcs", [])]
+        if not srcs:
+            fail("{}: the native unit {} has no source".format(here, uid))
+        hdrs = [h["path"] for h in u.get("hdrs", [])]
+        dirs = u.get("includes")
+        if dirs == None:
+            dirs = sorted({h.rpartition("/")[0]: True for h in hdrs}.keys())
+        needs = []
+        for s in u.get("needs", []):
+            t = target_of_soname(s)
+            if t == None:
+                fail("{}: {} needs the library {}, which no unit of the graph and no entry of natives = {{...}} provides".format(here, uid, s))
+            needs.append(t)
+        soname = u.get("soname") or "lib{}.a".format(nid)
+        own_native_ids[nid] = soname
+        name_once("native_" + nid + "_cxx")
+        native_static(
+            name = name_once("native_" + nid),
+            srcs = [_join(project, p) for p in srcs],
+            hdrs = [_join(project, p) for p in hdrs],
+            includes = [_join(here_repo, d) or "." for d in dirs],
+            cflags = u.get("cflags", []),
+            cflags_by_os = u.get("cflags_by_os", {}),
+            soname = soname,
+            needs = needs,
+            file_prefix = here_repo,
+            visibility = visibility,
+        )
+
     libs = []
     builds = []
     tests = []
@@ -292,12 +396,13 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
     # The package's own library: the sources kcov measures, at the names the line tables of a test give them (`<import>/<file>`).
     own_lib = None
     for uid in sorted(units.keys()):
-        if units[uid]["kind"] == "lib" and units[uid]["package"] == root:
+        if units[uid]["kind"] == "lib" and units[uid]["package"] == root and not is_native_unit(uid):
             own_lib = units[uid]
-    here_repo = _join(here, project)
     for uid in sorted(units.keys()):
         u = units[uid]
         kind = u["kind"]
+        if is_native_unit(uid):
+            continue
         if kind == "prebuilt":
             if u["package"] == root:
                 fail("{}: the graph holds a prebuilt unit for the root package itself".format(uid))
@@ -393,6 +498,22 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
         srcs = {_join(here_repo, own_lib["root"], s["path"][len(own_lib["root"]) + 1:]): _join(project, s["path"]) for s in own_lib["srcs"]} if own_lib and covs else {},
         visibility = visibility,
     )
+    # `:conda`, the package as a registry would serve it, for a package that builds native libraries of its own: `mopm pack` of the gated `:lib`, with each
+    # archive packed as `lib<id>.a` beside the `.mojoc` (rules/mojo/pack.bzl). Its sha256 goes into the lock of a consumer, which gets the archive as a
+    # prebuilt: the archive that was tested is the archive that ships.
+    if own_native_ids:
+        mojo_conda(
+            name = name_once("conda"),
+            lib = ":lib",
+            manifest = ":mopm.toml",
+            members = {m: "//" + _join(here, project, m) + ":mopm.toml" for m in sorted(member_dirs.keys())},
+            mojo = mojo,
+            mopm = mopm,
+            natives = {nid: ":native_" + nid for nid in own_native_ids.keys()},
+            package = root,
+            version = graph["package"].partition("@")[2],
+            visibility = visibility,
+        )
     mojo_group(name = name_once("build"), deps = builds, check = ":check", visibility = visibility)
     mojo_group(name = name_once("test"), deps = tests, check = ":check", visibility = visibility)
     mojo_group(name = name_once("ci"), deps = [":build", ":test"], check = ":check", visibility = visibility)

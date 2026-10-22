@@ -7,6 +7,8 @@
       base_sys/            the other `-sys` package, a workspace member of probe_sys
     sys_app/               imports probe_sys from the registry stand-in: both static archives come out of the `.conda` files, with no `natives` in its BUCK file
     copy_of_base/          base's sources at another path; `:same_bytes` fails unless the two `.mojoc` files are equal
+    member_native/         cshim_user -> cshim: two members; cshim has a C shim of its own (`[native.shim]`), built by `mojo_package` (`:native_shim`), linked into both members' tests and packed into `cshim:conda`
+    copy_of_cshim/         cshim's C at another path; `:same_bytes` fails unless the two archives are equal
     reexport/              a package whose `__init__.mojo` only re-exports (a docstring and `from .ops import ...`): the Mojo coverage report omits it and `:coverage` lists it `0/0`
     reexport_unused/       PLANTED DEFECT: the same plus a function nothing calls; `:coverage` must stay red with "is in no report" (ci/negative.bzl, COVERAGE_REDS)
     mopm-toolchain.toml    the versions every package here is built with (found by walking up)
@@ -14,6 +16,10 @@
     buildrules mojo sync               # after a change to a mopm.toml, mopm.lock, mopm-toolchain.toml or any source
     buck2 build //examples/mojo/ws:ci //examples/mojo/ws:coverage
     buildrules mojo check              # offline
+
+`member_native/` and `member_native/cshim/` hold graphs (`buildrules.mojo.lock.bzl`) in the shape of unit graph format 2 (a `native:<package>/<id>` unit and `built` entries,
+spec/unit-graph.md of mopm), written by hand and then made equal, key for key, to what a build of the mopm change that prints them says (`:table`). The pinned mopm prints format 1 and
+does not read them, so their unit builds wait for the mopm release that does; the pin bump runs `buildrules mojo sync` there and moves them to `//ci:mojo`.
 
 `mopm.lock` files are written by hand here: `mopm lock` needs a registry even for path dependencies, and the lock of `ws/` names a registry package.
 `ws/mopm.lock` records the `cnative` package as it would come from a registry: the URL, sha256 and size of the `.conda` that

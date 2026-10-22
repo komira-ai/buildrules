@@ -5,7 +5,7 @@ needs: the order of the link line, which is not the sorted order), and a shared 
 (rules/rust/refusal.bzl) and refuses with what is wrong, so a test target is green only if nothing was.
 """
 
-load("//rules/mojo:defs.bzl", "native_wiring", "own_static_natives")
+load("//rules/mojo:defs.bzl", "is_native_unit", "native_unit_id", "native_wiring", "own_static_natives")
 
 PROBE = {"id": "probe_sys", "soname": "libprobe_sys.a", "sha256": "aa", "package": "probe_sys", "kind": "static", "needs": ["libbase_sys.a"]}
 BASE = {"id": "base_sys", "soname": "libbase_sys.a", "sha256": "bb", "package": "base_sys", "kind": "static"}
@@ -39,3 +39,26 @@ def own_natives(refuse = fail):
     got = own_static_natives(two)
     if list(got.items()) != [("libprobe_sys.a", "aa"), ("libbase_sys.a", "bb")]:
         refuse("the static natives of one package are not in the graph's order, or include a shared one: {}".format(got))
+
+# Natives a workspace member builds: entries with `built`, the id of a native unit of the graph (`native:<package>/<id>`). `shim` is the dependent's own member,
+# `core` the member below it; the second is needed by the first, so it comes after it in the link line.
+SHIM = {"id": "shim", "soname": "libshim.a", "package": "app", "kind": "static", "needs": ["libcore.a"], "built": "native:app/shim"}
+CORE = {"id": "core", "soname": "libcore.a", "package": "core", "kind": "static", "built": "native:core/core"}
+BUILT_UNIT = {"id": "app@1.0.0#mojo1.0.0/test:t", "package": "app", "natives": [SHIM, CORE, BASE]}
+BUILT = {"native:app/shim": ":native_shim", "native:core/core": "//core:native_core"}
+
+def built_natives_are_the_targets_of_their_units(refuse = fail):
+    """A `built` entry is the target of the native unit it names (this package's, or the member's), in the graph's order, beside a registry package's archive."""
+    sonames, labels = native_wiring(BUILT_UNIT, {"base_sys": True}, {}, "examples/x", refuse, BUILT)
+    if sonames != ["libshim.a", "libcore.a", "libbase_sys.a"]:
+        refuse("the order of the graph is not kept: {}".format(sonames))
+    want = {"libshim.a": ":native_shim", "libcore.a": "//core:native_core", "libbase_sys.a": ":prebuilt_base_sys[libbase_sys.a]"}
+    if labels != want:
+        refuse("the targets are not the units': {}".format(labels))
+
+def native_units_are_told_by_their_id(refuse = fail):
+    """`native:<package>/<id>` is a native unit and its id is what follows the slash; a library or a test is neither."""
+    if not is_native_unit("native:app/shim") or is_native_unit("app@1.0.0#mojo1.0.0/lib") or is_native_unit("x/native:y"):
+        refuse("is_native_unit does not tell a native unit by its id")
+    if native_unit_id("native:app/shim") != "shim" or native_unit_id("native:core/a/b") != "a/b":
+        refuse("native_unit_id is not what follows the first slash")

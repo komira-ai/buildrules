@@ -2,7 +2,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # The C/C++ family: the toolchain's launcher, and the symbol-prefixing tools (README.md).
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
-load("//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load("//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
 load(":defs.bzl", "c_exe")
 
 # zig_cc_launcher: runs `zig cc|c++|ar|ranlib` for the toolchain (toolchain.bzl): expands the nested response
@@ -99,6 +99,45 @@ zig_exe(
     visibility = ["PUBLIC"],
 )
 
+# The checks above as modules, so the archive check applies the same code to each member of a native library.
+zig_module(
+    name = "cxx_hermetic",
+    src = "hermetic/src/hermetic.zig",
+    imports = ["hermetic/src/hermetic_test.zig"],
+    unit_tests = [":hermetic_unit"],
+)
+
+zig_module(
+    name = "cxx_floor",
+    src = "floor/src/floor.zig",
+    imports = ["floor/src/floor_test.zig"],
+    unit_tests = [":glibc_floor_unit"],
+)
+
+# archive_check (Zig): the validation of a native static library (`native_archive`, native.bzl): deterministic members, no debug section, no
+# build path, the glibc floor, and no undefined symbol that the final link would lack. Behind its unit tests (archive/src/archive_test.zig).
+_ARCHIVE_SRCS = ["archive/src/archive_test.zig", "archive/src/floor_symbols.txt"]
+
+zig_test(
+    name = "archive_check_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = _ARCHIVE_SRCS,
+    src = "archive/src/archive.zig",
+    deps = [":cxx_hermetic", ":cxx_floor"],
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "archive_check",
+    exec_compatible_with = LINUX_X86_64,
+    imports = _ARCHIVE_SRCS,
+    src = "archive/src/archive.zig",
+    deps = [":cxx_hermetic", ":cxx_floor"],
+    unit_tests = [":archive_check_unit", _ZIG_VERSION],
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
 # Read by the buildrules.dev site's tests (site/BUCK), which check its pages against this file.
 export_file(
     name = "defs.bzl",
@@ -123,8 +162,8 @@ export_file(
 # The coverage of the sources the tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. zig_cc_launcher.zig and
 # elfsyms.c have no unit test and are not measured.
 zig_coverage(
-    test_targets = [":prefix_tool_unit", ":glibc_floor_unit", ":hermetic_unit"],
-    expect = ["rules/cxx/" + f for f in glob(["prefix/src/*.zig", "floor/src/*.zig", "hermetic/src/*.zig"], exclude = ["**/*_test.zig"])],
+    test_targets = [":prefix_tool_unit", ":glibc_floor_unit", ":hermetic_unit", ":archive_check_unit"],
+    expect = ["rules/cxx/" + f for f in glob(["prefix/src/*.zig", "floor/src/*.zig", "hermetic/src/*.zig", "archive/src/*.zig"], exclude = ["**/*_test.zig"])],
 )
 
 scrub_files()

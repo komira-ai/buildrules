@@ -171,6 +171,9 @@ PLANTED = [
     ("//ci/planted:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
     ("//ci/planted:lib_behind_a_failing_test", "//examples/hello:hello_lib", "this test fails by design"),
     ("//ci/planted:mojo_test_that_fails", None, "check marker: TEST FAILED: "),
+    ("//ci/planted:native_with_an_undefined_symbol", "//ci/planted:native_good", "undefined symbol: planted_missing_helper"),
+    ("//ci/planted:native_newer_than_the_floor", "//ci/planted:native_good", "undefined symbol: arc4random"),
+    ("//ci/planted:native_with_debug_info", "//ci/planted:native_good", "member debug_info.c.pic.o has 1 debug section(s), first .debug_planted"),
 ]
 
 def _failures(ctx, label):
