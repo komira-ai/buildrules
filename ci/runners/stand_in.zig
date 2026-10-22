@@ -8,8 +8,8 @@
 //!   c_shared    cc -target x86_64-linux-gnu.2.34 -O2 -g0 -fPIC -shared -Wall -Werror -Wl,-soname,libstand_in.so.1 -Wl,--build-id=none SRC -o OUT
 //!   node        cc -target x86_64-linux-gnu.2.34 -shared -fPIC -O2 -fvisibility=hidden -Wall -Werror -Wl,-z,undefs -o OUT -I<dir> -DSTAND_IN=1 SRC
 //! The environment is the one `check run` makes: the cache directories and HOME inside a private scratch directory of the action's
-//! `$BUCK_SCRATCH_PATH`, made absolute, named for the rule (`buildrules`, `c_exe`, `c_shared`, `buildrules`, `br`), and the action's working directory. No
-//! variable outside `allowed_env` may be there. zig's own argv[0] is the absolute path of the stand-in (`check run` makes a relative program absolute).
+//! `$BUCK_SCRATCH_PATH`, made absolute, named for the rule (`buildrules`, `c_exe`, `c_shared`, `buildrules`, `br`), and the action's working directory. Apart
+//! from those and `HOME`, zig's environment is its parent's (`check`'s, which is the action's), unchanged, none dropped, none added. zig's own argv[0] is the absolute path of the stand-in (`check run` makes a relative program absolute).
 
 const std = @import("std");
 
@@ -91,19 +91,36 @@ fn env(a: std.mem.Allocator, name: []const u8) []const u8 {
     return std.process.getEnvVarOwned(a, name) catch fail("{s} is not set", .{name});
 }
 
-/// The variables the program may have: the action's own (`BUCK_SCRATCH_PATH`, `HOME` before `check run` replaces it, `HOSTNAME`, and the nonce a determinism probe adds)
-/// and the two cache variables `check run` sets. Any other (a `PATH`, an `LD_PRELOAD`) is one the rule gave zig and the scripts it replaced did not.
-const allowed_env = [_][]const u8{ "BUCK_SCRATCH_PATH", "HOME", "HOSTNAME", "ZIG_GLOBAL_CACHE_DIR", "ZIG_LOCAL_CACHE_DIR", "BUILDRULES_NONCE" };
+/// What `check run` may change in the action's environment for zig: the two cache variables and `HOME`. Every other variable zig has is the action's own (what its
+/// parent, `check`, was started with: on the farm `BUCK_SCRATCH_PATH`, `HOSTNAME` and `HOME`; on a runner that executes actions itself, the runner's whole environment),
+/// unchanged and none dropped. A variable the rule adds or changes (a `PATH`, an `LD_PRELOAD`) is one the scripts it replaced did not give zig.
+const set_by_check = [_][]const u8{ "HOME", "ZIG_GLOBAL_CACHE_DIR", "ZIG_LOCAL_CACHE_DIR" };
 
 fn checkNoOtherEnv(a: std.mem.Allocator, shape: Shape) void {
+    const path = std.fmt.allocPrint(a, "/proc/{d}/environ", .{std.os.linux.syscall0(.getppid)}) catch fail("out of memory", .{});
+    const raw = std.fs.cwd().readFileAlloc(a, path, 1 << 24) catch |e| fail("cannot read the environment of the parent ({s}): {s}", .{ path, @errorName(e) });
+    var parent = std.StringHashMap([]const u8).init(a);
+    var parts = std.mem.splitScalar(u8, raw, 0);
+    while (parts.next()) |entry| {
+        const eq = std.mem.indexOfScalar(u8, entry, '=') orelse continue;
+        parent.put(entry[0..eq], entry[eq + 1 ..]) catch fail("out of memory", .{});
+    }
     var map = std.process.getEnvMap(a) catch fail("cannot read the environment", .{});
     var it = map.iterator();
     while (it.next()) |entry| {
-        var known = false;
-        for (allowed_env) |name| {
-            if (std.mem.eql(u8, entry.key_ptr.*, name)) known = true;
+        const name = entry.key_ptr.*;
+        if (parent.get(name)) |was| {
+            if (std.mem.eql(u8, was, entry.value_ptr.*)) continue;
         }
-        if (!known) fail("{s}: the environment has {s}, which the rule does not give zig (allowed: BUCK_SCRATCH_PATH, HOME, HOSTNAME, ZIG_GLOBAL_CACHE_DIR, ZIG_LOCAL_CACHE_DIR, BUILDRULES_NONCE)", .{ @tagName(shape), entry.key_ptr.* });
+        var ours = false;
+        for (set_by_check) |n| {
+            if (std.mem.eql(u8, name, n)) ours = true;
+        }
+        if (!ours) fail("{s}: the environment has {s}, which the action did not have and the rule may not give zig (only HOME, ZIG_GLOBAL_CACHE_DIR and ZIG_LOCAL_CACHE_DIR are set)", .{ @tagName(shape), name });
+    }
+    var left = parent.iterator();
+    while (left.next()) |entry| {
+        if (map.get(entry.key_ptr.*) == null and !std.mem.eql(u8, entry.key_ptr.*, "_")) fail("{s}: the action's variable {s} is not in zig's environment", .{ @tagName(shape), entry.key_ptr.* });
     }
 }
 
