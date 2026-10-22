@@ -3,7 +3,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # (rules/mojo/check.bzl); `buildrules mojo sync` writes this file when the directory of the toolchain file has no BUCK file.
 export_file(
     name = "mopm-toolchain.toml",
-    src = "mopm-toolchain.toml" if glob(["mopm-toolchain.toml"]) else fail("mopm-toolchain.toml is required and there is no default. Create it, for example:\n\n[toolchain]\nmopm = '0.0.20'\nmojo = '1.0.0'\n"),
+    src = "mopm-toolchain.toml" if glob(["mopm-toolchain.toml"]) else fail("mopm-toolchain.toml is required and there is no default. Create it, for example:\n\n[toolchain]\nmopm = '0.0.24'\nmojo = '1.0.0'\n"),
     visibility = ["PUBLIC"],
 )
 

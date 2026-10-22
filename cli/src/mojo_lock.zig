@@ -2,7 +2,7 @@
 //! whether it is still the graph of the files on disk (docs/contract.md, section 12). Pure Starlark data:
 //!
 //!     SCHEMA = 1
-//!     MOPM = {"version": "0.0.20", "origin": "builtin"}
+//!     MOPM = {"version": "0.0.24", "origin": "builtin"}
 //!     MOJO = "1.0.0"
 //!     CLOSURE_SHA256 = "<mopm's hash of the toolchain closure, a second copy of the graph's>"
 //!     MANIFEST_SHA256 = {"mopm.toml": "<sha256>", ...}

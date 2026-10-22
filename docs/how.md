@@ -384,7 +384,7 @@ named chains of steps. `dist` is the directory the build script writes. Any othe
 
 ```toml
 [toolchain]
-mopm = "0.0.20"     # an exact release buildrules pins, or one buildrules-pins.toml supplies
+mopm = "0.0.24"     # an exact release buildrules pins, or one buildrules-pins.toml supplies
 mojo = "1.0.0"     # an exact release mopm pins a toolchain for
 ```
 
@@ -624,7 +624,7 @@ shows which it is. Against a stand-in, point the download at a copy of its tarba
 `buildrules-pins.toml`:
 
 ```toml
-[mopm."0.0.2"]   # a version buildrules does not pin; one it pins (0.0.20 today) is refused here
+[mopm."0.0.2"]   # a version buildrules does not pin; one it pins (0.0.24 today) is refused here
 url = "<release url>"
 sha256 = "<64 hex>"
 size = <bytes>

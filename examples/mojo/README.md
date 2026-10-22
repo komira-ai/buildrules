@@ -27,4 +27,4 @@ a lock that disagrees with a `.conda` fails the download's check, and one that d
 
 The URL in the lock is a placeholder channel; a machine that has the file points the download at it in the `.buckconfig.local` of the cell that declares it, for example
 `[buildrules] url_map = https://conda.mopm.dev/=http://mirror.invalid/channel/` in the root `.buckconfig.local` (the sha256 is still checked). The mopm tarball
-(`rules/mopm/pins.bzl`, the published mopm 0.0.20) is a download of the `toolchains` cell from its release URL and needs no mirror.
+(`rules/mopm/pins.bzl`, the published mopm 0.0.24) is a download of the `toolchains` cell from its release URL and needs no mirror.
