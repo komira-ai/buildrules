@@ -381,6 +381,26 @@ test "a package named on the command line with extra slashes or dots is the same
     }
 }
 
+test "a package named by a symbolic link to it, or by its absolute path inside the root, is the package that holds the cell: refused, nothing is written" {
+    const h = try repo("[cells]\n  toolchains = pkgs/base/tc\n", "toolchains");
+    defer h.destroy();
+    try h.put("pkgs/base/tc/BUCK", "# toolchains\n");
+    try h.tmp.dir.symLink("pkgs/base", "viapkg", .{});
+    const abs = try std.fmt.allocPrint(h.a(), "{s}/pkgs/base", .{try h.tmp.dir.realpathAlloc(h.a(), ".")});
+    for ([_][]const u8{ "viapkg", abs }) |spelling| {
+        const argv = h.a().alloc([]const u8, sync_args.len + 1) catch @panic("out of memory");
+        @memcpy(argv[0..sync_args.len], &sync_args);
+        argv[sync_args.len] = spelling;
+        const r = h.run(argv);
+        if (r.code != 1 or !kit.contains(r.err, "inside the Mojo package")) {
+            std.debug.print("`mojo sync {s}`: exit {d}; stderr: {s}\n", .{ spelling, r.code, r.err });
+            return error.NotRefused;
+        }
+        try expectNothingWritten(h);
+        if (h.has("pkgs/base/tc/mopm_pins.bzl") or h.has("pkgs/base/tc/mojo_pins.bzl")) return error.ARefusedRunWrote;
+    }
+}
+
 test "a package that cannot be resolved is a refusal, not a skip: nothing is written" {
     const h = try repo("[cells]\n  toolchains = " ++ custom ++ "\n", custom);
     defer h.destroy();
