@@ -55,7 +55,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx)
+    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + unpack_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
@@ -171,7 +171,53 @@ PLANTED = [
     ("//ci/planted:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
     ("//ci/planted:lib_behind_a_failing_test", "//examples/hello:hello_lib", "this test fails by design"),
     ("//ci/planted:mojo_test_that_fails", None, "check marker: TEST FAILED: "),
+    ("//ci/planted:zig_dist_of_other_bytes", "//rules/pins:zig", "the archive's sha256 is not the one given with --sha256"),
+    ("//ci/planted:zig_dist_over_its_max_output", "//rules/pins:zig", "the archive holds more decompressed bytes than --max-output allows"),
+    ("//ci/planted:zig_dist_of_a_corrupt_archive", "//rules/pins:zig", "the compressed data is corrupt"),
 ]
+
+# Every action that unpacks an archive is the pinned `unpack` given the archive's sha256 and size, its format and a limit on its decompressed bytes
+# (rules/core/unpack.bzl). The rules are found by kind in the closure of what CI builds, their actions are read, and each must run the program pinned for the
+# execution platform (rules/pins:unpack, a download: no rule builds it) with all four checks and a well formed value for each. The targets that must be among them
+# are named, so a rule that stops unpacking this way (or stops being built) does not leave an empty list that passes.
+UNPACK_KINDS = "zig_dist_rule|_mopm"
+UNPACK_CATEGORIES = ["zig_unpack", "mopm_unpack"]
+UNPACK_TARGETS = ["buildrules//rules/pins:zig", "buildrules//rules/pins:zig_next", "toolchains//:mopm_0_0_25"]
+
+def _flag_value(cmd, flag):
+    for i in range(len(cmd) - 1):
+        if cmd[i] == flag:
+            return cmd[i + 1]
+    return None
+
+def unpack_problems(ctx):
+    """Every way an unpacking action runs without the program pinned for its platform or without a check: a list of strings, empty when all hold."""
+    problems = []
+    nodes = ctx.cquery().eval("kind('{}', deps(//ci:all) + deps(//ci:mojo))".format(UNPACK_KINDS))
+    found = {}
+    for node in nodes:
+        label = str(node.label).split(" ")[0]
+        for act in ctx.aquery().all_actions([node]):
+            if str(act.attrs.category) not in UNPACK_CATEGORIES:
+                continue
+            found[label] = True
+            # The command is an opaque attribute that prints as `[arg, arg, ...]`.
+            cmd = str(act.attrs.cmd).lstrip("[").rstrip("]").split(", ")
+            if "/rules/pins/__bootstrap_unpack_" not in cmd[0]:
+                problems.append("{}: the unpacking action runs {}, not the pinned download of `unpack` (rules/pins/bootstrap.bzl)".format(label, cmd[0]))
+            sha = _flag_value(cmd, "--sha256")
+            if sha == None or len(sha) != 64 or any([c not in "0123456789abcdef" for c in sha.elems()]):
+                problems.append("{}: the unpacking action has no well formed --sha256: {}".format(label, sha))
+            for flag in ["--size", "--max-output"]:
+                value = _flag_value(cmd, flag)
+                if value == None or not value.isdigit() or int(value) <= 0:
+                    problems.append("{}: the unpacking action has no positive {}: {}".format(label, flag, value))
+            if _flag_value(cmd, "--format") not in ["tar", "tar.gz", "tar.xz", "zip"]:
+                problems.append("{}: the unpacking action states no --format: {}".format(label, _flag_value(cmd, "--format")))
+    for want in UNPACK_TARGETS:
+        if want not in found:
+            problems.append("{}: no unpacking action was found for it ({} node(s) of kind {}, found: {})".format(want, len(nodes), UNPACK_KINDS, sorted(found.keys())))
+    return problems
 
 def _failures(ctx, label):
     """The text of what failed when building `label` on GATE_PLATFORM."""

@@ -137,8 +137,8 @@ pub fn sameAsDirectory(name: []const u8, archive: []const u8, strip: u8, referen
     try std.testing.expectEqualStrings(b, m);
 }
 
-/// The same, with the reference made by busybox's `tar <flag> archive -C dir`.
-pub fn sameAsBusyboxTar(name: []const u8, archive: []const u8, flag: []const u8) !void {
+/// The same, with the reference made by busybox's `tar <flag> archive -C dir`, dropping `strip` leading components as `unpack` does.
+pub fn sameAsBusyboxTar(name: []const u8, archive: []const u8, flag: []const u8, strip: u8) !void {
     const w = try work();
     defer a.free(w);
     const bb = try envPath("BUSYBOX");
@@ -148,6 +148,19 @@ pub fn sameAsBusyboxTar(name: []const u8, archive: []const u8, flag: []const u8)
     const theirs = try std.fmt.allocPrint(a, "{s}/{s}_busybox", .{ w, name });
     defer a.free(theirs);
     try std.fs.cwd().makePath(theirs);
-    try std.testing.expectEqual(@as(u8, 0), try run(&.{ bb, "tar", flag, arch, "-C", theirs }));
-    try sameAsDirectory(name, archive, 0, theirs);
+    const strip_flag = try std.fmt.allocPrint(a, "--strip-components={d}", .{strip});
+    defer a.free(strip_flag);
+    try std.testing.expectEqual(@as(u8, 0), try run(&.{ bb, "tar", flag, arch, "-C", theirs, strip_flag }));
+    try sameAsDirectory(name, archive, strip, theirs);
+}
+
+/// The hex sha256 of the tree text of `dir` (`tree` above). A digest written in a test is the one of the tree busybox's `tar` made of the archive the rule unpacks, which
+/// is what the rule's output had before `unpack` made it: the same entries, executable bits, sizes, contents and link targets.
+pub fn treeDigest(dir: []const u8) ![64]u8 {
+    const text = try tree(dir);
+    defer a.free(text);
+    try std.testing.expect(text.len > 0);
+    var d: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(text, &d, .{});
+    return std.fmt.bytesToHex(d, .lower);
 }

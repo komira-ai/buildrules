@@ -9,6 +9,8 @@ load("@buildrules//rules/rust:cargo.bzl", "cargo_table_check")
 load("@buildrules//rules/rust:defs.bzl", "rust_library", "rust_test")
 load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "ZIG_CC_TARGET")
 load("@buildrules//rules/rust:toolchain.bzl", "rust_toolchain")
+load("@buildrules//rules/pins:pins.bzl", "PINS", "strip_prefix")
+load("@buildrules//rules/zig:zig.bzl", "zig_dist")
 load(":fixture.bzl", "planted_mojo_exe", "planted_mojo_toolchain")
 
 # Bad inputs for the checks and markers of the rules. Each target below is a rule given an input its action must refuse, so its build must be red: an action
@@ -114,6 +116,42 @@ mojo_test_run_rule(
     bin = ":mojo_test_exe",
     toolchain = ":mojo_toolchain",
     exec_compatible_with = test_exec_compatible_with(),
+)
+
+# The checks of unpacking (rules/core/unpack.bzl): `zig_dist` given an archive its `unpack` must refuse. Each is the pinned zig 0.12.0 distribution with one thing wrong.
+# (Control: //rules/pins:zig, the same rule with the pin's own values.)
+#   - a sha256 that is not the archive's (well formed, so the rule accepts it and the program refuses the archive before it reads a byte);
+#   - a limit of 1 MiB on a distribution that decompresses to 319,150,293 bytes;
+#   - a file named like the archive that is not one (text), with its own sha256 and size, so the program reads it and refuses what it finds.
+_ZIG = PINS["zig"]
+
+zig_dist(
+    name = "zig_dist_of_other_bytes",
+    archive = "buildrules//rules/pins:" + _ZIG["name"],
+    max_output = 400 * 1024 * 1024,
+    sha256 = "0" * 64,
+    size_bytes = _ZIG["size"],
+    strip_prefix = strip_prefix("zig"),
+)
+
+zig_dist(
+    name = "zig_dist_over_its_max_output",
+    archive = "buildrules//rules/pins:" + _ZIG["name"],
+    max_output = 1024 * 1024,
+    sha256 = _ZIG["sha256"],
+    size_bytes = _ZIG["size"],
+    strip_prefix = strip_prefix("zig"),
+)
+
+export_file(name = "corrupt.tar.xz", src = "corrupt.tar.xz", visibility = ["PUBLIC"])
+
+zig_dist(
+    name = "zig_dist_of_a_corrupt_archive",
+    archive = ":corrupt.tar.xz",
+    max_output = 400 * 1024 * 1024,
+    sha256 = "e883a74de45b83b441ffaa7928670bdadf8981dd43f2d8c48b209097be144815",
+    size_bytes = 95,
+    strip_prefix = strip_prefix("zig"),
 )
 
 scrub_files()

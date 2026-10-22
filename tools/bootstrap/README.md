@@ -26,16 +26,21 @@ Exit status 0, or 2 with a message naming the archive and the entry.
 What it keeps: regular files with their permission bits `0o777` (the umask does not apply; set-uid, set-gid and sticky are dropped), symbolic links as links, hard links as copies. Directories
 are made with the default mode; times, owners and groups are not restored.
 
-## Not covered yet
+## Who runs it, and what is not its
 
-`conda_unpack` (`rules/zig/conda_unpack.zig` and `rules/mojo/tools/conda_unpack.zig`) is not absorbed by this change. `unpack` reads the zip of a `.conda` package, but a package's members
+`zig_dist` and the mopm toolchain run the pinned download of this program (`//rules/pins:unpack`, docs/pins.md "unpack"), each with the archive's sha256 and size, its format and a `--max-output`
+(`rules/core/unpack.bzl` refuses a rule that leaves one out).
+
+`conda_unpack` (`rules/zig/conda_unpack.zig` and `rules/mojo/tools/conda_unpack.zig`) is not this program's. `unpack` reads the zip of a `.conda` package, but a package's members
 are zstd-compressed tars, which `unpack` does not read, and the two copies hold policy that is not unpacking (the closure of the Mojo compiler, the install-prefix rewrite of
-`modular.cfg`). Editing the Mojo copy re-keys every Mojo action (its header says so). The next step moves the zip walk onto this tool and leaves the policy where it is.
+`modular.cfg`). They run no busybox and are unchanged; editing the Mojo copy re-keys every Mojo action (its header says so). Moving the zip walk onto this tool would need a zstd decoder here, and so a
+new release of the program.
 
 ## Tests that run the built program
 
-`real_test.zig` runs the built `unpack` on the pinned zig tarball (against the zig distribution the build unpacks today), the pinned actionlint tarball (against busybox), and a conda package.
-`xz_speed_test.zig` times the real xz tarball against busybox's `xzcat`. `pin_check_test.zig` holds the pins to the built programs (docs/pins.md, "unpack").
+`real_test.zig` runs the built `unpack` on the pinned zig and mopm tarballs and the pinned actionlint tarball (each against the reference tar's extraction of the same bytes), holds the zig 0.12.0 and
+0.15.2 distributions and the mopm tree that the build makes with `unpack` to the digest of the tree the reference tar made of them, and unpacks a conda package.
+`xz_speed_test.zig` times the real xz tarball against the reference's `xzcat`. `pin_check_test.zig` holds the pins to the built programs (docs/pins.md, "unpack").
 
 ## Publishing
 

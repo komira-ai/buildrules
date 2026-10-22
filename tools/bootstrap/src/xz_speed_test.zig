@@ -1,6 +1,6 @@
-//! How fast `unpack` reads the real zig tarball (xz) against busybox, which every action unpacks it with today (only zig_dist uses xz). Decoding alone (busybox's
-//! `xzcat` and `unpack --check`, output thrown away) and extracting (`tar -xJf` and `unpack`) are each the fastest of three runs; the budget is that unpack takes
-//! less than three times busybox's time, or the xz path is swapped for a faster one before zig_dist moves onto it.
+//! How fast `unpack` reads the real zig tarball (xz) against busybox, which unpacked it before zig_dist moved onto `unpack` (only zig_dist uses xz). Decoding alone (busybox's
+//! `xzcat` and `unpack --check`, output thrown away) and extracting (`unpack`) are each the fastest of a few runs; the budget is that unpack takes
+//! less than three times busybox's time, or the xz path is swapped for a faster one.
 const std = @import("std");
 const real = @import("real.zig");
 

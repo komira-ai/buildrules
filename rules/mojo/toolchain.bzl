@@ -86,7 +86,11 @@ def mojo_toolchains(table = {}):
         zig_dist(
             name = "mojo_{}_zig".format(v),
             archive = ":mojo-{}-zig.tar.xz".format(version),
-            busybox = "buildrules//rules/pins:busybox",
+            # The zig of a graph is any release the graph names, so its limit is not measured per archive: 512 MiB, more than the largest zig buildrules pins holds
+            # (zig 0.15.2: 359,075,951 bytes, rules/pins/BUCK) by 40%.
+            max_output = 512 * 1024 * 1024,
+            sha256 = row["zig"]["sha256"],
+            size_bytes = row["zig"]["size"],
             strip_prefix = zig_url.split("/")[-1][:-len(".tar.xz")],
             exec_compatible_with = LINUX_X86_64,
         )
