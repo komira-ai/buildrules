@@ -47,6 +47,13 @@ export_file(
     visibility = ["//ci:"],
 )
 
+# Read by the publish-unpack workflow check (ci/BUCK), which holds the entries a build leaves in the checkout.
+export_file(
+    name = "gitignore",
+    src = ".gitignore",
+    visibility = ["//ci:"],
+)
+
 # Read by the buildrules.dev site tests (site/BUCK), which check the Releases section against these.
 export_file(
     name = "RELEASING.md",
