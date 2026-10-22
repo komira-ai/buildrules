@@ -1,0 +1,10 @@
+[package]
+name = "base_sys"
+version = "1.0.0"
+mojo = ["1.0.0"]
+
+[native.base_sys]
+kind = "static"
+
+[targets]
+lib = { path = "src/base_sys" }

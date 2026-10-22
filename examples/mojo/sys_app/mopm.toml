@@ -1,0 +1,11 @@
+[package]
+name = "sys_app"
+version = "1.0.0"
+mojo = ["1.0.0"]
+
+[dependencies]
+probe_sys = "1.0"
+
+[targets]
+lib = { path = "src/sys_app" }
+tests = ["tests"]

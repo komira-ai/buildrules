@@ -156,23 +156,31 @@ mojo_unit_rule = rule(
 
 def _prebuilt_impl(ctx):
     out = ctx.actions.declare_output(ctx.attrs.package + ".mojoc")
-    ctx.actions.run(
-        cmd_args(_file(ctx.attrs.unpacker), _file(ctx.attrs.archive), ctx.attrs.package, out.as_output()),
-        category = "mojo_prebuilt",
-        identifier = ctx.attrs.unit_id,
-    )
+    cmd = cmd_args(_file(ctx.attrs.unpacker), _file(ctx.attrs.archive), ctx.attrs.package, out.as_output())
+    sub_targets = {}
+    if ctx.attrs.natives:
+        # The package's static native libraries (`lib/<soname>` in the `.conda`), each hashed against the lock's value before anything is written.
+        # One directory, flat by soname; every soname is a sub-target (`:prebuilt_<package>[<soname>]`) that a unit's `natives` takes.
+        natives = ctx.actions.declare_output("natives", dir = True)
+        cmd.add("--natives", natives.as_output())
+        for soname, sha256 in ctx.attrs.natives.items():
+            cmd.add("--native", "{}={}".format(soname, sha256))
+            sub_targets[soname] = [DefaultInfo(default_output = natives.project(soname))]
+    ctx.actions.run(cmd, category = "mojo_prebuilt", identifier = ctx.attrs.unit_id)
     closure = {}
     for d in ctx.attrs.deps:
         closure.update(d[MojoLibInfo].closure)
     closure[ctx.attrs.package] = out
-    return [DefaultInfo(default_output = out), MojoLibInfo(id = ctx.attrs.unit_id, mojoc = out, closure = closure)]
+    return [DefaultInfo(default_output = out, sub_targets = sub_targets), MojoLibInfo(id = ctx.attrs.unit_id, mojoc = out, closure = closure)]
 
-# A registry dependency: the `.mojoc` inside the sha256-pinned `.conda` the graph names, never compiled.
+# A registry dependency: the `.mojoc` inside the sha256-pinned `.conda` the graph names, never compiled, and the static native libraries
+# the lock pins for the package (`natives`: soname -> sha256, in the graph's order), which come out of the same file.
 mojo_prebuilt_rule = rule(
     impl = _prebuilt_impl,
     attrs = {
         "archive": attrs.dep(),
         "deps": attrs.list(attrs.dep(providers = [MojoLibInfo]), default = []),
+        "natives": attrs.dict(attrs.string(), attrs.string(), default = {}),
         "package": attrs.string(),
         "unit_id": attrs.string(),
         "unpacker": attrs.exec_dep(default = "buildrules//rules/mojo:prebuilt_unpack"),
