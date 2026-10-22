@@ -2,9 +2,7 @@
 // rules/pins/pins.bzl, rules/mopm/pins.bzl) and fail when a figure in the page is not the figure in the table: the heading of the mopm section, the
 // size of a tarball, one digit of a sha256. Each rule is also run against planted text, so a check that cannot fail is caught here.
 
-import { readdirSync } from 'fs';
-import { join } from 'path';
-import { REPO_DIR, repoFile } from './helpers';
+import { repoFile } from './helpers';
 
 interface Pin {
   size: string;
@@ -171,13 +169,13 @@ export function strayDigests(md: string, pinned: ReadonlySet<string>, mopmDigest
 
 describe('pages quote no digest that a pin table does not hold', () => {
   const mopmDigest = entry(MOPM, one(MOPM, /MOPM_DEFAULT = "([^"]+)"/)).sha256;
-  const pages = ['README.md', ...readdirSync(join(REPO_DIR, 'docs')).filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`)];
+  // The pages the jest_test's `data` stages (site/BUCK): a page added there is added here.
+  const pages = ['contract', 'cxx_mutants', 'how', 'pins', 'why'].map((n) => `docs/${n}.md`);
 
   test('there are pages to read, among them the contract', () => {
     expect(pages).toContain('docs/contract.md');
     expect(pages).toContain('docs/pins.md');
   });
-
   for (const p of pages) {
     test(`${p} quotes only pinned digests`, () => {
       expect(strayDigests(repoFile(p), PINNED, mopmDigest)).toEqual([]);
