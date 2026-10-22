@@ -150,6 +150,36 @@ refuses(
     contains = ["util@0.1.0#mojo1.0.0/lib", "util@0.1.0#mojo1.1.0/lib", "another Mojo"],
 )
 
+# A package of the graph's closure that no dependency target says anything about is refused, naming it.
+refuses(
+    name = "dependency_with_no_recorded_library_is_refused",
+    check = check_closure_ids,
+    args = ["//x:t", {"util": "util@0.1.0#mojo1.0.0/lib", "base": "base@0.1.0#mojo1.0.0/lib"}, {"util": "util@0.1.0#mojo1.0.0/lib"}],
+    contains = ["//x:t", "imports base as base@0.1.0#mojo1.0.0/lib", "no dependency target says which library"],
+)
+
+# A path dependency whose directory is the importing package's own would be that package's :lib: refused, by name, from either base of the paths.
+refuses(
+    name = "member_in_the_importing_packages_directory_is_refused",
+    check = member_label,
+    args = ["src/codec", "json@1.0.0#mojo1.0.0/lib", "json", "src/codec/src/json", ""],
+    contains = ["json@1.0.0#mojo1.0.0/lib", "src/codec/src/json", "this package's own :lib", "a package of its own"],
+)
+
+refuses(
+    name = "member_in_the_importing_packages_directory_from_the_package_is_refused",
+    check = member_label,
+    args = ["src/codec", "json@1.0.0#mojo1.0.0/lib", "json", "src/json", "src/codec"],
+    contains = ["this package's own :lib"],
+)
+
+refuses(
+    name = "member_at_the_repository_root_of_a_root_package_is_refused",
+    check = member_label,
+    args = ["", "json@1.0.0#mojo1.0.0/lib", "json", "src/json", ""],
+    contains = ["this package's own :lib"],
+)
+
 accepts(
     name = "dependencies_built_as_the_graph_says_are_accepted",
     check = check_closure_ids,

@@ -41,7 +41,9 @@ def check_closure_ids(who, want, have, refuse = fail):
     from another version of its package, or for another Mojo, is not the graph's. `refuse` is `fail` in a build; a test passes a recorder
     (rules/rust/refusal.bzl)."""
     for package in sorted(want.keys()):
-        if package in have and have[package] != want[package]:
+        if package not in have:
+            refuse("{}: the graph imports {} as {} but no dependency target says which library it provides for {}: every library of the closure must come from a target of these rules".format(who, package, want[package], package))
+        elif have[package] != want[package]:
             refuse(("{}: the graph imports {} as {} but the dependency target provides {}: that library was built from another version of the package, " +
                     "or for another Mojo. Run `buildrules mojo sync` where the library is and where it is imported").format(who, package, want[package], have[package]))
 

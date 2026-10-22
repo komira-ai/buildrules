@@ -1046,7 +1046,7 @@ test "sync: a mopm that takes --workspace-root is given the repository root, and
         if (kit.contains(c, "plan --unit-graph")) try t.expectEqualStrings("package", mopm_dir_seen[i]);
     }
     const lock = h.read(lock_path);
-    try t.expect(kit.contains(lock, "MOPM = {\"version\": \"0.0.26\", \"origin\": \"builtin\", \"workspace_root\": true}\n"));
+    try t.expect(kit.contains(lock, "MOPM = {\"version\": \"0.0.26\", \"origin\": \"builtin\", \"workspace_root\": True}\n"));
     // the sibling is a path dependency: its manifest, found from the package, is in the table; its sources are not
     try t.expect(kit.contains(lock, "\"../util/mopm.toml\": \""));
     try t.expect(!kit.contains(lock, "pkgs/util/src/util/__init__.mojo"));
@@ -1197,7 +1197,7 @@ test "check: what the table says about --workspace-root must be what its mopm re
     try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
     const lock = h.read(lock_path);
     // the flag taken off by hand: the paths of the graph would be read from the package
-    try h.put(lock_path, try std.mem.replaceOwned(u8, h.a(), lock, ", \"workspace_root\": true", ""));
+    try h.put(lock_path, try std.mem.replaceOwned(u8, h.a(), lock, ", \"workspace_root\": True", ""));
     var r = h.run(&.{ "mojo", "check" });
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "records mopm 0.0.26 without --workspace-root, but that release takes it"));

@@ -97,8 +97,9 @@ def member_label(here, uid, package, root, base, refuse = fail):
     """The target of a path dependency's library, `//<its directory>:lib`, from the `root` of its unit (the graph's, relative to `base`, the directory
     its paths start at: the package's own for a mopm without --workspace-root, the repository root with it). The directory is derived from the
     repository path of the root, so a package next to this one (a sibling) is named like one below it. A root outside the repository root has no
-    target, and a library that is not at `<dir>/src/<package>` is not a package's library: both refused (`refuse` is `fail` in a build; a test passes a
-    recorder, rules/rust/refusal.bzl), with None as the answer."""
+    target, a library that is not at `<dir>/src/<package>` is not a package's library, and one whose directory is `here`, the package that imports it, would
+    be that package's own `:lib` (a cycle through its tests): all refused (`refuse` is `fail` in a build; a test passes a recorder,
+    rules/rust/refusal.bzl), with None as the answer."""
     repo_root = _within(_join(base, root)) if not root.startswith("/") else None
     if repo_root == None:
         refuse("{}: {} lives in {}, which is outside the repository root: a path dependency must be a directory below the root that holds .buckconfig".format(here, uid, root))
@@ -107,7 +108,11 @@ def member_label(here, uid, package, root, base, refuse = fail):
     if repo_root != suffix and not repo_root.endswith("/" + suffix):
         refuse("{}: {} lives in {}, not <dir>/{}: a workspace member's library must be its package directory's src/<name>".format(here, uid, repo_root, suffix))
         return None
-    return "//" + repo_root[:-len(suffix)].rstrip("/") + ":lib"
+    directory = repo_root[:-len(suffix)].rstrip("/")
+    if directory == here:
+        refuse("{}: {} lives in {}, the directory of the package that imports it: its library would be this package's own :lib, which waits for the tests that import it. A path dependency must be a package of its own (a directory with its own BUCK file and mopm.toml), not the importing package itself".format(here, uid, repo_root))
+        return None
+    return "//" + directory + ":lib"
 
 def graph_path_in_package(path, pkg_dir, rooted, refuse = fail):
     """A path of the graph as a path below the package's directory. The graph's paths start at the package, or at the repository root when mopm was given
