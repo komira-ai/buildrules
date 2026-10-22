@@ -8,8 +8,13 @@
 //!                                the same, then creates the release (if absent), uploads the assets it does not hold, downloads each asset again and checks it
 //!                                against the pin.
 //!
-//! Options: --root DIR (the repository root, default .), --buck2 PATH (default `buck2`), --gh PATH (default `gh`), --git PATH (default `git`), --work DIR (scratch for --apply: it must exist,
+//! Options: --root DIR (the repository root, default .), --buck2 PATH (default `buck2`), --buck2-config KEY=VALUE (passed to the build as `-c KEY=VALUE`; the dispatch workflow
+//! passes `buildrules_re.mode=local`, because a hosted runner has no farm), --gh PATH (default `gh`), --git PATH (default `git`), --work DIR (scratch for --apply: it must exist,
 //! and is where the uploaded copies and the downloads go).
+//!
+//! The tokens of the environment (GH_TOKEN, GITHUB_TOKEN and the two enterprise names) go to the --gh program alone; git, buck2 and what they run never get them.
+//!
+//! CI runs it as the dispatch workflow .github/workflows/publish-unpack.yml (the release bot's token is minted there, for the --apply step alone).
 //!
 //! The release is created pointing at the commit the programs were built from (`git rev-parse HEAD` of --root, which must have no uncommitted changes for --apply), and
 //! the downloads of an --apply go to a directory of their own under --work (`verify-<time>`), so a second run never meets the first one's files.
@@ -52,6 +57,8 @@ pub const Options = struct {
     apply: bool = false,
     root: []const u8 = ".",
     buck2: []const u8 = "buck2",
+    /// `KEY=VALUE` for the build's `-c`, or none.
+    buck2_config: ?[]const u8 = null,
     gh: []const u8 = "gh",
     git: []const u8 = "git",
     work: ?[]const u8 = null,
@@ -74,6 +81,10 @@ pub fn parse(args: []const []const u8, diag: *[]const u8) !Options {
             o.root = args[i];
         } else if (std.mem.eql(u8, arg, "--buck2")) {
             o.buck2 = args[i];
+        } else if (std.mem.eql(u8, arg, "--buck2-config")) {
+            const eq = std.mem.indexOfScalar(u8, args[i], '=');
+            if (eq == null or eq.? == 0 or eq.? + 1 == args[i].len) return fail(diag, "--buck2-config needs KEY=VALUE, with a key and a value");
+            o.buck2_config = args[i];
         } else if (std.mem.eql(u8, arg, "--gh")) {
             o.gh = args[i];
         } else if (std.mem.eql(u8, arg, "--git")) {
@@ -81,7 +92,7 @@ pub fn parse(args: []const []const u8, diag: *[]const u8) !Options {
         } else if (std.mem.eql(u8, arg, "--work")) {
             o.work = args[i];
         } else {
-            return fail(diag, "unknown argument (only --apply, --root, --buck2, --gh, --git, --work)");
+            return fail(diag, "unknown argument (only --apply, --root, --buck2, --buck2-config, --gh, --git, --work)");
         }
     }
     if (o.apply and o.work == null) return fail(diag, "--apply needs --work DIR (an existing directory for the copies and the downloads)");
@@ -197,7 +208,10 @@ pub fn publish(a: std.mem.Allocator, o: Options, r: Runner, say: Say) !u8 {
     }
     var argv = std.ArrayList([]const u8).empty;
     defer argv.deinit(a);
-    try argv.appendSlice(a, &.{ o.buck2, "build", "--show-full-output", "--" });
+    try argv.append(a, o.buck2);
+    try argv.append(a, "build");
+    if (o.buck2_config) |c| try argv.appendSlice(a, &.{ "-c", c });
+    try argv.appendSlice(a, &.{ "--show-full-output", "--" });
     for (pins.hosts) |h| {
         try labels.append(a, try target(a, h));
         try argv.append(a, labels.items[labels.items.len - 1]);
@@ -348,9 +362,40 @@ pub fn publish(a: std.mem.Allocator, o: Options, r: Runner, say: Say) !u8 {
     return 0;
 }
 
-const RealRunner = struct {
-    fn run(_: *anyopaque, a: std.mem.Allocator, argv: []const []const u8, cwd: []const u8) anyerror!Ran {
-        const res = try std.process.Child.run(.{ .allocator = a, .argv = argv, .cwd = cwd, .max_output_bytes = 1 << 24 });
+/// The variables that carry a GitHub token. Only the `gh` program is given them: `git` and `buck2` (and what `buck2` runs) have no use for one.
+const token_vars = [_][]const u8{ "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN" };
+
+/// The environment a child gets: the parent's, without the token variables unless `program` is the `gh` program.
+pub fn childEnv(a: std.mem.Allocator, parent: *const std.process.EnvMap, program: []const u8, gh: []const u8) !std.process.EnvMap {
+    var out = std.process.EnvMap.init(a);
+    errdefer out.deinit();
+    const keep_tokens = std.mem.eql(u8, program, gh);
+    var it = parent.iterator();
+    while (it.next()) |e| {
+        var token = false;
+        for (token_vars) |name| {
+            if (std.mem.eql(u8, e.key_ptr.*, name)) token = true;
+        }
+        if (token and !keep_tokens) continue;
+        try out.put(e.key_ptr.*, e.value_ptr.*);
+    }
+    return out;
+}
+
+/// Runs the programs for real. `env` is the environment of this process; `gh` is the program that may see the tokens in it.
+pub const RealRunner = struct {
+    gh: []const u8,
+    env: *const std.process.EnvMap,
+
+    pub fn runner(self: *RealRunner) Runner {
+        return .{ .ctx = self, .runFn = run };
+    }
+
+    fn run(ctx: *anyopaque, a: std.mem.Allocator, argv: []const []const u8, cwd: []const u8) anyerror!Ran {
+        const self: *RealRunner = @ptrCast(@alignCast(ctx));
+        var env = try childEnv(a, self.env, argv[0], self.gh);
+        defer env.deinit();
+        const res = try std.process.Child.run(.{ .allocator = a, .argv = argv, .cwd = cwd, .env_map = &env, .max_output_bytes = 1 << 24 });
         defer a.free(res.stderr);
         if (res.stderr.len > 0) std.debug.print("{s}", .{res.stderr});
         const code: u8 = switch (res.term) {
@@ -383,7 +428,10 @@ pub fn main() u8 {
     var id_buf: [32]u8 = undefined;
     var o2 = o;
     o2.run_id = std.fmt.bufPrint(&id_buf, "{d}", .{std.time.milliTimestamp()}) catch "0";
-    const runner = Runner{ .ctx = &unused, .runFn = RealRunner.run };
+    var env = std.process.getEnvMap(a) catch return 2;
+    defer env.deinit();
+    var real = RealRunner{ .gh = o2.gh, .env = &env };
+    const runner = real.runner();
     const say = Say{ .ctx = &unused, .sayFn = Stdout.say };
     return publish(a, o2, runner, say) catch |e| {
         std.debug.print("publish_unpack: {s}\n", .{@errorName(e)});

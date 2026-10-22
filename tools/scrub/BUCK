@@ -46,8 +46,10 @@ scrub_test(
     packages = [
     "//:scrub_files",
     "//beta:scrub_files",
+    "//ci/cargo_run:scrub_files",
     "//ci/mojo_gate:scrub_files",
     "//ci/negative:scrub_files",
+    "//ci/planted:scrub_files",
     "//ci:scrub_files",
     "//cli:scrub_files",
     "//docs:scrub_files",

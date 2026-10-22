@@ -1,0 +1,88 @@
+# Publishes the release of the three `unpack` programs (tools/bootstrap; the tag is UNPACK_TAG in rules/pins/bootstrap.bzl) with tools/held/publish_unpack. It is the dispatch
+# job of tools/bootstrap/README.md: the organisation's tag ruleset lets only the release bot create a tag, so a person cannot run `gh release create` for it, and the release
+# is made here, with the release bot's token, instead of by widening the ruleset.
+#
+#     gh workflow run publish-unpack.yml -R OWNER/REPO -f apply=false      builds the programs, checks them against the pins and reads the release; changes nothing
+#     gh workflow run publish-unpack.yml -R OWNER/REPO -f apply=true       the same, and then (token minted only now) creates the release, uploads the assets it lacks,
+#                                                                          downloads each again and verifies it against its pin
+#
+# (OWNER/REPO are the two path segments of this repository's address.)
+#
+# It runs by hand only (never on a push, a pull request or a schedule), and only from main. Only the last two steps of an `apply=true` run hold the release bot's token: it is
+# minted for this repository alone with `contents: write`, by the same step, variables and secret as release.yml's `tag` job (RELEASING.md, "The tag ruleset"), after the dry run
+# has passed. The job's own token stays `contents: read`. publish_unpack never replaces or deletes a release or an asset (the flags that force or clobber are not options of it),
+# so a second dispatch only verifies what is there. ci/publish_unpack_check.zig (`//ci:workflow`) holds all of this.
+name: publish-unpack
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Create the release and upload the programs (when false, only build, check and read the release)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-unpack
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # The release bot's key lives only in this environment, which is restricted to main (RELEASING.md); only the mint step below reads it.
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/workflow_check.zig compares both. The .zst is removed: publish_unpack refuses --apply
+      # in a tree with an untracked file, and the release must be of the commit the programs were built from.
+      - name: Install buck2
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
+          echo "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst" | sha256sum --check --strict -
+          zstd --decompress --quiet buck2.zst -o buck2
+          rm buck2.zst
+          chmod +x buck2
+          ./buck2 --version
+
+      # The program is written outside the checkout, so the tree stays the commit.
+      - name: Build publish_unpack
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out "$RUNNER_TEMP/publish_unpack" //tools/held:publish_unpack
+
+      - name: Dry run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x "$RUNNER_TEMP/publish_unpack"
+          "$RUNNER_TEMP/publish_unpack" --root "$GITHUB_WORKSPACE" --buck2 "$GITHUB_WORKSPACE/buck2" --buck2-config buildrules_re.mode=local
+
+      # The token of the release bot, for this repository alone, minted only for an apply and only now: the build and the dry run never held it.
+      - name: The token of the release bot, for this repository alone
+        id: bot
+        if: inputs.apply
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: buildrules
+          permission-contents: write
+
+      - name: Create the release, upload the programs it lacks, verify each
+        if: inputs.apply
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+        run: |
+          mkdir "$RUNNER_TEMP/unpack-work"
+          "$RUNNER_TEMP/publish_unpack" --apply --work "$RUNNER_TEMP/unpack-work" --root "$GITHUB_WORKSPACE" --buck2 "$GITHUB_WORKSPACE/buck2" --buck2-config buildrules_re.mode=local

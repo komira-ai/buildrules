@@ -230,16 +230,6 @@ staged_files = rule(
     attrs = {"srcs": attrs.list(attrs.source(), default = [])},
 )
 
-_CHECK_SCRIPT = """
-EXE="$1"; WANT="$2"; OUT="$3"
-GOT=$("$EXE") || { echo "c_check: $EXE exited non-zero" >&2; exit 1; }
-if [ "$GOT" != "$WANT" ]; then
-    echo "c_check: expected '$WANT' but $EXE printed '$GOT'" >&2
-    exit 1
-fi
-echo "$GOT" > "$OUT"
-"""
-
 def _c_check_result(actions, stdout, expected, label, result):
     got = stdout.read_string()
     if got.rstrip("\n") == expected:
@@ -262,12 +252,18 @@ _c_check_dynamic = dynamic_actions(
 )
 
 def _c_check_impl(ctx):
-    bb = ctx.attrs.busybox[DefaultInfo].default_outputs[0]
     out = ctx.actions.declare_output(ctx.label.name + ".stdout")
+
+    # `check expect` (rules/check): the executable exits 0 and its stdout, without trailing newlines, is `expected_stdout`; then, and only then, `out`
+    # holds it and a newline.
     ctx.actions.run(
-        cmd_args(bb, "sh", "-euc", _CHECK_SCRIPT, "sh", ctx.attrs.exe[RunInfo], ctx.attrs.expected_stdout, out.as_output()),
+        cmd_args(ctx.attrs._check_exe[RunInfo], "expect", "--name", "c_check", "--want", ctx.attrs.expected_stdout, "--out", out.as_output(), "--", ctx.attrs.exe[RunInfo]),
         category = "c_check",
     )
+    if not ctx.attrs.validate:
+        # The run alone, `out` as the output: a failure of it is an action failure, which a bxl can observe (ci/planted); the result below is a dynamic output,
+        # whose failure is an error of the whole bxl.
+        return [DefaultInfo(default_output = out)]
     result = ctx.actions.declare_output(ctx.label.name + ".c_check.json")
     ctx.actions.dynamic_output_new(_c_check_dynamic(
         stdout = out,
@@ -284,9 +280,11 @@ c_check = rule(
     impl = _c_check_impl,
     doc = "Runs `exe` (a cxx_binary) on the execution platform: fails unless it exits 0 and prints exactly `expected_stdout` (trailing newline ignored). A validation: a checked_cxx_library listing it is never built red.",
     attrs = {
-        "busybox": attrs.exec_dep(default = "buildrules//rules/pins:busybox"),
         "exe": attrs.dep(providers = [RunInfo]),
         "expected_stdout": attrs.string(),
+        # False: no validation, the target is the run of `check expect` alone (the cases of ci/planted build it so).
+        "validate": attrs.bool(default = True),
+        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
     },
 )
 
