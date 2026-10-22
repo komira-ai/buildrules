@@ -388,6 +388,11 @@ test "a package that cannot be resolved is a refusal, not a skip: nothing is wri
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "cannot resolve the Mojo package pkgs/no_such_package"));
     try expectNothingWritten(h);
+    // An absolute path is left as given (not read as relative to the root), and is refused the same way when it does not exist.
+    const a = h.run(&(sync_args ++ [_][]const u8{"/no/such/mojo/package"}));
+    try t.expectEqual(@as(u8, 1), a.code);
+    try t.expect(kit.contains(a.err, "cannot resolve the Mojo package /no/such/mojo/package"));
+    try expectNothingWritten(h);
 }
 
 test "a toolchains directory next to a package whose name it starts with is not inside the package" {
