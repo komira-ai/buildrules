@@ -4,6 +4,7 @@
 # Targets that are red on purpose or are not built by a wildcard build. A key is a target expression and must match at least one target.
 # Each package's scrub_files is not excluded: the scrub reads a fixture's text like any other file's.
 EXCLUDED = {
+    "//rules/pins:bootstrap_unpack_linux_x86_64 + //rules/pins:bootstrap_unpack_linux_aarch64 + //rules/pins:bootstrap_unpack_macos_aarch64": "the pinned release assets of the unpack program (rules/pins/bootstrap.bzl): the repository owner uploads them (tools/held/publish_unpack.zig), and until they exist a machine whose cache lacks them cannot fetch them, so no default target uses them and a wildcard build must not either. //ci:unpack_pin_check holds the rows to the programs the tree builds",
     "//examples/p4ws/crates/probe_env/... - //examples/p4ws/crates/probe_env:scrub_files": "refusal fixture: the build script is refused by design (a hidden input through the environment)",
     "//examples/p4ws/crates/probe_tree/... - //examples/p4ws/crates/probe_tree:scrub_files": "refusal fixture: the build script is refused by design (it reads outside its declared tree)",
     "//examples/p4ws/crates/probe_usr/... - //examples/p4ws/crates/probe_usr:scrub_files": "refusal fixture: the build script is refused by design (it reads the host's /usr)",

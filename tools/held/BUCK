@@ -1,11 +1,37 @@
-# Held scripts: steps only the repository owner runs (uploads to GitHub, anything that writes outside this tree). Each is a dry run unless given `--apply`.
-# They are shell because they drive `gh` and `curl`; a Zig check reads their text (ci/pin_mirrors_check.zig) and never runs them.
+# Held tools: steps only the repository owner runs (uploads to GitHub, anything that writes outside this tree). Each is a dry run unless given `--apply`.
+# mirror-busybox.sh is shell because it drives `gh` and `curl`; a Zig check reads its text (ci/pin_mirrors_check.zig) and never runs it. publish_unpack is Zig: it runs
+# `gh` and the build as programs, behind tests that run it against a recorder in place of both.
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 
 export_file(
     name = "mirror-busybox.sh",
     src = "mirror-busybox.sh",
     visibility = ["//ci:"],
+)
+
+_ZIG = "buildrules//rules/pins:zig_next"
+
+# Builds the three `unpack` programs, checks them against rules/pins/bootstrap.bzl, and publishes them as assets of the release the table names (docs/pins.md, "unpack").
+# Dry run unless `--apply --work DIR`; it never replaces or deletes an asset.
+zig_test(
+    name = "publish_unpack_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "publish_unpack_test.zig",
+    imports = ["publish_unpack.zig"],
+    deps = ["//tools/bootstrap:bootstrap_pins"],
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "publish_unpack",
+    exec_compatible_with = LINUX_X86_64,
+    src = "publish_unpack.zig",
+    deps = ["//tools/bootstrap:bootstrap_pins"],
+    zig = _ZIG,
+    unit_tests = [":publish_unpack_unit", "buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
 )
 
 scrub_files()
