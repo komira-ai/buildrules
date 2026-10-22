@@ -2,10 +2,34 @@
 
 A release build is stamped with the planned version: `-c buildrules.release_version=0.0.7` (the release workflow passes it, cli/BUCK reads it).
 A build that is not (a checkout, a user's farm) reports `<MAJOR.MINOR>-dev` of the `VERSION` file, so a program that was not released never
-claims a release number. No shell: busybox's own `sed` writes the file.
+claims a release number. No tool runs: a dynamic action reads the VERSION file and Starlark writes the source (`version_stamp`).
 """
 
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+
+def version_stamp(content, who = "cli_version", refuse = fail):
+    """The source `version.zig` holds for a VERSION file with `content`: one `pub const release = "<MAJOR.MINOR>-dev";` line per line of
+    the file that is exactly `<digits>.<digits>` (a final newline or none, no spaces, no carriage return, as the sed this replaces matched).
+    A file with no such line, or with two, is refused; the sed wrote an empty file for the first and two declarations for the second, and
+    the program did not compile with either. Returns None after a refusal."""
+    found = [line for line in content.split("\n") if regex_match("^[0-9]+\\.[0-9]+$", line)]
+    if len(found) != 1:
+        refuse("{}: the VERSION file must have exactly one line of the form MAJOR.MINOR (digits, a dot, digits), found {}: {}".format(who, len(found), repr(content)))
+        return None
+    return 'pub const release = "{}-dev";\n'.format(found[0])
+
+def _write_stamp(actions, version_file, who, out):
+    actions.write(out, version_stamp(version_file.read_string(), who = who))
+    return []
+
+_stamp = dynamic_actions(
+    impl = _write_stamp,
+    attrs = {
+        "out": dynattrs.output(),
+        "version_file": dynattrs.artifact_value(),
+        "who": dynattrs.value(str),
+    },
+)
 
 def _cli_version_impl(ctx):
     out = ctx.actions.declare_output("version.zig")
@@ -14,16 +38,16 @@ def _cli_version_impl(ctx):
             fail("{}: the release version {} is not MAJOR.MINOR.PATCH".format(ctx.label, repr(ctx.attrs.release)))
         ctx.actions.write(out, 'pub const release = "{}";\n'.format(ctx.attrs.release))
         return [DefaultInfo(default_output = out)]
-    bb = ctx.attrs.busybox[DefaultInfo].default_outputs[0]
-    # `s///w FILE` writes the line only when the VERSION file is `<MAJOR>.<MINOR>`; any other content writes nothing and the action fails.
-    script = cmd_args("s|^\\([0-9][0-9]*\\.[0-9][0-9]*\\)$|pub const release = \"\\1-dev\";|w ", out.as_output(), delimiter = "")
-    ctx.actions.run(cmd_args(bb, "sed", "-n", script, ctx.attrs.file), category = "cli_version")
+    ctx.actions.dynamic_output_new(_stamp(
+        version_file = ctx.attrs.file,
+        who = str(ctx.label.raw_target()),
+        out = out.as_output(),
+    ))
     return [DefaultInfo(default_output = out)]
 
 _cli_version = rule(
     impl = _cli_version_impl,
     attrs = {
-        "busybox": attrs.dep(default = "buildrules//rules/pins:busybox"),
         # The VERSION file (MAJOR.MINOR), used when `release` is empty.
         "file": attrs.source(),
         # MAJOR.MINOR.PATCH of the release being built; empty for a build that is not one.

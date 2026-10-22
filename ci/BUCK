@@ -71,6 +71,7 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:prebuilt_unit_extracts_its_own_static_natives",
     "//rules/core/tests:all",
     "//rules/zig/tests:all",
+    "//cli:version_stamps",
     "//rules/cxx/tests:all",
     "//rules/node/tests:all",
     "//rules/coverage/tests:all",
