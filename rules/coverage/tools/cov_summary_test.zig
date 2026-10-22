@@ -158,7 +158,21 @@ test "hasNoStatements: a re-export file has none, any other statement is one" {
         "from .a import (f, g)\r\n",
         "\"\"\"a\x0bb\"\"\"\nfrom .a import f\n", // a vertical tab inside a string is the string's
         "\"\"\"x\ny\x0cz\n\"\"\"\n", // a form feed inside a block docstring
-    }) |case| try t.expect(S.hasNoStatements(case));
+        // alias declarations emit no code
+        "alias A = Int\n",
+        "comptime B: UInt8 = 255  # a byte\n",
+        "comptime Vec[T: AnyType] = List[T]\n", // a parameter list
+        "alias P[T: AnyType = Int, n: Int = 2] = SIMD[T, n]\n", // defaults inside the list are not the declaration's `=`
+        "comptime M = Dict[\n    String,\n    Int,\n]\n", // the value over several lines inside brackets
+        "comptime D = (1,\n    # a note\n    2,\n\n    3)\n",
+        "comptime S = 1 + \\\n    2\n", // or after a backslash
+        "comptime T = \"a;b#c\"\ncomptime U = 'it\\'s'\n", // `;` and `#` inside a string, an escaped quote
+        "comptime E = 1 == 1\n",
+        "\"\"\"The types.\"\"\"\n\nfrom .a import f\n\ncomptime X = f\n# end\n",
+    }) |case| t.expect(S.hasNoStatements(case)) catch |e| {
+        std.debug.print("refused, should be accepted: {s}\n", .{case});
+        return e;
+    };
     // refused: a function, a struct, a decorator, a statement, a call, an indented line, a semicolon, an unclosed docstring or parenthesis
     for ([_][]const u8{
         "fn f():\n    pass\n",
@@ -190,9 +204,48 @@ test "hasNoStatements: a re-export file has none, any other statement is one" {
         "\"\"\"doc\"\"\"\x0b\n",
         "\"\"\"\ndoc\n\"\"\"\x0c\n",
         "from a import (b,\n\x0bc)\n",
+        // an alias is not every `alias` or `comptime` line
+        "alias A = 1\ndef f(): pass\n", // an alias followed by a function
+        "comptime A = Dict[\n    String,\n    Int,\n]\ndef f() -> Int:\n    return 1\n",
+        "alias A = 1\nfn f(): pass\n",
+        "alias A = 1\nstruct S:\n    pass\n",
+        "alias A = 1\ntrait T:\n    pass\n",
+        "alias A = 1\n@always_inline\n",
+        "var A = 1\n",
+        "alias A = 1\nvar B = 2\n",
+        "alias A\n", // no value
+        "comptime A: Int\n",
+        "comptime Vec[T: AnyType = Int]\n", // an `=` only inside the parameter list
+        "comptime A == 1\n",
+        "comptime assert A == 1\n",
+        "comptime assert A == 1, \"message\"\n",
+        "comptime if X:\n    pass\n",
+        "comptime if X == 1:\n    alias A = 1\n",
+        "comptime for i in range(3):\n    pass\n",
+        "comptime (1)\n",
+        "comptime = 1\n",
+        "aliasing = 3\n",
+        "alias A = 1; pass\n", // `;` after a declaration
+        "alias A = (1,\n    2); pass\n",
+        "alias A = 1\n  x = 2\n", // an indented line outside a continuation
+        "alias A = 1\n    alias B = 2\n",
+        "alias A = Dict[\n    String,\n", // unclosed
+        "alias A = (1,\n",
+        "alias A = 1 \\\n", // a backslash with nothing after it
+        "alias A = 1 \\\n\ndef f(): pass\n",
+        "alias A = 1 \\ x\n",
+        "alias A = ]\n",
+        "alias A = \"open\n", // a string that does not end on its line
+        "alias A = \"\"\"doc\"\"\"\n",
+        "alias A = 1\r\n\rx\n", // a lone carriage return
+        "alias A = 1\x0c\n",
+        "alias A = (1,\n\x0b2)\n",
         "\"\"\"a\"\"\" # k\x0cx = 1\n", // after a one-line docstring, in a comment
         "\"\"\"a\nb\"\"\" # k\x0bx = 1\n", // after a block docstring closes, in a comment
-    }) |case| try t.expect(!S.hasNoStatements(case));
+    }) |case| t.expect(!S.hasNoStatements(case)) catch |e| {
+        std.debug.print("accepted, should be refused: {any}\n", .{case});
+        return e;
+    };
 }
 
 test "withEmptySources: only a source with no statement is listed 0/0; the rest stays missing" {
