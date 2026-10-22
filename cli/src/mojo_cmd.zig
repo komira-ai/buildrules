@@ -76,7 +76,9 @@ pub fn run(root: *Ctx, args: []const []const u8) u8 {
         } else if (is_sync and std.mem.eql(u8, arg, "--buck2")) {
             buck2 = ctxm.flagValue(args, &i) orelse return root.usage("mojo sync: --buck2 needs a value", .{});
         } else if (is_sync and arg.len > 0 and arg[0] != '-') {
-            pkgs.append(root.a, trimSlashes(arg)) catch return ctxm.exit_fail;
+            // The same normalization as the toolchains path (`.//pkgs/base`, `pkgs/./base/` and `pkgs/base` are one package); an absolute path is left as given.
+            const pkg = if (arg[0] == '/') arg else normalize(root.a, arg) catch return ctxm.exit_fail;
+            pkgs.append(root.a, pkg) catch return ctxm.exit_fail;
         } else {
             return root.usage("mojo {s}: unknown argument {s}\n{s}", .{ sub, arg, usage_text });
         }
@@ -85,13 +87,6 @@ pub fn run(root: *Ctx, args: []const []const u8) u8 {
     defer ctx.dir.close();
     if (is_sync) return sync(&ctx, pkgs.items, check_only, mopm_path, buck2, tc_flag) catch |e| root.fail("mojo sync: {s}", .{@errorName(e)});
     return checkAll(&ctx, tc_flag) catch |e| root.fail("mojo check: {s}", .{@errorName(e)});
-}
-
-fn trimSlashes(s: []const u8) []const u8 {
-    var t = s;
-    while (std.mem.startsWith(u8, t, "./")) t = t[2..];
-    while (t.len > 1 and t[t.len - 1] == '/') t = t[0 .. t.len - 1];
-    return if (std.mem.eql(u8, t, ".")) "" else t;
 }
 
 // ---- paths -------------------------------------------------------------------------------------------
@@ -446,19 +441,19 @@ pub fn resolveTables(ctx: *Ctx, flag: ?[]const u8) !?Tables {
 }
 
 /// The first of `pkgs` whose source tree the tables' directory is in (`mopm` reads the package directory, so a table written there would be an input of its
-/// own table). Compared by real path when the directory exists, so a symbolic link into a package is caught; a package at the root is not considered
-/// (every directory is in it).
-fn packageHolding(ctx: *Ctx, tabs: Tables, pkgs: []const []const u8) !?[]const u8 {
+/// own table). Compared by real path when the directory exists, so a symbolic link into a package is caught. A package at the root is skipped: every
+/// directory is in it, and refusing it would refuse the default `toolchains/`. A package whose real path cannot be found is a refusal, not a skip: the
+/// answer would be unknown, and the run must stop before it writes anything. Returns the exit code of the refusal it printed, or null.
+fn guardPackages(ctx: *Ctx, tabs: Tables, pkgs: []const []const u8) !?u8 {
     for (pkgs) |pkg| {
         if (pkg.len == 0) continue;
-        const hit = if (tabs.real) |tc_real| blk: {
-            const pr = ctx.dir.realpathAlloc(ctx.a, if (pkg.len == 0) "." else pkg) catch |e| switch (e) {
+        if (tabs.real) |tc_real| {
+            const pr = ctx.dir.realpathAlloc(ctx.a, pkg) catch |e| switch (e) {
                 error.OutOfMemory => return e,
-                else => continue,
+                else => return ctx.fail("cannot resolve the Mojo package {s} ({s}), so cannot tell whether the toolchains directory {s} is inside it", .{ pkg, @errorName(e), tabs.dir }),
             };
-            break :blk isUnder(tc_real, pr);
-        } else isUnder(tabs.dir, pkg);
-        if (hit) return pkg;
+            if (isUnder(tc_real, pr)) return refuseInPackage(ctx, tabs, pkg);
+        } else if (isUnder(tabs.dir, pkg)) return refuseInPackage(ctx, tabs, pkg);
     }
     return null;
 }
@@ -523,7 +518,7 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
     const tabs = (try resolveTables(ctx, tc_flag)) orelse return ctxm.exit_fail;
     const pkgs = if (given.len > 0) given else try discover(ctx);
     if (pkgs.len == 0) return ctx.fail("no package here calls mojo_package(...) in its BUCK file", .{});
-    if (try packageHolding(ctx, tabs, pkgs)) |p| return refuseInPackage(ctx, tabs, p);
+    if (try guardPackages(ctx, tabs, pkgs)) |refused| return refused;
     var code: u8 = ctxm.exit_ok;
 
     // buildrules-pins.toml -> toolchains/mopm_pins.bzl first: the build of the pinned mopm loads it.
@@ -715,7 +710,7 @@ pub fn checkAll(ctx: *Ctx, tc_flag: ?[]const u8) !u8 {
         _ = ctx.fail("no package here calls mojo_package(...) in its BUCK file", .{});
         return ctxm.exit_fail;
     }
-    if (try packageHolding(ctx, tabs, pkgs)) |p| return refuseInPackage(ctx, tabs, p);
+    if (try guardPackages(ctx, tabs, pkgs)) |refused| return refused;
     var bad: usize = 0;
     var tcs = std.ArrayList(lockm.Tc).empty;
     for (pkgs) |pkg| try checkPackage(ctx, pkg, &bad, &tcs);

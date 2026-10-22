@@ -363,6 +363,33 @@ test "a toolchains directory inside a Mojo package's tree is refused by sync and
     if (h.has("pkgs/base/tc/mopm_pins.bzl") or h.has("pkgs/base/mopm_pins.bzl")) return error.ARefusedRunWrote;
 }
 
+test "a package named on the command line with extra slashes or dots is the same package: .//pkgs/base is refused like pkgs/base, and nothing is written" {
+    const h = try repo("[cells]\n  toolchains = pkgs/base/tc\n", "toolchains");
+    defer h.destroy();
+    try h.put("pkgs/base/tc/BUCK", "# toolchains\n");
+    for ([_][]const u8{ ".//pkgs/base", "./pkgs//base/", "pkgs/./base", "pkgs/base/", "pkgs/base" }) |spelling| {
+        const argv = h.a().alloc([]const u8, sync_args.len + 1) catch @panic("out of memory");
+        @memcpy(argv[0..sync_args.len], &sync_args);
+        argv[sync_args.len] = spelling;
+        const r = h.run(argv);
+        if (r.code != 1 or !kit.contains(r.err, "inside the Mojo package pkgs/base")) {
+            std.debug.print("`mojo sync {s}`: exit {d}; stderr: {s}\n", .{ spelling, r.code, r.err });
+            return error.NotRefused;
+        }
+        try expectNothingWritten(h);
+        if (h.has("pkgs/base/tc/mopm_pins.bzl") or h.has("pkgs/base/tc/mojo_pins.bzl")) return error.ARefusedRunWrote;
+    }
+}
+
+test "a package that cannot be resolved is a refusal, not a skip: nothing is written" {
+    const h = try repo("[cells]\n  toolchains = " ++ custom ++ "\n", custom);
+    defer h.destroy();
+    const r = h.run(&(sync_args ++ [_][]const u8{"pkgs/no_such_package"}));
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "cannot resolve the Mojo package pkgs/no_such_package"));
+    try expectNothingWritten(h);
+}
+
 test "a toolchains directory next to a package whose name it starts with is not inside the package" {
     const h = try repo("[cells]\n  toolchains = pkgs/base2/tc\n", "pkgs/base2/tc");
     defer h.destroy();
