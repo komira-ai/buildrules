@@ -487,7 +487,80 @@ pub fn sums(a: std.mem.Allocator, dist_dir: []const u8) !Dist {
     return d;
 }
 
-/// `cosign sign-blob --yes --bundle <file>.sigstore.json <file>` for the six release files and SHA256SUMS, after SHA256SUMS is checked. A bundle that
+/// Tries of `cosign sign-blob` per file when it fails the way a network flake does (`isTransientSignFailure`).
+pub const sign_tries: u32 = 3;
+
+/// The deadline cosign gives one `sign-blob` (its `--timeout`, default 3m). A token fetch that hangs ends in this long, not in minutes.
+pub const sign_timeout = "90s";
+
+/// The delay before the second try of a `cosign sign-blob`; the third waits twice as long. `waits`, when set, records the delays (a test seam; the tests give
+/// a `base_ms` of a few ms).
+pub const SignRetry = struct {
+    base_ms: u32 = 5000,
+    waits: ?*cmds.Waits = null,
+};
+
+/// The argv of one `cosign sign-blob`, and nothing in it can ask a person for anything:
+///   --yes                           no confirmation prompt
+///   --oidc-provider github-actions  the token comes from the Actions OIDC endpoint and from no other provider
+///   --fulcio-auth-flow token        when that endpoint hands back no token, cosign fails at once; unset, it falls back to the OAuth device flow
+///                                   ("Non-interactive mode detected, using device flow") and waits for a human until the device code expires
+///   --timeout 90s                   cosign's own deadline for the whole call
+fn signArgv(cosign: []const u8, bundle: []const u8, file: []const u8) [12][]const u8 {
+    return .{
+        cosign,
+        "sign-blob",
+        "--yes",
+        "--oidc-provider",
+        "github-actions",
+        "--fulcio-auth-flow",
+        "token",
+        "--timeout",
+        sign_timeout,
+        "--bundle",
+        bundle,
+        file,
+    };
+}
+
+/// A `cosign sign-blob` failure that says the network (the Actions token endpoint, Fulcio, Rekor or the timestamp authority) did not answer, and nothing about
+/// the file or the identity. Only these retry; any other refusal is final.
+fn isTransientSignFailure(stderr: []const u8) bool {
+    const markers = [_][]const u8{
+        "error fetching GitHub OIDC token",
+        "fetching ambient OIDC credentials",
+        "i/o timeout",
+        "context deadline exceeded",
+        "TLS handshake timeout",
+        "connection reset",
+        "connection refused",
+        "no such host",
+        "unexpected EOF",
+        "[502]",
+        "[503]",
+        "[504]",
+        "[429]",
+        "502 Bad Gateway",
+        "503 Service Unavailable",
+        "504 Gateway Timeout",
+    };
+    for (markers) |m| {
+        if (std.mem.indexOf(u8, stderr, m) != null) return true;
+    }
+    return false;
+}
+
+/// The wait after the `tries`-th failed try: `base_ms` times `tries`, recorded in `waits` when a test gave one, and slept.
+fn backoff(retry: SignRetry, tries: u32) void {
+    const wait_ms = @as(u64, retry.base_ms) * tries;
+    if (retry.waits) |w| {
+        w.ms[w.n] = wait_ms;
+        w.n += 1;
+    }
+    std.Thread.sleep(wait_ms * std.time.ns_per_ms);
+}
+
+/// `cosign sign-blob` (`signArgv`) with `--bundle <file>.sigstore.json <file>` for the six release files and SHA256SUMS, after SHA256SUMS is checked. A bundle that
 /// exists beforehand is refused (a command that wrote nothing would pass on it), and one that is empty afterwards is refused.
 pub fn sign(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign: []const u8) !usize {
     return signWith(a, io, dist_dir, cosign, false);
@@ -497,6 +570,11 @@ pub fn sign(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign: []c
 /// sha256, no stray tarball, no bundle already there) and the list of files it would sign, and then no `cosign` is run and no bundle is written. The count is the
 /// number of files that would be signed.
 pub fn signWith(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign: []const u8, dry: bool) !usize {
+    return signRetry(a, io, dist_dir, cosign, dry, .{});
+}
+
+/// `signWith`, with the delays between the tries of one file given (a test passes a recording seam).
+pub fn signRetry(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign: []const u8, dry: bool, retry: SignRetry) !usize {
     const d = try collect(a, dist_dir);
     try checkSums(a, dist_dir, d.files);
     var all = std.ArrayList([]const u8).empty;
@@ -516,9 +594,16 @@ pub fn signWith(a: std.mem.Allocator, io: cmds.Io, dist_dir: []const u8, cosign:
     for (all.items) |n| {
         const file = try join(a, dist_dir, n);
         const bundle = try std.fmt.allocPrint(a, "{s}.sigstore.json", .{file});
-        const r = try io.run(a, &.{ cosign, "sign-blob", "--yes", "--bundle", bundle, file });
+        const argv = signArgv(cosign, bundle, file);
+        var tries: u32 = 1;
+        const r = while (true) : (tries += 1) {
+            const got = try io.run(a, &argv);
+            if (got.code == 0 or tries >= sign_tries or !isTransientSignFailure(got.stderr)) break got;
+            std.debug.print("release sign: cosign sign-blob failed for {s} (try {d} of {d}), trying again: {s}\n", .{ n, tries, sign_tries, got.stderr });
+            backoff(retry, tries);
+        };
         if (r.code != 0) {
-            std.debug.print("release sign: cosign sign-blob failed for {s}: {s}\n", .{ n, r.stderr });
+            std.debug.print("release sign: cosign sign-blob failed for {s} after {d} tries: {s}\n", .{ n, tries, r.stderr });
             return error.CosignFailed;
         }
         const st = std.fs.cwd().statFile(bundle) catch {
@@ -578,6 +663,10 @@ const FakeCosign = struct {
     empty: []const u8 = "",
     /// Exit 1 for a file whose name contains this.
     fail: []const u8 = "",
+    /// Exit 1 with `flaky_stderr` for the first `flaky_n` calls (in all, not per file) on a file whose name contains `flaky`, then behave.
+    flaky: []const u8 = "",
+    flaky_n: u32 = 0,
+    flaky_stderr: []const u8 = "",
     version_says: []const u8 = "buildrules " ++ V ++ "\n",
     version_code: u8 = 0,
 
@@ -587,15 +676,20 @@ const FakeCosign = struct {
         if (argv.len == 2 and std.mem.eql(u8, argv[1], "--version")) {
             return .{ .code = self.version_code, .stdout = self.version_says, .stderr = "" };
         }
-        if (argv.len != 6 or !std.mem.eql(u8, argv[1], "sign-blob") or !std.mem.eql(u8, argv[2], "--yes") or !std.mem.eql(u8, argv[3], "--bundle")) {
+        // cosign <sign-blob flags..> --bundle <bundle> <file>
+        if (argv.len != 12 or !std.mem.eql(u8, argv[1], "sign-blob") or !std.mem.eql(u8, argv[9], "--bundle")) {
             std.debug.print("unscripted command: {s}\n", .{try std.mem.join(a, " ", argv)});
             return error.UnscriptedCommand;
         }
-        const file = argv[5];
+        const file = argv[11];
         if (self.fail.len != 0 and std.mem.indexOf(u8, file, self.fail) != null) return .{ .code = 1, .stdout = "", .stderr = "boom" };
+        if (self.flaky_n > 0 and self.flaky.len != 0 and std.mem.indexOf(u8, file, self.flaky) != null) {
+            self.flaky_n -= 1;
+            return .{ .code = 1, .stdout = "", .stderr = self.flaky_stderr };
+        }
         if (self.skip.len != 0 and std.mem.indexOf(u8, file, self.skip) != null) return .{ .code = 0, .stdout = "", .stderr = "" };
         const body: []const u8 = if (self.empty.len != 0 and std.mem.indexOf(u8, file, self.empty) != null) "" else "{\"bundle\":1}";
-        try std.fs.cwd().writeFile(.{ .sub_path = argv[4], .data = body });
+        try std.fs.cwd().writeFile(.{ .sub_path = argv[10], .data = body });
         return .{ .code = 0, .stdout = "", .stderr = "" };
     }
 
@@ -999,7 +1093,7 @@ test "sign runs cosign sign-blob on the six files and SHA256SUMS, and leaves a b
     var fake = FakeCosign{ .a = a };
     try t.expectEqual(@as(usize, 7), try sign(a, fake.io(), dir.path, "cosign"));
     try t.expectEqual(@as(usize, 7), fake.calls.items.len);
-    for (fake.calls.items) |c| try t.expect(std.mem.startsWith(u8, c, "cosign sign-blob --yes --bundle "));
+    for (fake.calls.items) |c| try t.expect(std.mem.startsWith(u8, c, "cosign sign-blob --yes --oidc-provider github-actions --fulcio-auth-flow token --timeout 90s --bundle "));
     for (targets) |tg| {
         const n = try std.fmt.allocPrint(a, "buildrules-cli-{s}-{s}.tar.gz.sigstore.json", .{ V, tg });
         _ = try dir.tmp.dir.statFile(n);
@@ -1026,6 +1120,121 @@ test "sign refuses a cosign that fails, one that writes no bundle, and an empty 
     try clearBundles(a, &dir);
     var hollow = FakeCosign{ .a = a, .empty = "linux-aarch64" };
     try t.expectError(error.NoBundle, sign(a, hollow.io(), dir.path, "cosign"));
+}
+
+test "sign gives cosign the argv that cannot ask a person for anything, bundle and file last" {
+    // The defect: cosign, with no token from the Actions endpoint, falls back to the OAuth device flow and waits for a human until the device code expires.
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var dir = try Dir.make(a);
+    defer dir.tmp.cleanup();
+    try dir.release(a);
+    _ = try sums(a, dir.path);
+    var fake = FakeCosign{ .a = a };
+    _ = try sign(a, fake.io(), dir.path, "/opt/cosign");
+    const sums_file = try join(a, dir.path, "SHA256SUMS");
+    const want = try std.fmt.allocPrint(a, "/opt/cosign sign-blob --yes --oidc-provider github-actions --fulcio-auth-flow token --timeout 90s --bundle {s}.sigstore.json {s}", .{ sums_file, sums_file });
+    try t.expectEqualStrings(want, fake.calls.items[fake.calls.items.len - 1]);
+}
+
+test "sign tries a call again when the network failed it, with growing delays, and then signs" {
+    // The defect: one dropped connection to the Actions token endpoint ended the whole release.
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var dir = try Dir.make(a);
+    defer dir.tmp.cleanup();
+    try dir.release(a);
+    _ = try sums(a, dir.path);
+    const seen = "Generating ephemeral keys...\nerror fetching GitHub OIDC token (will retry): Get \"https://example.invalid/idtoken\": dial tcp 192.0.2.1:443: i/o timeout\n";
+    var flaky = FakeCosign{ .a = a, .flaky = "macos-arm64", .flaky_n = 2, .flaky_stderr = seen };
+    const s = try signSummary(a, &dir, &flaky, "macos-arm64");
+    // two failed calls and the third that signs; the delays are 7 ms and 14 ms
+    try t.expectEqualStrings("signed on=3 waits=2 sum=21", s);
+}
+
+test "sign gives up after three tries of a network failure, and tries a refusal once" {
+    // The defects: a retry without a bound, and a retry of a refusal that is a verdict (the same bad call made three times).
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var dir = try Dir.make(a);
+    defer dir.tmp.cleanup();
+    try dir.release(a);
+    _ = try sums(a, dir.path);
+    var down = FakeCosign{ .a = a, .flaky = "linux-x86_64", .flaky_n = 100, .flaky_stderr = "Error: signing: getting keypair and token: context deadline exceeded" };
+    var refused = FakeCosign{ .a = a, .flaky = "linux-x86_64", .flaky_n = 100, .flaky_stderr = "Error: signing: getting keypair and token: oidc: malformed jwt" };
+    var boom = FakeCosign{ .a = a, .fail = "linux-x86_64" };
+    const got = try std.fmt.allocPrint(a, "{s}\n{s}\n{s}", .{
+        try signSummary(a, &dir, &down, "linux-x86_64"),
+        try signSummary(a, &dir, &refused, "linux-x86_64"),
+        try signSummary(a, &dir, &boom, "linux-x86_64"),
+    });
+    try t.expectEqualStrings("CosignFailed on=3 waits=2 sum=21\nCosignFailed on=1 waits=0 sum=0\nCosignFailed on=1 waits=0 sum=0", got);
+}
+
+/// Signs `dir` with `fake` (delays of 7 ms and 14 ms) and says, in one line, how it ended, how many calls the fake saw on files whose name contains `part`, and
+/// the delays it was asked to wait. Clears the bundles after, so the next run starts clean.
+fn signSummary(a: std.mem.Allocator, dir: *Dir, fake: *FakeCosign, part: []const u8) ![]const u8 {
+    var w = cmds.Waits{};
+    const res = signRetry(a, fake.io(), dir.path, "cosign", false, .{ .base_ms = 7, .waits = &w });
+    var on: usize = 0;
+    for (fake.calls.items) |c| {
+        if (std.mem.indexOf(u8, c, part) != null) on += 1;
+    }
+    var sum: u64 = 0;
+    for (w.ms[0..w.n]) |ms| sum += ms;
+    const how = if (res) |_| "signed" else |e| @errorName(e);
+    try clearBundles(a, dir);
+    return std.fmt.allocPrint(a, "{s} on={d} waits={d} sum={d}", .{ how, on, w.n, sum });
+}
+
+test "backoff waits base_ms times the try, records it when asked, and records nothing otherwise" {
+    var w = cmds.Waits{};
+    backoff(.{ .base_ms = 2, .waits = &w }, 3);
+    backoff(.{ .base_ms = 0 }, 1);
+    try t.expect(w.n == 1 and w.ms[0] == 6);
+}
+
+test "isTransientSignFailure: the shape of the failed release run retries, a device-flow wait on its own does not" {
+    try t.expect(allTransient(&.{
+        "Generating ephemeral keys...\nerror fetching GitHub OIDC token (will retry): Get \"https://x\": dial tcp 192.0.2.1:443: i/o timeout\nNon-interactive mode detected, using device flow.\nError: signing: getting keypair and token: retrieving ID token: authenticating caller: error obtaining token: expired_token",
+        "Error: reading ID token: fetching ambient OIDC credentials: Get \"https://x\": EOF",
+        "Error: signing: [POST /api/v2/signingCert][503] createSigningCertificate",
+        "Error: Post \"https://x\": net/http: TLS handshake timeout",
+        "Error: context deadline exceeded",
+        "Error: read tcp: connection reset by peer",
+        "Error: dial tcp 192.0.2.1:443: connect: connection refused",
+        "Error: dial tcp: lookup example.invalid: no such host",
+        "Error: Post \"https://x\": unexpected EOF",
+        "Error: signing: [502] bad",
+        "Error: signing: [504] bad",
+        "Error: signing: [429] slow down",
+        "Error: unexpected status: 502 Bad Gateway",
+        "Error: unexpected status: 503 Service Unavailable",
+        "Error: unexpected status: 504 Gateway Timeout",
+    }));
+    try t.expect(!anyTransient(&.{
+        "Error: signing: error obtaining token: expired_token",
+        "Error: signing: [400] createSigningCertificate",
+        "boom",
+        "",
+    }));
+}
+
+fn allTransient(list: []const []const u8) bool {
+    for (list) |s| {
+        if (!isTransientSignFailure(s)) return false;
+    }
+    return true;
+}
+
+fn anyTransient(list: []const []const u8) bool {
+    for (list) |s| {
+        if (isTransientSignFailure(s)) return true;
+    }
+    return false;
 }
 
 fn clearBundles(a: std.mem.Allocator, dir: *Dir) !void {
