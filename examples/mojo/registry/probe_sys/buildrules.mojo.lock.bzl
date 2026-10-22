@@ -33,14 +33,10 @@ GRAPH_JSON = r'''{
       "version": "1.0.0",
       "kind": "lib",
       "root": "base_sys/src/base_sys",
-      "srcs": [
-        {"path": "base_sys/src/base_sys/__init__.mojo", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
-      ],
       "deps": [],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
-      "outputs": ["base_sys.mojoc"],
-      "key": "7b0bd7f5b4bb6ea0ae9c9b79a6d9e10072038bb3b8b72d4f32159110240acb47"
+      "outputs": ["base_sys.mojoc"]
     },
     {
       "id": "probe_sys@1.0.0#mojo1.0.0/lib",
@@ -54,8 +50,7 @@ GRAPH_JSON = r'''{
       "deps": ["base_sys@1.0.0#mojo1.0.0/lib"],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
-      "outputs": ["probe_sys.mojoc"],
-      "key": "e5334564b29749342346e1456e430015840cc4f2f3f9214e8a34a1b5a7957a10"
+      "outputs": ["probe_sys.mojoc"]
     }
   ]
 }

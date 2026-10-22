@@ -41,8 +41,7 @@ GRAPH_JSON = r'''{
         {"id": "cnative", "soname": "libcnative.so.1", "sha256": "3ad85f56af088ec3a925e6f32f4be4c500efe9397750ddaac4c173d1962c356c", "package": "cnative"}
       ],
       "profile": {"opt": 3, "assert": "none", "debug": false},
-      "outputs": ["app_main"],
-      "key": "ebf26dbac53ae91b63e204f05b9b3af9cadec8a207169dcb7d2a9e24dbd71aee"
+      "outputs": ["app_main"]
     },
     {
       "id": "app@1.0.0#mojo1.0.0/lib",
@@ -58,8 +57,7 @@ GRAPH_JSON = r'''{
         {"id": "cnative", "soname": "libcnative.so.1", "sha256": "3ad85f56af088ec3a925e6f32f4be4c500efe9397750ddaac4c173d1962c356c", "package": "cnative"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
-      "outputs": ["app.mojoc"],
-      "key": "778c8eef6e11fead136bf4f5d354bbe8155845d10edccc4bfcd22fda86707fc2"
+      "outputs": ["app.mojoc"]
     },
     {
       "id": "app@1.0.0#mojo1.0.0/test:tests/test_app.mojo",
@@ -74,8 +72,7 @@ GRAPH_JSON = r'''{
         {"id": "cnative", "soname": "libcnative.so.1", "sha256": "3ad85f56af088ec3a925e6f32f4be4c500efe9397750ddaac4c173d1962c356c", "package": "cnative"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
-      "outputs": ["test_app.pass"],
-      "key": "355c5c910f38f28c1fe2e63732ed2879a74f59d4966eaf0c218362784554aac7"
+      "outputs": ["test_app.pass"]
     },
     {
       "id": "base@0.1.0#mojo1.0.0/lib",
@@ -83,14 +80,10 @@ GRAPH_JSON = r'''{
       "version": "0.1.0",
       "kind": "lib",
       "root": "util/base/src/base",
-      "srcs": [
-        {"path": "util/base/src/base/__init__.mojo", "sha256": "fb0f853364953595d2c32433c6ffc27013146e9afbbb8e8e12ff472453038116"}
-      ],
       "deps": [],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
-      "outputs": ["base.mojoc"],
-      "key": "4b12637c9fb336adb7f3d255ae59aab3febcc754126277744be4efcf6cffc1bd"
+      "outputs": ["base.mojoc"]
     },
     {
       "id": "cnative@0.1.0#mojo1.0.0/lib",
@@ -111,14 +104,10 @@ GRAPH_JSON = r'''{
       "version": "0.1.0",
       "kind": "lib",
       "root": "util/src/util",
-      "srcs": [
-        {"path": "util/src/util/__init__.mojo", "sha256": "04c3b0158d954116e6e31fe6580f24fcea9e6be16a8c575e8d954d46fcba2606"}
-      ],
       "deps": ["base@0.1.0#mojo1.0.0/lib"],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
-      "outputs": ["util.mojoc"],
-      "key": "1266daa7f4c486008e0d970d4f54e0ece09dbb9e85a7ba791de608fb91ae6d6e"
+      "outputs": ["util.mojoc"]
     }
   ]
 }

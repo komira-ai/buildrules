@@ -35,31 +35,46 @@ def _validated(ctx, info):
         ]))
     return info
 
+def check_closure_ids(who, want, have, refuse = fail):
+    """Each library the dependency targets provide is the one the graph names. `want` and `have` are `{package: unit id}` (the graph's closure of the unit,
+    and what the `MojoLibInfo` of the targets say they were built as); a unit id is `<package>@<version>#mojo<Mojo version>/lib`, so a library built
+    from another version of its package, or for another Mojo, is not the graph's. `refuse` is `fail` in a build; a test passes a recorder
+    (rules/rust/refusal.bzl)."""
+    for package in sorted(want.keys()):
+        if package in have and have[package] != want[package]:
+            refuse(("{}: the graph imports {} as {} but the dependency target provides {}: that library was built from another version of the package, " +
+                    "or for another Mojo. Run `buildrules mojo sync` where the library is and where it is imported").format(who, package, want[package], have[package]))
+
 def _unit_impl(ctx):
     tc = ctx.attrs.toolchain[MojoToolchainInfo]
     if tc.version != ctx.attrs.mojo:
         fail("{}: the graph is for Mojo {} but the toolchain {} is Mojo {}".format(ctx.label, ctx.attrs.mojo, ctx.attrs.toolchain.label, tc.version))
 
-    # The sources, at the paths the graph names (relative to the package directory).
+    # The sources, at the paths the graph names. The graph's paths start at `graph_base`, a directory of the repository (the package's, or the root
+    # when mopm was given --workspace-root), so a source is staged at its repository path less that directory.
     srcs = {}
+    where = ctx.label.package
     for s in ctx.attrs.srcs:
-        rel = s.short_path
-        if ctx.attrs.src_root:
-            if not rel.startswith(ctx.attrs.src_root + "/"):
-                fail("{}: source {} is not under {}".format(ctx.label, s, ctx.attrs.src_root))
-            rel = rel[len(ctx.attrs.src_root) + 1:]
+        rel = (where + "/" if where else "") + s.short_path
+        if ctx.attrs.graph_base:
+            if not rel.startswith(ctx.attrs.graph_base + "/"):
+                fail("{}: source {} is not under {}".format(ctx.label, s, ctx.attrs.graph_base))
+            rel = rel[len(ctx.attrs.graph_base) + 1:]
         srcs[rel] = s
     for want in ctx.attrs.src_paths:
         if want not in srcs:
             fail("{}: the graph names the source {} but the target's `srcs` do not include it".format(ctx.label, want))
     src_dir = ctx.actions.copied_dir("src", srcs)
 
-    # The dependencies' `.mojoc`, flat, and a check that the targets give exactly the closure the graph has.
+    # The dependencies' `.mojoc`, flat, and a check that the targets give exactly the closure the graph has, each library built as the graph says.
     closure = {}
+    ids = {}
     for d in ctx.attrs.deps:
         closure.update(d[MojoLibInfo].closure)
-    if sorted(closure.keys()) != sorted(ctx.attrs.closure_names):
-        fail("{}: the graph's closure of {} is {} but the dependency targets give {}".format(ctx.label, ctx.attrs.unit_id, sorted(ctx.attrs.closure_names), sorted(closure.keys())))
+        ids.update(d[MojoLibInfo].ids)
+    if sorted(closure.keys()) != sorted(ctx.attrs.closure_ids.keys()):
+        fail("{}: the graph's closure of {} is {} but the dependency targets give {}".format(ctx.label, ctx.attrs.unit_id, sorted(ctx.attrs.closure_ids.keys()), sorted(closure.keys())))
+    check_closure_ids(str(ctx.label), ctx.attrs.closure_ids, ids)
 
     # The native libraries by soname.
     natives = {}
@@ -113,9 +128,10 @@ def _unit_impl(ctx):
     if ctx.attrs.kind == "lib":
         mojoc = out.project(ctx.attrs.product)
         closure[ctx.attrs.package] = mojoc
+        ids[ctx.attrs.package] = ctx.attrs.unit_id
         return _validated(ctx, [
             DefaultInfo(default_output = mojoc),
-            MojoLibInfo(id = ctx.attrs.unit_id, mojoc = mojoc, closure = closure),
+            MojoLibInfo(id = ctx.attrs.unit_id, mojoc = mojoc, closure = closure, ids = ids),
         ])
     return _validated(ctx, [
         DefaultInfo(default_output = out.project(ctx.attrs.product), sub_targets = {"dir": [DefaultInfo(default_output = out)]}),
@@ -138,13 +154,15 @@ mojo_unit_rule = rule(
         "natives": attrs.dict(attrs.string(), attrs.dep(), default = {}),
         # Arguments mojo_launch puts right after `build` (the ISA flags of a test or binary).
         "build_args": attrs.list(attrs.string(), default = []),
-        "closure_names": attrs.list(attrs.string(), default = []),
+        # package name -> unit id, for every unit this one imports (directly or not): the graph's closure, which the dependency targets must give.
+        "closure_ids": attrs.dict(attrs.string(), attrs.string(), default = {}),
+        # The directory (of the repository) the graph's paths start at: the package's own, or "" when mopm was given --workspace-root.
+        "graph_base": attrs.string(default = ""),
         "package": attrs.string(),
         # The file name of the product inside the output directory: `<package>.mojoc` or the executable's name.
         "product": attrs.string(),
-        # Paths the graph names for this unit's sources, and the directory of the BUCK file's package they are relative to.
+        # Paths the graph names for this unit's sources (`srcs` are the files at those paths, in this BUCK file's package).
         "src_paths": attrs.list(attrs.string(), default = []),
-        "src_root": attrs.string(default = ""),
         "srcs": attrs.list(attrs.source(), default = []),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         "unit_id": attrs.string(),
@@ -168,10 +186,13 @@ def _prebuilt_impl(ctx):
             sub_targets[soname] = [DefaultInfo(default_output = natives.project(soname))]
     ctx.actions.run(cmd, category = "mojo_prebuilt", identifier = ctx.attrs.unit_id)
     closure = {}
+    ids = {}
     for d in ctx.attrs.deps:
         closure.update(d[MojoLibInfo].closure)
+        ids.update(d[MojoLibInfo].ids)
     closure[ctx.attrs.package] = out
-    return [DefaultInfo(default_output = out, sub_targets = sub_targets), MojoLibInfo(id = ctx.attrs.unit_id, mojoc = out, closure = closure)]
+    ids[ctx.attrs.package] = ctx.attrs.unit_id
+    return [DefaultInfo(default_output = out, sub_targets = sub_targets), MojoLibInfo(id = ctx.attrs.unit_id, mojoc = out, closure = closure, ids = ids)]
 
 # A registry dependency: the `.mojoc` inside the sha256-pinned `.conda` the graph names, never compiled, and the static native libraries
 # the lock pins for the package (`natives`: soname -> sha256, in the graph's order), which come out of the same file.
@@ -256,7 +277,7 @@ def _gated_lib_impl(ctx):
     closure[ctx.attrs.package] = out
     return _validated(ctx, [
         DefaultInfo(default_output = out),
-        MojoLibInfo(id = lib.id, mojoc = out, closure = closure),
+        MojoLibInfo(id = lib.id, mojoc = out, closure = closure, ids = lib.ids),
     ])
 
 # The library as the world sees it (`:lib`): the compiled library (`:lib_ungated`, which the package's own tests import) behind the

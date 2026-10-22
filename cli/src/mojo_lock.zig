@@ -2,15 +2,15 @@
 //! whether it is still the graph of the files on disk (docs/contract.md, section 12). Pure Starlark data:
 //!
 //!     SCHEMA = 1
-//!     MOPM = {"version": "0.0.20", "origin": "builtin"}
+//!     MOPM = {"version": "0.0.20", "origin": "builtin"}      # and , "workspace_root": true for a mopm that was given --workspace-root
 //!     MOJO = "1.0.0"
 //!     CLOSURE_SHA256 = "<mopm's hash of the toolchain closure, a second copy of the graph's>"
 //!     MANIFEST_SHA256 = {"mopm.toml": "<sha256>", ...}
-//!     GRAPH_JSON = r'''<mopm plan --unit-graph --locked, verbatim>'''
+//!     GRAPH_JSON = r'''<mopm plan --unit-graph --locked, path dependencies by identity only (rules/mojo/tools/graph_norm.zig)>'''
 //!     GRAPH = json.decode(GRAPH_JSON)
 //!
-//! The graph text is embedded unchanged, so reviewing the diff of the table is reviewing mopm's output, and `check` reads
-//! the same bytes the rules do.
+//! The graph text is mopm's, line for line, but for the sources and keys of path dependencies (their own tables hold those), so reviewing
+//! the diff of the table is reviewing mopm's output, and `check` reads the same bytes the rules do.
 
 const std = @import("std");
 const valid = @import("valid.zig");
@@ -22,6 +22,9 @@ pub const Lock = struct {
     schema: u32,
     mopm_version: []const u8,
     mopm_origin: []const u8,
+    /// The graph was asked for with `--workspace-root` (its paths are relative to the cell root, not to the package). Written only when true, so a
+    /// table made before the flag existed is unchanged.
+    workspace_root: bool = false,
     mojo: []const u8,
     closure_sha256: []const u8,
     manifests: []const Manifest,
@@ -38,7 +41,7 @@ pub fn render(a: std.mem.Allocator, l: Lock) ![]u8 {
     var o = std.ArrayList(u8).empty;
     try o.appendSlice(a, header);
     try o.print(a, "SCHEMA = {d}\n", .{l.schema});
-    try o.print(a, "MOPM = {{\"version\": \"{s}\", \"origin\": \"{s}\"}}\n", .{ l.mopm_version, l.mopm_origin });
+    try o.print(a, "MOPM = {{\"version\": \"{s}\", \"origin\": \"{s}\"{s}}}\n", .{ l.mopm_version, l.mopm_origin, if (l.workspace_root) ", \"workspace_root\": true" else "" });
     try o.print(a, "MOJO = \"{s}\"\n", .{l.mojo});
     try o.print(a, "CLOSURE_SHA256 = \"{s}\"\n", .{l.closure_sha256});
     try o.appendSlice(a, "MANIFEST_SHA256 = {\n");
@@ -97,6 +100,7 @@ pub fn parse(a: std.mem.Allocator, name: []const u8, text: []const u8, diag: *Di
             const o2 = rest[oi + mark.len ..];
             const q2 = std.mem.indexOfScalar(u8, o2, '"') orelse continue;
             l.mopm_origin = o2[0..q2];
+            l.workspace_root = std.mem.indexOf(u8, o2[q2..], ", \"workspace_root\": true}") != null;
         } else if (std.mem.startsWith(u8, line, "MOJO = \"")) {
             l.mojo = std.mem.trimRight(u8, line["MOJO = \"".len..], "\"");
         } else if (std.mem.startsWith(u8, line, "CLOSURE_SHA256 = \"")) {
