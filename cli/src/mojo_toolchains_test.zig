@@ -163,11 +163,81 @@ test "cell: [repositories] is Buck's alias of [cells] and is read; when both set
     }
 }
 
+test "cell: buck2 reads [repositories] only when there is no [cells] section at all, so any [cells] section (even one with no toolchains line) hides it" {
+    // [cells] root = . and [repositories] toolchains = alt/tc: buck2 has no toolchains cell, so the tables are where they are by default.
+    const h = try repo("[cells]\n  root = .\n[repositories]\n  toolchains = alt/tc\n", "toolchains");
+    defer h.destroy();
+    try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
+    try expectTables(h, "toolchains", true);
+    try expectTables(h, "alt/tc", false);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check" }).code);
+    // The [cells] section may be in .buckconfig.local: the merged configuration has one, so [repositories] of the committed file is hidden all the same.
+    const g = try repo("[repositories]\n  toolchains = alt/tc\n", "toolchains");
+    defer g.destroy();
+    try g.put(".buckconfig.local", "[cells]\n  root = .\n");
+    try t.expectEqual(@as(u8, 0), g.run(&sync_args).code);
+    try expectTables(g, "toolchains", true);
+    try expectTables(g, "alt/tc", false);
+}
+
+test "local: a [repositories] toolchains line in .buckconfig.local is not a toolchains cell when a [cells] section exists" {
+    const h = try repo("[cells]\n  toolchains = " ++ custom ++ "\n", custom);
+    defer h.destroy();
+    try h.put(".buckconfig.local", "[repositories]\n  toolchains = alt/tc\n");
+    try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
+    try expectTables(h, custom, true);
+}
+
+test "local: a .buckconfig.local that is a directory is reported as that, not as a bare error name" {
+    const h = try repo("[cells]\n  toolchains = " ++ custom ++ "\n", custom);
+    defer h.destroy();
+    try h.tmp.dir.makeDir(".buckconfig.local");
+    for ([_][]const []const u8{ &sync_args, &.{ "mojo", "check" } }) |argv| {
+        const r = h.run(argv);
+        try t.expectEqual(@as(u8, 1), r.code);
+        try t.expect(kit.contains(r.err, ".buckconfig.local is a directory, not a file"));
+        try t.expect(!kit.contains(r.err, "IsDir"));
+    }
+    try expectNothingWritten(h);
+}
+
+test "cell: a header followed by a ; comment is not a section (buck2 rejects it); one followed by a # comment is" {
+    const h = try repo("[cells] ; no\n  toolchains = alt/tc\n", "toolchains");
+    defer h.destroy();
+    try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
+    try expectTables(h, "toolchains", true);
+    try expectTables(h, "alt/tc", false);
+}
+
+test "a toolchains directory inside a package at the repository root is accepted (every directory is, and refusing it would refuse the default)" {
+    const h = try kit.Harness.create();
+    defer h.destroy();
+    h.ctx.execer = &fakeExec;
+    tables_in = "tc";
+    try h.put(".buckconfig", "[cells]\n  toolchains = tc\n");
+    try h.put("mopm-toolchain.toml", fx.toolchain);
+    try h.put("tc/BUCK", "# toolchains\n");
+    try h.put("mopm.toml", fx.manifest);
+    try h.put("mopm.lock", fx.mopm_lock);
+    try h.put("src/base/__init__.mojo", fx.lib);
+    try h.put("tests/test_base.mojo", fx.test_src);
+    try h.put("BUCK", fx.buck);
+    try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
+    try expectTables(h, "tc", true);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check" }).code);
+}
+
 test "local: a toolchains cell set in .buckconfig.local, under [cells] or [repositories], is refused (buck2 would use it, the committed pins must not depend on it)" {
-    for ([_][]const u8{ "[cells]\n  toolchains = alt/tc\n", "[repositories]\n  toolchains = alt/tc\n" }) |local| {
-        const h = try repo("[cells]\n  toolchains = " ++ custom ++ "\n", custom);
+    // [repositories] in the local file counts only where no [cells] section exists: the second pair has none, in either file.
+    const Pair = struct { root: []const u8, local: []const u8 };
+    for ([_]Pair{
+        .{ .root = "[cells]\n  toolchains = " ++ custom ++ "\n", .local = "[cells]\n  toolchains = alt/tc\n" },
+        .{ .root = "[repositories]\n  toolchains = " ++ custom ++ "\n", .local = "[repositories]\n  toolchains = alt/tc\n" },
+        .{ .root = "[repositories]\n  toolchains = " ++ custom ++ "\n", .local = "[cells]\n  toolchains = alt/tc\n" },
+    }) |pair| {
+        const h = try repo(pair.root, custom);
         defer h.destroy();
-        try h.put(".buckconfig.local", local);
+        try h.put(".buckconfig.local", pair.local);
         for ([_][]const []const u8{ &sync_args, &.{ "mojo", "check" } }) |argv| {
             const r = h.run(argv);
             try t.expectEqual(@as(u8, 1), r.code);

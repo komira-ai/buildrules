@@ -448,7 +448,9 @@ no such line behaves as before. Four rules, each the reading of Buck's own confi
 - A root `.buckconfig` with an include line (`<file:...>`, `<?file:...>`) is refused: includes are not followed, so a cell path they hold would be missed.
 - `.buckconfig.local` may not set the toolchains cell (under `[cells]` or `[repositories]`): buck2 honours it, but the pins are committed and so must their
   location be. Exit 1; declare the cell in the committed `.buckconfig`.
-- `[repositories]` is read as an alias of `[cells]`, as buck2 does; when both set `toolchains`, `[cells]` wins.
+- `[repositories]` is Buck's older name for `[cells]`, and is read only when no `[cells]` section exists at all, in `.buckconfig` or `.buckconfig.local`
+  (whatever that section holds, as buck2 does: with `[cells] root = .` and `[repositories] toolchains = x` there is no toolchains cell). A header may be followed
+  by a `#` comment (`[cells] # x`); buck2 rejects a `;` there, so that is not a section header.
 
 `--toolchains DIR` on `mojo sync` and `mojo check` is an assertion only: it must name that same directory, else exit 1 with both paths. `rust_pins.bzl` is
 not covered by this.

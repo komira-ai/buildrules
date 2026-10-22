@@ -307,22 +307,23 @@ pub const Tables = struct { dir: []const u8, real: ?[]const u8, mojo_pins: []con
 
 /// What the root .buckconfig says that matters here: the path of the `toolchains` cell (`[cells] toolchains = DIR`; the last assignment wins, as in
 /// Buck's own files) and the first include line (`<file:...>`, `<?file:...>`), which is not followed.
-/// `[repositories]` is Buck's older name for `[cells]` and is read as an alias; when both name the cell, `[cells]` wins, as in Buck. `local` is what
+/// `[repositories]` is Buck's older name for `[cells]`: buck2 reads it only when no `[cells]` section exists at all (in .buckconfig or .buckconfig.local,
+/// whatever that section holds), and so does this. `local` is what
 /// `.buckconfig.local` sets for it (Buck honours that file, a committed table must not depend on it).
 const Conf = struct { toolchains: ?[]const u8 = null, include: ?[]const u8 = null, local: ?[]const u8 = null };
 
-const Parsed = struct { cells: ?[]const u8 = null, repos: ?[]const u8 = null, include: ?[]const u8 = null };
+const Parsed = struct { cells: ?[]const u8 = null, repos: ?[]const u8 = null, include: ?[]const u8 = null, has_cells: bool = false };
 
 fn isIncludeLine(line: []const u8) bool {
     return std.mem.startsWith(u8, line, "<file:") or std.mem.startsWith(u8, line, "<?file:");
 }
 
-/// Whether `line` is the header of the section `name`: exactly `[name]`, optionally followed by a comment.
+/// Whether `line` is the header of the section `name`: exactly `[name]`, optionally followed by a `#` comment (buck2 accepts `[s] # c` and rejects `[s] ; c`).
 fn isHeaderOf(line: []const u8, name: []const u8) bool {
     const close = std.mem.indexOfScalar(u8, line, ']') orelse return false;
     if (!std.mem.eql(u8, line[1..close], name)) return false;
     const rest = std.mem.trim(u8, line[close + 1 ..], " \t");
-    return rest.len == 0 or rest[0] == '#' or rest[0] == ';';
+    return rest.len == 0 or rest[0] == '#';
 }
 
 fn parseConf(text: []const u8) Parsed {
@@ -338,6 +339,7 @@ fn parseConf(text: []const u8) Parsed {
         }
         if (line[0] == '[') {
             sec = if (isHeaderOf(line, contract.buckconfig_section)) .cells else if (isHeaderOf(line, contract.buckconfig_alias_section)) .repos else .none;
+            if (sec == .cells) p.has_cells = true;
             continue;
         }
         if (sec == .none) continue;
@@ -349,17 +351,24 @@ fn parseConf(text: []const u8) Parsed {
     return p;
 }
 
-fn readConf(ctx: *Ctx) !Conf {
+fn readConf(ctx: *Ctx) !?Conf {
     var conf = Conf{};
-    if (try ctx.readOpt(".buckconfig")) |text| {
-        const p = parseConf(text);
-        conf.include = p.include;
-        conf.toolchains = p.cells orelse p.repos;
-    }
-    if (try ctx.readOpt(".buckconfig.local")) |text| {
-        const p = parseConf(text);
-        conf.local = p.cells orelse p.repos;
-    }
+    const root: Parsed = if (try ctx.readOpt(".buckconfig")) |text| parseConf(text) else .{};
+    const local: Parsed = blk: {
+        const text = ctx.readOpt(".buckconfig.local") catch |e| switch (e) {
+            error.IsDir => {
+                _ = ctx.fail(".buckconfig.local is a directory, not a file: buildrules cannot tell whether it sets the toolchains cell", .{});
+                return null;
+            },
+            else => return e,
+        };
+        break :blk if (text) |s| parseConf(s) else .{};
+    };
+    // buck2 reads `[repositories]` as the cells only when no `[cells]` section exists in the merged configuration (whatever that section holds).
+    const has_cells = root.has_cells or local.has_cells;
+    conf.include = root.include;
+    conf.toolchains = if (has_cells) root.cells else root.repos;
+    conf.local = if (has_cells) local.cells else local.repos;
     return conf;
 }
 
@@ -375,7 +384,7 @@ fn isUnder(x: []const u8, base: []const u8) bool {
 /// with an include line is refused: the include is not followed, so the cell path it might hold would be missed.
 pub fn resolveTables(ctx: *Ctx, flag: ?[]const u8) !?Tables {
     const a = ctx.a;
-    const conf = try readConf(ctx);
+    const conf = (try readConf(ctx)) orelse return null;
     if (conf.include) |inc| {
         _ = ctx.fail(".buckconfig has an include line ({s}): the toolchains cell is read from the root .buckconfig itself and includes are not followed; write the cell's path there", .{inc});
         return null;
@@ -443,7 +452,7 @@ fn packageHolding(ctx: *Ctx, tabs: Tables, pkgs: []const []const u8) !?[]const u
     for (pkgs) |pkg| {
         if (pkg.len == 0) continue;
         const hit = if (tabs.real) |tc_real| blk: {
-            const pr = ctx.dir.realpathAlloc(ctx.a, pkg) catch |e| switch (e) {
+            const pr = ctx.dir.realpathAlloc(ctx.a, if (pkg.len == 0) "." else pkg) catch |e| switch (e) {
                 error.OutOfMemory => return e,
                 else => continue,
             };
