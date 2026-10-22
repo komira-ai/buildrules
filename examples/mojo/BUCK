@@ -1,10 +1,28 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/zig:zig.bzl", "zig_test")
 # Exports mopm-toolchain.toml. Every Mojo package below this directory carries a `:check` that compares it with the hash its table recorded
 # (rules/mojo/check.bzl); `buildrules mojo sync` writes this file when the directory of the toolchain file has no BUCK file.
 export_file(
     name = "mopm-toolchain.toml",
     src = "mopm-toolchain.toml" if glob(["mopm-toolchain.toml"]) else fail("mopm-toolchain.toml is required and there is no default. Create it, for example:\n\n[toolchain]\nmopm = '0.0.25'\nmojo = '1.0.0'\n"),
     visibility = ["PUBLIC"],
+)
+
+# What `:coverage` gives a consumer, held to the real outputs of two packages (coverage_records_test.zig): the count per file and the per-line records
+# it was counted from (`:coverage[reports]`) agree file by file. Needs the Mojo toolchain, so //ci:mojo builds it.
+zig_test(
+    name = "coverage_records",
+    exec_compatible_with = LINUX_X86_64,
+    src = "coverage_records_test.zig",
+    data = {
+        "reexport/coverage.txt": "//examples/mojo/reexport:coverage",
+        "reexport/reports.cobertura.xml": "//examples/mojo/reexport:coverage[reports]",
+        "partial/coverage.txt": "//examples/mojo/partial:coverage",
+        "partial/reports.cobertura.xml": "//examples/mojo/partial:coverage[reports]",
+    },
+    zig ="buildrules//rules/pins:zig_next",
+    visibility = ["//ci:"],
 )
 
 scrub_files()

@@ -417,7 +417,8 @@ Each package is a mopm project: its own `mopm.toml`, `mopm.lock` and graph (`mop
 | `:test` | every test run |
 | `:bin_<name>`, `:build` | the `[targets] bins` of `mopm.toml`; `:build` is the library and the binaries |
 | `:<stem>__cov_bin`, `:<stem>__cov` | the same test as a debug build, and its run under kcov: a Cobertura report in repository paths |
-| `:coverage` | the package's line coverage from those reports (`coverage.txt`); red if a source of the library is in no report |
+| `:coverage` | the package's line coverage from those reports (`coverage.txt`); red if a source of the library is in no report. `:coverage[reports]` is the reports themselves, the per-line records (12.4) |
+| `:coverage_floor` | only if `coverage_floor.txt` is beside the BUCK file: green while `coverage.txt` is exactly that floor (12.4) |
 | `:ci` | `:build` and `:test` |
 | `:table` | the committed graph is what the pinned mopm's `plan --unit-graph --locked` prints for the package and its members now, byte for byte (an action; not part of `:ci`, but of `//ci:all` for every example). `:workspace` is the files it reads |
 | `:check` | the validation every step above carries: the files the table was made from still hash to what it recorded, and `toolchains/mojo_pins.bzl` still holds the table's toolchain (12.6) |
@@ -522,7 +523,31 @@ It is also a `buck2 test` target (`ExternalRunnerTestInfo`).
 through `cov_zig` (it keeps the debug information and rewrites the action's directories out of it), kcov v42 built from source with the pinned zig (`rules/coverage`
 `kcov_build`, `cov_zig`, `debug_relocate`, `cov_normalize`) runs the binary in a tree of copies of the test source and the library's sources at the relative names the line
 tables use, and `cov_normalize` maps the report to repository paths. `cov_run` refuses a binary that names the library's sources by the directory they were staged in. Branch coverage,
-`covcheck`'s policy and floors, and the census are not ported.
+`covcheck`'s policy and the census are not ported.
+
+**What `:coverage` gives a consumer.** Two outputs of one target, built from the same reports:
+
+- `:coverage` (its default output, `coverage.txt`): one row per file, `<path> <hit>/<total> <n>%`, the rows of a test's own sources marked `(not counted)`, then `total <hit>/<total> <n>%`
+  over the library's sources. A library source with no executable line (a re-export `__init__.mojo`) is listed `0/0`.
+- `:coverage[reports]`: the records the rows were counted from, one file per test (`<stem>__cov.cobertura.xml`), kcov's Cobertura XML after `cov_normalize`: `<?xml?>`, `<coverage timestamp="0">`,
+  one `<package name="">`, one `<class name="P" filename="P">` per file that has a record, bytewise sorted, and in it one `<line number="N" hits="H"/>` per line the compiler emitted code for, sorted by
+  number, `H` being 1 when the test ran the line and 0 when not. `P` is the repository path (relative to the root of the cell that holds the package; never absolute, never under `buck-out`). A line
+  kcov gave branch data keeps it, `branch="true" condition-coverage="NN% (k/n)"`. A file with no executable line has no class, so it is the `0/0` row of `coverage.txt` and absent from the
+  records, the same fact twice. This is the shape `covcheck` reads with `--cobertura` (one file per test binary; a path in several files is merged by summing).
+
+A consumer selects them by sub-target, and the build report (or `--show-full-output`) names one path per test:
+
+```
+buck2 build //pkg:coverage                       # coverage.txt
+buck2 build //pkg:coverage[reports] --show-full-output
+```
+
+*Branch records.* kcov writes no `branch` attribute for a Mojo executable, so `:coverage[reports]` holds no branch data today and `coverage.txt` has no `branches` rows (`examples/mojo/coverage_records_test.zig`
+holds both to that). The branch records `covcheck` reads with `--branch-lcov` are written by a classifier of the compiled code's LLVM IR, which is not ported; they are not in this output.
+
+*The floor.* A package with a `coverage_floor.txt` beside its BUCK file (the file every other package's floor is, `rules/coverage/README.md`) gets `:coverage_floor`: `lines NN.NN`, the line total of
+`coverage.txt` rounded down to a hundredth. The check is exact in both directions: lower than the floor fails with `coverage fell`, higher fails with `raise the floor to NN.NN`. A `branches` figure is
+refused while the tests record no branches. With no file there is no target, and the package is as it was. `mojo_coverage_floor(name, coverage, floor)` (`rules/mojo/defs.bzl`) checks a `:coverage` against any other file.
 
 ### 12.5 Versions: pinned mopm, the Mojo version
 
@@ -547,6 +572,8 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 | the table's Mojo is not the graph's, or mopm-toolchain.toml names another | analysis; `mojo check`; `mojo sync` (mopm exit 4) | `the table says Mojo 1.1.0 but its unit graph is for Mojo 1.0.0`; `mopm has no pinned toolchain for mojo 1.1.0` |
 | a native library other than the pinned one | `mopm unit build` | `native library X has sha256 B, but the graph declares A` |
 | a library source no test compiled, that has any statement beyond comments, docstrings and imports (a re-export-only `__init__.mojo` has none, is omitted by the report, and is listed `0/0`) | `:coverage` | `<file> is in no report: no test compiled it, or kcov could not open it` |
+| a package's line coverage below its `coverage_floor.txt` | `:coverage_floor` | `<package>: line coverage is 60.00% (3/5), below its floor 70.00%: coverage fell` |
+| a package's line coverage above its `coverage_floor.txt` | `:coverage_floor` | `<package>: line coverage is 60.00% (3/5), above its floor 50.00%: raise the floor to 60.00 (floors only rise, ...)` |
 | `toolchains/mojo_pins.bzl` edited without a sync (a `cc_target`, a hash, a component) | `:check` at analysis; `mojo check` | `toolchains/mojo_pins.bzl and the table's unit graph disagree about the Mojo 1.0.0 toolchain (cc_target)` |
 | `mopm-toolchain.toml` says another Mojo than the table was made for | `:check` (the file's hash); `mojo check` | `examples/mojo/mopm-toolchain.toml is not what the Mojo table was made from (sha256 A, the table says B): run `buildrules mojo sync``  |
 | a test at an ISA level on a platform without it | analysis | as section 11 |
