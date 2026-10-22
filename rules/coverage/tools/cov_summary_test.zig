@@ -156,6 +156,8 @@ test "hasNoStatements: a re-export file has none, any other statement is one" {
         "from .a import (\n    f,\n    g,  # why\n)\n",
         "from .a import f, \\\n    g\n",
         "from .a import (f, g)\r\n",
+        "\"\"\"a\x0bb\"\"\"\nfrom .a import f\n", // a vertical tab inside a string is the string's
+        "\"\"\"x\ny\x0cz\n\"\"\"\n", // a form feed inside a block docstring
     }) |case| try t.expect(S.hasNoStatements(case));
     // refused: a function, a struct, a decorator, a statement, a call, an indented line, a semicolon, an unclosed docstring or parenthesis
     for ([_][]const u8{
@@ -175,6 +177,19 @@ test "hasNoStatements: a re-export file has none, any other statement is one" {
         "from .a import f)\n",
         "from .a\n",
         "importing()\n",
+        "from a import b; pass\n", // a `;` alone: no call, no parenthesis to refuse it for another reason
+        "from a import (b,\n c); pass\n", // and after a parenthesised list
+        "# c\rx = 1\n", // a lone carriage return is a line break to some readers
+        "from a import b\rx = 1\n",
+        "from a import b\r", // ... also at the end of the text
+        "from a import b\r\r\n",
+        "# c\x0bx = 1\n", // a vertical tab or form feed outside a string likewise
+        "# c\x0cx = 1\n",
+        "from a import b\x0c\n",
+        "\x0cfrom a import b\n",
+        "\"\"\"doc\"\"\"\x0b\n",
+        "\"\"\"\ndoc\n\"\"\"\x0c\n",
+        "from a import (b,\n\x0bc)\n",
     }) |case| try t.expect(!S.hasNoStatements(case));
 }
 

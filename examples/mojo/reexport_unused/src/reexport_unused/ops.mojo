@@ -1,0 +1,6 @@
+def add(a: Int, b: Int) -> Int:
+    return a + b
+
+
+def double(x: Int) -> Int:
+    return add(x, x)

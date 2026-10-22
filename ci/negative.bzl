@@ -55,7 +55,36 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + gate_problems(ctx)
+    return problems + gate_problems(ctx) + coverage_red_problems(ctx)
+
+# Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
+# that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
+COVERAGE_REDS = [
+    ("//examples/mojo/reexport_unused:coverage", "is in no report: no test compiled it, or kcov could not open it"),
+]
+
+def coverage_red_problems(ctx):
+    """Every way a coverage fixture is not red for its reason: a list of strings, empty when all is as planted."""
+    problems = []
+    for label, reason in COVERAGE_REDS:
+        built, failed = _built_with_why(ctx, label)
+        if not failed:
+            problems.append("{} built ({} artifact(s)): the planted defect is no longer red".format(label, built))
+        elif reason not in failed:
+            problems.append("{} is red, but not for the reason it plants (expected \"{}\"): {}".format(label, reason, failed))
+    return problems
+
+def _built_with_why(ctx, label):
+    """(artifacts built, the failures of building `label` on GATE_PLATFORM as one string, empty when none)."""
+    built = 0
+    why = ""
+    for _, result in ctx.build(label, target_platform = GATE_PLATFORM).items():
+        ok = result.artifacts()
+        bad = result.failures()
+        built += len(list(ok)) if ok else 0
+        for failure in (list(bad) if bad else []):
+            why += str(failure)
+    return built, why
 
 # The gate of a Mojo library (docs/contract.md, 12.8): a library's public `.mojoc` exists only if every test of its package passed. Two things are held.
 #

@@ -55,6 +55,8 @@ scrub_test(
     "//examples/hello:scrub_files",
     "//examples/isa:scrub_files",
     "//examples/mojo/copy_of_base:scrub_files",
+    "//examples/mojo/reexport:scrub_files",
+    "//examples/mojo/reexport_unused:scrub_files",
     "//examples/mojo/registry/cnative:scrub_files",
     "//examples/mojo/registry/probe_sys/base_sys:scrub_files",
     "//examples/mojo/registry/probe_sys:scrub_files",

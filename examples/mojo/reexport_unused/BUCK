@@ -1,0 +1,8 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# PLANTED DEFECT: ../reexport with a function in __init__.mojo that no test calls. The Mojo report omits the file, as it does ../reexport's, and
+# `:coverage` must stay red with "is in no report" because the file has a statement. ci/all.bzl lists `:coverage` as excluded; ci/negative.bzl holds it red.
+mojo_package(path = ".")
+
+scrub_files()

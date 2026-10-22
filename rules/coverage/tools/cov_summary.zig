@@ -193,6 +193,10 @@ fn parens(code: []const u8, depth: *i32) bool {
     return true;
 }
 
+fn hasLineBreakChar(s: []const u8) bool {
+    return std.mem.indexOfAny(u8, s, "\x0b\x0c") != null;
+}
+
 /// Whether a Mojo source has no executable line: only blank lines, comments, docstrings (a triple-quoted string on its own lines) and top-level
 /// `from ... import ...` / `import ...` statements (a re-export file, `__init__.mojo`). The Mojo coverage report omits such a file, and so it
 /// does a file with code that no test compiled; this is what tells them apart, so it is strict: any other statement, a `;`, a quote on an import,
@@ -201,6 +205,10 @@ pub fn hasNoStatements(text: []const u8) bool {
     var in_doc: ?[]const u8 = null; // the closing triple quote while inside a docstring
     var depth: i32 = 0; // open parentheses of an import
     var cont = false; // the previous import line ended with a backslash
+    // A carriage return that does not end a CRLF is a line break to some readers and not to this one: refuse the file rather than guess.
+    for (text, 0..) |c, i| {
+        if (c == '\r' and (i + 1 >= text.len or text[i + 1] != '\n')) return false;
+    }
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
@@ -208,9 +216,13 @@ pub fn hasNoStatements(text: []const u8) bool {
             const at = std.mem.indexOf(u8, line, q) orelse continue;
             const rest = std.mem.trim(u8, line[at + 3 ..], " \t");
             if (rest.len != 0 and rest[0] != '#') return false;
+            if (hasLineBreakChar(rest)) return false;
             in_doc = null;
             continue;
         }
+        // A vertical tab or form feed outside a string is a line break to some readers (Python's splitlines) and not to others.
+        const doc_start = std.mem.startsWith(u8, line, "\"\"\"") or std.mem.startsWith(u8, line, "'''");
+        if (!doc_start and hasLineBreakChar(raw)) return false;
         if (depth > 0 or cont) {
             if (!importContinuation(line)) return false;
             const code = line[0 .. std.mem.indexOfScalar(u8, line, '#') orelse line.len];
@@ -219,11 +231,12 @@ pub fn hasNoStatements(text: []const u8) bool {
             continue;
         }
         if (line.len == 0 or line[0] == '#') continue;
-        if (std.mem.startsWith(u8, line, "\"\"\"") or std.mem.startsWith(u8, line, "'''")) {
+        if (doc_start) {
             const q = line[0..3];
             if (std.mem.indexOf(u8, line[3..], q)) |at| {
                 const rest = std.mem.trim(u8, line[3 + at + 3 ..], " \t");
                 if (rest.len != 0 and rest[0] != '#') return false;
+                if (hasLineBreakChar(rest)) return false;
             } else in_doc = q;
             continue;
         }
