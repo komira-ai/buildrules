@@ -129,26 +129,69 @@ def gate_problems(ctx):
 # only when that passed. For each rule a planted input that must make the action fail, and a control, the same rule on an input that is right, that must
 # build (so the planted one is red for its input and not for something else). The Mojo test run has no control here: its stand-in program cannot pass,
 # and the real runs are built by //ci:mojo.
+#
+# Each row is (planted target, control or None, the text its failure must hold). The text is what `check` says when it ran the right command and the check
+# failed, so a command line `check` refuses (a wrong option, a missing program) is red here too and cannot pass as the planted failure. `check marker` says
+# `TEST FAILED: ` only after it started the test, and that is what the Mojo test run (which has no control) is held to.
 PLANTED = [
-    ("//ci/planted:run_check_of_other_stdout", "//examples/hello:hello_runs"),
-    ("//ci/planted:c_check_of_other_stdout", "//ci/planted:c_check_of_its_stdout"),
-    ("//ci/planted:mojo_same_of_other_bytes", "//ci/mojo_gate:consumer_of_green"),
-    ("//ci/planted:table_of_other_bytes", "//ci/planted:table_in_sync"),
-    ("//ci/planted:rust_toolchain_of_other_version", "toolchains//:rust"),
-    ("//ci/planted:fails", "//examples/hello:hello_lib_test"),
-    ("//ci/planted:lib_behind_a_failing_test", "//examples/hello:hello_lib"),
-    ("//ci/planted:mojo_test_that_fails", None),
+    ("//ci/planted:run_check_of_other_stdout", "//examples/hello:hello_runs", "run_check: expected output equal to 'not what it prints' but"),
+    ("//ci/planted:c_check_of_other_stdout", "//ci/planted:c_check_of_its_stdout", "c_check: expected output equal to 'not what it prints' but"),
+    ("//ci/planted:mojo_same_of_other_bytes", "//ci/mojo_gate:consumer_of_green", "differ at byte 1"),
+    ("//ci/planted:table_of_other_bytes", "//ci/planted:table_in_sync", "STALE ci/planted/empty.txt"),
+    ("//ci/planted:rust_toolchain_of_other_version", "toolchains//:rust", "rust_toolchain: expected output starting with 'rustc 0.0.0 (' but"),
+    ("//ci/planted:fails", "//examples/hello:hello_lib_test", "the planted failing test"),
+    ("//ci/planted:lib_behind_a_failing_test", "//examples/hello:hello_lib", "the planted failing test"),
+    ("//ci/planted:mojo_test_that_fails", None, "check marker: TEST FAILED: "),
 ]
 
+def _failures(ctx, label):
+    """The text of what failed when building `label` on GATE_PLATFORM."""
+    text = ""
+    for _, result in ctx.build(label, target_platform = GATE_PLATFORM).items():
+        bad = result.failures()
+        for f in (list(bad) if bad else []):
+            text += str(f) + "\n"
+    return text
+
 def planted_problems(ctx):
-    """Every way a planted check or marker is not red, or its control is not green: a list of strings, empty when all is as planted."""
+    """Every way a planted check or marker is not red for its reason, or its control is not green: a list of strings, empty when all is as planted."""
     problems = []
-    for planted, control in PLANTED:
+    for planted, control, reason in PLANTED:
         built, failed = _built(ctx, planted)
         if not failed:
             problems.append("{} built ({} artifact(s)): the check it plants is gone, a failure leaves the target green".format(planted, built))
+        elif reason not in _failures(ctx, planted):
+            problems.append("{} is red, but not for the reason it plants (expected \"{}\"): {}".format(planted, reason, _failures(ctx, planted)))
         if control:
             built, failed = _built(ctx, control)
             if failed or not built:
                 problems.append("{} (the control of {}) must build, and it built {} artifact(s) and failed {}".format(control, planted, built, failed))
+    return problems + test_command_problems(ctx)
+
+# The command `buck2 test` runs for a test (its ExternalRunnerTestInfo): `check run`, the start options, then `--` and the program. No build action of CI runs it,
+# so a command that lost its options is green everywhere but under `buck2 test`; this holds the text of the command of one cargo test (the working directory, the
+# absolute directories and the one that is made) and of one Mojo test run (the compiler's lib on the library path), and that the program is the test's binary.
+TEST_COMMANDS = [
+    ("//ci/cargo_run:env_test", [
+        "\"run\", \"--tmpdir\", \"--abs\", \"CARGO_MANIFEST_DIR\", \"--cwd-env\", \"CARGO_MANIFEST_DIR\", \"--abs\", \"CARGO_TARGET_TMPDIR\", \"--mkdir-env\", \"CARGO_TARGET_TMPDIR\", \"--\", <build artifact env_test__bin_bin/env",
+    ]),
+    ("//ci/planted:mojo_test_that_fails", [
+        "\"run\", \"--ld-library-path\", cmd_args(<build artifact check",
+        "\"/lib\", delimiter=\"\"), \"--\", <build artifact check",
+    ]),
+]
+
+def test_command_problems(ctx):
+    """Every way the `buck2 test` command of the tests in TEST_COMMANDS is not what the rule builds: a list of strings, empty when all is as expected."""
+    problems = []
+    for label, wants in TEST_COMMANDS:
+        node = ctx.configured_targets(label, target_platform = GATE_PLATFORM)
+        info = ctx.analysis(node).providers()[ExternalRunnerTestInfo]
+        if len(info.command) != 1:
+            problems.append("{}: the `buck2 test` command is {} argument lists, not 1".format(label, len(info.command)))
+            continue
+        text = str(info.command[0])
+        for want in wants:
+            if want not in text:
+                problems.append("{}: the `buck2 test` command lacks `{}`: {}".format(label, want, text))
     return problems

@@ -25,6 +25,16 @@ directory it names is made). `--scratch NAME` makes a private directory (`$BUCK_
 before the run and removed after. The program runs in `--cwd`, or the directory `--cwd-env NAME` names, or the working directory. It is never
 looked for in a `PATH`: its name must contain a `/`, and a relative one is made absolute first.
 
+## What differs from the shell script it replaced
+
+The rules that moved from `sh -c` to `check` (`run_check`, `c_check`, `mojo_same`, the Mojo and Rust test runs, the welds, the version and table checks) see these differences:
+
+- The program gets only the environment the action has, plus the options above. A shell added `PWD`, `OLDPWD` and `SHLVL` to what it ran; a test no longer sees them (a test that reads `PWD` must use its working directory).
+- In capture mode (`expect`, `marker --capture`) the program's stdin is empty. A shell script left it as the action's own.
+- `expect` writes the bytes the program printed, less trailing newlines, and one newline. An `echo "$GOT"` of the old script (busybox ash) interpreted backslash escapes in them; `check` does not.
+- The rules no longer take a `busybox` attribute: it is removed from `run_check`, `c_check`, `mojo_same`, `mojo_test_run_rule`, `mojo_gated_lib_rule` and the gate fixture (ci/mojo_gate). A BUCK file that passes `busybox =` to one of them is an error at the next pin bump.
+- A failed `marker` exits with the test's own status (the scripts exited 1).
+
 ## Tests
 
 The cases start the toolbox (`rules/toolbox`) as the program: `printenv` reads the environment back, `mkdir -p` and `cat` the working
