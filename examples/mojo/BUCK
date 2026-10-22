@@ -9,8 +9,9 @@ export_file(
     visibility = ["PUBLIC"],
 )
 
-# What `:coverage` gives a consumer, held to the real outputs of two packages (coverage_records_test.zig): the count per file and the per-line records
-# it was counted from (`:coverage[reports]`) agree file by file. Needs the Mojo toolchain, so //ci:mojo builds it.
+# What `:coverage` gives a consumer, held to the real outputs of two packages (coverage_records_test.zig): the count per file and the records
+# it was counted from (`:coverage[reports]`, the per-line records; `:coverage[branches]`, the branch records) agree file by file. Needs the Mojo
+# toolchain, so //ci:mojo builds it.
 zig_test(
     name = "coverage_records",
     exec_compatible_with = LINUX_X86_64,
@@ -18,8 +19,10 @@ zig_test(
     data = {
         "reexport/coverage.txt": "//examples/mojo/reexport:coverage",
         "reexport/reports.cobertura.xml": "//examples/mojo/reexport:coverage[reports]",
+        "reexport/branches.info": "//examples/mojo/reexport:coverage[branches]",
         "partial/coverage.txt": "//examples/mojo/partial:coverage",
         "partial/reports.cobertura.xml": "//examples/mojo/partial:coverage[reports]",
+        "partial/branches.info": "//examples/mojo/partial:coverage[branches]",
     },
     zig ="buildrules//rules/pins:zig_next",
     visibility = ["//ci:"],

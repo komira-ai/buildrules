@@ -1,6 +1,7 @@
 //! cov_summary: the line coverage of a package, from the normalized Cobertura reports of its tests (cov_normalize's output).
 //!
-//!   cov_summary --out <file> [--expect <repository path>]... [--src <repository path>=<file>]... [--blocks <blocks file>]... <report.xml>...
+//!   cov_summary --out <file> [--expect <repository path>]... [--src <repository path>=<file>]... [--blocks <blocks file>]...
+//!               [--branch-lcov <branch records>]... <report.xml>...
 //!
 //! `--src` gives the file behind an `--expect` path (Mojo only). The Mojo report omits a source with no executable line, so an expected source that
 //! no report names but whose text has no statement beyond comments, docstrings and `import` lines (a re-export `__init__.mojo`) is listed as 0/0
@@ -10,6 +11,12 @@
 //! With any, the output continues after the line total with the same listing prefixed `branches `: the blocks at a position that ran are the most
 //! any report hit, `--expect` limits the total to the package's own sources, and a source in no block report is refused as it is in no line report.
 //!
+//! `--branch-lcov` is a branch record file of one Mojo test (cov_branch_classify's output; branch_lcov.zig has the format and what is
+//! refused): lcov `BRDA` lines keyed by decision and arm. With any, the output continues after the line total with the same listing
+//! prefixed `branches ` (as with `--blocks`; a package has one kind of branch figure, so the two do not mix): an arm is hit when any test
+//! took it, the records of all the tests are summed by id, `--expect` limits the total to the package's own sources, and an expected source
+//! that has lines and no record is refused, as one in no line report is (a source with no executable line is `0/0` in both).
+//!
 //! A line counts as hit when any report records it with hits above 0. The output lists every file the reports name with its hit and
 //! recorded lines, then the total. `--expect` names the package's own sources: the tool fails (exit 1, nothing written) when one is not in any
 //! report, because kcov drops a file it cannot open without an error and a package whose library no test compiled must not read as
@@ -17,6 +24,7 @@
 //! upper bound (a coverage checker may list such functions; this tool does not).
 
 const std = @import("std");
+const branch_lcov = @import("branch_lcov.zig");
 
 pub const FileCov = struct { path: []const u8, hit: usize, total: usize };
 
@@ -106,6 +114,49 @@ pub fn summarizeBlocks(a: std.mem.Allocator, files: *std.StringArrayHashMapUnman
         }
     }.lt);
     return out.toOwnedSlice(a);
+}
+
+/// The branch rows of a Mojo package: one per file the summed records name, and a 0/0 row for each expected source they do not name whose line
+/// row has no line (the classifier writes no record for a file with no code). An expected source that has lines and no record is `lacking`.
+pub const BranchRows = union(enum) { rows: []FileCov, lacking: []const u8 };
+
+pub fn branchRows(a: std.mem.Allocator, counts: []const branch_lcov.Count, lines: []const FileCov, expect: []const []const u8) !BranchRows {
+    var out = std.ArrayList(FileCov).empty;
+    for (counts) |c| try out.append(a, .{ .path = c.path, .hit = c.hit, .total = c.total });
+    for (expect) |e| {
+        var named = false;
+        for (out.items) |r| named = named or std.mem.eql(u8, r.path, e);
+        if (named) continue;
+        for (lines) |l| {
+            if (std.mem.eql(u8, l.path, e) and l.total > 0) return .{ .lacking = e };
+        }
+        try out.append(a, .{ .path = e, .hit = 0, .total = 0 });
+    }
+    std.mem.sort(FileCov, out.items, {}, struct {
+        fn lt(_: void, x: FileCov, y: FileCov) bool {
+            return std.mem.lessThan(u8, x.path, y.path);
+        }
+    }.lt);
+    return .{ .rows = try out.toOwnedSlice(a) };
+}
+
+/// The branch listing of the record files `texts` (named `origins` in errors): `text` is the `branches `-prefixed rows and total to follow the
+/// line listing, or `refused` says why the records cannot be used.
+pub const Branch = union(enum) { text: []const u8, refused: []const u8 };
+
+pub fn branchListing(a: std.mem.Allocator, origins: []const []const u8, texts: []const []const u8, lines: []const FileCov, expect: []const []const u8) !Branch {
+    var sum = branch_lcov.Sum{};
+    var diag = branch_lcov.Diag{};
+    for (origins, texts) |o, t| {
+        sum.add(a, &diag, t, o) catch |e| switch (e) {
+            error.Refused => return .{ .refused = diag.msg },
+            error.OutOfMemory => return e,
+        };
+    }
+    switch (try branchRows(a, try sum.counts(a), lines, expect)) {
+        .lacking => |m| return .{ .refused = try std.fmt.allocPrint(a, "{s} is in no branch record: its tests ran no code of it, or the classifier found none", .{m}) },
+        .rows => |brows| return .{ .text = try renderWith(a, brows, expect, "branches ") },
+    }
 }
 
 pub fn summarize(a: std.mem.Allocator, files: *std.StringArrayHashMapUnmanaged(Lines)) ![]FileCov {
@@ -289,6 +340,7 @@ pub fn main() !void {
     var expect = std.ArrayList([]const u8).empty;
     var reports = std.ArrayList([]const u8).empty;
     var block_reports = std.ArrayList([]const u8).empty;
+    var branch_files = std.ArrayList([]const u8).empty;
     var srcs = std.ArrayList([2][]const u8).empty;
     var i: usize = 1;
     while (i < argv.len) : (i += 1) {
@@ -305,13 +357,17 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, argv[i], "--blocks") and i + 1 < argv.len) {
             i += 1;
             try block_reports.append(a, argv[i]);
+        } else if (std.mem.eql(u8, argv[i], "--branch-lcov") and i + 1 < argv.len) {
+            i += 1;
+            try branch_files.append(a, argv[i]);
         } else if (argv[i].len > 0 and argv[i][0] == '-') {
             die(2, "unknown option {s}", .{argv[i]});
         } else {
             try reports.append(a, argv[i]);
         }
     }
-    if (out_path == null or reports.items.len == 0) die(2, "usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... <report.xml>...", .{});
+    if (out_path == null or reports.items.len == 0) die(2, "usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... <report.xml>...", .{});
+    if (block_reports.items.len != 0 and branch_files.items.len != 0) die(2, "--blocks (Zig) and --branch-lcov (Mojo) are two kinds of branch figure: a package has one", .{});
     var files: std.StringArrayHashMapUnmanaged(Lines) = .empty;
     for (reports.items) |p| {
         const text = std.fs.cwd().readFileAlloc(a, p, 64 << 20) catch |e| die(1, "cannot read {s}: {s}", .{ p, @errorName(e) });
@@ -329,6 +385,14 @@ pub fn main() !void {
         const brows = try summarizeBlocks(a, &blocks);
         if (missing(brows, expect.items)) |m| die(1, "{s} is in no block report: no test compiled it with block counters", .{m});
         text = try std.mem.concat(a, u8, &.{ text, try renderWith(a, brows, expect.items, "branches ") });
+    }
+    if (branch_files.items.len != 0) {
+        const texts = try a.alloc([]const u8, branch_files.items.len);
+        for (branch_files.items, texts) |p, *t| t.* = readSource(a, p);
+        switch (try branchListing(a, branch_files.items, texts, rows, expect.items)) {
+            .refused => |m| die(1, "{s}", .{m}),
+            .text => |t| text = try std.mem.concat(a, u8, &.{ text, t }),
+        }
     }
     std.fs.cwd().writeFile(.{ .sub_path = out_path.?, .data = text }) catch |e| die(1, "cannot write {s}: {s}", .{ out_path.?, @errorName(e) });
 }

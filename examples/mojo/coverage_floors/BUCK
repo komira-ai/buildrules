@@ -1,9 +1,11 @@
 load("@buildrules//rules/mojo:defs.bzl", "mojo_coverage_floor")
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 
-# The coverage of ../partial (60.00% of its lines) held to a floor that is not its own: one above it, one below it. Each target must fail, and say
-# which way (ci/negative.bzl, COVERAGE_REDS). The floor that is exactly its coverage is ../partial/coverage_floor.txt, whose `:coverage_floor`
-# is green and is built by //ci:mojo.
+# The coverage of ../partial (60.00% of its lines, 50.00% of its branch arms) held to floors that are not its own, one defect each. Each target must
+# fail, and say which way (ci/negative.bzl, COVERAGE_REDS). The floor that is exactly its coverage is ../partial/coverage_floor.txt, whose
+# `:coverage_floor` is green and is built by //ci:mojo.
+#
+# The line figure: a floor above it, and one below it (the branch figure is right in both).
 mojo_coverage_floor(
     name = "floor_above_the_coverage",
     coverage = "//examples/mojo/partial:coverage",
@@ -14,6 +16,34 @@ mojo_coverage_floor(
     name = "floor_below_the_coverage",
     coverage = "//examples/mojo/partial:coverage",
     floor = "floor_below.txt",
+)
+
+# The branch figure: a floor above it, and one below it (the line figure is right in both).
+mojo_coverage_floor(
+    name = "branches_floor_above_the_coverage",
+    coverage = "//examples/mojo/partial:coverage",
+    floor = "branches_above.txt",
+)
+
+mojo_coverage_floor(
+    name = "branches_floor_below_the_coverage",
+    coverage = "//examples/mojo/partial:coverage",
+    floor = "branches_below.txt",
+)
+
+# The tests record branches and the floor file has no `branches` figure: a floor that leaves the branches unheld is refused.
+mojo_coverage_floor(
+    name = "floor_without_branches",
+    coverage = "//examples/mojo/partial:coverage",
+    floor = "no_branches.txt",
+)
+
+# The floor file has a `branches` figure and the tests record none: ../sys_app links a native library, so its tests are not instrumented and its
+# `coverage.txt` has no branch rows; a `branches` floor there is refused rather than read as a package with nothing to take.
+mojo_coverage_floor(
+    name = "branches_floor_without_records",
+    coverage = "//examples/mojo/sys_app:coverage",
+    floor = "branches_unmeasured.txt",
 )
 
 scrub_files()

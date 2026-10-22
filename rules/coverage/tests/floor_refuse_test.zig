@@ -226,7 +226,66 @@ test "cov_summary: a source no report names is refused, and so is a report that 
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        try proc.expectRefusal("no arguments", try summaryRun(a, &tmp, null, &.{}), 2, &.{"usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... <report.xml>..."});
+        try proc.expectRefusal("no arguments", try summaryRun(a, &tmp, null, &.{}), 2, &.{"usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... <report.xml>..."});
         try proc.expectRefusal("an unknown option", try summaryRun(a, &tmp, REPORT, &.{ "--bogus", "report.xml" }), 2, &.{"cov_summary: unknown option --bogus"});
+    }
+}
+
+// The branch records of a Mojo package's tests (--branch-lcov), as the process the public target hands out: the rows follow the line rows, an arm is hit when any test took it, a
+// source with lines and no record is refused, and so is a record file that is not one or a mix of the two kinds of branch figure.
+const RECORDS_ONE =
+    \\SF:rules/pkg/a.zig
+    \\BRDA:5,9:br:0/1,0,3
+    \\BRDA:5,9:br:0/1,1,0
+    \\end_of_record
+    \\
+;
+
+const RECORDS_TWO =
+    \\SF:rules/pkg/a.zig
+    \\BRDA:5,9:br:0/1,0,0
+    \\BRDA:5,9:br:0/1,1,1
+    \\end_of_record
+    \\
+;
+
+test "cov_summary: branch records are summed over the tests, listed after the lines, and a source with lines and none is refused" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    {
+        // Each test takes one arm of the one decision: the package has both.
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = "one.info", .data = RECORDS_ONE });
+        try tmp.dir.writeFile(.{ .sub_path = "two.info", .data = RECORDS_TWO });
+        try proc.expectOk("two tests", try summaryRun(a, &tmp, REPORT, &.{ "--expect", "rules/pkg/a.zig", "--branch-lcov", "one.info", "--branch-lcov", "two.info", "report.xml" }));
+        try std.testing.expectEqualStrings("rules/pkg/a.zig 1/2 50%\ntotal 1/2 50%\nbranches rules/pkg/a.zig 2/2 100%\nbranches total 2/2 100%\n", try tmp.dir.readFileAlloc(a, "coverage.txt", 1 << 16));
+    }
+    {
+        // One test that took one arm: half.
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = "one.info", .data = RECORDS_ONE });
+        try proc.expectOk("one test", try summaryRun(a, &tmp, REPORT, &.{ "--expect", "rules/pkg/a.zig", "--branch-lcov", "one.info", "report.xml" }));
+        try std.testing.expectEqualStrings("rules/pkg/a.zig 1/2 50%\ntotal 1/2 50%\nbranches rules/pkg/a.zig 1/2 50%\nbranches total 1/2 50%\n", try tmp.dir.readFileAlloc(a, "coverage.txt", 1 << 16));
+    }
+    {
+        // A source the line report names with lines and the records do not.
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = "empty.info", .data = "" });
+        try proc.expectRefusal("a source with lines and no record", try summaryRun(a, &tmp, REPORT, &.{ "--expect", "rules/pkg/a.zig", "--branch-lcov", "empty.info", "report.xml" }), 1, &.{"cov_summary: rules/pkg/a.zig is in no branch record: its tests ran no code of it, or the classifier found none"});
+        try std.testing.expectError(error.FileNotFound, tmp.dir.access("coverage.txt", .{}));
+    }
+    {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = "bad.info", .data = "SF:rules/pkg/a.zig\nDA:1,1\nend_of_record\n" });
+        try proc.expectRefusal("a record file that holds a line record", try summaryRun(a, &tmp, REPORT, &.{ "--branch-lcov", "bad.info", "report.xml" }), 1, &.{"cov_summary: bad.info:2: 'DA' record in a branch record file"});
+        try proc.expectRefusal("a record file that is not there", try summaryRun(a, &tmp, REPORT, &.{ "--branch-lcov", "missing.info", "report.xml" }), 1, &.{"cov_summary: cannot read missing.info: FileNotFound"});
+        try tmp.dir.writeFile(.{ .sub_path = "blocks", .data = "# blocks v2\nrules/pkg/a.zig\t1\t1\t1\t1\n" });
+        try tmp.dir.writeFile(.{ .sub_path = "one.info", .data = RECORDS_ONE });
+        try proc.expectRefusal("both kinds of branch figure", try summaryRun(a, &tmp, REPORT, &.{ "--blocks", "blocks", "--branch-lcov", "one.info", "report.xml" }), 2, &.{"cov_summary: --blocks (Zig) and --branch-lcov (Mojo) are two kinds of branch figure: a package has one"});
     }
 }

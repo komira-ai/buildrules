@@ -1,0 +1,306 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# Branch coverage of Mojo tests (README.md): `cov_branch` (whose `link` links a test's LLVM bitcode with profile counters, whose `run` runs
+# the test and merges its profile, and whose `annotate` applies the profile), the classifier that turns the annotated IR into lcov records,
+# and the LLVM pieces they use. Static executables built with the pinned zig 0.15.2, each gated by its cases, which run as build actions.
+# linux x86_64 only, like the coverage builds that use them.
+load("//rules/core:pinned_file.bzl", "pinned_file")
+load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/coverage:defs.bzl", "cov_tool")
+load("//rules/coverage:pins.bzl", "LLVM_BRANCH_PINS")
+load("//rules/coverage:zig_cover.bzl", "zig_coverage")
+load("//rules/pins:pins.bzl", "PINS")
+load("//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load(":llvm_branch.bzl", "llvm_branch_check", "llvm_branch_unpack")
+
+_ZIG = "buildrules//rules/pins:zig_next"
+_ZIG_VERSION = "buildrules//rules/pins:zig_next_version"
+
+# ---- cov_branch: the tool of the link, run and annotate actions (cov_branch.zig) -------------------------------------------------
+
+# The sources of the tool and of its unit tests (cov_branch.zig imports the tests in a `test` block, and `zig test` needs every file).
+_COV_BRANCH_SRCS = [
+    "cov_branch_annotate.zig",
+    "cov_branch_annotate_fixture.zig",
+    "cov_branch_annotate_order_test.zig",
+    "cov_branch_annotate_test.zig",
+    "cov_branch_common.zig",
+    "cov_branch_common_test.zig",
+    "cov_branch_link.zig",
+    "cov_branch_link_test.zig",
+    "cov_branch_run.zig",
+    "cov_branch_run_test.zig",
+    "proc.zig",
+]
+
+# Its unit tests: the three subcommands in-process over stand-in steps, and what they share.
+zig_test(
+    name = "cov_branch_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = _COV_BRANCH_SRCS,
+    src = "cov_branch.zig",
+    zig = _ZIG,
+)
+
+# The process step over a stand-in program.
+zig_exe(
+    name = "proc_stub",
+    exec_compatible_with = LINUX_X86_64,
+    src = "proc_stub.zig",
+    zig = _ZIG,
+)
+
+zig_test(
+    name = "cov_branch_proc_test",
+    exec_compatible_with = LINUX_X86_64,
+    env_tools = {"PROC_STUB": ":proc_stub"},
+    imports = ["proc.zig"],
+    src = "cov_branch_proc_test.zig",
+    zig = _ZIG,
+)
+
+# Welded: no branch coverage run has the tool unless its unit tests passed.
+zig_exe(
+    name = "cov_branch_exe",
+    exec_compatible_with = LINUX_X86_64,
+    imports = _COV_BRANCH_SRCS,
+    src = "cov_branch.zig",
+    unit_tests = [":cov_branch_unit", _ZIG_VERSION],
+    zig = _ZIG,
+)
+
+# The stand-ins of the process tests of the three subcommands: test-only programs that record their arguments and environment.
+zig_exe(
+    name = "cov_branch_link_stub",
+    exec_compatible_with = LINUX_X86_64,
+    src = "cov_branch_link_stub.zig",
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "cov_branch_run_stub",
+    exec_compatible_with = LINUX_X86_64,
+    src = "cov_branch_run_stub.zig",
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "cov_branch_annotate_stub",
+    exec_compatible_with = LINUX_X86_64,
+    src = "cov_branch_annotate_stub.zig",
+    zig = _ZIG,
+)
+
+# The shipped executable's three subcommands run as processes (cov_branch_{link,run,}_exe_test.zig). They run the executable, so they cannot
+# be inputs of it; they are validations of :cov_branch instead.
+zig_test(
+    name = "cov_branch_link_exe_test",
+    exec_compatible_with = LINUX_X86_64,
+    env_tools = {
+        "COV_BRANCH": ":cov_branch_exe",
+        "COV_BRANCH_LINK_STUB": ":cov_branch_link_stub",
+    },
+    imports = ["proc.zig"],
+    src = "cov_branch_link_exe_test.zig",
+    zig = _ZIG,
+)
+
+zig_test(
+    name = "cov_branch_run_exe_test",
+    exec_compatible_with = LINUX_X86_64,
+    env_tools = {
+        "COV_BRANCH": ":cov_branch_exe",
+        "COV_BRANCH_RUN_STUB": ":cov_branch_run_stub",
+    },
+    src = "cov_branch_run_exe_test.zig",
+    zig = _ZIG,
+)
+
+zig_test(
+    name = "cov_branch_exe_test",
+    exec_compatible_with = LINUX_X86_64,
+    env_tools = {
+        "COV_BRANCH": ":cov_branch_exe",
+        "COV_BRANCH_STUB": ":cov_branch_annotate_stub",
+    },
+    imports = ["cov_branch_annotate_fixture.zig"],
+    src = "cov_branch_exe_test.zig",
+    zig = _ZIG,
+)
+
+# The tool every branch coverage action takes: :cov_branch_exe, gated by its process tests.
+cov_tool(
+    name = "cov_branch",
+    cases = [
+        ":cov_branch_exe_test",
+        ":cov_branch_link_exe_test",
+        ":cov_branch_proc_test",
+        ":cov_branch_run_exe_test",
+    ],
+    exec_compatible_with = LINUX_X86_64,
+    exe = ":cov_branch_exe",
+    visibility = ["PUBLIC"],
+)
+
+# ---- cov_branch_classify: the branches of annotated IR as lcov records (cov_branch_classify.zig) ---------------------------------
+
+zig_exe(
+    name = "cov_branch_classify_exe",
+    exec_compatible_with = LINUX_X86_64,
+    imports = [
+        "cov_branch_andor.zig",
+        "cov_branch_ir.zig",
+        "cov_branch_records.zig",
+        "cov_branch_source.zig",
+    ],
+    src = "cov_branch_classify.zig",
+    unit_tests = [_ZIG_VERSION],
+    zig = _ZIG,
+)
+
+# Its cases (README.md, "Tests"): `zig test` of each file, run as a build action, runs the shipped executable as a child process on the
+# fixtures; its path reaches the test in the environment (`env_tools`, COV_BRANCH_CLASSIFY). They run the executable, so they cannot be
+# inputs of it; they are validations of the public target :cov_branch_classify, which no build gets unless every case passes.
+_CLASSIFY_CASE_INPUTS = [
+    "cov_branch_classify_harness.zig",
+    "fixtures/a.src",
+    "fixtures/b.src",
+    "fixtures/c.src",
+    "fixtures/case.golden.info",
+    "fixtures/case.ll",
+    "fixtures/d.src",
+    "fixtures/gen.src",
+    "fixtures/rules.golden.info",
+    "fixtures/rules.ll",
+    "fixtures/t.src",
+    "fixtures/try.golden.info",
+    "fixtures/try.ll",
+]
+
+_CLASSIFY_CASES = ["andor", "case", "files", "main", "rules", "try"]
+
+[
+    zig_test(
+        name = "cov_branch_classify_{}_test".format(group),
+        exec_compatible_with = LINUX_X86_64,
+        env_tools = {"COV_BRANCH_CLASSIFY": ":cov_branch_classify_exe"},
+        imports = _CLASSIFY_CASE_INPUTS,
+        src = "cov_branch_classify_{}_test.zig".format(group),
+        zig = _ZIG,
+    )
+    for group in _CLASSIFY_CASES
+]
+
+cov_tool(
+    name = "cov_branch_classify",
+    cases = [":cov_branch_classify_{}_test".format(group) for group in _CLASSIFY_CASES],
+    exec_compatible_with = LINUX_X86_64,
+    exe = ":cov_branch_classify_exe",
+    visibility = ["PUBLIC"],
+)
+
+# ---- the LLVM pieces (llvm_branch.zig, llvm_branch.bzl) ---------------------------------------------------------------------------
+
+[
+    pinned_file(
+        name = LLVM_BRANCH_PINS[role]["name"],
+        url = LLVM_BRANCH_PINS[role]["url"],
+        sha256 = LLVM_BRANCH_PINS[role]["sha256"],
+        size_bytes = LLVM_BRANCH_PINS[role]["size"],
+    )
+    for role in LLVM_BRANCH_PINS
+]
+
+# The unpack and the checks, built behind their unit tests.
+zig_test(
+    name = "llvm_branch_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["llvm_branch.zig"],
+    src = "llvm_branch_test.zig",
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "llvm_branch_bin",
+    exec_compatible_with = LINUX_X86_64,
+    src = "llvm_branch.zig",
+    unit_tests = [":llvm_branch_unit", _ZIG_VERSION],
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+# The program the version check instruments, read by the checks of every Mojo version (toolchains/BUCK).
+export_file(
+    name = "profile_fixture.c",
+    src = "fixtures/profile_fixture.c",
+    visibility = ["PUBLIC"],
+)
+
+_LIBGCC = "buildrules//rules/pins:" + PINS["libgcc"]["name"]
+_LIBSTDCXX = "buildrules//rules/pins:" + PINS["libstdcxx"]["name"]
+
+_PIN = {role: ":" + LLVM_BRANCH_PINS[role]["name"] for role in LLVM_BRANCH_PINS}
+
+# llvm-profdata and llvm-nm 23.1.3 with the libraries they load (through their DT_RPATH $ORIGIN/../lib), and the compiler-rt 23 profile
+# runtime. The same for every Mojo version; the lld that instruments Mojo's bitcode is the Mojo version's own (toolchains/BUCK).
+llvm_branch_unpack(
+    name = "llvm23",
+    exec_compatible_with = LINUX_X86_64,
+    members = {
+        "bin/llvm-nm": "tools/bin/llvm-nm-23",
+        "bin/llvm-profdata": "tools/bin/llvm-profdata-23",
+        "lib/libLLVM.so.23.1": "libllvm/lib/libLLVM.so.23.1",
+        "lib/libgcc_s.so.1": "libgcc/lib/libgcc_s.so.1",
+        "lib/libiconv.so.2": "libiconv/lib/libiconv.so.2",
+        "lib/libstdc++.so.6": "libstdcxx/lib/libstdc++.so.6",
+        "lib/libxml2.so.16": "libxml2/lib/libxml2.so.16",
+        "lib/libz.so.1": "libzlib/lib/libz.so.1",
+        "lib/libzstd.so.1": "zstd/lib/libzstd.so.1",
+        "runtime/libclang_rt.profile-x86_64.a": "rt/lib/clang/23/lib/linux/libclang_rt.profile-x86_64.a",
+    },
+    packages = {
+        "libgcc": _LIBGCC,
+        "libiconv": _PIN["libiconv"],
+        "libllvm": _PIN["libllvm"],
+        "libstdcxx": _LIBSTDCXX,
+        "libxml2": _PIN["libxml2"],
+        "libzlib": _PIN["libzlib"],
+        "rt": _PIN["rt"],
+        "tools": _PIN["tools"],
+        "zstd": _PIN["zstd"],
+    },
+    visibility = ["PUBLIC"],
+)
+
+# llvm-profdata, llvm-nm and the runtime: files, version, and the runtime's symbols.
+llvm_branch_check(
+    name = "llvm23_check",
+    exec_compatible_with = LINUX_X86_64,
+    mode = "tools",
+    tools = ":llvm23",
+    want = {
+        "profdata": "23.1.3",
+        "symbols": "__llvm_profile_runtime,__llvm_profile_write_file",
+    },
+    visibility = ["PUBLIC"],
+)
+
+# ---- the coverage of the tools' unit tests (README.md of rules/coverage, "Zig coverage") ------------------------------------------------
+# The process tests (`*_exe_test`) run the built executables and add nothing to it; the stand-in programs (`*_stub.zig`), the classifier (a
+# static executable run by its cases), and `cov_branch.zig`'s `main` are measured by no unit test.
+zig_coverage(
+    test_targets = [
+        ":cov_branch_unit",
+        ":cov_branch_proc_test",
+        ":llvm_branch_unit",
+    ],
+    expect = ["rules/coverage/branch/" + f for f in [
+        "cov_branch_annotate.zig",
+        "cov_branch_common.zig",
+        "cov_branch_link.zig",
+        "cov_branch_run.zig",
+        "llvm_branch.zig",
+        "proc.zig",
+    ]],
+)
+
+scrub_files()

@@ -1,10 +1,12 @@
-//! What `:coverage` of a mojo_package gives a consumer (docs/contract.md, section 12.4): `coverage.txt`, the count per file, and `:coverage[reports]`, the
-//! records it was counted from, one kcov Cobertura file per test. Both are the zig_test's `data` (under BUILDRULES_TEST_WORK), the real outputs of two
-//! example packages: `reexport` (its `__init__.mojo` only re-exports, so the report omits it) and `partial` (a test that takes one arm of a function,
-//! so a line is recorded and does not run).
+//! What `:coverage` of a mojo_package gives a consumer (docs/contract.md, section 12.4): `coverage.txt`, the count per file (lines, then branches),
+//! `:coverage[reports]`, the line records it was counted from (one kcov Cobertura file per test), and `:coverage[branches]`, the branch records (one
+//! lcov file per test, the classifier's output). All are the zig_test's `data` (under BUILDRULES_TEST_WORK), the real outputs of two example packages:
+//! `reexport` (its `__init__.mojo` only re-exports, so the line report omits it; `ops.mojo` has code and no decision) and `partial` (a test that takes
+//! one arm of a function, so a line is recorded and does not run, and one branch arm never runs).
 //!
 //! A consumer reads the records, not the count, so the cases hold the two to each other: every file with a line in the summary has a class in the
-//! records with the same lines hit and recorded, a file with none has no class, and the records hold no file the summary lacks.
+//! records with the same lines hit and recorded, a file with none has no class, and the records hold no file the summary lacks; and every file of the
+//! branch rows has the arms hit and recorded that its branch records hold.
 
 const std = @import("std");
 const t = std.testing;
@@ -17,12 +19,13 @@ fn work(a: std.mem.Allocator, sub: []const u8) ![]u8 {
     return std.fs.cwd().readFileAlloc(a, p, 1 << 20);
 }
 
-/// The file rows of a coverage.txt: `<path> <hit>/<total> <n>%`, with ` (not counted)` after a test's own source. The `total` row is left out.
+/// The line rows of a coverage.txt: `<path> <hit>/<total> <n>%`, with ` (not counted)` after a test's own source. The `total` row is left out, and
+/// so are the `branches ` rows (branchRowsOf).
 fn rowsOf(a: std.mem.Allocator, text: []const u8) ![]Row {
     var out = std.ArrayList(Row).empty;
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |line| {
-        if (line.len == 0 or std.mem.startsWith(u8, line, "total ")) continue;
+        if (line.len == 0 or std.mem.startsWith(u8, line, "total ") or std.mem.startsWith(u8, line, "branches ")) continue;
         var f = std.mem.splitScalar(u8, line, ' ');
         const path = f.next() orelse return error.BadRow;
         const frac = f.next() orelse return error.BadRow;
@@ -132,29 +135,128 @@ test "the records name files by repository path, not by the directory an action 
     }
 }
 
-test "the records carry no branch data and the summary claims none" {
-    // kcov writes no `branch` attribute for a Mojo executable (rules/coverage/README.md): branch records are not something these reports hold.
+test "the line records carry no branch data: kcov writes none for a Mojo executable, so the branch figure is not read from them" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "reexport", "partial" }) |pkg| {
+        const records = try work(a, try std.fmt.allocPrint(a, "{s}/reports.cobertura.xml", .{pkg}));
+        try t.expect(std.mem.indexOf(u8, records, "branch=") == null);
+        try t.expect(std.mem.indexOf(u8, records, "condition-coverage") == null);
+    }
+}
+
+/// The branch rows of a coverage.txt: `branches <path> <hit>/<total> <n>%`, with ` (not counted)` after a file that is not the library's. The
+/// `branches total` row is left out.
+fn branchRowsOf(a: std.mem.Allocator, text: []const u8) ![]Row {
+    var out = std.ArrayList(Row).empty;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "branches ") or std.mem.startsWith(u8, line, "branches total ")) continue;
+        const rows = try rowsOf(a, line["branches ".len..]);
+        try out.appendSlice(a, rows);
+    }
+    return out.toOwnedSlice(a);
+}
+
+/// The arms of `path` in a branch record file: how many were taken (a count above 0; `-` is an arm not taken) and how many there are. Null when the
+/// file has no `SF:` record for `path`.
+fn armsOf(text: []const u8, path: []const u8) ?Class {
+    var c = Class{ .hit = 0, .total = 0 };
+    var inside = false;
+    var found = false;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |line| {
+        if (std.mem.startsWith(u8, line, "SF:")) {
+            inside = std.mem.eql(u8, line[3..], path);
+            found = found or inside;
+        } else if (inside and std.mem.startsWith(u8, line, "BRDA:")) {
+            const comma = std.mem.lastIndexOfScalar(u8, line, ',') orelse return null;
+            const taken = line[comma + 1 ..];
+            c.total += 1;
+            if (!std.mem.eql(u8, taken, "-") and !std.mem.eql(u8, taken, "0")) c.hit += 1;
+        }
+    }
+    return if (found) c else null;
+}
+
+test "the branch rows of a package are the arms of its branch records, file by file, and the records hold no file the rows lack" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
     for ([_][]const u8{ "reexport", "partial" }) |pkg| {
         const summary = try work(a, try std.fmt.allocPrint(a, "{s}/coverage.txt", .{pkg}));
-        const records = try work(a, try std.fmt.allocPrint(a, "{s}/reports.cobertura.xml", .{pkg}));
-        try t.expect(std.mem.indexOf(u8, records, "branch=") == null);
-        try t.expect(std.mem.indexOf(u8, records, "condition-coverage") == null);
-        try t.expect(std.mem.indexOf(u8, summary, "branches") == null);
+        const records = try work(a, try std.fmt.allocPrint(a, "{s}/branches.info", .{pkg}));
+        const rows = try branchRowsOf(a, summary);
+        try t.expect(rows.len >= 1);
+        var with_records: usize = 0;
+        for (rows) |r| {
+            if (armsOf(records, r.path)) |arms| {
+                with_records += 1;
+                try t.expectEqual(r.hit, arms.hit);
+                try t.expectEqual(r.total, arms.total);
+            } else {
+                // A source with no code has no record and counts 0 of 0.
+                try t.expectEqual(@as(usize, 0), r.total);
+            }
+        }
+        try t.expectEqual(with_records, std.mem.count(u8, records, "SF:"));
     }
 }
 
-test "a package without a floor file has the summary it always had" {
+test "one if with one arm run: the records and the summary give its exact counts" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
+    // `checked` is `if x < 0:` at line 5, column 5, and the test passes 5: the true arm (arm 0) never runs, the false arm (arm 1) runs once.
+    try t.expectEqualStrings(
+        "SF:examples/mojo/partial/src/partial/__init__.mojo\n" ++
+            "BRDA:5,5:br:0/1,0,0\n" ++
+            "BRDA:5,5:br:0/1,1,1\n" ++
+            "end_of_record\n",
+        try work(a, "partial/branches.info"),
+    );
+    try t.expectEqualStrings(
+        "examples/mojo/partial/src/partial/__init__.mojo 3/5 60%\n" ++
+            "examples/mojo/partial/tests/test_partial.mojo 4/4 100% (not counted)\n" ++
+            "total 3/5 60%\n" ++
+            "branches examples/mojo/partial/src/partial/__init__.mojo 1/2 50%\n" ++
+            "branches total 1/2 50%\n",
+        try work(a, "partial/coverage.txt"),
+    );
+}
+
+test "a package with code and no decision reports 0/0 branches, consistently in the records and the summary" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // ops.mojo has code and no `if`: the classifier names the file with no record, so the package reads as measured with nothing to take; the
+    // re-export `__init__.mojo` has no code and no record, and is 0/0 in both figures.
+    try t.expectEqualStrings(
+        "SF:examples/mojo/reexport/src/reexport/ops.mojo\n" ++
+            "end_of_record\n",
+        try work(a, "reexport/branches.info"),
+    );
     try t.expectEqualStrings(
         "examples/mojo/reexport/src/reexport/__init__.mojo 0/0 0%\n" ++
             "examples/mojo/reexport/src/reexport/ops.mojo 4/4 100%\n" ++
             "examples/mojo/reexport/tests/test_ops.mojo 6/6 100% (not counted)\n" ++
-            "total 4/4 100%\n",
+            "total 4/4 100%\n" ++
+            "branches examples/mojo/reexport/src/reexport/__init__.mojo 0/0 0%\n" ++
+            "branches examples/mojo/reexport/src/reexport/ops.mojo 0/0 0%\n" ++
+            "branches total 0/0 0%\n",
         try work(a, "reexport/coverage.txt"),
     );
+}
+
+test "the branch records name files by repository path, not by the directory an action ran in" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "reexport", "partial" }) |pkg| {
+        const records = try work(a, try std.fmt.allocPrint(a, "{s}/branches.info", .{pkg}));
+        try t.expect(std.mem.indexOf(u8, records, "SF:examples/mojo/") != null);
+        try t.expect(std.mem.indexOf(u8, records, "SF:/") == null);
+        try t.expect(std.mem.indexOf(u8, records, "buck-out") == null);
+    }
 }

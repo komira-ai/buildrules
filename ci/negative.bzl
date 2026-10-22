@@ -63,6 +63,10 @@ COVERAGE_REDS = [
     ("//examples/mojo/reexport_unused:coverage", "is in no report: no test compiled it, or kcov could not open it"),
     ("//examples/mojo/coverage_floors:floor_above_the_coverage", "line coverage is 60.00% (3/5), below its floor 70.00%: coverage fell"),
     ("//examples/mojo/coverage_floors:floor_below_the_coverage", "line coverage is 60.00% (3/5), above its floor 50.00%: raise the floor to 60.00"),
+    ("//examples/mojo/coverage_floors:branches_floor_above_the_coverage", "branch coverage is 50.00% (1/2), below its floor 60.00%: coverage fell"),
+    ("//examples/mojo/coverage_floors:branches_floor_below_the_coverage", "branch coverage is 50.00% (1/2), above its floor 40.00%: raise the floor to 50.00"),
+    ("//examples/mojo/coverage_floors:floor_without_branches", "the tests record branches (1/2) and the floor file has no `branches` figure: add `branches 50.00`"),
+    ("//examples/mojo/coverage_floors:branches_floor_without_records", "the floor file has a `branches` figure and the tests record no branches: the instrumentation was dropped"),
 ]
 
 def coverage_red_problems(ctx):

@@ -85,6 +85,7 @@ scrub_test(
     "//platforms:scrub_files",
     "//rules/core/tests:scrub_files",
     "//rules/core:scrub_files",
+    "//rules/coverage/branch:scrub_files",
     "//rules/coverage/tests:scrub_files",
     "//rules/coverage:scrub_files",
     "//rules/cxx/tests:scrub_files",
