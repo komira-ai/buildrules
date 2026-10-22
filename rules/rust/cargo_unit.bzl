@@ -300,38 +300,18 @@ def _build_impl(ctx):
 
 # ---- mode test -------------------------------------------------------------------
 
-# The run, shared by the welded marker and `buck2 test`: the same pinned binary, the same environment, the working directory at the package.
-_RUN_PREP = """set -eu
-EXE="$1"; OUT="$2"
-ROOT="$PWD"
-case "$EXE" in /*) ;; *) EXE="$ROOT/$EXE" ;; esac
-case "$OUT" in /*|/dev/null) ;; *) OUT="$ROOT/$OUT" ;; esac
-case "${BUCK_SCRATCH_PATH:-}" in /*) export TMPDIR="$BUCK_SCRATCH_PATH" ;; "") export TMPDIR="${TMPDIR:-/tmp}" ;; *) export TMPDIR="$ROOT/$BUCK_SCRATCH_PATH" ;; esac
-case "$CARGO_MANIFEST_DIR" in /*) ;; *) export CARGO_MANIFEST_DIR="$ROOT/$CARGO_MANIFEST_DIR" ;; esac
-if [ -n "${CARGO_TARGET_TMPDIR:-}" ]; then
-    case "$CARGO_TARGET_TMPDIR" in /*) ;; *) export CARGO_TARGET_TMPDIR="$ROOT/$CARGO_TARGET_TMPDIR" ;; esac
-    mkdir -p "$CARGO_TARGET_TMPDIR"
-fi
-cd "$CARGO_MANIFEST_DIR"
-"""
+# The run, shared by the welded marker and `buck2 test`: the same pinned binary, the same environment, the working directory at the package. These
+# are the options of `check marker` and `check run` (rules/check) that start it: TMPDIR is the action's scratch directory; CARGO_MANIFEST_DIR (and
+# CARGO_TARGET_TMPDIR, made, for an integration test) is made absolute against the action's directory; the binary runs in CARGO_MANIFEST_DIR.
+_START = ["--tmpdir", "--abs", "CARGO_MANIFEST_DIR", "--cwd-env", "CARGO_MANIFEST_DIR"]
+_START_TARGET_TMPDIR = ["--abs", "CARGO_TARGET_TMPDIR", "--mkdir-env", "CARGO_TARGET_TMPDIR"]
 
-# The build action: the marker is the test's own output, it says how many tests passed.
-_RUN_TEST = _RUN_PREP + """if "$EXE" > "$OUT.log" 2>&1; then
-    cat "$OUT.log" > "$OUT"
-else
-    cat "$OUT.log"
-    echo "TEST FAILED: $EXE" >&2
-    exit 1
-fi
-"""
-
-# `buck2 test`: the binary's output goes to the runner's log, its exit status is the verdict.
-_RUN_TEST_CLI = _RUN_PREP + """exec "$EXE"
-"""
+# The build action's marker is the test's own output (stdout, then stderr): it says how many tests passed. A failed run shows that output.
+# `buck2 test` has no marker: the binary's output goes to the runner's log, its exit status is the verdict.
+_MARKER = ["--capture", "--stamp-log"]
 
 def _test_impl(ctx):
     """Compiles the test binary. The run is `test_run` (a target of its own, so it can ask for an ISA level)."""
-    tc = ctx.attrs.toolchain[RustToolchainInfo]
     name = ctx.attrs.crate_name
     exe = ctx.actions.declare_output(ctx.label.name + "_bin/" + name)
     _closure, bins = _rustc(ctx, "bin", exe, test = True)
@@ -346,9 +326,9 @@ def _test_impl(ctx):
             exe = exe,
             hidden = _inputs(ctx) + list(ctx.attrs.run_data) + bins,
             env = env,
-            busybox = tc.busybox,
-            script = _RUN_TEST,
-            cli_script = _RUN_TEST_CLI,
+            start = _START + (_START_TARGET_TMPDIR if "CARGO_TARGET_TMPDIR" in env else []),
+            marker = _MARKER,
+            cli = True,
             labels = list(ctx.attrs.labels),
         ),
     ]

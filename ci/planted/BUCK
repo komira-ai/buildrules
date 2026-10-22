@@ -1,0 +1,119 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//ci/mojo_gate:fixture.bzl", "gate_fixture_lib")
+load("@buildrules//rules:isa.bzl", "test_exec_compatible_with")
+load("@buildrules//rules/core:run_check.bzl", "run_check")
+load("@buildrules//rules/cxx:defs.bzl", "c_check")
+load("@buildrules//rules/mojo:same.bzl", "mojo_same")
+load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
+load("@buildrules//rules/rust:cargo.bzl", "cargo_table_check")
+load("@buildrules//rules/rust:defs.bzl", "rust_library", "rust_test")
+load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "ZIG_CC_TARGET")
+load("@buildrules//rules/rust:toolchain.bzl", "rust_toolchain")
+load(":fixture.bzl", "planted_mojo_exe", "planted_mojo_toolchain")
+
+# Bad inputs for the checks and markers of the rules. Each target below is a rule given an input its action must refuse, so its build must be red: an action
+# that wrote its output and exited 0 on a failure (a marker that exists after a failed test, a comparison that is never made) would leave the target green.
+# They are excluded from the wildcard build (ci/all.bzl), and `buck2 bxl //ci:negative.bxl:check` (a part of //ci:completeness.bxl:check) builds each,
+# requires the refusal and its reason, and requires its control, the same rule on a good input, to build (ci/negative.bzl, `planted_problems`). The checks
+# themselves are tested in rules/check; this holds that each rule calls them as a check.
+
+# run_check: the program prints `hello, world`. (Control: //examples/hello:hello_runs.)
+run_check(
+    name = "run_check_of_other_stdout",
+    exe = "//examples/hello:hello",
+    expected_stdout = "not what it prints",
+)
+
+# c_check: the program prints `hello from C`. The validation is left out (`validate = False`): a failure of its result, a dynamic output, is an error of the whole
+# bxl and not a failure to count. (Control: `c_check_of_its_stdout`; the validation is the part of //examples/cxx:runs_c that //ci:all builds.)
+c_check(
+    name = "c_check_of_other_stdout",
+    exe = "//examples/cxx:hello_c",
+    expected_stdout = "not what it prints",
+    validate = False,
+)
+
+c_check(
+    name = "c_check_of_its_stdout",
+    exe = "//examples/cxx:hello_c",
+    expected_stdout = "hello from C",
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+# mojo_same: two libraries of different bytes. (Control: //ci/mojo_gate:consumer_of_green, which compares a library with its own copy.)
+gate_fixture_lib(name = "lib_a", package = "same", text = "one\n")
+
+gate_fixture_lib(name = "lib_b", package = "same", text = "two\n")
+
+mojo_same(
+    name = "mojo_same_of_other_bytes",
+    a = ":lib_a",
+    b = ":lib_b",
+)
+
+# The cargo table check: a file that is not the one the table was generated from. `empty.txt` is empty, whose sha256 is the well-known value below.
+# (Control: `table_in_sync`, the same with the right digest.)
+EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+export_file(name = "empty.txt", src = "empty.txt", visibility = ["PUBLIC"])
+
+cargo_table_check(
+    name = "table_of_other_bytes",
+    files = [":empty.txt"],
+    hashes = ["0000000000000000000000000000000000000000000000000000000000000000"],
+    names = ["ci/planted/empty.txt"],
+)
+
+cargo_table_check(
+    name = "table_in_sync",
+    files = [":empty.txt"],
+    hashes = [EMPTY_SHA256],
+    names = ["ci/planted/empty.txt"],
+    visibility = ["//ci:"],
+)
+
+# The check of the pinned Rust: a toolchain whose sysroot is the default one and whose pinned `rustc --version` line is another. (Control: `toolchains//:rust`, the
+# same declaration with the line `rust_toolchains` writes.) The `busybox` attribute is the rule's own (it is no longer run by the version check); the pin that drops it
+# drops this line and the row of ci/no_shell_allow.tsv for it.
+rust_toolchain(
+    name = "rust_toolchain_of_other_version",
+    busybox = "toolchains//:busybox_pin",
+    cc_target = ZIG_CC_TARGET,
+    clippy = "toolchains//:clippy",
+    sysroot = "toolchains//:sysroot",
+    version = RUST_DEFAULT,
+    version_line = "rustc 0.0.0 (",
+    zig = "toolchains//:zig",
+)
+
+# A Rust test that fails: `fails` is its run, which must write no marker. (Control: //examples/hello:hello_lib_test.)
+rust_test(
+    name = "fails",
+    srcs = ["fails.rs"],
+    crate_root = "fails.rs",
+    crate_name = "fails",
+)
+
+# A library welded to that test: the copy that is the published library is made by an action that reads the test's marker. (Control: //examples/hello:hello_lib.)
+rust_library(
+    name = "lib_behind_a_failing_test",
+    srcs = ["fails.rs"],
+    crate_root = "fails.rs",
+    crate_name = "fails",
+    gate_tests = [":fails"],
+)
+
+# The run of a Mojo test that fails (the program exits 2), with a stand-in for the compiler. The real runs, which pass, are the tests of //ci:mojo.
+planted_mojo_exe(name = "mojo_test_exe")
+
+planted_mojo_toolchain(name = "mojo_toolchain")
+
+mojo_test_run_rule(
+    name = "mojo_test_that_fails",
+    bin = ":mojo_test_exe",
+    toolchain = ":mojo_toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
+scrub_files()

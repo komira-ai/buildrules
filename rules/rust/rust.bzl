@@ -63,9 +63,8 @@ def _compile(ctx, crate_type, out, test = False):
 
 def _weld(ctx, raw, out, markers):
     """`out` is a copy of `raw` taken by an action that also reads every marker."""
-    tc = ctx.attrs.toolchain[RustToolchainInfo]
     ctx.actions.run(
-        cmd_args(tc.busybox, "cp", raw, out.as_output(), hidden = markers),
+        cmd_args(ctx.attrs._check_exe[RunInfo], "copy", raw, out.as_output(), hidden = markers),
         category = "weld",
         identifier = ctx.label.name,
     )
@@ -96,25 +95,15 @@ def _rust_binary_impl(ctx):
         _weld(ctx, raw, final, markers)
     return [DefaultInfo(default_output = final), RunInfo(args = cmd_args(final))]
 
-_RUN_TEST = """set -eu
-BIN="$1"; OUT="$2"
-if "$BIN" > "$OUT.log" 2>&1; then
-    echo passed > "$OUT"
-else
-    cat "$OUT.log"
-    echo "TEST FAILED: $BIN" >&2
-    exit 1
-fi
-"""
-
 def _rust_test_impl(ctx):
     """Compiles the test binary; `test_run` (a target of its own, so it can ask for an ISA level) runs it."""
-    tc = ctx.attrs.toolchain[RustToolchainInfo]
     exe = ctx.actions.declare_output(ctx.label.name + "_bin/" + _crate_name(ctx))
     _compile(ctx, "bin", exe, test = True)
+
+    # The run is `check marker --capture` (test_run.bzl): `passed` is the marker, and the test's output is shown only if it failed.
     return [
         DefaultInfo(default_output = exe),
-        TestUnitInfo(exe = exe, hidden = [], env = {"BUILDRULES_NONCE": _NONCE}, busybox = tc.busybox, script = _RUN_TEST),
+        TestUnitInfo(exe = exe, hidden = [], env = {"BUILDRULES_NONCE": _NONCE}, marker = ["--capture"]),
     ]
 
 _COMMON = {
@@ -127,6 +116,7 @@ _COMMON = {
     "rustc_flags": attrs.list(attrs.string(), default = []),
     "srcs": attrs.list(attrs.source()),
     "toolchain": attrs.exec_dep(default = _TOOLCHAIN, providers = [RustToolchainInfo]),
+    "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
 }
 
 _rust_library = rule(
