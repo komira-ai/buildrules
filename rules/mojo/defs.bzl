@@ -394,11 +394,16 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
                 zig_override = "toolchains//:mojo_{}_cov_link".format(vname(mojo)),
                 **common(uid, "test", stem, _COVERAGE_PROFILE)
             )
-            test_src = in_package(u["srcs"][0]["path"])
+            # The test file is compiled under the path the graph names (from the package, or from the repository root when the table is rooted), and
+            # that is the name in the line tables: the tree kcov runs in, what it measures and the first half of the map use it; the repository path
+            # (below the package, then from the repository root) is the other half.
+            test_graph = u["srcs"][0]["path"]
+            graph_dir = test_graph.rpartition("/")[0]
+            test_src = in_package(test_graph)
             test_dir = test_src.rpartition("/")[0]
-            share = {test_src: _join(project, test_src)}
-            maps = [(test_dir + "/=" + _join(here_repo, test_dir) + "/") if test_dir else "=" + here_repo + "/"]
-            includes = [test_src]
+            share = {test_graph: _join(project, test_src)}
+            maps = [(graph_dir + "/=" + _join(here_repo, test_dir) + "/") if graph_dir else "=" + here_repo + "/"]
+            includes = [test_graph]
             if own_lib:
                 prefix = own_lib["root"] + "/"
                 for s in own_lib["srcs"]:

@@ -1,0 +1,21 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:same.bzl", "mojo_report_is")
+
+# What the coverage report of a package whose table is rooted ("workspace_root": True) says: the sources of the package itself, once each, at the
+# repository paths the unrooted examples use (examples/mojo/ws/util has the same shape), and none of a sibling's. `app` imports `../base`, and
+# `base`'s source is not in `app`'s report. The expected texts are committed here, outside the two packages, so they are not inputs of their `:table`.
+mojo_report_is(
+    name = "app_coverage_lists_its_own_sources_at_repository_paths",
+    report = "//examples/mojo/sibfake/app:coverage",
+    want = "app.coverage.txt",
+    visibility = ["PUBLIC"],
+)
+
+mojo_report_is(
+    name = "base_coverage_lists_its_own_sources_at_repository_paths",
+    report = "//examples/mojo/sibfake/base:coverage",
+    want = "base.coverage.txt",
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

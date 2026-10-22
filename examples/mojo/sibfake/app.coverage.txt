@@ -1,0 +1,3 @@
+examples/mojo/sibfake/app/src/util/__init__.mojo 2/2 100%
+examples/mojo/sibfake/app/tests/test_util.mojo 5/5 100% (not counted)
+total 2/2 100%
