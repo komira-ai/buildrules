@@ -47,7 +47,8 @@ path of their staged source, which names the target, so a pair built under two t
 | other variables | `BUCK_SCRATCH_PATH`, `HOME` (as set below), `HOSTNAME`, the three cache variables | the same, less `PATH`, `PWD` and `SHLVL` |
 | working directory | the action's root | the same |
 | exit status of zig | `set -e` ended the script with it (3 stays 3) | `run` exits with it (3 stays 3) |
-| zig not there | `sh: line N: <path>: not found`, status 127 | `check run: cannot run <path>: FileNotFound`, status 127 |
+| zig's `argv[0]` | the path as the rule wrote it (relative to the action's root; `sh` printed it so) | absolute (`check run` makes a program with a `/` absolute against the working directory; the stand-in zig checks it) |
+| zig not there | `sh: buck-out/nowhere/zig: not found` (the path as written, relative), status 127 | `check run: cannot run <root>/buck-out/nowhere/zig: FileNotFound` (absolute; `<root>` is the action's root), status 127 |
 | zig's stdout and stderr | passed through | passed through |
 | the Node library's `-o` | an absolute path | the path as the action names it, relative to the same working directory |
 

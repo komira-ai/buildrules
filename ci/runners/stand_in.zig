@@ -8,7 +8,8 @@
 //!   c_shared    cc -target x86_64-linux-gnu.2.34 -O2 -g0 -fPIC -shared -Wall -Werror -Wl,-soname,libstand_in.so.1 -Wl,--build-id=none SRC -o OUT
 //!   node        cc -target x86_64-linux-gnu.2.34 -shared -fPIC -O2 -fvisibility=hidden -Wall -Werror -Wl,-z,undefs -o OUT -I<dir> -DSTAND_IN=1 SRC
 //! The environment is the one `check run` makes: the cache directories and HOME inside a private scratch directory of the action's
-//! `$BUCK_SCRATCH_PATH`, made absolute, named for the rule (`buildrules`, `c_exe`, `c_shared`, `buildrules`, `br`), and the action's working directory.
+//! `$BUCK_SCRATCH_PATH`, made absolute, named for the rule (`buildrules`, `c_exe`, `c_shared`, `buildrules`, `br`), and the action's working directory. No
+//! variable outside `allowed_env` may be there. zig's own argv[0] is the absolute path of the stand-in (`check run` makes a relative program absolute).
 
 const std = @import("std");
 
@@ -90,7 +91,24 @@ fn env(a: std.mem.Allocator, name: []const u8) []const u8 {
     return std.process.getEnvVarOwned(a, name) catch fail("{s} is not set", .{name});
 }
 
+/// The variables the program may have: the action's own (`BUCK_SCRATCH_PATH`, `HOME` before `check run` replaces it, `HOSTNAME`, and the nonce a determinism probe adds)
+/// and the two cache variables `check run` sets. Any other (a `PATH`, an `LD_PRELOAD`) is one the rule gave zig and the scripts it replaced did not.
+const allowed_env = [_][]const u8{ "BUCK_SCRATCH_PATH", "HOME", "HOSTNAME", "ZIG_GLOBAL_CACHE_DIR", "ZIG_LOCAL_CACHE_DIR", "BUILDRULES_NONCE" };
+
+fn checkNoOtherEnv(a: std.mem.Allocator, shape: Shape) void {
+    var map = std.process.getEnvMap(a) catch fail("cannot read the environment", .{});
+    var it = map.iterator();
+    while (it.next()) |entry| {
+        var known = false;
+        for (allowed_env) |name| {
+            if (std.mem.eql(u8, entry.key_ptr.*, name)) known = true;
+        }
+        if (!known) fail("{s}: the environment has {s}, which the rule does not give zig (allowed: BUCK_SCRATCH_PATH, HOME, HOSTNAME, ZIG_GLOBAL_CACHE_DIR, ZIG_LOCAL_CACHE_DIR, BUILDRULES_NONCE)", .{ @tagName(shape), entry.key_ptr.* });
+    }
+}
+
 fn checkEnv(a: std.mem.Allocator, shape: Shape) void {
+    checkNoOtherEnv(a, shape);
     const here = std.process.getCwdAlloc(a) catch |e| fail("no working directory: {s}", .{@errorName(e)});
     const bs = env(a, "BUCK_SCRATCH_PATH");
     const base = if (bs.len > 0 and bs[0] == '/') bs else std.fmt.allocPrint(a, "{s}/{s}", .{ here, bs }) catch fail("out of memory", .{});
@@ -113,6 +131,7 @@ pub fn main() void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
     const argv = std.process.argsAlloc(a) catch fail("out of memory", .{});
+    if (argv[0].len == 0 or argv[0][0] != '/') fail("argv[0] is `{s}`, not an absolute path (`check run` makes the program absolute)", .{argv[0]});
     const shape = shapeOf(argv);
     const out = checkArgs(shape, argv);
     checkEnv(a, shape);

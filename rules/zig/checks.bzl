@@ -17,6 +17,15 @@ def check_target_triple(who, target, refuse = fail):
     if not regex_match("^[a-z0-9_.-]+$", target):
         refuse("{}: target {} is not a zig target triple".format(who, repr(target)))
 
+# The packages that may build a `zig_exe` with `bootstrap = True`, which runs zig without `check run`: `check` (rules/check) and the toolbox its tests start
+# (rules/toolbox). Any other executable is built by `check run`, like the rest.
+BOOTSTRAP_PACKAGES = ["rules/check", "rules/toolbox"]
+
+def check_bootstrap(who, cell, package, bootstrap, refuse = fail):
+    """`bootstrap = True` is for the packages of BOOTSTRAP_PACKAGES of the buildrules cell, and nobody else."""
+    if bootstrap and (cell != "buildrules" or package not in BOOTSTRAP_PACKAGES):
+        refuse("{}: bootstrap = True is for {} only (they are what `check run` is built and tested with); {}//{} builds with `check run` like every other zig_exe".format(who, " and ".join(BOOTSTRAP_PACKAGES), cell, package))
+
 def check_optimize(who, optimize, refuse = fail):
     """`optimize` is one of zig's optimization modes."""
     if optimize not in ZIG_OPTIMIZE_MODES:

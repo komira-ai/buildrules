@@ -22,6 +22,7 @@ REASON = "built for ISA x86-64-v3 but its execution platform reports ISA="
 # rules/coverage/checks.bzl, rules/mojo/unit.bzl).
 CASES = [
     ("//ci/negative:zig_exe_with_a_dep_of_the_wrong_kind", PLATFORM, "Attribute requires a dep that provides `ZigModuleInfo`"),
+    ("//ci/negative:zig_exe_with_bootstrap_outside_check", PLATFORM, "bootstrap = True is for rules/check and rules/toolbox only"),
     ("//ci/negative:cxx_library_gated_by_the_wrong_kind", PLATFORM, "Attribute requires a dep that provides `ValidationInfo`"),
     ("//ci/negative:npm_tarball_with_a_dep_of_the_wrong_kind", PLATFORM, "Attribute requires a dep that provides `NpmPackageInfo`"),
     ("//ci/negative:zig_coverage_of_no_test", PLATFORM, "test_targets is empty: a package with no test has no coverage to measure"),

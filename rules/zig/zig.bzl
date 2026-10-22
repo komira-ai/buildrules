@@ -21,7 +21,7 @@ ZigExeInfo = provider(fields = {
     "unit_tests": provider_field(list),
 })
 load("@buildrules//rules/core:test_runtime.bzl", "RUNNER_ENV", "data_map")
-load(":checks.bzl", "check_exe_target", "check_exec_tool_name", "check_module_name", "check_optimize", "check_same_tests", "check_target_triple", "check_unique_dep_names", "check_unique_imports", "zig_closure")
+load(":checks.bzl", "check_bootstrap", "check_exe_target", "check_exec_tool_name", "check_module_name", "check_optimize", "check_same_tests", "check_target_triple", "check_unique_dep_names", "check_unique_imports", "zig_closure")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/core:rerun.bzl", "RERUN_ATTRS", "rerun_env", "rerun_info")
 
@@ -220,6 +220,7 @@ def _zig_exe_impl(ctx):
     zig = ctx.attrs.zig[DefaultInfo].default_outputs[0]
     out = ctx.actions.declare_output(ctx.label.name)
     check_target_triple(ctx.label, ctx.attrs.target)
+    check_bootstrap(ctx.label.raw_target(), ctx.label.cell, ctx.label.package, ctx.attrs.bootstrap)
     zig_bin = cmd_args(zig, "/zig", delimiter = "")
     build = cmd_args(
         "build-exe",

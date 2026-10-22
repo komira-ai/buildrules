@@ -81,6 +81,16 @@ zig_exe(
     target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
 )
 
+# `bootstrap = True` builds an executable with zig run directly, without `check run`; only rules/check and rules/toolbox (what `check run` is built and tested with) may.
+# Here another package asks for it, and the rule must refuse (rules/zig/checks.bzl, `check_bootstrap`).
+zig_exe(
+    name = "zig_exe_with_bootstrap_outside_check",
+    bootstrap = True,
+    src = "negative_check.zig",
+    zig = "buildrules//rules/pins:zig_next",
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
 # The `checks` of a checked_cxx_library are validations (a target that returns a ValidationInfo); here one is an executable that returns none, so nothing would run it.
 checked_cxx_library(
     name = "cxx_library_gated_by_the_wrong_kind",

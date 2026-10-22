@@ -5,7 +5,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("//rules/rust:refusal.bzl", "accepts", "refuses")
 load("//rules:matrix.bzl", "group")
 load(":cases.bzl", "every_mode", "mod")
-load("//rules/zig:checks.bzl", "check_exe_target", "check_exec_tool_name", "check_module_name", "check_optimize", "check_same_tests", "check_target_triple", "check_unique_dep_names", "check_unique_imports", "zig_closure")
+load("//rules/zig:checks.bzl", "check_bootstrap", "check_exe_target", "check_exec_tool_name", "check_module_name", "check_optimize", "check_same_tests", "check_target_triple", "check_unique_dep_names", "check_unique_imports", "zig_closure")
 
 _ALL = []
 
@@ -25,6 +25,18 @@ _ALL.append(refuses("zig_target_upper_case_is_refused", check_target_triple, [_W
 _ALL.append(refuses("zig_target_empty_is_refused", check_target_triple, [_WHO, ""], ["is not a zig target triple"]))
 
 _ALL.append(refuses("zig_target_shell_metacharacter_is_refused", check_target_triple, [_WHO, "x86_64-linux-musl;rm"], ["is not a zig target triple"]))
+
+# ---- bootstrap: zig run without `check run`, for check and the toolbox only ------------------------------------------------------------------------
+
+_ALL.append(accepts("zig_bootstrap_in_rules_check_is_accepted", check_bootstrap, [_WHO, "buildrules", "rules/check", True]))
+
+_ALL.append(accepts("zig_bootstrap_in_rules_toolbox_is_accepted", check_bootstrap, [_WHO, "buildrules", "rules/toolbox", True]))
+
+_ALL.append(accepts("zig_without_bootstrap_anywhere_is_accepted", check_bootstrap, [_WHO, "buildrules", "tools/scrub", False]))
+
+_ALL.append(refuses("zig_bootstrap_in_another_package_is_refused", check_bootstrap, [_WHO, "buildrules", "tools/scrub", True], ["bootstrap = True is for rules/check and rules/toolbox only", "buildrules//tools/scrub"]))
+
+_ALL.append(refuses("zig_bootstrap_in_another_cell_is_refused", check_bootstrap, [_WHO, "toolchains", "rules/check", True], ["bootstrap = True is for", "toolchains//rules/check"]))
 
 # ---- optimize: one of zig's modes ------------------------------------------------------------------------------------------------------------------
 
