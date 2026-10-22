@@ -60,7 +60,7 @@ GRAPH_JSON = r'''{
       "kind": "lib",
       "root": "src/sys_app",
       "srcs": [
-        {"path": "src/sys_app/__init__.mojo", "sha256": "95a4b33e9c75ef7a77de5b515fd0e76e5415f4eca3a044302c1981a775449011"}
+        {"path": "src/sys_app/__init__.mojo", "sha256": "58c825657d984fbf840f469f095521f30dd1e1952654f8ae4807d5c39c9b6846"}
       ],
       "deps": ["probe_sys@1.0.0#mojo1.0.0/lib"],
       "natives": [
@@ -69,7 +69,7 @@ GRAPH_JSON = r'''{
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["sys_app.mojoc"],
-      "key": "e1c01de89284c166a927a2710ec67392d01a59209449b5d9239e883b8d3775a7"
+      "key": "d2336b6a9f5b15820994ff49e003669793fd2f926e21dafb920d327bcbf2e870"
     },
     {
       "id": "sys_app@1.0.0#mojo1.0.0/test:tests/test_sys_app.mojo",
@@ -77,7 +77,7 @@ GRAPH_JSON = r'''{
       "version": "1.0.0",
       "kind": "test",
       "srcs": [
-        {"path": "tests/test_sys_app.mojo", "sha256": "f17219755975ff152e37c3e2f9bb04de80430ee577fb404bae92b82e09b2cb47"}
+        {"path": "tests/test_sys_app.mojo", "sha256": "31016b632db152969ae52d2d009433ac8e6fccd4020c92c01d94e46de5e1530d"}
       ],
       "deps": ["sys_app@1.0.0#mojo1.0.0/lib"],
       "natives": [
@@ -86,7 +86,7 @@ GRAPH_JSON = r'''{
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_sys_app.pass"],
-      "key": "c6fa0304ad43210b894d816cfd166851cd25a057888613d05feb6aa2b58b1786"
+      "key": "4783c543922cf0dd609cbcd1f3d786b5fa01220c568cbb4d5054fbbbcfa0b89a"
     }
   ]
 }

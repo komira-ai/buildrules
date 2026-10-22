@@ -206,6 +206,43 @@ test "the test's --env entries come before LLVM_PROFILE_FILE, which is always th
     try testing.expect(std.mem.startsWith(u8, env[4], "LLVM_PROFILE_FILE="));
 }
 
+test "each --lib-dir follows the compiler's lib on the library path, in the order given and made absolute; the rest of the environment is as it was" {
+    // Defect caught: a shared native library the instrumented binary loads that the run cannot find (an ordinary test finds it in the lib/ beside
+    // it), or that shadows the compiler's runtime library (the compiler's directory comes first).
+    var c = try Case.init();
+    defer c.deinit();
+    var fake = Fake.init();
+    const b = good();
+    fake.raw_bytes = &b;
+    var full = std.ArrayList([]const u8).empty;
+    try full.appendSlice(c.a(), c.argv());
+    try full.appendSlice(c.a(), &.{ "--lib-dir", c.p("natives"), "--env", "A=1", "--lib-dir", "rel/libs" });
+    try testing.expectEqual(@as(u8, 0), try r.cli(c.a(), full.items, c.where(), fake.runner(), &c.err));
+    const env = fake.calls.items[0].env;
+    try testing.expectEqual(@as(usize, 4), env.len);
+    try testing.expectEqualStrings("PATH=/usr/bin:/bin", env[0]);
+    try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "LD_LIBRARY_PATH={s}/lib:{s}:{s}/rel/libs", .{ c.p("tc/compiler"), c.p("natives"), c.root }), env[1]);
+    try testing.expectEqualStrings("A=1", env[2]);
+}
+
+test "--lib-dir is repeatable, and an empty one is a usage error" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    const full = [_][]const u8{ "--compiler", "c", "--share", "s", "--label", "l", "--profdata", "p", "--raw-version", "11", "--binary", "b", "--out", "o" };
+    const none = (try r.parseArgs(a, &full, &why)).?;
+    try testing.expectEqual(@as(usize, 0), none.lib_dirs.len);
+    const two = (try r.parseArgs(a, &([_][]const u8{ "--lib-dir", "x" } ++ full ++ [_][]const u8{ "--lib-dir", "y" }), &why)).?;
+    try testing.expectEqual(@as(usize, 2), two.lib_dirs.len);
+    try testing.expectEqualStrings("x", two.lib_dirs[0]);
+    try testing.expectEqualStrings("y", two.lib_dirs[1]);
+    try testing.expect((try r.parseArgs(a, &(full ++ [_][]const u8{ "--lib-dir", "" }), &why)) == null);
+    try testing.expectEqualStrings("--lib-dir is empty", why);
+    try testing.expect((try r.parseArgs(a, &(full ++ [_][]const u8{"--lib-dir"}), &why)) == null);
+    try testing.expectEqualStrings("unknown argument --lib-dir", why);
+}
+
 test "a test that fails fails the action with its own exit status, the label and the reason; nothing is merged" {
     for ([_]struct { st: proc.Status, rc: u8 }{ .{ .st = .{ .exited = 3 }, .rc = 3 }, .{ .st = .{ .signaled = 11 }, .rc = 139 } }) |cs| {
         var c = try Case.init();

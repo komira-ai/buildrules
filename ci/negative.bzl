@@ -24,6 +24,8 @@ CASES = [
     ("//ci/negative:npm_tarball_with_a_dep_of_the_wrong_kind", PLATFORM, "Attribute requires a dep that provides `NpmPackageInfo`"),
     ("//ci/negative:zig_coverage_of_no_test", PLATFORM, "test_targets is empty: a package with no test has no coverage to measure"),
     ("//ci/negative:cross_exe_with_other_tests", PLATFORM, "waits for the unit tests"),
+    ("//ci/negative:mojo_instrumented_link_without_a_native_the_unit_links", PLATFORM, "the unit links the native library libbase_sys.a and the instrumented link of its branch coverage is not given it"),
+    ("//ci/negative:mojo_instrumented_link_with_a_needed_archive_before_its_user", PLATFORM, "libbase_sys.a is linked before libprobe_sys.a, which needs it"),
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys/base_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
@@ -87,7 +89,7 @@ COVERAGE_FLOOR_PACKAGES = [
     ("//examples/mojo/reexport", True),
     ("//examples/mojo/reexport_unused", False),
     ("//examples/mojo/copy_of_base", False),
-    ("//examples/mojo/sys_app", False),
+    ("//examples/mojo/sys_app", True),
     ("//examples/mojo/ws", False),
     ("//examples/mojo/ws/util", False),
     ("//examples/mojo/ws/util/base", False),
@@ -107,32 +109,30 @@ def coverage_floor_wiring_problems(ctx):
             problems.append("{} has a :coverage_floor and no coverage_floor.txt: a package without a floor must be as it was".format(package))
     return problems
 
-# A package whose tests link no native library has the five branch coverage actions of each test, and its `:coverage` waits for the last; one whose tests do has
-# none of them (rules/mojo/defs.bzl: the instrumented link line carries no native library), so its `coverage.txt` has no `branches` rows and a floor may not
-# hold a `branches` figure. (package, the stem of its test, whether it is instrumented)
+# Every package with a test has the five branch coverage actions of each test, and its `:coverage` waits for the last: also a package whose tests link native
+# libraries (`ws`: a shared object; `sys_app`: two static archives), because the instrumented link is given them as the ordinary link is (rules/mojo/defs.bzl,
+# rules/coverage/branch/README.md). (package, the stem of its test)
 BRANCH_PACKAGES = [
-    ("//examples/mojo/partial", "test_partial", True),
-    ("//examples/mojo/reexport", "test_ops", True),
-    ("//examples/mojo/copy_of_base", "test_base", True),
-    ("//examples/mojo/ws/util", "test_util", True),
-    ("//examples/mojo/ws/util/base", "test_base", True),
-    ("//examples/mojo/ws", "test_app", False),
-    ("//examples/mojo/sys_app", "test_sys_app", False),
+    ("//examples/mojo/partial", "test_partial"),
+    ("//examples/mojo/reexport", "test_ops"),
+    ("//examples/mojo/copy_of_base", "test_base"),
+    ("//examples/mojo/ws/util", "test_util"),
+    ("//examples/mojo/ws/util/base", "test_base"),
+    ("//examples/mojo/ws", "test_app"),
+    ("//examples/mojo/sys_app", "test_sys_app"),
 ]
 
 def coverage_branch_wiring_problems(ctx):
-    """Every example package against whether its tests are instrumented for branches: a list of strings, empty when all agree."""
+    """Every example package against the branch coverage targets of its test: a list of strings, empty when all are there and `:coverage` waits for them."""
     problems = []
     q = ctx.uquery()
-    for package, stem, instrumented in BRANCH_PACKAGES:
+    for package, stem in BRANCH_PACKAGES:
         names = [t.label.name for t in q.eval(package + ":")]
         mine = [stem + "__" + step for step in ["bc", "pgo", "profdata", "ir", "info"]]
         have = [n for n in mine if n in names]
         waits = (stem + "__info") in [t.label.name for t in q.eval("deps({}:coverage, 1)".format(package))]
-        if instrumented and (len(have) != len(mine) or not waits):
+        if len(have) != len(mine) or not waits:
             problems.append("{} has {} of the {} branch coverage targets of {} and its :coverage {} wait for {}__info: its branch figure is not made".format(package, len(have), len(mine), stem, "does" if waits else "does not", stem))
-        elif not instrumented and (have or waits):
-            problems.append("{} links a native library and has branch coverage targets ({}): its tests are not instrumented, so it must have none".format(package, ", ".join(have) if have else stem + "__info is a dependency of :coverage"))
     return problems
 
 def _built_with_why(ctx, label):

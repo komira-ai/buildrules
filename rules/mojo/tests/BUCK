@@ -2,6 +2,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # mopm-toolchain.toml is required (docs/contract.md, section 12): the refusals of rules/mojo/defs.bzl as analysis tests (rules/rust/refusal.bzl).
 # Each target is green only if the rule refused as stated; make the rule fall back to a default and it stops existing (analysis fails).
 load("//rules/mojo:defs.bzl", "check_toolchain_file_present", "check_toolchain_file_recorded", "native_wiring")
+load("//rules/mojo:unit.bzl", "cov_link_natives")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
 load(":natives.bzl", "PREBUILT", "UNIT", "USER", "own_natives", "reversed_graph_is_reversed", "wiring_is_as_the_graph_says")
 
@@ -72,6 +73,51 @@ refuses(
     check = native_wiring,
     args = [UNIT, PREBUILT, dict(USER, **{"libbase_sys.a": "//x:mine"}), "examples/x"],
     contains = ["libbase_sys.a comes from the lock", "registry package base_sys", "remove it"],
+)
+
+# The native libraries of the instrumented link of a test's branch coverage (rules/mojo/unit.bzl, `cov_link_natives`): the unit's libraries, no
+# other, in the graph's order. Two static archives, the first needing the second (the graph lists a library before every library it needs), and a
+# shared object.
+_INSTRUMENTED = ["libprobe_sys.a", "libbase_sys.a", "libcnative.so.1"]
+_ALL = {"libprobe_sys.a": "//x:probe", "libbase_sys.a": "//x:base", "libcnative.so.1": "//x:cnative"}
+_NEEDS = {"libprobe_sys.a": ["libbase_sys.a"]}
+
+accepts(
+    name = "instrumented_link_with_the_units_natives_in_its_order_is_accepted",
+    check = cov_link_natives,
+    args = ["//x:test__pgo", _INSTRUMENTED, _ALL, _NEEDS],
+)
+
+# A library the unit links and the instrumented link is not given: the test cannot link, so it is refused at analysis, naming the library.
+refuses(
+    name = "instrumented_link_without_one_of_the_natives_is_refused",
+    check = cov_link_natives,
+    args = ["//x:test__pgo", _INSTRUMENTED, {"libprobe_sys.a": "//x:probe", "libcnative.so.1": "//x:cnative"}, _NEEDS],
+    contains = ["//x:test__pgo", "the unit links the native library libbase_sys.a", "instrumented link", "add it to `natives`"],
+)
+
+# A library the unit does not link: refused, so the instrumented binary is not linked with code the test is not.
+refuses(
+    name = "instrumented_link_with_a_native_the_unit_does_not_link_is_refused",
+    check = cov_link_natives,
+    args = ["//x:test__pgo", _INSTRUMENTED, dict(_ALL, **{"libother.a": "//x:other"}), _NEEDS],
+    contains = ["`natives` gives the instrumented link libother.a", "which the unit does not link"],
+)
+
+# An archive listed before the one it is needed by: the other order of the ordinary link, where the linker would leave symbols undefined.
+refuses(
+    name = "instrumented_link_with_a_needed_archive_first_is_refused",
+    check = cov_link_natives,
+    args = ["//x:test__pgo", ["libbase_sys.a", "libprobe_sys.a", "libcnative.so.1"], _ALL, _NEEDS],
+    contains = ["libbase_sys.a is linked before libprobe_sys.a, which needs it", "a static archive comes before every archive it needs"],
+)
+
+# A need the unit's link does not carry at all.
+refuses(
+    name = "instrumented_link_with_a_need_the_unit_does_not_link_is_refused",
+    check = cov_link_natives,
+    args = ["//x:test__pgo", ["libprobe_sys.a"], {"libprobe_sys.a": "//x:probe"}, _NEEDS],
+    contains = ["libprobe_sys.a needs libbase_sys.a, which the unit's link does not carry"],
 )
 
 scrub_files()

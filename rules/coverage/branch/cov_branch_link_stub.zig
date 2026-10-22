@@ -8,7 +8,9 @@
 //! (argv[1..]), one per line, to `<dir>/argv` and its environment, one
 //! NAME=VALUE per line in the order it was given, to `<dir>/env`. When
 //! `<dir>/say` exists, it writes `stdout: <say>` to stdout and `stderr:
-//! <say>` to stderr. When `<dir>/stub_out` exists, it writes its bytes to the
+//! <say>` to stderr. When `<dir>/stub_stdout` exists, it writes its bytes to
+//! stdout as they are (what llvm-nm prints). When `<dir>/stub_out` exists, it
+//! writes its bytes to the
 //! file the last `-o <file>` argument names. It exits with the decimal
 //! status in `<dir>/stub_rc`, 0 when there is none. A test-only program: no
 //! rule hands it out.
@@ -49,6 +51,7 @@ pub fn main() !u8 {
         try std.fs.File.stdout().deprecatedWriter().print("stdout: {s}\n", .{say});
         try std.fs.File.stderr().deprecatedWriter().print("stderr: {s}\n", .{say});
     }
+    if (try readOpt(alloc, dir, "stub_stdout")) |bytes| try std.fs.File.stdout().writeAll(bytes);
     if (out) |o| {
         if (try readOpt(alloc, dir, "stub_out")) |bytes| try std.fs.cwd().writeFile(.{ .sub_path = o, .data = bytes });
     }

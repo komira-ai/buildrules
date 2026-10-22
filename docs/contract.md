@@ -417,7 +417,7 @@ Each package is a mopm project: its own `mopm.toml`, `mopm.lock` and graph (`mop
 | `:test` | every test run |
 | `:bin_<name>`, `:build` | the `[targets] bins` of `mopm.toml`; `:build` is the library and the binaries |
 | `:<stem>__cov_bin`, `:<stem>__cov` | the same test as a debug build, and its run under kcov: a Cobertura report in repository paths |
-| `:<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info` | the same test as LLVM bitcode, instrumented and linked, run for its profile, the profile applied to the bitcode, and the library's branches in that IR classified: the branch records (12.4). Not for a package whose tests link a native library |
+| `:<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info` | the same test as LLVM bitcode, instrumented and linked, run for its profile, the profile applied to the bitcode, and the library's branches in that IR classified: the branch records (12.4). A test that links native libraries has them too: its instrumented link is given the same libraries in the same order |
 | `:coverage` | the package's line and branch coverage from those reports and records (`coverage.txt`); red if a source of the library is in no report. `:coverage[reports]` is the reports themselves, the per-line records, and `:coverage[branches]` the branch records (12.4) |
 | `:coverage_floor` | only if `coverage_floor.txt` is beside the BUCK file: green while `coverage.txt` is exactly that floor (12.4) |
 | `:ci` | `:build` and `:test` |
@@ -530,15 +530,17 @@ build arguments `--emit llvm-bitcode --debug-level line-tables`, so `<stem>__bc`
 LLVM that reads and writes the compiler's bitcode, unpacked from the pinned compiler package) and linked as a release test is, with the LLVM 23 profile runtime (`<stem>__pgo`); run in the tree of its sources, the raw
 profiles merged by the pinned `llvm-profdata` (`<stem>__profdata`; the raw profile version is `RAW_PROFILE_VERSION`, checked against both LLVMs by a check of each Mojo toolchain); read back by lld with the profile
 applied, as IR text whose branches carry their counts (`<stem>__ir`); and the branches of the library's sources in that IR classified, each a source decision or a branch the compiler made, as lcov `BRDA` records in
-repository paths (`<stem>__info`). The tools are static Zig executables (`cov_branch link|run|annotate`, `cov_branch_classify`), each behind its tests. A package whose tests link a native library is not instrumented yet
-(the instrumented link line has none of its libraries) and has the line figure alone.
+repository paths (`<stem>__info`). The tools are static Zig executables (`cov_branch link|run|annotate`, `cov_branch_classify`), each behind its tests. A test whose unit links native libraries is instrumented too: `<stem>__pgo` is given the unit's `native_sonames` (the graph's
+order: a library before every library it needs) and their targets, the very wiring of `<stem>__bin`, and links them after the instrumented object by path, as the ordinary link does; a shared one is
+found at run time through `<stem>__pgo[libs]` (`cov_branch run --lib-dir`). A library the unit links that the target is not given, one it is given that the unit does not link, and a graph order in which an
+archive stands after one that needs it are refused when the target is analysed; a library that defines a symbol the instrumented object defines too fails the link (README of `rules/coverage/branch`).
 
 **What `:coverage` gives a consumer.** Three outputs of one target, built from the same reports and records:
 
 - `:coverage` (its default output, `coverage.txt`): one row per file, `<path> <hit>/<total> <n>%`, the rows of a test's own sources marked `(not counted)`, then `total <hit>/<total> <n>%`
   over the library's sources. A library source with no executable line (a re-export `__init__.mojo`) is listed `0/0`. Then the branch rows, the same listing with `branches ` in front of each row, over
   the arms of the library's source decisions (`if`, `elif`, `while`, `and`/`or`, a `for` head, a raising call in a `try:` body): an arm counts as hit when any test took it. A source with code and no
-  decision, or with no code, is `0/0`; the tests of a package with a native library have no branch rows.
+  decision, or with no code, is `0/0`; a package whose tests link native libraries has them like any other.
 - `:coverage[reports]`: the records the rows were counted from, one file per test (`<stem>__cov.cobertura.xml`), kcov's Cobertura XML after `cov_normalize`: `<?xml?>`, `<coverage timestamp="0">`,
   one `<package name="">`, one `<class name="P" filename="P">` per file that has a record, bytewise sorted, and in it one `<line number="N" hits="H"/>` per line the compiler emitted code for, sorted by
   number, `H` being 1 when the test ran the line and 0 when not. `P` is the repository path (relative to the root of the cell that holds the package; never absolute, never under `buck-out`). A line

@@ -2,9 +2,11 @@
 //! the raw profiles it writes into an indexed profile (README.md, "cov_branch run").
 //!
 //! usage: cov_branch run --compiler <compiler_dir> --share <dir> --label <label> --profdata <llvm-profdata>
-//!            --raw-version <N> --binary <test_binary> --out <profdata_out> [--env NAME=VALUE]...
+//!            --raw-version <N> --binary <test_binary> --out <profdata_out> [--lib-dir <dir>]... [--env NAME=VALUE]...
 //!
 //!   --compiler     the Mojo compiler closure; its lib/ is on LD_LIBRARY_PATH (the binary loads libKGENCompilerRTShared.so from it)
+//!   --lib-dir      a directory of the shared native libraries the test loads (an ordinary test finds them in `lib/` beside it); put on
+//!                  LD_LIBRARY_PATH after the compiler's lib/, in the order of the flags
 //!   --share        the tree the test runs in (its working directory): the test source and the library's sources at the relative
 //!                  names the line tables use, as `cov_run` gives kcov
 //!   --profdata     the pinned llvm-profdata
@@ -13,7 +15,7 @@
 //!   --env          one more variable of the test's environment
 //!
 //! Steps:
-//!   1. The test runs in <share> with exactly this environment: PATH=/usr/bin:/bin, LD_LIBRARY_PATH=<compiler>/lib, the --env
+//!   1. The test runs in <share> with exactly this environment: PATH=/usr/bin:/bin, LD_LIBRARY_PATH=<compiler>/lib (then each --lib-dir), the --env
 //!      entries and LLVM_PROFILE_FILE=<scratch>/prof/%p.profraw (an absolute path; %p is the pid, so a child the test starts writes
 //!      a profile of its own). The test must pass: when it fails, so does this action, with the test's output and this tool's message.
 //!   2. At least one raw profile was written there; none (the runtime was not linked, the variable did not reach the test, the test
@@ -48,23 +50,32 @@ pub const Args = struct {
     raw_version: u32,
     binary: []const u8,
     out: []const u8,
+    /// Each --lib-dir, in order.
+    lib_dirs: []const []const u8 = &.{},
     /// "NAME=VALUE" of each --env, in order.
     env: []const []const u8,
 };
 
-pub const USAGE = "usage: cov_branch run --compiler DIR --share DIR --label L --profdata P --raw-version N --binary F --out F [--env NAME=VALUE]...";
+pub const USAGE = "usage: cov_branch run --compiler DIR --share DIR --label L --profdata P --raw-version N --binary F --out F [--lib-dir DIR]... [--env NAME=VALUE]...";
 
 const NAMES = [_][]const u8{ "--compiler", "--share", "--label", "--profdata", "--raw-version", "--binary", "--out" };
 
 /// The arguments after `run`, or the reason they are refused (a usage error).
 pub fn parseArgs(alloc: std.mem.Allocator, argv: []const []const u8, why: *[]const u8) !?Args {
-    // The --env pairs first: the flag repeats, the others do not.
+    // The --env and --lib-dir pairs first: the flags repeat, the others do not.
     var env = std.ArrayList([]const u8).empty;
+    var libs = std.ArrayList([]const u8).empty;
     var rest = std.ArrayList([]const u8).empty;
     var i: usize = 0;
     while (i < argv.len) : (i += 2) {
         if (std.mem.eql(u8, argv[i], "--env") and i + 1 < argv.len) {
             try env.append(alloc, argv[i + 1]);
+        } else if (std.mem.eql(u8, argv[i], "--lib-dir") and i + 1 < argv.len) {
+            if (argv[i + 1].len == 0) {
+                why.* = "--lib-dir is empty";
+                return null;
+            }
+            try libs.append(alloc, argv[i + 1]);
         } else {
             try rest.append(alloc, argv[i]);
             if (i + 1 < argv.len) try rest.append(alloc, argv[i + 1]);
@@ -94,6 +105,7 @@ pub fn parseArgs(alloc: std.mem.Allocator, argv: []const []const u8, why: *[]con
         .raw_version = raw,
         .binary = v[5],
         .out = v[6],
+        .lib_dirs = try libs.toOwnedSlice(alloc),
         .env = try env.toOwnedSlice(alloc),
     };
 }
@@ -109,7 +121,10 @@ fn parseVersion(s: []const u8) ?u32 {
 pub fn testEnv(alloc: std.mem.Allocator, a: Args, cwd: []const u8, k: []const u8) ![]const []const u8 {
     var v = std.ArrayList([]const u8).empty;
     try v.append(alloc, "PATH=/usr/bin:/bin");
-    try v.append(alloc, try std.fmt.allocPrint(alloc, "LD_LIBRARY_PATH={s}/lib", .{try common.abs(alloc, cwd, a.compiler)}));
+    var ld = std.ArrayList(u8).empty;
+    try ld.writer(alloc).print("LD_LIBRARY_PATH={s}/lib", .{try common.abs(alloc, cwd, a.compiler)});
+    for (a.lib_dirs) |d| try ld.writer(alloc).print(":{s}", .{try common.abs(alloc, cwd, d)});
+    try v.append(alloc, ld.items);
     try v.appendSlice(alloc, a.env);
     try v.append(alloc, try std.fmt.allocPrint(alloc, "LLVM_PROFILE_FILE={s}/prof/%p.profraw", .{k}));
     return v.toOwnedSlice(alloc);

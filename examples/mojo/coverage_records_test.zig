@@ -1,6 +1,6 @@
 //! What `:coverage` of a mojo_package gives a consumer (docs/contract.md, section 12.4): `coverage.txt`, the count per file (lines, then branches),
 //! `:coverage[reports]`, the line records it was counted from (one kcov Cobertura file per test), and `:coverage[branches]`, the branch records (one
-//! lcov file per test, the classifier's output). All are the zig_test's `data` (under BUILDRULES_TEST_WORK), the real outputs of two example packages:
+//! lcov file per test, the classifier's output). All are the zig_test's `data` (under BUILDRULES_TEST_WORK), the real outputs of example packages (`reexport` and `partial` for lines and branches, `sys_app` and `ws`, whose tests link native libraries, for branches):
 //! `reexport` (its `__init__.mojo` only re-exports, so the line report omits it; `ops.mojo` has code and no decision) and `partial` (a test that takes
 //! one arm of a function, so a line is recorded and does not run, and one branch arm never runs).
 //!
@@ -184,7 +184,7 @@ test "the branch rows of a package are the arms of its branch records, file by f
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    for ([_][]const u8{ "reexport", "partial" }) |pkg| {
+    for ([_][]const u8{ "reexport", "partial", "sys_app", "ws" }) |pkg| {
         const summary = try work(a, try std.fmt.allocPrint(a, "{s}/coverage.txt", .{pkg}));
         const records = try work(a, try std.fmt.allocPrint(a, "{s}/branches.info", .{pkg}));
         const rows = try branchRowsOf(a, summary);
@@ -249,11 +249,56 @@ test "a package with code and no decision reports 0/0 branches, consistently in 
     );
 }
 
+test "a package whose test links static native libraries has branch records, and the rows count exactly their arms" {
+    // Defect caught: an instrumented link without the package's libraries gives the package no branch records at all (it cannot link, or the
+    // action is left out), so its branch rows would be missing or 0/0 whatever the code decides. `clamped_answer` is `if value > limit:` at line 18
+    // (a select), and its test takes both arms, one call with a limit above the answer and one below it; the answer comes from the C archives.
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings(
+        "SF:examples/mojo/sys_app/src/sys_app/__init__.mojo\n" ++
+            "BRDA:18,5:select:0/1,0,1\n" ++
+            "BRDA:18,5:select:0/1,1,1\n" ++
+            "end_of_record\n",
+        try work(a, "sys_app/branches.info"),
+    );
+    try t.expectEqualStrings(
+        "examples/mojo/sys_app/src/sys_app/__init__.mojo 5/5 100%\n" ++
+            "examples/mojo/sys_app/tests/test_sys_app.mojo 7/7 100% (not counted)\n" ++
+            "total 5/5 100%\n" ++
+            "branches examples/mojo/sys_app/src/sys_app/__init__.mojo 2/2 100%\n" ++
+            "branches total 2/2 100%\n",
+        try work(a, "sys_app/coverage.txt"),
+    );
+}
+
+test "a package whose test links a shared native library has branch records too: named with no decision, 0/0, the test having run" {
+    // `ws`'s library has code and no decision, and its test loads libcnative.so.1 (the answer 4242 comes from it): the instrumented binary ran
+    // (a record names the file) with the shared object found, and the rows agree with the records.
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings(
+        "SF:examples/mojo/ws/src/app/__init__.mojo\n" ++
+            "end_of_record\n",
+        try work(a, "ws/branches.info"),
+    );
+    try t.expectEqualStrings(
+        "examples/mojo/ws/src/app/__init__.mojo 2/2 100%\n" ++
+            "examples/mojo/ws/tests/test_app.mojo 4/4 100% (not counted)\n" ++
+            "total 2/2 100%\n" ++
+            "branches examples/mojo/ws/src/app/__init__.mojo 0/0 0%\n" ++
+            "branches total 0/0 0%\n",
+        try work(a, "ws/coverage.txt"),
+    );
+}
+
 test "the branch records name files by repository path, not by the directory an action ran in" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    for ([_][]const u8{ "reexport", "partial" }) |pkg| {
+    for ([_][]const u8{ "reexport", "partial", "sys_app", "ws" }) |pkg| {
         const records = try work(a, try std.fmt.allocPrint(a, "{s}/branches.info", .{pkg}));
         try t.expect(std.mem.indexOf(u8, records, "SF:examples/mojo/") != null);
         try t.expect(std.mem.indexOf(u8, records, "SF:/") == null);

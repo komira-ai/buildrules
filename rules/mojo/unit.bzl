@@ -331,44 +331,85 @@ mojo_cov_run_rule = rule(
 #   mojo_cov_branch_annotate the bitcode with that profile applied by lld, as IR text whose branches carry their counts
 #   mojo_cov_branch_classify the branches of the library's sources in that IR, as lcov BRDA records in repository paths
 
+def cov_link_natives(label, sonames, provided, needs, refuse = fail):
+    """Checks the native libraries the instrumented link is given against the unit's: every library the unit links is given, no other is, and
+    the order is the graph's, which is the order of the ordinary test link (a library before every library it needs: a static archive resolves
+    what the libraries before it left undefined). `sonames` is the unit's list in the graph's order, `provided` the sonames the target has a
+    file for, `needs` each soname's list of the sonames it needs. `refuse` is `fail` in a build; a test passes a recorder (rules/rust/refusal.bzl)."""
+    for soname in sonames:
+        if soname not in provided:
+            refuse("{}: the unit links the native library {} and the instrumented link of its branch coverage is not given it: add it to `natives` (the instrumented test cannot link without it)".format(label, soname))
+    for soname in provided:
+        if soname not in sonames:
+            refuse("{}: `natives` gives the instrumented link {}, which the unit does not link".format(label, soname))
+    position = {soname: i for i, soname in enumerate(sonames)}
+    for soname in sonames:
+        for need in needs.get(soname, []):
+            if need not in position:
+                refuse("{}: {} needs {}, which the unit's link does not carry".format(label, soname, need))
+            elif position[need] < position[soname]:
+                refuse("{}: {} is linked before {}, which needs it: a static archive comes before every archive it needs, as in the ordinary link".format(label, need, soname))
+
+def _is_static(soname):
+    # A static native library is `lib<stem>.a` (docs/contract.md, section 12.4); every other native is a shared object.
+    return soname.endswith(".a")
+
 def _pgo_impl(ctx):
     tc = ctx.attrs.toolchain[MojoToolchainInfo]
     llvm = ctx.attrs.branch[CovBranchInfo]
     bc = ctx.attrs.bc[MojoExeInfo]
     out = ctx.actions.declare_output(ctx.label.name)
+
+    # The unit's native libraries, as the ordinary test link gets them: one flag each, in the graph's order.
+    sonames = ctx.attrs.native_sonames
+    cov_link_natives(ctx.label, sonames, ctx.attrs.natives, ctx.attrs.native_needs)
+    cmd = cmd_args(
+        ctx.attrs.tool[RunInfo],
+        "link",
+        "--compiler",
+        tc.compiler,
+        "--zig",
+        tc.zig,
+        "--target",
+        tc.cc_target,
+        "--lld",
+        llvm.lld,
+        "--runtime",
+        llvm.runtime,
+        "--bitcode",
+        bc.exe,
+        "--out",
+        out.as_output(),
+        "--nm",
+        llvm.nm,
+        hidden = [llvm.lld_dir, llvm.tools_dir, bc.dir],
+    )
+    for soname in sonames:
+        cmd.add("--native", _file(ctx.attrs.natives[soname]))
     ctx.actions.run(
-        cmd_args(
-            ctx.attrs.tool[RunInfo],
-            "link",
-            "--compiler",
-            tc.compiler,
-            "--zig",
-            tc.zig,
-            "--target",
-            tc.cc_target,
-            "--lld",
-            llvm.lld,
-            "--runtime",
-            llvm.runtime,
-            "--bitcode",
-            bc.exe,
-            "--out",
-            out.as_output(),
-            hidden = [llvm.lld_dir, llvm.tools_dir, bc.dir],
-        ),
+        cmd,
         category = "mojo_cov_pgo_link",
         identifier = ctx.label.name,
         env = {"BUILDRULES_UNIT_NONCE": _NONCE},
     )
-    return _validated(ctx, [DefaultInfo(default_output = out)])
 
-# One test's bitcode instrumented with profile counters and linked (rules/coverage/branch/cov_branch_link.zig).
+    # The shared libraries the binary loads: an ordinary test finds them in `lib/` beside it (its run path); `[libs]` is that directory for the
+    # run of the instrumented binary (`cov_branch run --lib-dir`). A static archive is in the binary and is not loaded.
+    shared = {soname: _file(ctx.attrs.natives[soname]) for soname in sonames if not _is_static(soname)}
+    sub = {"libs": [DefaultInfo(default_output = ctx.actions.copied_dir("libs", shared))]} if shared else {}
+    return _validated(ctx, [DefaultInfo(default_output = out, sub_targets = sub)])
+
+# One test's bitcode instrumented with profile counters and linked with the unit's native libraries (rules/coverage/branch/cov_branch_link.zig).
 mojo_cov_pgo_rule = rule(
     impl = _pgo_impl,
     attrs = {
         "branch": attrs.exec_dep(providers = [CovBranchInfo]),
         "bc": attrs.dep(providers = [MojoExeInfo]),
         "check": _CHECK_ATTR,
+        # The unit's native libraries in the graph's order, the target of each, and what each needs (`needs` of the graph).
+        "native_needs": attrs.dict(attrs.string(), attrs.list(attrs.string()), default = {}),
+        "native_sonames": attrs.list(attrs.string(), default = []),
+        "natives": attrs.dict(attrs.string(), attrs.dep(), default = {}),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         "tool": attrs.exec_dep(default = "buildrules//rules/coverage/branch:cov_branch", providers = [RunInfo]),
     },
@@ -386,26 +427,33 @@ def _branch_run_impl(ctx):
     # The tree the test runs in: the test source and the library's sources at the relative names the line tables use, as the kcov run's.
     share = ctx.actions.copied_dir("share", {dest: src for dest, src in ctx.attrs.share.items()})
     profdata = ctx.actions.declare_output(ctx.label.name + ".profdata")
+    cmd = cmd_args(
+        ctx.attrs.tool[RunInfo],
+        "run",
+        "--compiler",
+        tc.compiler,
+        "--share",
+        share,
+        "--label",
+        str(ctx.label.raw_target()),
+        "--profdata",
+        llvm.profdata,
+        "--raw-version",
+        str(RAW_PROFILE_VERSION),
+        "--binary",
+        ctx.attrs.pgo[DefaultInfo].default_outputs[0],
+        "--out",
+        profdata.as_output(),
+        hidden = [llvm.tools_dir],
+    )
+
+    # The shared native libraries the instrumented binary loads (`[libs]` of the link): found through the library path, as an ordinary test finds
+    # them through the `lib/` beside it.
+    libs = ctx.attrs.pgo[DefaultInfo].sub_targets.get("libs")
+    if libs:
+        cmd.add("--lib-dir", libs[DefaultInfo].default_outputs[0])
     ctx.actions.run(
-        cmd_args(
-            ctx.attrs.tool[RunInfo],
-            "run",
-            "--compiler",
-            tc.compiler,
-            "--share",
-            share,
-            "--label",
-            str(ctx.label.raw_target()),
-            "--profdata",
-            llvm.profdata,
-            "--raw-version",
-            str(RAW_PROFILE_VERSION),
-            "--binary",
-            ctx.attrs.pgo[DefaultInfo].default_outputs[0],
-            "--out",
-            profdata.as_output(),
-            hidden = [llvm.tools_dir],
-        ),
+        cmd,
         category = "mojo_cov_branch_run",
         identifier = ctx.label.name,
         env = {"BUILDRULES_UNIT_NONCE": _NONCE},
