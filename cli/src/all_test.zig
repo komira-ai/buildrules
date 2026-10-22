@@ -14,6 +14,7 @@ test {
     _ = @import("autopin_manifest_test.zig");
     _ = @import("autopin_oom_test.zig");
     _ = @import("autopin_safe_test.zig");
+    _ = @import("autopin_verify_test.zig");
     _ = @import("autopin_table_test.zig");
     _ = @import("autopin_zip_test.zig");
     _ = @import("buckgen_test.zig");

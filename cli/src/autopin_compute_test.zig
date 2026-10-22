@@ -655,3 +655,25 @@ test "compute: a pins.lock.bzl directory whose lock has no packages and whose ta
     const m = try readManifest(h, "artifact", &.{"infra=pins-lock"});
     try t.expectEqual(@as(usize, 0), m.files.len);
 }
+
+test "compute: a lock with the packages aws-cdk-lib bundles is read, pins nothing for them, and changes nothing when the table is in sync" {
+    inline for (.{ "buildrules-lock", "pins-lock" }) |kind| {
+        reset();
+        defer teardown();
+        const h = try kit.Harness.create();
+        defer h.destroy();
+        const cdk = [_]Pkg{ .{ .name = "left-pad", .version = "1.3.0" }, .{ .name = "aws-cdk-lib", .version = "2.150.0" } };
+        const cdk_lock_entry = ",\"node_modules/aws-cdk-lib\":{\"version\":\"2.150.0\",\"resolved\":\"" ++ reg ++ "aws-cdk-lib/-/aws-cdk-lib-2.150.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\",\"bundleDependencies\":[\"ajv\",\"table\"]}";
+        const bundled = ",\"node_modules/aws-cdk-lib/node_modules/table\":{\"version\":\"6.8.2\",\"inBundle\":true,\"bundleDependencies\":[\"ajv\"]},\"node_modules/aws-cdk-lib/node_modules/ajv\":{\"version\":\"8.17.1\",\"inBundle\":true,\"license\":\"MIT\"},\"node_modules/aws-cdk-lib/node_modules/table/node_modules/ajv\":{\"version\":\"8.12.0\",\"inBundle\":true}";
+        if (comptime std.mem.eql(u8, kind, "buildrules-lock")) try syncedBuildrules(h, "site", &cdk) else try syncedPins(h, "site", &cdk);
+        try event(h);
+        try h.put("site/package-lock.json", try lockJson(h.a(), cdk[0..1], cdk_lock_entry ++ bundled));
+        fetches = 0;
+        const r = runCompute(h, "artifact", &.{"site=" ++ kind});
+        errdefer std.debug.print("err: {s}\n", .{r.err});
+        try t.expectEqual(@as(u8, 0), r.code);
+        try t.expectEqual(@as(usize, 0), fetches);
+        const m = try readManifest(h, "artifact", &.{"site=" ++ kind});
+        try t.expect(m.files.len <= 1);
+    }
+}
