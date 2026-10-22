@@ -529,7 +529,7 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 | the two copies of the closure hash in the table differ | analysis; `mojo check` | `the table records toolchain closure A but its unit graph pins B: the file was edited by hand` |
 | the table's Mojo is not the graph's, or mopm-toolchain.toml names another | analysis; `mojo check`; `mojo sync` (mopm exit 4) | `the table says Mojo 1.1.0 but its unit graph is for Mojo 1.0.0`; `mopm has no pinned toolchain for mojo 1.1.0` |
 | a native library other than the pinned one | `mopm unit build` | `native library X has sha256 B, but the graph declares A` |
-| a library source no test compiled | `:coverage` | `<file> is in no report: no test compiled it, or kcov could not open it` |
+| a library source no test compiled, that has any statement beyond comments, docstrings and imports (a re-export-only `__init__.mojo` has none, is omitted by the report, and is listed `0/0`) | `:coverage` | `<file> is in no report: no test compiled it, or kcov could not open it` |
 | `toolchains/mojo_pins.bzl` edited without a sync (a `cc_target`, a hash, a component) | `:check` at analysis; `mojo check` | `toolchains/mojo_pins.bzl and the table's unit graph disagree about the Mojo 1.0.0 toolchain (cc_target)` |
 | `mopm-toolchain.toml` says another Mojo than the table was made for | `:check` (the file's hash); `mojo check` | `examples/mojo/mopm-toolchain.toml is not what the Mojo table was made from (sha256 A, the table says B): run `buildrules mojo sync``  |
 | a test at an ISA level on a platform without it | analysis | as section 11 |

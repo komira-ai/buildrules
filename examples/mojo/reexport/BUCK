@@ -1,0 +1,8 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A package whose __init__.mojo only re-exports: the Mojo coverage report omits it, and `:coverage` lists it 0/0 instead of refusing it
+# (rules/coverage/tools/cov_summary.zig, hasNoStatements). ../reexport_unused is the same package with an unused function in __init__.mojo.
+mojo_package(path = ".")
+
+scrub_files()

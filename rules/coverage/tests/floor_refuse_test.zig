@@ -188,6 +188,21 @@ test "cov_summary: a source no report names is refused, and so is a report that 
         try std.testing.expectError(error.FileNotFound, tmp.dir.access("coverage.txt", .{}));
     }
     {
+        // The Mojo report omits a source with no executable line: a re-export file is listed 0/0, and a file with a function the report lacks is refused.
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = "init.mojo", .data = "\"\"\"The package.\"\"\"\nfrom .a import f\n" });
+        try tmp.dir.writeFile(.{ .sub_path = "real.mojo", .data = "from .a import f\n\nfn g():\n    pass\n" });
+        try proc.expectOk("a re-export-only source", try summaryRun(a, &tmp, REPORT, &.{ "--expect", "rules/pkg/a.zig", "--expect", "rules/pkg/__init__.mojo", "--src", "rules/pkg/__init__.mojo=init.mojo", "--src", "rules/pkg/real.mojo=real.mojo", "report.xml" }));
+        const text = try tmp.dir.readFileAlloc(a, "coverage.txt", 1 << 16);
+        try std.testing.expectEqualStrings("rules/pkg/__init__.mojo 0/0 0%\nrules/pkg/a.zig 1/2 50%\ntotal 1/2 50%\n", text);
+        try tmp.dir.deleteFile("coverage.txt");
+        try proc.expectRefusal("a source with a function that no report names", try summaryRun(a, &tmp, REPORT, &.{ "--expect", "rules/pkg/real.mojo", "--src", "rules/pkg/real.mojo=real.mojo", "report.xml" }), 1, &.{"cov_summary: rules/pkg/real.mojo is in no report: no test compiled it, or kcov could not open it"});
+        try std.testing.expectError(error.FileNotFound, tmp.dir.access("coverage.txt", .{}));
+        try proc.expectRefusal("a re-export source with no --src", try summaryRun(a, &tmp, REPORT, &.{ "--expect", "rules/pkg/__init__.mojo", "report.xml" }), 1, &.{"cov_summary: rules/pkg/__init__.mojo is in no report: no test compiled it, or kcov could not open it"});
+        try proc.expectRefusal("a --src without a path", try summaryRun(a, &tmp, REPORT, &.{ "--src", "oops", "report.xml" }), 2, &.{"cov_summary: --src wants <expected path>=<file>, got oops"});
+    }
+    {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
         try proc.expectRefusal("a class with no filename", try summaryRun(a, &tmp, "<class name=\"a\">\n", &.{"report.xml"}), 1, &.{"cov_summary: report.xml is not a normalized Cobertura report"});

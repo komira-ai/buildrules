@@ -336,6 +336,10 @@ def _cov_summary_impl(ctx):
     cmd = cmd_args(ctx.attrs.tool[RunInfo], "--out", out.as_output())
     for e in ctx.attrs.expect:
         cmd.add("--expect", e)
+    # The source behind each expected path, so a source the report omits for having no executable line (a re-export `__init__.mojo`) can be told
+    # from one the report missed (cov_summary.zig, hasNoStatements).
+    for path, src in ctx.attrs.srcs.items():
+        cmd.add("--src", cmd_args(path, src, delimiter = "="))
     for r in ctx.attrs.reports:
         cmd.add(_file(r))
     ctx.actions.run(cmd, category = "mojo_cov_summary", identifier = ctx.label.name)
@@ -348,6 +352,7 @@ mojo_cov_summary_rule = rule(
         "check": _CHECK_ATTR,
         "expect": attrs.list(attrs.string(), default = []),
         "reports": attrs.list(attrs.dep()),
+        "srcs": attrs.dict(attrs.string(), attrs.source(), default = {}),
         "tool": attrs.exec_dep(default = "buildrules//rules/coverage:cov_summary", providers = [RunInfo]),
     },
 )
