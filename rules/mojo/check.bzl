@@ -6,6 +6,9 @@ toolchains/mojo_pins.bzl. A change to any of them without a sync leaves a table 
 (`:lib`, `:test`, `:build`, `:coverage`, the binaries, `:ci`) carries this target as a validation, so such a build is red:
 
     the files     an action (rules/mojo/tools/files_check.zig) hashes each file and compares it with the table's value
+    the graph     `:table`, a target of its own (in //ci:all for every example): an action (rules/mojo/tools/table_check.zig) runs the pinned mopm's
+                  `plan --unit-graph --locked` over the package and its members and requires the table's graph to be that output, byte for byte (the keys,
+                  the order of units, natives and dependencies, every sha256), so a table that was edited, or left behind by a change, is red
     the pins      at analysis: the toolchain the package builds with (`toolchains//:mojo_<v>`, declared from mojo_pins.bzl) must hold exactly
                   the toolchain section of the table's graph (version, cc_target, closure hash, the zig, every component)
 
@@ -50,5 +53,52 @@ mojo_check_rule = rule(
         "names": attrs.list(attrs.string()),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         "_tool": attrs.exec_dep(default = "buildrules//rules/mojo:files_check", providers = [RunInfo]),
+    },
+)
+
+def _workspace_impl(ctx):
+    # The workspace as the repository has it, in one directory: this package's files (paths relative to the package, less the project directory) and
+    # each member's workspace (under the member's directory). mopm reads mopm.toml, mopm.lock and every source of it.
+    tree = {}
+    for f in ctx.attrs.files:
+        rel = f.short_path
+        if ctx.attrs.project:
+            if not rel.startswith(ctx.attrs.project + "/"):
+                continue
+            rel = rel[len(ctx.attrs.project) + 1:]
+        tree[rel] = f
+    for member, dep in ctx.attrs.members.items():
+        tree[member] = dep[DefaultInfo].default_outputs[0]
+    return [DefaultInfo(default_output = ctx.actions.copied_dir("workspace", tree))]
+
+mojo_workspace_rule = rule(
+    impl = _workspace_impl,
+    doc = "The files of a Mojo package and of its workspace members, laid out as the repository has them (the input of `:table`).",
+    attrs = {
+        "files": attrs.list(attrs.source()),
+        # `{"<directory below this one>": "<that package's :workspace>"}`, the outermost members only (a member's own members are in its workspace).
+        "members": attrs.dict(attrs.string(), attrs.dep()),
+        "project": attrs.string(default = ""),
+    },
+)
+
+def _table_impl(ctx):
+    out = ctx.actions.declare_output("table_is_mopms")
+    ctx.actions.run(
+        cmd_args(ctx.attrs._tool[RunInfo], ctx.attrs.mopm[RunInfo], ctx.attrs.workspace[DefaultInfo].default_outputs[0], ctx.attrs.mojo, ctx.attrs.table, out.as_output()),
+        category = "mojo_table",
+        identifier = ctx.label.name,
+    )
+    return [DefaultInfo(default_output = out)]
+
+mojo_table_rule = rule(
+    impl = _table_impl,
+    doc = "Fails unless the committed graph (buildrules.mojo.lock.bzl) is, byte for byte, what the pinned mopm's `plan --unit-graph --locked` prints for the package and its members now.",
+    attrs = {
+        "mojo": attrs.string(),
+        "mopm": attrs.exec_dep(providers = [RunInfo]),
+        "table": attrs.source(),
+        "workspace": attrs.dep(),
+        "_tool": attrs.exec_dep(default = "buildrules//rules/mojo:table_check", providers = [RunInfo]),
     },
 )

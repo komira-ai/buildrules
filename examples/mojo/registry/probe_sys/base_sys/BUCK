@@ -1,0 +1,32 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:pack.bzl", "mojo_conda")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# The publisher's side of the registry stand-in, as a package of its own: a `-sys` package, whose Mojo module is empty (its `__init__.mojo` has no byte)
+# and which exists to ship `libbase_sys.a`. It is a workspace member of probe_sys, which needs its library.
+mojo_package(path = ".")
+
+# The native library: one C file, compiled by the pinned zig (rules/cxx), archived. mopm packs it as `lib/libbase_sys.a`.
+cxx_library(
+    name = "base_c",
+    srcs = ["native/base.c"],
+    compiler_flags = ["-O2"],
+    preferred_linkage = "static",
+    visibility = ["PUBLIC"],
+)
+
+# `mopm pack` of the package: the `.conda` a registry would serve for base_sys. Its sha256 and size, and the sha256 of the archive in it, are in
+# the consumer's lock (examples/mojo/sys_app/mopm.lock).
+mojo_conda(
+    name = "conda",
+    lib = ":lib",
+    manifest = "mopm.toml",
+    mojo = "1.0.0",
+    mopm = "toolchains//:mopm",
+    natives = {"base_sys": ":base_c[static-pic]"},
+    package = "base_sys",
+    version = "1.0.0",
+    visibility = ["//ci:"],
+)
+
+scrub_files()

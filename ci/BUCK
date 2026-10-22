@@ -62,6 +62,13 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:recorded_toolchain_file_is_accepted",
     "//rules/mojo/tests:missing_toolchain_file_is_refused",
     "//rules/mojo/tests:present_toolchain_file_is_accepted",
+    "//rules/mojo/tests:native_order_and_targets_come_from_the_graph",
+    "//rules/mojo/tests:native_order_is_not_sorted",
+    "//rules/mojo/tests:native_without_a_source_is_refused",
+    "//rules/mojo/tests:static_native_of_a_member_without_a_source_is_refused",
+    "//rules/mojo/tests:static_native_of_a_member_the_user_supplies_is_accepted",
+    "//rules/mojo/tests:native_named_twice_is_refused",
+    "//rules/mojo/tests:prebuilt_unit_extracts_its_own_static_natives",
     "//rules/core/tests:all",
     "//rules/zig/tests:all",
     "//rules/cxx/tests:all",
@@ -88,6 +95,12 @@ group(name = "mojo", deps = [
     "//examples/mojo/copy_of_base:same_bytes",
     "//examples/mojo/registry/cnative:ci",
     "//examples/mojo/registry/cnative:conda",
+    "//examples/mojo/registry/probe_sys:ci",
+    "//examples/mojo/registry/probe_sys:conda",
+    "//examples/mojo/registry/probe_sys/base_sys:ci",
+    "//examples/mojo/registry/probe_sys/base_sys:conda",
+    "//examples/mojo/sys_app:ci",
+    "//examples/mojo/sys_app:coverage",
     "//examples/mojo/ws:ci",
     "//examples/mojo/ws:coverage",
     "//examples/mojo/ws/util:ci",
@@ -266,6 +279,9 @@ no_shell(
         "//examples/isa:scrub_files",
         "//examples/mojo/copy_of_base:scrub_files",
         "//examples/mojo/registry/cnative:scrub_files",
+        "//examples/mojo/registry/probe_sys/base_sys:scrub_files",
+        "//examples/mojo/registry/probe_sys:scrub_files",
+        "//examples/mojo/sys_app:scrub_files",
         "//examples/mojo/ws/util/base:scrub_files",
         "//examples/mojo/ws/util:scrub_files",
         "//examples/mojo/ws:scrub_files",
@@ -351,6 +367,20 @@ group(name = "floors", deps = [
     "//infra/site:coverage_floor",
 ])
 
+# The committed Mojo tables against the pinned mopm (rules/mojo/check.bzl, `:table`): each example's graph must be, byte for byte, what
+# `mopm plan --unit-graph --locked` prints for it now. Needs no package channel (mopm reads the lock, offline), so the public runner builds them,
+# unlike the rest of the Mojo examples (//ci:mojo).
+group(name = "mojo_tables", deps = [
+    "//examples/mojo/copy_of_base:table",
+    "//examples/mojo/registry/cnative:table",
+    "//examples/mojo/registry/probe_sys:table",
+    "//examples/mojo/registry/probe_sys/base_sys:table",
+    "//examples/mojo/sys_app:table",
+    "//examples/mojo/ws:table",
+    "//examples/mojo/ws/util:table",
+    "//examples/mojo/ws/util/base:table",
+])
+
 # Everything the public runner can build: the public CI builds this one target. It names what the other groups do not reach: the C/C++ rules and
 # aws-lc, the gate and kpin tools, the Node toolchain, the type checks of the sites, the cargo units outside the matrix. ci/completeness.bxl
 # (`buck2 bxl //ci:completeness.bxl:check`) fails when a target of the tree is in neither this closure, //ci:mojo's, nor EXCLUDED in ci/all.bzl.
@@ -358,6 +388,7 @@ group(name = "all", deps = [
     ":matrix",
     "//ci/mojo_gate:consumer_of_green",
     ":workflow",
+    ":mojo_tables",
     ":floors",
     "//cli:buildrules",
     "//cli:buildrules_linux_x86_64",

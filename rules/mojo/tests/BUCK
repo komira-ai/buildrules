@@ -1,10 +1,11 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # mopm-toolchain.toml is required (docs/contract.md, section 12): the refusals of rules/mojo/defs.bzl as analysis tests (rules/rust/refusal.bzl).
 # Each target is green only if the rule refused as stated; make the rule fall back to a default and it stops existing (analysis fails).
-load("//rules/mojo:defs.bzl", "check_toolchain_file_present", "check_toolchain_file_recorded")
-load("//rules/rust:refusal.bzl", "recording", "refusal_test")
+load("//rules/mojo:defs.bzl", "check_toolchain_file_present", "check_toolchain_file_recorded", "native_wiring")
+load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
+load(":natives.bzl", "PREBUILT", "UNIT", "USER", "own_natives", "reversed_graph_is_reversed", "wiring_is_as_the_graph_says")
 
-_NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.15\"", "mojo = \"1.0.0\""]
+_NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.20\"", "mojo = \"1.0.0\""]
 
 # A table whose recorded files do not include the toolchain file (made by hand, or before the file was required): refused.
 _r1, _f1 = recording()
@@ -29,5 +30,48 @@ refusal_test(name = "missing_toolchain_file_is_refused", refusals = _r4, contain
 _r5, _f5 = recording()
 check_toolchain_file_present("examples/x", ["mopm-toolchain.toml"], _f5)
 refusal_test(name = "present_toolchain_file_is_accepted", refusals = _r5, none = True, visibility = ["PUBLIC"])
+
+# Where the native libraries of a unit come from (rules/mojo/tests/natives.bzl has the unit and the checks).
+_r6, _f6 = recording()
+wiring_is_as_the_graph_says(_f6)
+refusal_test(name = "native_order_and_targets_come_from_the_graph", refusals = _r6, none = True, visibility = ["PUBLIC"])
+
+_r7, _f7 = recording()
+reversed_graph_is_reversed(_f7)
+refusal_test(name = "native_order_is_not_sorted", refusals = _r7, none = True, visibility = ["PUBLIC"])
+
+_r8, _f8 = recording()
+own_natives(_f8)
+refusal_test(name = "prebuilt_unit_extracts_its_own_static_natives", refusals = _r8, none = True, visibility = ["PUBLIC"])
+
+# A native the lock does not provide and the user did not name: refused, with the unit and the soname.
+refuses(
+    name = "native_without_a_source_is_refused",
+    check = native_wiring,
+    args = [UNIT, PREBUILT, {}, "examples/x"],
+    contains = ["examples/x", "links the native library libcnative.so.1", "natives = {...}"],
+)
+
+# A static library of a workspace member (its package is not a prebuilt unit of the graph) is the user's to supply.
+refuses(
+    name = "static_native_of_a_member_without_a_source_is_refused",
+    check = native_wiring,
+    args = [UNIT, {"base_sys": True, "cnative": True}, USER, "examples/x"],
+    contains = ["links the native library libprobe_sys.a"],
+)
+
+accepts(
+    name = "static_native_of_a_member_the_user_supplies_is_accepted",
+    check = native_wiring,
+    args = [UNIT, {"base_sys": True, "cnative": True}, dict(USER, **{"libprobe_sys.a": "//x:probe"}), "examples/x"],
+)
+
+# Two sources for one file: the lock's registry package and the user's entry.
+refuses(
+    name = "native_named_twice_is_refused",
+    check = native_wiring,
+    args = [UNIT, PREBUILT, dict(USER, **{"libbase_sys.a": "//x:mine"}), "examples/x"],
+    contains = ["libbase_sys.a comes from the lock", "registry package base_sys", "remove it"],
+)
 
 scrub_files()

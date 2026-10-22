@@ -209,7 +209,7 @@ test "sync: without mopm-toolchain.toml, or with a floating version, nothing run
     try t.expect(kit.contains(r.err, "no mopm-toolchain.toml at or above pkgs/base"));
     try t.expect(kit.contains(r.err, "it is required, like rust-toolchain.toml"));
     try t.expect(kit.contains(r.err, "there is no default"));
-    try t.expect(kit.contains(r.err, "[toolchain]\nmopm = \"0.0.15\"\nmojo = \"1.0.0\"\n"));
+    try t.expect(kit.contains(r.err, "[toolchain]\nmopm = \"0.0.20\"\nmojo = \"1.0.0\"\n"));
     for ([_][]const u8{ "0.0", "latest", "^0.0.1" }) |v| {
         try h.put("mopm-toolchain.toml", try std.fmt.allocPrint(h.a(), "[toolchain]\nmopm = \"{s}\"\nmojo = \"1.0.0\"\n", .{v}));
         r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
@@ -583,7 +583,7 @@ test "check: without mopm-toolchain.toml the check fails and says what to write,
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "no mopm-toolchain.toml at or above pkgs/base"));
     try t.expect(kit.contains(r.err, "there is no default"));
-    try t.expect(kit.contains(r.err, "[toolchain]\nmopm = \"0.0.15\"\nmojo = \"1.0.0\"\n"));
+    try t.expect(kit.contains(r.err, "[toolchain]\nmopm = \"0.0.20\"\nmojo = \"1.0.0\"\n"));
     try t.expect(!kit.contains(r.out, "ok:"));
 }
 
@@ -591,7 +591,7 @@ test "the BUCK export of mopm-toolchain.toml fails the load, with the file and a
     const mc = @import("mojo_cmd.zig");
     try t.expect(kit.contains(mc.export_snippet, "if glob([\"mopm-toolchain.toml\"]) else fail("));
     try t.expect(kit.contains(mc.export_snippet, "mopm-toolchain.toml is required and there is no default. Create it, for example:"));
-    try t.expect(kit.contains(mc.export_snippet, "[toolchain]\\nmopm = '0.0.15'\\nmojo = '1.0.0'"));
+    try t.expect(kit.contains(mc.export_snippet, "[toolchain]\\nmopm = '0.0.20'\\nmojo = '1.0.0'"));
 }
 
 // ---- more of sync and check: arguments, discovery, failures of the programs it runs, path dependencies --------------------

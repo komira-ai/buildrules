@@ -1,0 +1,14 @@
+[package]
+name = "probe_sys"
+version = "1.0.0"
+mojo = ["1.0.0"]
+
+[dependencies]
+base_sys = { path = "base_sys", version = "1.0" }
+
+[native.probe_sys]
+kind = "static"
+needs = ["libbase_sys.a"]
+
+[targets]
+lib = { path = "src/probe_sys" }
