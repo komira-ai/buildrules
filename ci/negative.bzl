@@ -171,27 +171,49 @@ def planted_problems(ctx):
 # The command `buck2 test` runs for a test (its ExternalRunnerTestInfo): `check run`, the start options, then `--` and the program. No build action of CI runs it,
 # so a command that lost its options is green everywhere but under `buck2 test`; this holds the text of the command of one cargo test (the working directory, the
 # absolute directories and the one that is made) and of one Mojo test run (the compiler's lib on the library path), and that the program is the test's binary.
+# It also holds the rest of what `buck2 test` is given: the environment (the keys a test reads: CARGO_MANIFEST_DIR, the package's CARGO_PKG_*, the nonce, and
+# CARGO_TARGET_TMPDIR for an integration test only), the labels, and the inputs the run reads (`hidden`). The three kinds of cargo test are here: a library
+# test (examples/p4ws), a binary's test and an integration test (ci/cargo_run). Each row: label, text of the command, keys the environment has, keys it has not,
+# labels, text of the command's `hidden`.
+_CARGO_START = "\"run\", \"--tmpdir\", \"--abs\", \"CARGO_MANIFEST_DIR\", \"--cwd-env\", \"CARGO_MANIFEST_DIR\", "
+_CARGO_ENV = ["CARGO_MANIFEST_DIR", "CARGO_PKG_NAME", "CARGO_PKG_VERSION", "BUILDRULES_NONCE"]
 TEST_COMMANDS = [
     ("//ci/cargo_run:env_test", [
-        "\"run\", \"--tmpdir\", \"--abs\", \"CARGO_MANIFEST_DIR\", \"--cwd-env\", \"CARGO_MANIFEST_DIR\", \"--abs\", \"CARGO_TARGET_TMPDIR\", \"--mkdir-env\", \"CARGO_TARGET_TMPDIR\", \"--\", <build artifact env_test__bin_bin/env",
-    ]),
+        _CARGO_START + "\"--abs\", \"CARGO_TARGET_TMPDIR\", \"--mkdir-env\", \"CARGO_TARGET_TMPDIR\", \"--\", <build artifact env_test__bin_bin/env",
+    ], _CARGO_ENV + ["CARGO_TARGET_TMPDIR"], [], ["test", "cargo_run"], ["hidden=[", "ci/cargo_run/tests/env.rs"]),
+    ("//ci/cargo_run:bin_test", [
+        _CARGO_START + "\"--\", <build artifact bin_test__bin_bin/cargo_run",
+    ], _CARGO_ENV, ["CARGO_TARGET_TMPDIR"], ["test", "cargo_run"], ["hidden=[", "ci/cargo_run/src/main.rs"]),
+    ("//examples/p4ws/crates/probe_ok:probe_ok-0.1.0_2662e7548e", [
+        _CARGO_START + "\"--\", <build artifact",
+    ], _CARGO_ENV, ["CARGO_TARGET_TMPDIR"], ["test"], ["hidden=[", "src/lib.rs"]),
     ("//ci/planted:mojo_test_that_fails", [
         "\"run\", \"--ld-library-path\", cmd_args(<build artifact check",
         "\"/lib\", delimiter=\"\"), \"--\", <build artifact check",
-    ]),
+    ], [], [], ["test", "mojo"], ["hidden=[<build artifact check"]),
 ]
 
 def test_command_problems(ctx):
-    """Every way the `buck2 test` command of the tests in TEST_COMMANDS is not what the rule builds: a list of strings, empty when all is as expected."""
+    """Every way what `buck2 test` is given for the tests in TEST_COMMANDS is not what the rule builds: a list of strings, empty when all is as expected."""
     problems = []
-    for label, wants in TEST_COMMANDS:
+    for label, wants, env_has, env_hasnt, labels, hidden in TEST_COMMANDS:
         node = ctx.configured_targets(label, target_platform = GATE_PLATFORM)
         info = ctx.analysis(node).providers()[ExternalRunnerTestInfo]
         if len(info.command) != 1:
             problems.append("{}: the `buck2 test` command is {} argument lists, not 1".format(label, len(info.command)))
             continue
         text = str(info.command[0])
-        for want in wants:
+        for want in wants + hidden:
             if want not in text:
                 problems.append("{}: the `buck2 test` command lacks `{}`: {}".format(label, want, text))
+        env = info.env or {}
+        for key in env_has:
+            if key not in env:
+                problems.append("{}: the environment `buck2 test` gives lacks {}: {}".format(label, key, sorted(env.keys())))
+        for key in env_hasnt:
+            if key in env:
+                problems.append("{}: the environment `buck2 test` gives has {}, which this kind of test does not get".format(label, key))
+        for want in labels:
+            if want not in (info.labels or []):
+                problems.append("{}: the labels `buck2 test` is given lack `{}`: {}".format(label, want, info.labels))
     return problems

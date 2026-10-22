@@ -48,6 +48,6 @@ test_run = rule(
         "required_isa": attrs.string(default = ""),
         "unit": attrs.dep(providers = [TestUnitInfo]),
         "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
-        "_exec_isa":attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
+        "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
     },
 )

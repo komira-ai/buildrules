@@ -390,6 +390,7 @@ group(name = "all", deps = [
     ":matrix",
     "//ci/mojo_gate:consumer_of_green",
     "//ci/cargo_run:env_test",
+    "//ci/cargo_run:bin_test",
     "//ci/planted:c_check_of_its_stdout",
     "//ci/planted:table_in_sync",
     ":workflow",

@@ -22,6 +22,30 @@ cargo_unit(
     debug_assertions = True,
     overflow_checks = True,
     srcs = glob(["tests/**"]),
+    labels = ["cargo_run"],
+    visibility = ["//ci:"],
+)
+
+# The unit test of a binary target (`target_kind = "bin"`): no CARGO_TARGET_TMPDIR. The library kind is //examples/p4ws/crates/probe_ok's test.
+cargo_unit(
+    name = "bin_test",
+    pkg = "cargo_run",
+    version = "0.1.0",
+    crate_name = "cargo_run",
+    mode = "test",
+    crate_type = "bin",
+    side = "target",
+    target_kind = "bin",
+    target_name = "cargo_run",
+    edition = "2021",
+    root = "src/main.rs",
+    crate_hash = "9876543210",
+    opt_level = "0",
+    debuginfo = "0",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["src/**"]),
+    labels = ["cargo_run"],
     visibility = ["//ci:"],
 )
 

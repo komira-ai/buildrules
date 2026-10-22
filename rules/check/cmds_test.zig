@@ -120,6 +120,22 @@ test "expect: only the trailing newlines are dropped before the comparison" {
     try t.expectEqualStrings("\n", try c.read("o"));
 }
 
+test "expect: only newlines are dropped, not a trailing space or a carriage return" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    // the program prints "hello \n": the space is part of the output
+    try kit.expectResult(try expectCmd(&c, &.{ "--want", "hello " }, &.{ "echo", "hello " }), 0, "", "");
+    try t.expectEqualStrings("hello \n", try c.read("o"));
+    try kit.expectFailure(try expectCmd(&c, &.{ "--want", "hello" }, &.{ "echo", "hello " }), 1, "printed 'hello '");
+    // the program prints "hello\r\n": the CR is part of the output
+    try kit.expectResult(try expectCmd(&c, &.{ "--want", "hello\r" }, &.{ "echo", "-e", "hello\\r" }), 0, "", "");
+    try t.expectEqualStrings("hello\r\n", try c.read("o"));
+    try kit.expectFailure(try expectCmd(&c, &.{ "--want", "hello" }, &.{ "echo", "-e", "hello\\r" }), 1, "equal to 'hello' but");
+    // and the program that prints no newline at all (`echo -n`) is its text as it is
+    try kit.expectResult(try expectCmd(&c, &.{ "--want", "x " }, &.{ "echo", "-n", "x " }), 0, "", "");
+    try t.expectEqualStrings("x \n", try c.read("o"));
+}
+
 test "expect: another output is exit 1 with both texts in the message, and the file is not written, nor an earlier one changed" {
     var c = try kit.Case.init();
     defer c.deinit();
