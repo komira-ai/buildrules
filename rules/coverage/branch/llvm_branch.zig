@@ -16,7 +16,7 @@
 //! so conda_payload (rules/coverage/tools/conda_payload.zig) writes the payload tar
 //! first; the program reads only the members asked for.
 //!
-//! `check` runs one mode (lld, tools, raw_version; README.md, "Checks") and
+//! `check` runs one mode (lld, tools, raw_version; README.md, "The LLVM pieces") and
 //! writes <report_dir>/validation.json and what it measured; exit 1 on the
 //! first wrong result, naming it. The <key>=<value> arguments are what the
 //! mode expects (the `want` of the target).
@@ -482,7 +482,7 @@ fn lldMode(c: *Ctx) void {
     c.writeReport("lld_version.txt", out);
     const needle = c.print("LLD {s}.", .{major});
     if (std.mem.indexOf(u8, out, needle) == null)
-        c.red("lld -flavor gnu --version does not print 'LLD {s}.': the Mojo package's lld is another LLVM. A new Mojo is a new instrumenter: re-run the version coupling (README.md, Updating) before changing lld= in BUCK", .{major});
+        c.red("lld -flavor gnu --version does not print 'LLD {s}.': the Mojo package's lld is another LLVM. A new Mojo is a new instrumenter: re-run the version coupling (rules/coverage/branch/README.md, \"Updating\") before changing the version of a toolchain", .{major});
     c.pass();
     c.green();
 }
@@ -504,7 +504,7 @@ fn toolsMode(c: *Ctx) void {
     const out = c.run(&.{ profdata, "--version" }, null) orelse c.red("llvm-profdata --version failed", .{});
     c.writeReport("profdata_version.txt", out);
     const needle = c.print("LLVM version {s}", .{version});
-    if (std.mem.indexOf(u8, out, needle) == null) c.red("llvm-profdata --version does not print 'LLVM version {s}' (the profdata= of BUCK)", .{version});
+    if (std.mem.indexOf(u8, out, needle) == null) c.red("llvm-profdata --version does not print 'LLVM version {s}' (the profdata= of the check's want)", .{version});
     c.pass();
     const rt = c.join(&.{ c.tools_dir, runtime });
     const head = blk: {
@@ -582,10 +582,10 @@ fn rawVersionMode(c: *Ctx) void {
         c.red("the raw profile's variant flags 0x{x:0>8} lack the IR-instrumentation bit 0x01000000: its version word is the runtime's default, not the instrumenter's", .{flags});
     c.pass();
     const profdata_out = c.join(&.{ w, "pg.profdata" });
-    if (accepts(c, profraw, profdata_out)) |why| c.red("{s} (README.md, The version coupling)", .{why});
+    if (accepts(c, profraw, profdata_out)) |why| c.red("{s} (rules/coverage/branch/README.md, \"The version coupling\")", .{why});
     const raw_n = std.fmt.parseInt(u32, raw, 10) catch c.red("raw={s} is not a number", .{raw});
     if (v != raw_n)
-        c.red("llvm-profdata accepts raw version {d}, but RAW_PROFILE_VERSION of defs.bzl, which every branch coverage run requires of each raw profile, is {s}: change it to {d} (README.md, Updating)", .{ v, raw, v });
+        c.red("llvm-profdata accepts raw version {d}, but RAW_PROFILE_VERSION of llvm_branch.bzl, which every branch coverage run requires of each raw profile, is {s}: change it to {d} (rules/coverage/branch/README.md, \"Updating\")", .{ v, raw, v });
     c.pass();
     const profdata = c.join(&.{ c.tools_dir, "bin/llvm-profdata" });
     const show = c.run(&.{ profdata, "show", profdata_out }, null) orelse c.red("llvm-profdata show failed", .{});
