@@ -2,7 +2,10 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # The buildrules command line, in Zig, built by the pinned zig behind its unit tests.
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_module", "zig_test")
 load(":release.bzl", "release_binaries")
-load(":version.bzl", "cli_version")
+load(":version.bzl", "cli_version", "version_stamp")
+load(":version_cases.bzl", "stamps")
+load("@buildrules//rules/rust:refusal.bzl", "accepts", "refuses")
+load("@buildrules//rules:matrix.bzl", "group")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 
 # The CLI is Zig 0.15 code (std.Io, ArrayList.empty): it builds with the pinned zig_next, as kpin does.
@@ -22,6 +25,33 @@ zig_module(
     name = "buildrules_version",
     src = ":version_zig",
 )
+
+# The bytes of version.zig for a VERSION file (cli/version.bzl `version_stamp`), pinned as analysis tests (rules/rust/refusal.bzl): what the sed this replaced
+# accepted gives its exact bytes (a final newline or none, a lone matching line among others), and what it could not turn into a compiling program is refused.
+# The stamp is also held end to end by :version_unit below, on the real VERSION file.
+_DEV = 'pub const release = "1.2-dev";\n'
+
+_STAMPS = [
+    accepts("stamp_plain_line", stamps, ["1.2\n", _DEV]),
+    accepts("stamp_no_final_newline", stamps, ["1.2", _DEV]),
+    accepts("stamp_many_digits", stamps, ["10.250\n", 'pub const release = "10.250-dev";\n']),
+    accepts("stamp_leading_zeros_kept", stamps, ["0.0\n", 'pub const release = "0.0-dev";\n']),
+    accepts("stamp_one_line_among_others", stamps, ["# the version\n\n1.2\nnotes\n", _DEV]),
+    accepts("stamp_blank_lines_around", stamps, ["\n1.2\n\n\n", _DEV]),
+    refuses("stamp_empty_file", version_stamp, ["", "//cli:version_zig"], ["//cli:version_zig", "exactly one line", "found 0"]),
+    refuses("stamp_three_parts", version_stamp, ["1.2.3\n", "//cli:version_zig"], ["found 0"]),
+    refuses("stamp_not_a_number", version_stamp, ["abc\n", "//cli:version_zig"], ["found 0"]),
+    refuses("stamp_missing_minor", version_stamp, ["1\n", "//cli:version_zig"], ["found 0"]),
+    refuses("stamp_empty_part", version_stamp, [".2\n", "//cli:version_zig"], ["found 0"]),
+    refuses("stamp_trailing_dot", version_stamp, ["1.\n", "//cli:version_zig"], ["found 0"]),
+    refuses("stamp_trailing_space", version_stamp, ["1.2 \n", "//cli:version_zig"], ["found 0"]),
+    refuses("stamp_leading_space", version_stamp, [" 1.2\n", "//cli:version_zig"], ["found 0"]),
+    refuses("stamp_carriage_return", version_stamp, ["1.2\r\n", "//cli:version_zig"], ["found 0"]),
+    refuses("stamp_sign", version_stamp, ["-1.2\n", "//cli:version_zig"], ["found 0"]),
+    refuses("stamp_two_version_lines", version_stamp, ["1.2\n3.4\n", "//cli:version_zig"], ["found 2"]),
+]
+
+group(name = "version_stamps", deps = _STAMPS, visibility = ["PUBLIC"])
 
 _TESTS = [
     "autopin_api",
