@@ -116,6 +116,8 @@ export const cli: Page = {
       ['`--author-email EMAIL`', '`commit-push`: the App\'s bot address, `<id>+<name>[bot]@users.noreply.github.com`'],
     ),
     p('`commit-check` exits 0 when it checked or skipped (a pull request that is closed, moved on, edited by someone else, or that changes a file outside `--set`; `has_change` says which) and 1 when what it was given is not what it claims to be. `commit-push` exits 0 when it committed or when the branch had moved (GitHub\'s non-fast-forward answer is the only failure that is a skip) and 1 for any other failure.'),
+    code('buildrules autopin verify-pins --set DIR=KIND [--set DIR=KIND ...] [--dir DIR]', 'usage'),
+    p('`verify-pins` is the check a pull request gets without any secret. `compute` downloads only the tarballs a table lacks, so a wrong sha256 or size in a row that did not change is never looked at; `verify-pins` downloads every row of each table from `registry.npmjs.org` (the same download path: https only, no redirect, 64 MiB each; 4 GiB in all) and compares the sha512 with the lock, the sha256 and the size with the row. The lock is read as strictly as `compute` reads it, with one addition: a package that the lock marks `inBundle` ships inside the tarball of the package that bundles it, so it needs no row, provided its parent chain reaches a package with a tarball of its own. It exits 0 when every row is as the registry\'s bytes say, 1 when one differs or a download failed, 2 on a usage error.'),
     h2('Not yet in the command line'),
     ul(
       'Commands for Zig and C/C++: those rules are used with hand-written `BUCK` files today.',
