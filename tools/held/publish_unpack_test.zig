@@ -511,6 +511,25 @@ test "parse: the options, and apply needs a work directory" {
     try t.expectError(error.Usage, pub_.parse(&.{ "--clobber", "x" }, &diag));
 }
 
+test "--buck2-config reaches the build as -c KEY=VALUE, before the targets, and is only a KEY=VALUE" {
+    var diag: []const u8 = "";
+    const o = try pub_.parse(&.{ "--buck2-config", "buildrules_re.mode=local" }, &diag);
+    try t.expectEqualStrings("buildrules_re.mode=local", o.buck2_config.?);
+    try t.expect((try pub_.parse(&.{}, &diag)).buck2_config == null);
+    try t.expectError(error.Usage, pub_.parse(&.{ "--buck2-config", "local" }, &diag));
+    try t.expectEqualStrings("--buck2-config needs KEY=VALUE", diag);
+    var w = try World.init(null);
+    defer w.deinit();
+    var f = w.fake();
+    defer f.deinit();
+    var out = Lines{};
+    defer out.deinit();
+    var opts = w.options(false);
+    opts.buck2_config = "buildrules_re.mode=local";
+    try t.expectEqual(@as(u8, 0), try pub_.publish(a, opts, f.runner(), out.say()));
+    try t.expectEqual(@as(usize, 1), f.called("fake-buck2 build -c buildrules_re.mode=local --show-full-output -- //tools/bootstrap:unpack_"));
+}
+
 test "the release points at the commit the programs were built from, and a tree with changes is refused" {
     {
         var w = try World.init(null);

@@ -8,8 +8,11 @@
 //!                                the same, then creates the release (if absent), uploads the assets it does not hold, downloads each asset again and checks it
 //!                                against the pin.
 //!
-//! Options: --root DIR (the repository root, default .), --buck2 PATH (default `buck2`), --gh PATH (default `gh`), --git PATH (default `git`), --work DIR (scratch for --apply: it must exist,
+//! Options: --root DIR (the repository root, default .), --buck2 PATH (default `buck2`), --buck2-config KEY=VALUE (passed to the build as `-c KEY=VALUE`; the dispatch workflow
+//! passes `buildrules_re.mode=local`, because a hosted runner has no farm), --gh PATH (default `gh`), --git PATH (default `git`), --work DIR (scratch for --apply: it must exist,
 //! and is where the uploaded copies and the downloads go).
+//!
+//! CI runs it as the dispatch workflow .github/workflows/publish-unpack.yml (the release bot's token is minted there, for the --apply step alone).
 //!
 //! The release is created pointing at the commit the programs were built from (`git rev-parse HEAD` of --root, which must have no uncommitted changes for --apply), and
 //! the downloads of an --apply go to a directory of their own under --work (`verify-<time>`), so a second run never meets the first one's files.
@@ -52,6 +55,8 @@ pub const Options = struct {
     apply: bool = false,
     root: []const u8 = ".",
     buck2: []const u8 = "buck2",
+    /// `KEY=VALUE` for the build's `-c`, or none.
+    buck2_config: ?[]const u8 = null,
     gh: []const u8 = "gh",
     git: []const u8 = "git",
     work: ?[]const u8 = null,
@@ -74,6 +79,9 @@ pub fn parse(args: []const []const u8, diag: *[]const u8) !Options {
             o.root = args[i];
         } else if (std.mem.eql(u8, arg, "--buck2")) {
             o.buck2 = args[i];
+        } else if (std.mem.eql(u8, arg, "--buck2-config")) {
+            if (std.mem.indexOfScalar(u8, args[i], '=') == null) return fail(diag, "--buck2-config needs KEY=VALUE");
+            o.buck2_config = args[i];
         } else if (std.mem.eql(u8, arg, "--gh")) {
             o.gh = args[i];
         } else if (std.mem.eql(u8, arg, "--git")) {
@@ -81,7 +89,7 @@ pub fn parse(args: []const []const u8, diag: *[]const u8) !Options {
         } else if (std.mem.eql(u8, arg, "--work")) {
             o.work = args[i];
         } else {
-            return fail(diag, "unknown argument (only --apply, --root, --buck2, --gh, --git, --work)");
+            return fail(diag, "unknown argument (only --apply, --root, --buck2, --buck2-config, --gh, --git, --work)");
         }
     }
     if (o.apply and o.work == null) return fail(diag, "--apply needs --work DIR (an existing directory for the copies and the downloads)");
@@ -197,7 +205,10 @@ pub fn publish(a: std.mem.Allocator, o: Options, r: Runner, say: Say) !u8 {
     }
     var argv = std.ArrayList([]const u8).empty;
     defer argv.deinit(a);
-    try argv.appendSlice(a, &.{ o.buck2, "build", "--show-full-output", "--" });
+    try argv.append(a, o.buck2);
+    try argv.append(a, "build");
+    if (o.buck2_config) |c| try argv.appendSlice(a, &.{ "-c", c });
+    try argv.appendSlice(a, &.{ "--show-full-output", "--" });
     for (pins.hosts) |h| {
         try labels.append(a, try target(a, h));
         try argv.append(a, labels.items[labels.items.len - 1]);

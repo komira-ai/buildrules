@@ -7,8 +7,8 @@ extract; the prelude's unarchive shells out to the host's `tar`). So `unpack` is
 
 The rows are the bytes the source makes: the build is reproducible, and //ci:unpack_pin_check (tools/bootstrap:pin_check_unit) builds the program for each host from the tree
 and requires the sha256 and size here to be its. When the source changes the check is red, naming the new values; the new programs are published under the next tag
-(`unpack-2`, ...: a release asset is never replaced), `UNPACK_TAG` and the rows are updated together. The upload is a step the repository owner runs
-(tools/held/publish_unpack.zig); until the asset exists these rows cannot be fetched on a machine whose cache lacks it, so no target in the default build uses them.
+(`unpack-2`, ...: a release asset is never replaced), `UNPACK_TAG` and the rows are updated together. The upload is the dispatch workflow
+.github/workflows/publish-unpack.yml (tools/bootstrap/README.md, "Publishing"), which runs tools/held/publish_unpack.zig with the release bot's token; until the asset exists these rows cannot be fetched on a machine whose cache lacks it, so no target in the default build uses them.
 """
 
 UNPACK_TAG = "unpack-1"
