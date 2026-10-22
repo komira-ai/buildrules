@@ -307,7 +307,11 @@ pub const Tables = struct { dir: []const u8, real: ?[]const u8, mojo_pins: []con
 
 /// What the root .buckconfig says that matters here: the path of the `toolchains` cell (`[cells] toolchains = DIR`; the last assignment wins, as in
 /// Buck's own files) and the first include line (`<file:...>`, `<?file:...>`), which is not followed.
-const Conf = struct { toolchains: ?[]const u8 = null, include: ?[]const u8 = null };
+/// `[repositories]` is Buck's older name for `[cells]` and is read as an alias; when both name the cell, `[cells]` wins, as in Buck. `local` is what
+/// `.buckconfig.local` sets for it (Buck honours that file, a committed table must not depend on it).
+const Conf = struct { toolchains: ?[]const u8 = null, include: ?[]const u8 = null, local: ?[]const u8 = null };
+
+const Parsed = struct { cells: ?[]const u8 = null, repos: ?[]const u8 = null, include: ?[]const u8 = null };
 
 fn isIncludeLine(line: []const u8) bool {
     return std.mem.startsWith(u8, line, "<file:") or std.mem.startsWith(u8, line, "<?file:");
@@ -321,26 +325,40 @@ fn isHeaderOf(line: []const u8, name: []const u8) bool {
     return rest.len == 0 or rest[0] == '#' or rest[0] == ';';
 }
 
-fn readConf(ctx: *Ctx) !Conf {
-    const text = (try ctx.readOpt(".buckconfig")) orelse return .{};
-    var conf = Conf{};
-    var in_section = false;
+fn parseConf(text: []const u8) Parsed {
+    var p = Parsed{};
+    var sec: enum { none, cells, repos } = .none;
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0 or line[0] == '#' or line[0] == ';') continue;
         if (isIncludeLine(line)) {
-            if (conf.include == null) conf.include = line;
+            if (p.include == null) p.include = line;
             continue;
         }
         if (line[0] == '[') {
-            in_section = isHeaderOf(line, contract.buckconfig_section);
+            sec = if (isHeaderOf(line, contract.buckconfig_section)) .cells else if (isHeaderOf(line, contract.buckconfig_alias_section)) .repos else .none;
             continue;
         }
-        if (!in_section) continue;
+        if (sec == .none) continue;
         const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
         if (!std.mem.eql(u8, std.mem.trim(u8, line[0..eq], " \t"), contract.buckconfig_toolchains_key)) continue;
-        conf.toolchains = std.mem.trim(u8, line[eq + 1 ..], " \t");
+        const v = std.mem.trim(u8, line[eq + 1 ..], " \t");
+        if (sec == .cells) p.cells = v else p.repos = v;
+    }
+    return p;
+}
+
+fn readConf(ctx: *Ctx) !Conf {
+    var conf = Conf{};
+    if (try ctx.readOpt(".buckconfig")) |text| {
+        const p = parseConf(text);
+        conf.include = p.include;
+        conf.toolchains = p.cells orelse p.repos;
+    }
+    if (try ctx.readOpt(".buckconfig.local")) |text| {
+        const p = parseConf(text);
+        conf.local = p.cells orelse p.repos;
     }
     return conf;
 }
@@ -360,6 +378,10 @@ pub fn resolveTables(ctx: *Ctx, flag: ?[]const u8) !?Tables {
     const conf = try readConf(ctx);
     if (conf.include) |inc| {
         _ = ctx.fail(".buckconfig has an include line ({s}): the toolchains cell is read from the root .buckconfig itself and includes are not followed; write the cell's path there", .{inc});
+        return null;
+    }
+    if (conf.local) |v| {
+        _ = ctx.fail(".buckconfig.local sets the toolchains cell ({s}): buck2 would use it, but the pins tables are committed and so must their location be; declare the toolchains cell in the committed .buckconfig", .{v});
         return null;
     }
     const from = ".buckconfig [cells] toolchains";

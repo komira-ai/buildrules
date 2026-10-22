@@ -41,6 +41,8 @@ pub const mojo_pins_file = toolchains_dir ++ "/" ++ mojo_pins_name;
 pub const mopm_pins_file = toolchains_dir ++ "/" ++ mopm_pins_name;
 /// The section and key of .buckconfig that name the toolchains directory: the cell itself.
 pub const buckconfig_section = "cells";
+/// Buck's older name for the same section.
+pub const buckconfig_alias_section = "repositories";
 pub const buckconfig_toolchains_key = "toolchains";
 pub const mojo_defs_label = "@buildrules//rules/mojo:defs.bzl";
 

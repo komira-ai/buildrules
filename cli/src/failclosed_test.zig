@@ -290,6 +290,34 @@ test "check: the Mojo packages of a repository are checked, or the run fails, wh
     try expectFailsClosed(h, &.{"check"});
 }
 
+test "check: the Mojo part of the top-level check reads the toolchains cell, finds a stale mopm_pins.bzl there, and passes when it is current" {
+    const h = try mojoFresh();
+    defer h.destroy();
+    const cell = "tools/build/cells/toolchains";
+    try h.put(".buckconfig", "[cells]\n  toolchains = " ++ cell ++ "\n");
+    try h.put(cell ++ "/BUCK", "# toolchains\n");
+    try h.put("Cargo.toml", fx.root_cargo);
+    try h.put("Cargo.lock", fx.cargo_lock);
+    try h.put("crates/hello/Cargo.toml", fx.hello_cargo);
+    try h.put("crates/hello/BUCK", fx.hello_buck);
+    try h.put("rust-toolchain.toml", fx.toolchain);
+    try h.put("buildrules.lock.bzl", fx.table);
+    try h.put("buildrules.bzl", fx.bzl);
+    try h.put("toolchains/rust_pins.bzl", pins_toml.empty);
+    try h.put("BUCK", fx.root_buck);
+    try h.put("third_party/buildrules/BUCK", fx.third_party);
+    try h.put("third_party/buildrules/crate_sizes.tsv", fx.sizes);
+    const s = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 0), s.code);
+    try t.expect(h.has(cell ++ "/mopm_pins.bzl"));
+    const good = h.run(&.{"check"});
+    if (good.code != 0) std.debug.panic("check is not green on a synced repository: {s}", .{good.err});
+    try h.put(cell ++ "/mopm_pins.bzl", "# stale\n");
+    const bad = h.run(&.{"check"});
+    try t.expectEqual(@as(u8, 1), bad.code);
+    try t.expect(std.mem.indexOf(u8, bad.err, "STALE: " ++ cell ++ "/mopm_pins.bzl") != null);
+}
+
 test "mojo check: with an allocation failing anywhere, a synced package is not reported in sync" {
     const h = try mojoSynced();
     defer h.destroy();

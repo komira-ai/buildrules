@@ -144,6 +144,48 @@ test "cell: a .buckconfig with CRLF line ends is read the same (the carriage ret
     try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check" }).code);
 }
 
+test "cell: [repositories] is Buck's alias of [cells] and is read; when both set the cell, [cells] wins whichever comes first" {
+    const h = try repo("[repositories]\n  toolchains = " ++ custom ++ "\n", custom);
+    defer h.destroy();
+    try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
+    try expectTables(h, custom, true);
+    try expectTables(h, "toolchains", false);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check" }).code);
+    for ([_][]const u8{
+        "[repositories]\n  toolchains = alt/tc\n[cells]\n  toolchains = " ++ custom ++ "\n",
+        "[cells]\n  toolchains = " ++ custom ++ "\n[repositories]\n  toolchains = alt/tc\n",
+    }) |bc| {
+        const g = try repo(bc, custom);
+        defer g.destroy();
+        try t.expectEqual(@as(u8, 0), g.run(&sync_args).code);
+        try expectTables(g, custom, true);
+        try expectTables(g, "alt/tc", false);
+    }
+}
+
+test "local: a toolchains cell set in .buckconfig.local, under [cells] or [repositories], is refused (buck2 would use it, the committed pins must not depend on it)" {
+    for ([_][]const u8{ "[cells]\n  toolchains = alt/tc\n", "[repositories]\n  toolchains = alt/tc\n" }) |local| {
+        const h = try repo("[cells]\n  toolchains = " ++ custom ++ "\n", custom);
+        defer h.destroy();
+        try h.put(".buckconfig.local", local);
+        for ([_][]const []const u8{ &sync_args, &.{ "mojo", "check" } }) |argv| {
+            const r = h.run(argv);
+            try t.expectEqual(@as(u8, 1), r.code);
+            try t.expect(kit.contains(r.err, ".buckconfig.local sets the toolchains cell"));
+            try t.expect(kit.contains(r.err, "committed .buckconfig"));
+        }
+        try expectNothingWritten(h);
+    }
+}
+
+test "local: a .buckconfig.local that sets other things is not a problem" {
+    const h = try repo("[cells]\n  toolchains = " ++ custom ++ "\n", custom);
+    defer h.destroy();
+    try h.put(".buckconfig.local", "[buck2_re_client]\n  tls = false\n[other]\n  toolchains = alt/tc\n");
+    try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
+    try expectTables(h, custom, true);
+}
+
 test "include: a root .buckconfig with an include line is refused (it is not followed, so the cell's path might be missed), and nothing is written" {
     for ([_][]const u8{ "<file:.buckconfig.farm>\n[cells]\n  toolchains = " ++ custom ++ "\n", "[cells]\n  toolchains = " ++ custom ++ "\n  <?file:.buckconfig.local>\n" }) |bc| {
         const h = try repo(bc, custom);
