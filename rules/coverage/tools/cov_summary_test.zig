@@ -190,6 +190,8 @@ test "hasNoStatements: a re-export file has none, any other statement is one" {
         "\"\"\"doc\"\"\"\x0b\n",
         "\"\"\"\ndoc\n\"\"\"\x0c\n",
         "from a import (b,\n\x0bc)\n",
+        "\"\"\"a\"\"\" # k\x0cx = 1\n", // after a one-line docstring, in a comment
+        "\"\"\"a\nb\"\"\" # k\x0bx = 1\n", // after a block docstring closes, in a comment
     }) |case| try t.expect(!S.hasNoStatements(case));
 }
 
