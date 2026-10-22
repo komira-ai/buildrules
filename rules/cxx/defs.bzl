@@ -282,7 +282,7 @@ c_check = rule(
     attrs = {
         "exe": attrs.dep(providers = [RunInfo]),
         "expected_stdout": attrs.string(),
-        # False: no validation, the target is the run of `check expect` alone (the planted checks of ci/planted build it so).
+        # False: no validation, the target is the run of `check expect` alone (the cases of ci/planted build it so).
         "validate": attrs.bool(default = True),
         "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
     },

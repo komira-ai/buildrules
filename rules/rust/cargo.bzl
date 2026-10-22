@@ -383,5 +383,5 @@ _check = rule(
     },
 )
 
-# The same rule under a public name, for the planted stale table of ci/planted.
+# The same rule under a public name, for the stale-table case of ci/planted.
 cargo_table_check = _check

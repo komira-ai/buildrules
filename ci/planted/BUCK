@@ -11,11 +11,11 @@ load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "ZIG_CC_TARGET")
 load("@buildrules//rules/rust:toolchain.bzl", "rust_toolchain")
 load(":fixture.bzl", "planted_mojo_exe", "planted_mojo_toolchain")
 
-# PLANTED DEFECTS in the checks and markers of the rules. Each target below is a rule given an input that must make its action fail, and the build
-# must be red: an action that wrote its output and exited 0 on a failure (a marker that exists after a failed test, a comparison that is never made)
-# would leave the target green. They are excluded from the wildcard build (ci/all.bzl), and `buck2 bxl //ci:negative.bxl:check` (a part of
-# //ci:completeness.bxl:check) builds each, requires the failure, and requires its control, the same rule on an input that is right, to build
-# (ci/negative.bzl, `planted_problems`). The checks themselves are tested in rules/check; this holds that each rule calls them as a check.
+# Bad inputs for the checks and markers of the rules. Each target below is a rule given an input its action must refuse, so its build must be red: an action
+# that wrote its output and exited 0 on a failure (a marker that exists after a failed test, a comparison that is never made) would leave the target green.
+# They are excluded from the wildcard build (ci/all.bzl), and `buck2 bxl //ci:negative.bxl:check` (a part of //ci:completeness.bxl:check) builds each,
+# requires the refusal and its reason, and requires its control, the same rule on a good input, to build (ci/negative.bzl, `planted_problems`). The checks
+# themselves are tested in rules/check; this holds that each rule calls them as a check.
 
 # run_check: the program prints `hello, world`. (Control: //examples/hello:hello_runs.)
 run_check(

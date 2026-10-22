@@ -37,7 +37,7 @@ The rules that moved from `sh -c` to `check` (`run_check`, `c_check`, `mojo_same
 - The cargo test marker (the test's output, `--stamp-log`) is all of stdout and then all of stderr; the script interleaved them as they came.
 - A file `digest` cannot read says `cannot read`; the script said `STALE`, with an empty hash.
 - The `same` message (the first difference) is on stderr; `cmp` wrote its own.
-- The wording of every message changed. The planted checks of ci/planted pin the new wording (ci/negative.bzl, `PLANTED`), so a change of it is a change of those rows.
+- The wording of every message changed. The cases of ci/planted pin the new wording (ci/negative.bzl, `PLANTED`), so a change of it is a change of those rows.
 - The rules no longer take a `busybox` attribute: it is removed from `run_check`, `c_check`, `mojo_same`, `mojo_test_run_rule`, `mojo_gated_lib_rule` and the gate fixture (ci/mojo_gate). A BUCK file that still passes `busybox =` to one of them is an error at once, when the graph is loaded.
 
 ## Tests

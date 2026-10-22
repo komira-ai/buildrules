@@ -155,12 +155,12 @@ def gate_problems(ctx):
     return problems
 
 # The checks and markers of the rules (ci/planted/BUCK): each rule runs `check` (rules/check) to compare, hash, copy or run a test, and writes its output
-# only when that passed. For each rule a planted input that must make the action fail, and a control, the same rule on an input that is right, that must
-# build (so the planted one is red for its input and not for something else). The Mojo test run has no control here: its stand-in program cannot pass,
+# only when that passed. For each rule, a bad input the action must refuse (the build is red), and a control, the same rule on a good input, that must
+# build (so the refusal is for the input and not for something else). The Mojo test run has no control here: its stand-in program cannot pass,
 # and the real runs are built by //ci:mojo.
 #
-# Each row is (planted target, control or None, the text its failure must hold). The text is what `check` says when it ran the right command and the check
-# failed, so a command line `check` refuses (a wrong option, a missing program) is red here too and cannot pass as the planted failure. `check marker` says
+# Each row is (target that must be refused, control or None, the text its refusal must hold). The text is what `check` says when it ran the right command
+# and the check failed, so a command line `check` itself refuses (a wrong option, a missing program) does not satisfy it. `check marker` says
 # `TEST FAILED: ` only after it started the test, and that is what the Mojo test run (which has no control) is held to.
 PLANTED = [
     ("//ci/planted:run_check_of_other_stdout", "//examples/hello:hello_runs", "run_check: expected output equal to 'not what it prints' but"),
@@ -168,8 +168,8 @@ PLANTED = [
     ("//ci/planted:mojo_same_of_other_bytes", "//ci/mojo_gate:consumer_of_green", "differ at byte 1"),
     ("//ci/planted:table_of_other_bytes", "//ci/planted:table_in_sync", "STALE ci/planted/empty.txt"),
     ("//ci/planted:rust_toolchain_of_other_version", "toolchains//:rust", "rust_toolchain: expected output starting with 'rustc 0.0.0 (' but"),
-    ("//ci/planted:fails", "//examples/hello:hello_lib_test", "the planted failing test"),
-    ("//ci/planted:lib_behind_a_failing_test", "//examples/hello:hello_lib", "the planted failing test"),
+    ("//ci/planted:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
+    ("//ci/planted:lib_behind_a_failing_test", "//examples/hello:hello_lib", "this test fails by design"),
     ("//ci/planted:mojo_test_that_fails", None, "check marker: TEST FAILED: "),
 ]
 
@@ -183,7 +183,7 @@ def _failures(ctx, label):
     return text
 
 def planted_problems(ctx):
-    """Every way a planted check or marker is not red for its reason, or its control is not green: a list of strings, empty when all is as planted."""
+    """Every way a check or marker does not refuse its bad input for its reason, or its control is not green: a list of strings, empty when all hold."""
     problems = []
     for planted, control, reason in PLANTED:
         built, failed = _built(ctx, planted)
