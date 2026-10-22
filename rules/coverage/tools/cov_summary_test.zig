@@ -243,7 +243,7 @@ test "hasNoStatements: a re-export file has none, any other statement is one" {
         "\"\"\"a\"\"\" # k\x0cx = 1\n", // after a one-line docstring, in a comment
         "\"\"\"a\nb\"\"\" # k\x0bx = 1\n", // after a block docstring closes, in a comment
     }) |case| t.expect(!S.hasNoStatements(case)) catch |e| {
-        std.debug.print("accepted, should be refused: {any}\n", .{case});
+        std.debug.print("accepted, should be refused: {s}\n", .{case});
         return e;
     };
 }
