@@ -526,8 +526,8 @@ tables use, and `cov_normalize` maps the report to repository paths. `cov_run` r
 
 ### 12.5 Versions: pinned mopm, the Mojo version
 
-`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.25` is the published mopm release (its linux-x86_64 tarball,
-sha256 80ac2ed4...23dc, checked against the release's `SHA256SUMS`); a machine that mirrors the download points it at its copy with `url_map`.
+`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.25` is the published mopm release (its linux-x86_64 tarball;
+the digest and size are the row's in `rules/mopm/pins.bzl`, the source of truth, which match the release's `SHA256SUMS`); a machine that mirrors the download points it at its copy with `url_map`.
 A version not in the table is refused by `mojo sync` (the message names `buildrules-pins.toml` and the table to add) unless `buildrules-pins.toml` has `[mopm."V"]` with `url`, `sha256`, `size`.
 The mopm binary is an input of every unit action: a mopm bump re-keys every unit on purpose. The Mojo version comes from the graph: mopm pins one (`1.0.0`) today, so no package here
 builds for two Mojo versions; `mopm lock` writes the lock for each version `[package] mojo` lists and `plan --mojo M` makes the graph for one, so two versions would be two units, two actions,
