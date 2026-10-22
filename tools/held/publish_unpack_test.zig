@@ -517,7 +517,11 @@ test "--buck2-config reaches the build as -c KEY=VALUE, before the targets, and 
     try t.expectEqualStrings("buildrules_re.mode=local", o.buck2_config.?);
     try t.expect((try pub_.parse(&.{}, &diag)).buck2_config == null);
     try t.expectError(error.Usage, pub_.parse(&.{ "--buck2-config", "local" }, &diag));
-    try t.expectEqualStrings("--buck2-config needs KEY=VALUE", diag);
+    try t.expect(std.mem.indexOf(u8, diag, "--buck2-config needs KEY=VALUE") != null);
+    // an empty key, an empty value, or nothing at all is refused too
+    for ([_][]const u8{ "=local", "buildrules_re.mode=", "=", "" }) |bad| {
+        try t.expectError(error.Usage, pub_.parse(&.{ "--buck2-config", bad }, &diag));
+    }
     var w = try World.init(null);
     defer w.deinit();
     var f = w.fake();
@@ -528,6 +532,46 @@ test "--buck2-config reaches the build as -c KEY=VALUE, before the targets, and 
     opts.buck2_config = "buildrules_re.mode=local";
     try t.expectEqual(@as(u8, 0), try pub_.publish(a, opts, f.runner(), out.say()));
     try t.expectEqual(@as(usize, 1), f.called("fake-buck2 build -c buildrules_re.mode=local --show-full-output -- //tools/bootstrap:unpack_"));
+}
+
+test "the token variables go to the gh program alone, not to git or buck2" {
+    var env = std.process.EnvMap.init(a);
+    defer env.deinit();
+    try env.put("GH_TOKEN", "token-one");
+    try env.put("GITHUB_TOKEN", "token-two");
+    try env.put("GH_ENTERPRISE_TOKEN", "token-three");
+    try env.put("GITHUB_ENTERPRISE_TOKEN", "token-four");
+    try env.put("KEEP_ME", "kept");
+    // the environment function: gh keeps all of it, any other program loses the four and keeps the rest
+    {
+        var for_gh = try pub_.childEnv(a, &env, "gh", "gh");
+        defer for_gh.deinit();
+        try t.expectEqual(@as(u32, 5), for_gh.count());
+    }
+    for ([_][]const u8{ "git", "buck2", "/work/buck2", "ghx", "" }) |prog| {
+        var other = try pub_.childEnv(a, &env, prog, "gh");
+        defer other.deinit();
+        try t.expectEqual(@as(u32, 1), other.count());
+        try t.expectEqualStrings("kept", other.get("KEEP_ME").?);
+    }
+    try t.expectEqual(@as(u32, 5), env.count());
+    // through the runner, with a real child that prints its environment
+    {
+        var real = pub_.RealRunner{ .gh = "/usr/bin/env", .env = &env };
+        const r = try real.runner().run(a, &.{"/usr/bin/env"}, "/");
+        defer a.free(r.out);
+        try t.expectEqual(@as(u8, 0), r.code);
+        try t.expect(std.mem.indexOf(u8, r.out, "GH_TOKEN=token-one") != null);
+        try t.expect(std.mem.indexOf(u8, r.out, "GITHUB_TOKEN=token-two") != null);
+    }
+    {
+        var real = pub_.RealRunner{ .gh = "gh", .env = &env };
+        const r = try real.runner().run(a, &.{"/usr/bin/env"}, "/");
+        defer a.free(r.out);
+        try t.expectEqual(@as(u8, 0), r.code);
+        try t.expect(std.mem.indexOf(u8, r.out, "KEEP_ME=kept") != null);
+        try t.expect(std.mem.indexOf(u8, r.out, "token-") == null);
+    }
 }
 
 test "the release points at the commit the programs were built from, and a tree with changes is refused" {

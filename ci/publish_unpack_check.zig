@@ -39,7 +39,8 @@ const tool = "\"$RUNNER_TEMP/publish_unpack\"";
 const common = " --root \"$GITHUB_WORKSPACE\" --buck2 \"$GITHUB_WORKSPACE/buck2\" --buck2-config buildrules_re.mode=local";
 const dry_cmd = tool ++ common;
 const apply_cmd = tool ++ " --apply --work \"$RUNNER_TEMP/unpack-work\"" ++ common;
-const build_cmd = "./buck2 build --console simple -c buildrules_re.mode=local --out \"$RUNNER_TEMP/publish_unpack\" //tools/held:publish_unpack";
+const apply_body = "          mkdir \"$RUNNER_TEMP/unpack-work\"\n          " ++ apply_cmd;
+const build_cmd ="./buck2 build --console simple -c buildrules_re.mode=local --out \"$RUNNER_TEMP/publish_unpack\" //tools/held:publish_unpack";
 const mode_flag = "buildrules_re.mode=local";
 
 /// The lines of the top-level block `key:` (column 0), trimmed, up to the next line in column 0.
@@ -95,6 +96,13 @@ fn mintBlock(a: std.mem.Allocator, text: []const u8) !?[]const u8 {
         try out.append('\n');
     }
     return try out.toOwnedSlice();
+}
+
+fn sameLine(lines: []const []const u8, want: []const u8) bool {
+    for (lines) |l| {
+        if (std.mem.eql(u8, l, want)) return true;
+    }
+    return false;
 }
 
 /// `GH_TOKEN` followed by an optional quote, optional blanks and a colon: a plain, a double-quoted and a single-quoted key (also in a flow map).
@@ -153,6 +161,12 @@ pub fn check(a: std.mem.Allocator, raw: []const u8, release_raw: []const u8, dot
     }
     if (writes != 1) try add(a, &f, "{s}: {d} write permissions (exactly one: the bot token's `permission-contents: write`)", .{ file, writes });
 
+    // Where it runs and how: GitHub's own hosted runner (a self-hosted one would hold the key), one run at a time and none cancelled, and a checkout that leaves no credentials.
+    if (count(wf, "runs-on:") != 1 or !wc.hasLine(wf, "    runs-on: ubuntu-latest")) try add(a, &f, "{s}: the job does not run on exactly `runs-on: ubuntu-latest` (a hosted runner)", .{file});
+    const conc = try topLines(a, wf, "concurrency:");
+    if (conc == null or conc.?.len != 2 or !sameLine(conc.?, "group: publish-unpack") or !sameLine(conc.?, "cancel-in-progress: false")) try add(a, &f, "{s}: the concurrency is not exactly `group: publish-unpack` and `cancel-in-progress: false`", .{file});
+    if (count(wf, "actions/checkout@") != 1 or count(wf, "persist-credentials: false") != 1 or !has(wf, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n")) try add(a, &f, "{s}: the checkout does not set `persist-credentials: false` (exactly one checkout)", .{file});
+
     // The job: from main only, in the environment that holds the key.
     const jobs = try rc.parseJobs(a, wf);
     if (jobs.len != 1) try add(a, &f, "{s}: the workflow has {d} jobs, not exactly one", .{ file, jobs.len });
@@ -209,6 +223,10 @@ pub fn check(a: std.mem.Allocator, raw: []const u8, release_raw: []const u8, dot
         if (!has(s, "\n        " ++ apply_if ++ "\n")) try add(a, &f, "{s}: the apply step is not `{s}`", .{ file, apply_if });
         if (!has(s, "\n          GH_TOKEN: ${{ steps.bot.outputs.token }}\n")) try add(a, &f, "{s}: the apply step does not run with `GH_TOKEN: ${{{{ steps.bot.outputs.token }}}}` as a step env", .{file});
         if (!has(s, "\n          " ++ apply_cmd ++ "\n")) try add(a, &f, "{s}: the apply command is not exactly `{s}`", .{ file, apply_cmd });
+        // The body holds the token in its environment: nothing runs in it but the directory and the tool (no echo, no encoding of the token, no second command).
+        const run_open = "\n        run: |\n";
+        const body_text = if (std.mem.indexOf(u8, s, run_open)) |at| std.mem.trimRight(u8, s[at + run_open.len ..], " \r\n") else "";
+        if (!std.mem.eql(u8, body_text, apply_body)) try add(a, &f, "{s}: the run body of the apply step is not exactly the `mkdir` and the tool command", .{file});
     }
     if (dry_at) |d| {
         const s = sts[d];
@@ -386,7 +404,7 @@ test "the mint step is the one release.yml's tag job has, and the key is read wh
     try expectFinding(a, r.wf, .{ .wf = r.wf, .release = try edited(a, r.release, "permission-contents: write", "permission-contents: write\n          permission-pull-requests: write"), .ds = r.ds }, "differs from release.yml");
 }
 
-test "rule:a trigger a change or a clock can start" {
+test "rule: a trigger a change or a clock can start" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -405,7 +423,7 @@ test "rule:a trigger a change or a clock can start" {
     try expectRefused(a, r, "        default: false\n", "        default: false\n      other:\n        type: boolean\n        default: false\n", "more than one input");
 }
 
-test "rule:a run from any branch" {
+test "rule: a run from any branch" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -419,7 +437,7 @@ test "rule:a run from any branch" {
     try expectRefused(a, r, "  publish:\n", "  other:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n  publish:\n", "not exactly one");
 }
 
-test "rule:a token with more than it needs" {
+test "rule: a token with more than it needs" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -441,7 +459,7 @@ test "rule:a token with more than it needs" {
     try expectRefused(a, r, "    permissions:\n      contents: read\n", "    permissions:\n      contents: read\n    env:\n      KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n", "reads a secret other than");
 }
 
-test "rule:the bot's token minted or held when it is not an apply" {
+test "rule: the bot's token minted or held when it is not an apply" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -470,7 +488,7 @@ test "rule:the bot's token minted or held when it is not an apply" {
     try expectRefused(a, r, "          \"$RUNNER_TEMP/publish_unpack\" --root", "          \"$RUNNER_TEMP/publish_unpack\" --apply --work \"$RUNNER_TEMP/unpack-work\" --root", "`--apply` is in");
 }
 
-test "rule:a write that replaces, removes or goes around the tool" {
+test "rule: a write that replaces, removes or goes around the tool" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -486,7 +504,7 @@ test "rule:a write that replaces, removes or goes around the tool" {
     try expectRefused(a, r, "mkdir \"$RUNNER_TEMP/unpack-work\"\n", "mkdir \"$RUNNER_TEMP/unpack-work\"\n          \"$RUNNER_TEMP/publish_unpack\" --root x\n", "runs 3 times");
 }
 
-test "rule:a third-party or unpinned action" {
+test "rule: a third-party or unpinned action" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -497,7 +515,7 @@ test "rule:a third-party or unpinned action" {
     try expectRefused(a, r, "      - name: Dry run\n", "      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n        with:\n          path: x\n          key: y\n\n      - name: Dry run\n", "`uses:` lines");
 }
 
-test "rule:a build that is not local, an unpinned buck2, a tree that is not the commit" {
+test "rule: a build that is not local, an unpinned buck2, a tree that is not the commit" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -516,7 +534,25 @@ test "rule:a build that is not local, an unpinned buck2, a tree that is not the 
     try expectRefused(a, r, "      - name: Dry run\n", "      - name: Dry run\n        x: engine_address\n", "mentions `engine_address`");
 }
 
-test "rule:an inline expansion of event data" {
+test "rule: the runner, the concurrency, the checkout and the body that holds the token are exactly as written" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try real(a);
+    try expectRefused(a, r, "    runs-on: ubuntu-latest\n", "    runs-on: self-hosted\n", "does not run on exactly");
+    try expectRefused(a, r, "    runs-on: ubuntu-latest\n", "    runs-on: [self-hosted, linux]\n", "does not run on exactly");
+    try expectRefused(a, r, "    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-24.04\n", "does not run on exactly");
+    try expectRefused(a, r, "  cancel-in-progress: false\n", "  cancel-in-progress: true\n", "concurrency is not exactly");
+    try expectRefused(a, r, "  cancel-in-progress: false\n", "", "concurrency is not exactly");
+    try expectRefused(a, r, "  group: publish-unpack\n", "  group: ${{ github.run_id }}\n", "concurrency is not exactly");
+    try expectRefused(a, r, "          persist-credentials: false\n", "          persist-credentials: true\n", "persist-credentials");
+    try expectRefused(a, r, "        with:\n          persist-credentials: false\n", "", "persist-credentials");
+    try expectRefused(a, r, "          mkdir \"$RUNNER_TEMP/unpack-work\"\n", "          mkdir \"$RUNNER_TEMP/unpack-work\"\n          echo \"$GH_TOKEN\" | base64\n", "run body of the apply step");
+    try expectRefused(a, r, "          mkdir \"$RUNNER_TEMP/unpack-work\"\n", "          env > \"$RUNNER_TEMP/env.txt\"\n          mkdir \"$RUNNER_TEMP/unpack-work\"\n", "run body of the apply step");
+    try expectRefused(a, r, "          mkdir \"$RUNNER_TEMP/unpack-work\"\n", "", "run body of the apply step");
+}
+
+test "rule: an inline expansion of event data" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
