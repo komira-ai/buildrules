@@ -4,7 +4,7 @@ The small programs a test expects on its `PATH`, as one static Zig executable: `
 `true` and `false`. It is chosen by how it is called: a link named for an applet runs that applet, and `toolbox <applet> ARG...` runs it by
 name; `toolbox --list` names them. An unknown name is `applet not found` (exit 127).
 
-No rule uses it yet. It exists so that a test's `PATH` can be a directory of links to one pinned, reproducible binary.
+Only the stand-in tests of ci/mojo_gate run it so far (as the program `check marker` starts). It exists so that a test's `PATH` can be a directory of links to one pinned, reproducible binary.
 
 | applet | what it does |
 |---|---|

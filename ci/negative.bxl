@@ -3,13 +3,13 @@
 #
 #   buck2 bxl //ci:negative.bxl:check
 
-load("@buildrules//ci:negative.bzl", "CASES", "CONTROL", "FIXTURE", "PLATFORM", "RUNNERS", "negative_problems")
+load("@buildrules//ci:negative.bzl", "CASES", "CONTROL", "FIXTURE", "PLANTED", "PLATFORM", "RUNNERS", "negative_problems")
 
 def _impl(ctx):
     problems = negative_problems(ctx)
     if problems:
         fail("ci/negative: {} problem(s):\n  ".format(len(problems)) + "\n  ".join(problems))
-    ctx.output.print("ok: {} is red on {} for the reason it plants, {} analyses, and {} more planted defects are red for their reasons; the Mojo gate holds (a library behind a failing test is unbuildable, behind a passing one buildable, and each real package waits for its tests); the {} planted runners (the toolchain's refusals, a zig_exe against the stand-in zig) are red for their reasons".format(FIXTURE, PLATFORM, CONTROL, len(CASES), len(RUNNERS)))
+    ctx.output.print("ok: {} is red on {} for the reason it plants, {} analyses, and {} more planted defects are red for their reasons; the Mojo gate holds (a library behind a failing test is unbuildable, behind a passing one buildable, and each real package waits for its tests); the {} checks and markers of ci/planted refuse their bad inputs; the {} runner cases (the toolchain's refusals, a zig_exe against the stand-in zig) fail with their messages".format(FIXTURE, PLATFORM, CONTROL, len(CASES), len(PLANTED), len(RUNNERS)))
 
 check = bxl_main(
     impl = _impl,

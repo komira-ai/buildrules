@@ -60,7 +60,7 @@ rust_zig_exe(
     zig = ":stand_in_dist",
 )
 
-# PLANTED DEFECTS. Each target below must be red, for the reason ci/negative.bzl (`RUNNERS`) holds it to; they are excluded from the wildcard build (ci/all.bzl) and
+# TARGETS THAT MUST FAIL. Each target below fails with the message ci/negative.bzl (`RUNNERS`) holds it to; they are excluded from the wildcard build (ci/all.bzl) and
 # `buck2 bxl //ci:negative.bxl:check` (a part of //ci:completeness.bxl:check) builds each and requires the failure.
 #
 # zig_exe given another optimize mode, and another strip flag, than the stand-in expects: the rule writes what its attributes say, and the stand-in holds the defaults.

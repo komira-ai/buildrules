@@ -9,7 +9,7 @@
 //! rust-toolchain.toml, and required like it, with no default:
 //!
 //!     [toolchain]
-//!     mopm = "0.0.20"     # a version of rules/mopm/pins.bzl, or one buildrules-pins.toml supplies a hash for
+//!     mopm = "0.0.25"     # a version of rules/mopm/pins.bzl, or one buildrules-pins.toml supplies a hash for
 //!     mojo = "1.0.0"     # a version mopm pins a toolchain for: the graph names it, the lock records it
 //!
 //! `sync` runs mopm and (for the pinned mopm) buck2; `check` runs nothing.
@@ -25,8 +25,8 @@ const Diag = @import("diag.zig").Diag;
 const Ctx = ctxm.Ctx;
 
 pub const usage_text =
-    \\usage: buildrules mojo sync [--dir DIR] [--check] [--mopm MOPM] [--buck2 BUCK2] [PACKAGE_DIR...]
-    \\       buildrules mojo check [--dir DIR]
+    \\usage: buildrules mojo sync [--dir DIR] [--toolchains TC_DIR] [--check] [--mopm MOPM] [--buck2 BUCK2] [PACKAGE_DIR...]
+    \\       buildrules mojo check [--dir DIR] [--toolchains TC_DIR]
     \\
     \\  sync    for each package (a directory with a mopm.toml and a BUCK file that calls mojo_package; no PACKAGE_DIR =
     \\          all of them): the pinned mopm's `plan --unit-graph --locked` is written, verbatim, as buildrules.mojo.lock.bzl
@@ -38,6 +38,10 @@ pub const usage_text =
     \\          committed table was made from, or a generated file is hand-edited.
     \\
     \\  --dir DIR  the repository root (default .): holds .buckconfig
+    \\  --toolchains TC_DIR  asserts the directory of the `toolchains` cell: the two pins tables live in the directory `[cells] toolchains`
+    \\          names in the root .buckconfig (default toolchains), for sync, check and `buildrules check` alike. The flag is not a second
+    \\          place to set it: it is refused unless it names that same directory. A cell directory that does not exist, is outside the
+    \\          root or is inside a Mojo package is refused, and so is a root .buckconfig with an include line (includes are not followed).
     \\
     \\Exit codes: 0 ok, 1 failed or stale, 2 usage.
     \\
@@ -56,12 +60,15 @@ pub fn run(root: *Ctx, args: []const []const u8) u8 {
     var check_only = !is_sync;
     var mopm_path: ?[]const u8 = null;
     var buck2: []const u8 = "buck2";
+    var tc_flag: ?[]const u8 = null;
     var pkgs = std.ArrayList([]const u8).empty;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "--dir")) {
             dir = ctxm.flagValue(args, &i) orelse return root.usage("mojo {s}: --dir needs a value", .{sub});
+        } else if (std.mem.eql(u8, arg, "--toolchains")) {
+            tc_flag = ctxm.flagValue(args, &i) orelse return root.usage("mojo {s}: --toolchains needs a value", .{sub});
         } else if (is_sync and std.mem.eql(u8, arg, "--check")) {
             check_only = true;
         } else if (is_sync and std.mem.eql(u8, arg, "--mopm")) {
@@ -76,8 +83,8 @@ pub fn run(root: *Ctx, args: []const []const u8) u8 {
     }
     var ctx = root.into(dir) catch |e| return root.fail("cannot open {s}: {s}", .{ dir, @errorName(e) });
     defer ctx.dir.close();
-    if (is_sync) return sync(&ctx, pkgs.items, check_only, mopm_path, buck2) catch |e| root.fail("mojo sync: {s}", .{@errorName(e)});
-    return checkAll(&ctx) catch |e| root.fail("mojo check: {s}", .{@errorName(e)});
+    if (is_sync) return sync(&ctx, pkgs.items, check_only, mopm_path, buck2, tc_flag) catch |e| root.fail("mojo sync: {s}", .{@errorName(e)});
+    return checkAll(&ctx, tc_flag) catch |e| root.fail("mojo check: {s}", .{@errorName(e)});
 }
 
 fn trimSlashes(s: []const u8) []const u8 {
@@ -165,7 +172,7 @@ pub fn findToolchain(ctx: *Ctx, pkg: []const u8, why: *[]const u8) !?Tc {
         dir = std.fs.path.dirname(dir) orelse "";
         up = try std.fmt.allocPrint(a, "{s}../", .{up});
     }
-    why.* = try std.fmt.allocPrint(a, "no {s} at or above {s}: it is required, like rust-toolchain.toml, and there is no default. Create it, for example:\n\n[toolchain]\nmopm = \"0.0.20\"\nmojo = \"1.0.0\"\n\n(an exact release each)", .{ contract.mojo_toolchain_file, if (pkg.len == 0) "." else pkg });
+    why.* = try std.fmt.allocPrint(a, "no {s} at or above {s}: it is required, like rust-toolchain.toml, and there is no default. Create it, for example:\n\n[toolchain]\nmopm = \"0.0.25\"\nmojo = \"1.0.0\"\n\n(an exact release each)", .{ contract.mojo_toolchain_file, if (pkg.len == 0) "." else pkg });
     return null;
 }
 
@@ -178,7 +185,7 @@ pub const export_snippet =
     "export_file(\n" ++
     "    name = \"" ++ contract.mojo_toolchain_file ++ "\",\n" ++
     "    src = \"" ++ contract.mojo_toolchain_file ++ "\" if glob([\"" ++ contract.mojo_toolchain_file ++ "\"]) else fail(\"" ++ contract.mojo_toolchain_file ++
-    " is required and there is no default. Create it, for example:\\n\\n[toolchain]\\nmopm = '0.0.20'\\nmojo = '1.0.0'\\n\"),\n" ++
+    " is required and there is no default. Create it, for example:\\n\\n[toolchain]\\nmopm = '0.0.25'\\nmojo = '1.0.0'\\n\"),\n" ++
     "    visibility = [\"PUBLIC\"],\n" ++
     ")\n";
 
@@ -293,6 +300,173 @@ fn originOf(ctx: *Ctx, version: []const u8) ![]const u8 {
     return if (std.mem.indexOf(u8, text, needle) != null) contract.pins_file else "builtin";
 }
 
+// ---- the toolchains directory --------------------------------------------------------------------------
+
+/// Where the two generated pins tables are: the directory `dir` (relative to the root, normalized), the files in it, and its real path when it exists.
+pub const Tables = struct { dir: []const u8, real: ?[]const u8, mojo_pins: []const u8, mopm_pins: []const u8 };
+
+/// What the root .buckconfig says that matters here: the path of the `toolchains` cell (`[cells] toolchains = DIR`; the last assignment wins, as in
+/// Buck's own files) and the first include line (`<file:...>`, `<?file:...>`), which is not followed.
+/// `[repositories]` is Buck's older name for `[cells]`: buck2 reads it only when no `[cells]` section exists at all (in .buckconfig or .buckconfig.local,
+/// whatever that section holds), and so does this. `local` is what
+/// `.buckconfig.local` sets for it (Buck honours that file, a committed table must not depend on it).
+const Conf = struct { toolchains: ?[]const u8 = null, include: ?[]const u8 = null, local: ?[]const u8 = null };
+
+const Parsed = struct { cells: ?[]const u8 = null, repos: ?[]const u8 = null, include: ?[]const u8 = null, has_cells: bool = false };
+
+fn isIncludeLine(line: []const u8) bool {
+    return std.mem.startsWith(u8, line, "<file:") or std.mem.startsWith(u8, line, "<?file:");
+}
+
+/// Whether `line` is the header of the section `name`: exactly `[name]`, optionally followed by a `#` comment (buck2 accepts `[s] # c` and rejects `[s] ; c`).
+fn isHeaderOf(line: []const u8, name: []const u8) bool {
+    const close = std.mem.indexOfScalar(u8, line, ']') orelse return false;
+    if (!std.mem.eql(u8, line[1..close], name)) return false;
+    const rest = std.mem.trim(u8, line[close + 1 ..], " \t");
+    return rest.len == 0 or rest[0] == '#';
+}
+
+fn parseConf(text: []const u8) Parsed {
+    var p = Parsed{};
+    var sec: enum { none, cells, repos } = .none;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#' or line[0] == ';') continue;
+        if (isIncludeLine(line)) {
+            if (p.include == null) p.include = line;
+            continue;
+        }
+        if (line[0] == '[') {
+            sec = if (isHeaderOf(line, contract.buckconfig_section)) .cells else if (isHeaderOf(line, contract.buckconfig_alias_section)) .repos else .none;
+            if (sec == .cells) p.has_cells = true;
+            continue;
+        }
+        if (sec == .none) continue;
+        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        if (!std.mem.eql(u8, std.mem.trim(u8, line[0..eq], " \t"), contract.buckconfig_toolchains_key)) continue;
+        const v = std.mem.trim(u8, line[eq + 1 ..], " \t");
+        if (sec == .cells) p.cells = v else p.repos = v;
+    }
+    return p;
+}
+
+fn readConf(ctx: *Ctx) !?Conf {
+    var conf = Conf{};
+    const root: Parsed = if (try ctx.readOpt(".buckconfig")) |text| parseConf(text) else .{};
+    const local: Parsed = blk: {
+        const text = ctx.readOpt(".buckconfig.local") catch |e| switch (e) {
+            error.IsDir => {
+                _ = ctx.fail(".buckconfig.local is a directory, not a file: buildrules cannot tell whether it sets the toolchains cell", .{});
+                return null;
+            },
+            else => return e,
+        };
+        break :blk if (text) |s| parseConf(s) else .{};
+    };
+    // buck2 reads `[repositories]` as the cells only when no `[cells]` section exists in the merged configuration (whatever that section holds).
+    const has_cells = root.has_cells or local.has_cells;
+    conf.include = root.include;
+    conf.toolchains = if (has_cells) root.cells else root.repos;
+    conf.local = if (has_cells) local.cells else local.repos;
+    return conf;
+}
+
+/// `x` is `base` or a path below it (component-wise, so `ab` is not below `a`).
+fn isUnder(x: []const u8, base: []const u8) bool {
+    return std.mem.eql(u8, x, base) or (std.mem.startsWith(u8, x, base) and x.len > base.len and x[base.len] == '/');
+}
+
+/// The places of the two pins tables: the directory of the `toolchains` cell, `[cells] toolchains = DIR` of the root .buckconfig (the one place the path
+/// is configured, so the tables cannot land where the cell does not look), else `toolchains/`. A cell path that is written must be a directory inside
+/// the root, symbolic links followed; the default is not checked, so a repository without a toolchains directory is where it was (the first sync makes
+/// it). `--toolchains DIR` is an assertion only: it must name that same directory. Each refusal is printed and the answer is null. A root .buckconfig
+/// with an include line is refused: the include is not followed, so the cell path it might hold would be missed.
+pub fn resolveTables(ctx: *Ctx, flag: ?[]const u8) !?Tables {
+    const a = ctx.a;
+    const conf = (try readConf(ctx)) orelse return null;
+    if (conf.include) |inc| {
+        _ = ctx.fail(".buckconfig has an include line ({s}): the toolchains cell is read from the root .buckconfig itself and includes are not followed; write the cell's path there", .{inc});
+        return null;
+    }
+    if (conf.local) |v| {
+        _ = ctx.fail(".buckconfig.local sets the toolchains cell ({s}): buck2 would use it, but the pins tables are committed and so must their location be; declare the toolchains cell in the committed .buckconfig", .{v});
+        return null;
+    }
+    const from = ".buckconfig [cells] toolchains";
+    var rel: []const u8 = contract.toolchains_dir;
+    if (conf.toolchains) |raw| {
+        if (raw.len == 0) {
+            _ = ctx.fail("{s} is empty: name the directory of the toolchains cell, relative to the repository root", .{from});
+            return null;
+        }
+        if (raw[0] == '/') {
+            _ = ctx.fail("{s} = {s} is an absolute path: name the directory of the toolchains cell relative to the repository root", .{ from, raw });
+            return null;
+        }
+        rel = try normalize(a, raw);
+        if (rel.len == 0) {
+            _ = ctx.fail("{s} = {s} is the repository root itself: name the directory of the toolchains cell", .{ from, raw });
+            return null;
+        }
+        if (std.mem.eql(u8, rel, "..") or std.mem.startsWith(u8, rel, "../")) {
+            _ = ctx.fail("{s} = {s} is outside the repository: the toolchains directory must be inside the root", .{ from, raw });
+            return null;
+        }
+    }
+    var real: ?[]const u8 = null;
+    if (ctx.dir.openDir(rel, .{})) |opened| {
+        var d = opened;
+        defer d.close();
+        const root_real = try ctx.dir.realpathAlloc(a, ".");
+        const tc_real = try d.realpathAlloc(a, ".");
+        if (conf.toolchains != null and (std.mem.eql(u8, tc_real, root_real) or !isUnder(tc_real, root_real))) {
+            _ = ctx.fail("{s} = {s} does not lead to a directory below the repository root (a symbolic link takes it out): the toolchains directory must be inside the root", .{ from, rel });
+            return null;
+        }
+        real = tc_real;
+    } else |_| {
+        if (conf.toolchains != null) {
+            _ = ctx.fail("{s} = {s}: no such directory under the repository root", .{ from, rel });
+            return null;
+        }
+    }
+    if (flag) |f| {
+        if (f.len == 0 or f[0] == '/' or !std.mem.eql(u8, try normalize(a, f), rel)) {
+            _ = ctx.fail("--toolchains {s} is not the toolchains cell: {s} says {s}. The cell is the one place the path is configured; change it there, or drop the flag", .{ f, from, rel });
+            return null;
+        }
+    }
+    return Tables{
+        .dir = rel,
+        .real = real,
+        .mojo_pins = try join(a, rel, contract.mojo_pins_name),
+        .mopm_pins = try join(a, rel, contract.mopm_pins_name),
+    };
+}
+
+/// The first of `pkgs` whose source tree the tables' directory is in (`mopm` reads the package directory, so a table written there would be an input of its
+/// own table). Compared by real path when the directory exists, so a symbolic link into a package is caught; a package at the root is not considered
+/// (every directory is in it).
+fn packageHolding(ctx: *Ctx, tabs: Tables, pkgs: []const []const u8) !?[]const u8 {
+    for (pkgs) |pkg| {
+        if (pkg.len == 0) continue;
+        const hit = if (tabs.real) |tc_real| blk: {
+            const pr = ctx.dir.realpathAlloc(ctx.a, if (pkg.len == 0) "." else pkg) catch |e| switch (e) {
+                error.OutOfMemory => return e,
+                else => continue,
+            };
+            break :blk isUnder(tc_real, pr);
+        } else isUnder(tabs.dir, pkg);
+        if (hit) return pkg;
+    }
+    return null;
+}
+
+fn refuseInPackage(ctx: *Ctx, tabs: Tables, pkg: []const u8) u8 {
+    return ctx.fail("the toolchains directory {s} is inside the Mojo package {s}: the pins tables would be among the files the package's table is made from; move the toolchains cell out of the package", .{ tabs.dir, pkg });
+}
+
 // ---- sync ----------------------------------------------------------------------------------------------
 
 fn sha256Of(ctx: *Ctx, rel: []const u8) !?[]const u8 {
@@ -343,11 +517,13 @@ fn mopmFor(ctx: *Ctx, buck2: []const u8, version: []const u8, given: ?[]const u8
     return null;
 }
 
-fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]const u8, buck2: []const u8) !u8 {
+fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]const u8, buck2: []const u8, tc_flag: ?[]const u8) !u8 {
     const a = ctx.a;
     if (!ctx.exists(".buckconfig")) return ctx.fail("no .buckconfig here: run `buildrules mojo sync` from the repository root (or give --dir)", .{});
+    const tabs = (try resolveTables(ctx, tc_flag)) orelse return ctxm.exit_fail;
     const pkgs = if (given.len > 0) given else try discover(ctx);
     if (pkgs.len == 0) return ctx.fail("no package here calls mojo_package(...) in its BUCK file", .{});
+    if (try packageHolding(ctx, tabs, pkgs)) |p| return refuseInPackage(ctx, tabs, p);
     var code: u8 = ctxm.exit_ok;
 
     // buildrules-pins.toml -> toolchains/mopm_pins.bzl first: the build of the pinned mopm loads it.
@@ -359,9 +535,9 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
         return ctxm.exit_fail;
     };
     if (!check_only) {
-        try writeIfChanged(ctx, contract.mopm_pins_file, mopm_pins_text);
+        try writeIfChanged(ctx, tabs.mopm_pins, mopm_pins_text);
         // toolchains/BUCK loads the Mojo table too: an empty one until the graphs are in.
-        if (!ctx.exists(contract.mojo_pins_file)) try ctx.write(contract.mojo_pins_file, lockm.pins_empty);
+        if (!ctx.exists(tabs.mojo_pins)) try ctx.write(tabs.mojo_pins, lockm.pins_empty);
     }
 
     // What the sync writes from here on is collected and written at the end, once the toolchain table has been rendered too: a sync that
@@ -465,10 +641,10 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
         var td = Diag.init(a);
         if (lockm.renderPins(a, tcs.items, &td)) |pins| {
             if (check_only) {
-                code |= compareOne(ctx, contract.mojo_pins_file, pins);
-                code |= compareOne(ctx, contract.mopm_pins_file, mopm_pins_text);
+                code |= compareOne(ctx, tabs.mojo_pins, pins);
+                code |= compareOne(ctx, tabs.mopm_pins, mopm_pins_text);
             } else {
-                try queue(a, &pend, .{ .path = contract.mojo_pins_file, .text = pins });
+                try queue(a, &pend, .{ .path = tabs.mojo_pins, .text = pins });
             }
         } else |_| {
             for (td.msgs.items) |m| _ = ctx.fail("{s}", .{m});
@@ -531,13 +707,15 @@ pub fn hasPackages(ctx: *Ctx) !bool {
     return p.len > 0;
 }
 
-pub fn checkAll(ctx: *Ctx) !u8 {
+pub fn checkAll(ctx: *Ctx, tc_flag: ?[]const u8) !u8 {
     const a = ctx.a;
+    const tabs = (try resolveTables(ctx, tc_flag)) orelse return ctxm.exit_fail;
     const pkgs = try discover(ctx);
     if (pkgs.len == 0) {
         _ = ctx.fail("no package here calls mojo_package(...) in its BUCK file", .{});
         return ctxm.exit_fail;
     }
+    if (try packageHolding(ctx, tabs, pkgs)) |p| return refuseInPackage(ctx, tabs, p);
     var bad: usize = 0;
     var tcs = std.ArrayList(lockm.Tc).empty;
     for (pkgs) |pkg| try checkPackage(ctx, pkg, &bad, &tcs);
@@ -546,9 +724,9 @@ pub fn checkAll(ctx: *Ctx) !u8 {
     var td = Diag.init(a);
     if (tcs.items.len > 0) {
         if (lockm.renderPins(a, tcs.items, &td)) |pins| {
-            const have = (try ctx.readOpt(contract.mojo_pins_file)) orelse "";
+            const have = (try ctx.readOpt(tabs.mojo_pins)) orelse "";
             if (!std.mem.eql(u8, have, pins)) {
-                _ = ctx.fail("STALE: {s} is not what the unit graphs generate (first difference at line {d}): {s}", .{ contract.mojo_pins_file, firstDifference(have, pins), fix });
+                _ = ctx.fail("STALE: {s} is not what the unit graphs generate (first difference at line {d}): {s}", .{ tabs.mojo_pins, firstDifference(have, pins), fix });
                 bad += 1;
             }
         } else |_| {
@@ -560,9 +738,9 @@ pub fn checkAll(ctx: *Ctx) !u8 {
     var pd = Diag.init(a);
     const pins_text: []const u8 = (try ctx.readOpt(contract.pins_file)) orelse "";
     if (mopm_pins.render(a, pins_text, &pd)) |fresh| {
-        const have = (try ctx.readOpt(contract.mopm_pins_file)) orelse "";
+        const have = (try ctx.readOpt(tabs.mopm_pins)) orelse "";
         if (!std.mem.eql(u8, have, fresh)) {
-            _ = ctx.fail("STALE: {s} is not what {s} generates (first difference at line {d}): {s}", .{ contract.mopm_pins_file, contract.pins_file, firstDifference(have, fresh), fix });
+            _ = ctx.fail("STALE: {s} is not what {s} generates (first difference at line {d}): {s}", .{ tabs.mopm_pins, contract.pins_file, firstDifference(have, fresh), fix });
             bad += 1;
         }
     } else |_| {

@@ -188,16 +188,9 @@ mojo_prebuilt_rule = rule(
 )
 
 # The binary needs the compiler's runtime libraries (libKGENCompilerRTShared.so) next to its own: the closure's lib/ is on
-# LD_LIBRARY_PATH, nothing else is in the environment. Its native libraries are found through its runpath ($ORIGIN/lib).
-_RUN = """set -eu
-EXE="$1"; MARK="$2"; CC="$3"
-case "$EXE" in /*) ;; *) EXE="$PWD/$EXE" ;; esac
-case "$MARK" in /*) ;; *) MARK="$PWD/$MARK" ;; esac
-case "$CC" in /*) ;; *) CC="$PWD/$CC" ;; esac
-LD_LIBRARY_PATH="$CC/lib"; export LD_LIBRARY_PATH
-"$EXE"
-echo passed > "$MARK"
-"""
+# LD_LIBRARY_PATH (`--ld-library-path`, made absolute), nothing else is added to the environment. Its native libraries are found through its
+# runpath ($ORIGIN/lib). The build action is `check marker` (rules/check): the marker is written, `passed`, only when the binary exited 0; the
+# `buck2 test` command is `check run`, the same start without a marker.
 
 def _test_run_impl(ctx):
     info = ctx.attrs.bin[MojoExeInfo]
@@ -207,11 +200,12 @@ def _test_run_impl(ctx):
         fail(("{}: built for ISA {} but its execution platform reports ISA={}. A test at an ISA level must run on a platform " +
               "that has it: set exec_compatible_with = test_exec_compatible_with() (rules/isa.bzl), which the mojo_package " +
               "macro does, so the farm schedules the run on a worker of at least that level.").format(ctx.label, want, have))
-    bb = _file(ctx.attrs.busybox)
+    check = ctx.attrs._check_exe[RunInfo]
     compiler = ctx.attrs.toolchain[MojoToolchainInfo].compiler
+    libs = cmd_args(compiler, "/lib", delimiter = "")
     marker = ctx.actions.declare_output(ctx.label.name + ".passed")
     ctx.actions.run(
-        cmd_args(bb, "sh", "-c", _RUN, "sh", info.exe, marker.as_output(), compiler, hidden = [info.dir]),
+        cmd_args(check, "marker", "--out", marker.as_output(), "--ld-library-path", libs, "--", info.exe, hidden = [info.dir]),
         category = ctx.attrs.category,
         identifier = ctx.label.name,
         env = {"BUILDRULES_UNIT_NONCE": _NONCE},
@@ -221,7 +215,7 @@ def _test_run_impl(ctx):
         MojoTestRunInfo(marker = marker),
         ExternalRunnerTestInfo(
             type = "custom",
-            command = [cmd_args(bb, "sh", "-c", _RUN, "sh", info.exe, "/dev/null", compiler, hidden = [info.dir])],
+            command = [cmd_args(check, "run", "--ld-library-path", libs, "--", info.exe, hidden = [info.dir])],
             labels = ["test", "mojo"],
         ),
     ])
@@ -231,10 +225,10 @@ mojo_test_run_rule = rule(
     attrs = {
         "check": _CHECK_ATTR,
         "bin": attrs.dep(providers = [MojoExeInfo]),
-        "busybox": attrs.exec_dep(default = "buildrules//rules/pins:busybox"),
         "category": attrs.string(default = "mojo_test"),
         "required_isa": attrs.string(default = ""),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
+        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
         "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
     },
 )
@@ -248,7 +242,7 @@ def _gated_lib_impl(ctx):
     # target that imports the library (it reads this file) and no `buck2 build` of the library can succeed.
     out = ctx.actions.declare_output(ctx.attrs.package + ".mojoc")
     ctx.actions.run(
-        cmd_args(_file(ctx.attrs.busybox), "cp", lib.mojoc, out.as_output(), hidden = markers),
+        cmd_args(ctx.attrs._check_exe[RunInfo], "copy", lib.mojoc, out.as_output(), hidden = markers),
         category = "mojo_gate",
         identifier = ctx.label.name,
     )
@@ -264,11 +258,11 @@ def _gated_lib_impl(ctx):
 mojo_gated_lib_rule = rule(
     impl = _gated_lib_impl,
     attrs = {
-        "busybox": attrs.exec_dep(default = "buildrules//rules/pins:busybox"),
         "check": _CHECK_ATTR,
         "lib": attrs.dep(providers = [MojoLibInfo]),
         "package": attrs.string(),
         "test_runs": attrs.list(attrs.dep(providers = [MojoTestRunInfo]), default = []),
+        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
     },
 )
 
@@ -336,6 +330,10 @@ def _cov_summary_impl(ctx):
     cmd = cmd_args(ctx.attrs.tool[RunInfo], "--out", out.as_output())
     for e in ctx.attrs.expect:
         cmd.add("--expect", e)
+    # The source behind each expected path, so a source the report omits for having no executable line (a re-export `__init__.mojo`) can be told
+    # from one the report missed (cov_summary.zig, hasNoStatements).
+    for path, src in ctx.attrs.srcs.items():
+        cmd.add("--src", cmd_args(path, src, delimiter = "="))
     for r in ctx.attrs.reports:
         cmd.add(_file(r))
     ctx.actions.run(cmd, category = "mojo_cov_summary", identifier = ctx.label.name)
@@ -348,6 +346,7 @@ mojo_cov_summary_rule = rule(
         "check": _CHECK_ATTR,
         "expect": attrs.list(attrs.string(), default = []),
         "reports": attrs.list(attrs.dep()),
+        "srcs": attrs.dict(attrs.string(), attrs.source(), default = {}),
         "tool": attrs.exec_dep(default = "buildrules//rules/coverage:cov_summary", providers = [RunInfo]),
     },
 )

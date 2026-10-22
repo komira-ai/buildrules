@@ -59,11 +59,13 @@ TestUnitInfo = provider(fields = {
     # Everything the run reads besides the binary: sources, data, the package's other binaries.
     "hidden": provider_field(list),
     "env": provider_field(dict),
-    "busybox": provider_field(typing.Any),
-    # `sh -c` script of the build action (argument 1 = the binary, 2 = the marker to write).
-    "script": provider_field(str),
-    # `sh -c` script of `buck2 test`, or None when the unit is not a `buck2 test` target.
-    "cli_script": provider_field(typing.Any, default = None),
+    # How the binary is started, as the options of `check run`, `check marker` (rules/check) before the `--`: the environment made absolute, the
+    # working directory, the scratch directory. The same for the build action and for `buck2 test`.
+    "start": provider_field(list, default = []),
+    # The options only the build action's `check marker` takes: how the marker is made (`--capture`, `--stamp-log`).
+    "marker": provider_field(list, default = []),
+    # True when the unit is a `buck2 test` target as well (a `check run` of the same binary, no marker).
+    "cli": provider_field(bool, default = False),
     "labels": provider_field(list, default = []),
 })
 

@@ -1,7 +1,7 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # check (README.md): what a rule's build action runs instead of a shell script: start a program in a prepared environment (run), compare its output
 # (expect), write a marker only when a test passed (marker), hash files (digest), compare files (same), copy a file (copy), audit machine code (isa).
-# One static Zig executable, built by the pinned zig behind its unit tests. The runner rules (zig_exe, c_exe, c_shared, ...) start zig with it (README.md).
+# One static Zig executable, built by the pinned zig behind its unit tests. The checks and markers of the rules run it, and so do the runner rules (zig_exe, c_exe, c_shared, ...) that start zig (README.md).
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_test")
 

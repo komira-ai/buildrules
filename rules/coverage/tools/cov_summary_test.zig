@@ -137,3 +137,82 @@ test "blocks: a report that is not zig_cover's is refused" {
         try t.expectError(error.BadReport, S.addBlocks(a, &files, text));
     }
 }
+
+fn readFake(_: std.mem.Allocator, p: []const u8) []const u8 {
+    if (std.mem.eql(u8, p, "init")) return "\"\"\"The package.\"\"\"\n\nfrom .a import f\n";
+    return "fn f():\n    pass\n";
+}
+
+test "hasNoStatements: a re-export file has none, any other statement is one" {
+    // accepted: empty, comments, one-line and block docstrings, plain, aliased, parenthesised and continued imports, a trailing comment
+    for ([_][]const u8{
+        "",
+        "\n\n",
+        "# only a comment\n",
+        "\"\"\"doc\"\"\"\nfrom .a import f\n",
+        "\"\"\"doc\n   with from x import y: inside\n   more\n\"\"\" # tail\nimport os\n",
+        "'''doc'''\n",
+        "from .a import f, g as h # re-export\nimport .b\n",
+        "from .a import (\n    f,\n    g,  # why\n)\n",
+        "from .a import f, \\\n    g\n",
+        "from .a import (f, g)\r\n",
+        "\"\"\"a\x0bb\"\"\"\nfrom .a import f\n", // a vertical tab inside a string is the string's
+        "\"\"\"x\ny\x0cz\n\"\"\"\n", // a form feed inside a block docstring
+    }) |case| try t.expect(S.hasNoStatements(case));
+    // refused: a function, a struct, a decorator, a statement, a call, an indented line, a semicolon, an unclosed docstring or parenthesis
+    for ([_][]const u8{
+        "fn f():\n    pass\n",
+        "from .a import f\nfn g(): pass\n",
+        "struct S:\n    pass\n",
+        "@always_inline\n",
+        "x = 1\n",
+        "from .a import f; g()\n",
+        "from .a import f\n  g()\n",
+        "from .a import (f,\n    g\n",
+        "\"\"\"doc\nnever closed\n",
+        "\"\"\"doc\"\"\" x = 1\n",
+        "\"\"\"doc\nmore\"\"\" x = 1\n",
+        "from .a import (\n    f(),\n)\n",
+        "from .a import f \\\n    ; g()\n",
+        "from .a import f)\n",
+        "from .a\n",
+        "importing()\n",
+        "from a import b; pass\n", // a `;` alone: no call, no parenthesis to refuse it for another reason
+        "from a import (b,\n c); pass\n", // and after a parenthesised list
+        "# c\rx = 1\n", // a lone carriage return is a line break to some readers
+        "from a import b\rx = 1\n",
+        "from a import b\r", // ... also at the end of the text
+        "from a import b\r\r\n",
+        "# c\x0bx = 1\n", // a vertical tab or form feed outside a string likewise
+        "# c\x0cx = 1\n",
+        "from a import b\x0c\n",
+        "\x0cfrom a import b\n",
+        "\"\"\"doc\"\"\"\x0b\n",
+        "\"\"\"\ndoc\n\"\"\"\x0c\n",
+        "from a import (b,\n\x0bc)\n",
+        "\"\"\"a\"\"\" # k\x0cx = 1\n", // after a one-line docstring, in a comment
+        "\"\"\"a\nb\"\"\" # k\x0bx = 1\n", // after a block docstring closes, in a comment
+    }) |case| try t.expect(!S.hasNoStatements(case));
+}
+
+test "withEmptySources: only a source with no statement is listed 0/0; the rest stays missing" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var files: std.StringArrayHashMapUnmanaged(std.AutoArrayHashMapUnmanaged(usize, bool)) = .empty;
+    try S.addReport(a, &files, report_a);
+    const rows = try S.summarize(a, &files);
+    const expect = [_][]const u8{ "p/src/a.mojo", "p/src/__init__.mojo", "p/src/b.mojo" };
+    const srcs = [_][2][]const u8{ .{ "p/src/__init__.mojo", "init" }, .{ "p/src/b.mojo", "b" } };
+    const out = try S.withEmptySources(a, rows, &expect, &srcs, readFake);
+    try t.expectEqual(@as(usize, 3), out.len);
+    try t.expectEqualStrings("p/src/__init__.mojo", out[0].path);
+    try t.expectEqual(@as(usize, 0), out[0].total);
+    // b.mojo has a function and the report lacks it: still missing. A source with no --src entry is still missing.
+    try t.expectEqualStrings("p/src/b.mojo", S.missing(out, &expect).?);
+    try t.expectEqualStrings("p/src/__init__.mojo", S.missing(rows, &expect).?);
+    const nosrc = try S.withEmptySources(a, rows, &expect, &.{}, readFake);
+    try t.expectEqual(@as(usize, 2), nosrc.len);
+    // listed and counted, as 0/0: the total does not move
+    try t.expectEqualStrings("p/src/__init__.mojo 0/0 0%\np/src/a.mojo 1/3 33%\np/tests/test_a.mojo 1/1 100% (not counted)\ntotal 1/3 33%\n", try S.render(a, out, &.{ "p/src/a.mojo", "p/src/__init__.mojo" }));
+}

@@ -22,11 +22,11 @@ xz variants (not used): rustc 80351960 / 8426a3d1...dfc15; rust-std 29573972 / 0
 `rustc --version` must start with `rustc 1.95.0 (` and `cargo --version` with `cargo 1.95.0 (`; an action refuses the toolchain otherwise.
 Host floor: a Linux x86_64 kernel, glibc >= 2.34, and `libgcc_s.so.1` (rustc's driver needs it; it is not pinned yet).
 
-## mopm 0.0.20
+## mopm 0.0.25
 
-mopm 0.0.20 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.20, pinned in `rules/mopm/pins.bzl`. Its linux-x86_64 asset
-`mopm-0.0.20-linux-x86_64.tar.gz` is 1073134 bytes with sha256 `efa525027407f31cd83716a87858252acfed6674c84dc1091d1da111812d2c43`, the digest in the release's
-`SHA256SUMS` (downloaded and compared, 2026-10-21; the sigstore bundle of the tarball carries the same digest); it unpacks into `mopm-0.0.20-linux-x86_64/` holding `mopm` and `LICENSE`.
+mopm 0.0.25 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.25, pinned in `rules/mopm/pins.bzl`. Its linux-x86_64 asset
+`mopm-0.0.25-linux-x86_64.tar.gz` is 1074723 bytes with sha256 `1848ffbb6c3f3522e95c36d3d5f7d4260abb8dde2cb3c415b17ca94dc48edeac`, the digest in the release's
+`SHA256SUMS` (downloaded and compared, 2026-10-22; the sigstore bundle of the tarball carries the same digest); it unpacks into `mopm-0.0.25-linux-x86_64/` holding `mopm` and `LICENSE`.
 
 ## Mirrors
 
@@ -53,6 +53,24 @@ Every other pin's host is a single origin too. `ci/pin_mirrors_check.zig` holds 
 node, conda-forge and the Rust distribution servers have mirrors only as the prefix map above, or none; `registry.npmjs.org` rows carry an integrity hash). No mirror was
 found or checked for `static.rust-lang.org` (CloudFront) or `registry.npmjs.org`. Moving one of them to a release asset of its own is the same three steps as busybox: a held
 upload script, the pin's URL, and the allow-list line removed.
+
+## unpack (the program that unpacks the rest)
+
+Every action that unpacks an archive needs a program that can do it before anything else has been unpacked, and Buck2 has none of its own (`download_file` does not extract; the prelude's
+unarchive shells out to the host's `tar`). `tools/bootstrap` is that program: tar, tar.gz, tar.xz and zip, `--strip-components`, the archive's sha256 and size checked before anything is
+read, symbolic links and permission bits kept, and every entry that would leave the destination refused (`tools/bootstrap/README.md` lists the rules and the test that holds each).
+It is built by the pinned zig 0.15.2 for the three hosts and published as the assets `unpack-linux-x86_64`, `unpack-linux-aarch64` and `unpack-macos-aarch64` of a release of this
+repository whose tag is `UNPACK_TAG` in `rules/pins/bootstrap.bzl`; the rows there pin each asset by sha256 and size, as every other download here is.
+
+The rows are the bytes the source makes. The build is reproducible, so `//tools/bootstrap:pin_check_unit` (in `//ci:all`) builds the program for each host from the tree and requires
+the sha256 and size of the row to be its: a source change without new rows is red, and the red text names the values to write. A release asset is never replaced; the new programs go under
+the next tag (`unpack-2`, ...) and `UNPACK_TAG` and the rows change together. `tools/held/publish_unpack.zig` builds the three, checks them against the rows, and uploads them: a dry run
+unless `--apply --work DIR`. The tag ruleset lets only the release bot create a tag, so it runs as the dispatch workflow `.github/workflows/publish-unpack.yml`
+(`tools/bootstrap/README.md`, "Publishing"), by hand and from `main` only, and the bot's token is minted in its apply step alone. Until the assets exist the rows cannot be fetched on a machine whose cache lacks them, so no default target uses them
+(`//rules/pins:bootstrap_unpack_<host>`), and no rule runs `unpack` yet: moving the zig, Rust and Node unpacking onto it is the next work.
+
+macOS cannot be built or run on the farm. The `unpack_macos` job of `ci.yml` (GitHub's `macos-14` runner) builds the program with the pinned zig for macOS, runs its unit tests natively,
+unpacks the real darwin zig 0.12.0 tarball of `hosts.bzl` into a tree equal to the system tar's, and runs the zig it made; `ci/unpack_macos_check.zig` holds that job to the table.
 
 ## Other hosts (linux-aarch64, macos-aarch64)
 

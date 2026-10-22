@@ -228,25 +228,28 @@ llvm_tools_dist = rule(
 
 # ---- the toolchain ---------------------------------------------------------------
 
-_VERSION_OK = """set -eu
-GOT=$("$1" --version)
-# $2 is the full pinned line for a version of RUST_VERSIONS and `rustc <version> (` for one the user pinned.
-case "$GOT" in
-    "$2"*) ;;
-    *)
-        echo "rust_toolchain: pinned '$2' but the sysroot's rustc prints '$GOT'" >&2
-        exit 1
-        ;;
-esac
-echo "$GOT" > "$3"
-"""
-
 def _rust_toolchain_impl(ctx):
     bb = _file(ctx.attrs.busybox)
     sysroot = _file(ctx.attrs.sysroot)
     ok = ctx.actions.declare_output("rustc_version_ok")
+
+    # `check expect --prefix` (rules/check): `rustc --version` starts with `version_line` (the full pinned line for a version of RUST_VERSIONS and
+    # `rustc <version> (` for one the user pinned); then, and only then, `ok` holds what it printed.
     ctx.actions.run(
-        cmd_args(bb, "sh", "-c", _VERSION_OK, "sh", cmd_args(sysroot, "/bin/rustc", delimiter = ""), ctx.attrs.version_line, ok.as_output()),
+        cmd_args(
+            ctx.attrs._check_exe[RunInfo],
+            "expect",
+            "--prefix",
+            "--name",
+            "rust_toolchain",
+            "--want",
+            ctx.attrs.version_line,
+            "--out",
+            ok.as_output(),
+            "--",
+            cmd_args(sysroot, "/bin/rustc", delimiter = ""),
+            "--version",
+        ),
         category = "rustc_version",
         env = _ENV,
     )
@@ -277,6 +280,7 @@ rust_toolchain = rule(
         "version": attrs.string(),
         "version_line": attrs.string(),
         "zig": attrs.exec_dep(),
+        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
     },
 )
 

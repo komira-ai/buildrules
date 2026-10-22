@@ -1,4 +1,4 @@
-"""The tools the C/C++ toolchain refuses (rules/cxx/toolchain.bzl): one planted refusal each (ci/runners/BUCK) and one row of the bxl check (ci/negative.bzl).
+"""The tools the C/C++ toolchain refuses (rules/cxx/toolchain.bzl): one target each that must fail with its refusal (ci/runners/BUCK) and one row of the bxl check (ci/negative.bzl).
 
 The names are the `what` of the toolchain's `refuse(what)` calls, which its message prints: `cxx toolchain: <what> is not provided (see rules/cxx/toolchain.bzl)`.
 """
@@ -27,6 +27,6 @@ REFUSED = [
     "strip",
 ]
 
-# The target name of a tool's planted refusal: `refused_dist_lto_planner`.
+# The target name of a tool's refusal: `refused_dist_lto_planner`.
 def refusal_target(what):
     return "refused_" + what.replace(" ", "_")

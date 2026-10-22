@@ -1,6 +1,6 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # toolbox (README.md): the small programs a test expects on its PATH (rm, mkdir, sleep, echo, cat, env, printenv, true, false) as one static
-# Zig executable, built by the pinned zig behind its unit tests. No rule uses it yet.
+# Zig executable, built by the pinned zig behind its unit tests. Only the gate stand-ins of ci/mojo_gate run it so far (README.md).
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_test")
 

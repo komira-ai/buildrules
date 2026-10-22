@@ -7,6 +7,8 @@
       base_sys/            the other `-sys` package, a workspace member of probe_sys
     sys_app/               imports probe_sys from the registry stand-in: both static archives come out of the `.conda` files, with no `natives` in its BUCK file
     copy_of_base/          base's sources at another path; `:same_bytes` fails unless the two `.mojoc` files are equal
+    reexport/              a package whose `__init__.mojo` only re-exports (a docstring and `from .ops import ...`): the Mojo coverage report omits it and `:coverage` lists it `0/0`
+    reexport_unused/       PLANTED DEFECT: the same plus a function nothing calls; `:coverage` must stay red with "is in no report" (ci/negative.bzl, COVERAGE_REDS)
     mopm-toolchain.toml    the versions every package here is built with (found by walking up)
 
     buildrules mojo sync               # after a change to a mopm.toml, mopm.lock, mopm-toolchain.toml or any source
@@ -25,4 +27,4 @@ a lock that disagrees with a `.conda` fails the download's check, and one that d
 
 The URL in the lock is a placeholder channel; a machine that has the file points the download at it in the `.buckconfig.local` of the cell that declares it, for example
 `[buildrules] url_map = https://conda.mopm.dev/=http://mirror.invalid/channel/` in the root `.buckconfig.local` (the sha256 is still checked). The mopm tarball
-(`rules/mopm/pins.bzl`, the published mopm 0.0.20) is a download of the `toolchains` cell from its release URL and needs no mirror.
+(`rules/mopm/pins.bzl`, the published mopm 0.0.25) is a download of the `toolchains` cell from its release URL and needs no mirror.

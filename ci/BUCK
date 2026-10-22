@@ -71,6 +71,7 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:prebuilt_unit_extracts_its_own_static_natives",
     "//rules/core/tests:all",
     "//rules/zig/tests:all",
+    "//cli:version_stamps",
     "//rules/cxx/tests:all",
     "//rules/node/tests:all",
     "//rules/coverage/tests:all",
@@ -93,6 +94,9 @@ group(name = "mojo", deps = [
     "//examples/mojo/copy_of_base:ci",
     "//examples/mojo/copy_of_base:coverage",
     "//examples/mojo/copy_of_base:same_bytes",
+    "//examples/mojo/reexport:ci",
+    "//examples/mojo/reexport:coverage",
+    "//examples/mojo/reexport_unused:ci",
     "//examples/mojo/registry/cnative:ci",
     "//examples/mojo/registry/cnative:conda",
     "//examples/mojo/registry/probe_sys:ci",
@@ -131,7 +135,7 @@ actionlint_check(
     name = "workflow_lint",
     exec_compatible_with = LINUX_X86_64,
     actionlint = "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
-    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml", "//:site.yml", "//:site-publish.yml", "//:advisories.yml"],
+    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml", "//:site.yml", "//:site-publish.yml", "//:advisories.yml", "//:publish-unpack.yml"],
 )
 
 zig_test(
@@ -222,6 +226,24 @@ zig_test(
     },
 )
 
+# The publish-unpack workflow (.github/workflows/publish-unpack.yml, tools/bootstrap/README.md): actionlint accepts it (above), and ci/publish_unpack_check.zig holds it to a manual
+# trigger and nothing else, the main-ref guard, a read-only token, the release bot's token minted by release.yml's own step and only when `apply` is true (and given to the last step
+# alone), the pinned buck2, local mode, and no forcing or clobbering. It reuses the rules of workflow_check.zig and the job parser of release_check.zig, and each of its rules is tested against an edited copy of the file that breaks it.
+zig_test(
+    name = "publish_unpack_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "publish_unpack_check.zig",
+    imports = ["workflow_check.zig", "release_check.zig"],
+    data = {
+        ".github/workflows/publish-unpack.yml": "//:publish-unpack.yml",
+        "tools/buck2": "//:buck2.pin",
+        # the tests of the two files this one imports run here too, and release.yml is where the mint step is read from
+        ".github/workflows/release.yml": "//:release.yml",
+        ".github/workflows/ci.yml": "//:ci.yml",
+        "ci/BUCK": "BUCK",
+    },
+)
+
 # The hosts of the pinned downloads (docs/pins.md, "Mirrors"): ci/pin_mirrors_check.zig requires every pin table's URL to be on github.com (the busybox mirror is a release asset of this
 # repository, uploaded by tools/held/mirror-busybox.sh) or its host to be listed in the check with the reason it has no mirror yet. It reads the text of the tables and the held script and
 # plants a defect for each of its rules.
@@ -269,8 +291,10 @@ no_shell(
     packages = [
         "//:scrub_files",
         "//beta:scrub_files",
+        "//ci/cargo_run:scrub_files",
         "//ci/mojo_gate:scrub_files",
         "//ci/negative:scrub_files",
+        "//ci/planted:scrub_files",
         "//ci/runners:scrub_files",
         "//ci:scrub_files",
         "//cli:scrub_files",
@@ -279,6 +303,8 @@ no_shell(
         "//examples/hello:scrub_files",
         "//examples/isa:scrub_files",
         "//examples/mojo/copy_of_base:scrub_files",
+        "//examples/mojo/reexport:scrub_files",
+        "//examples/mojo/reexport_unused:scrub_files",
         "//examples/mojo/registry/cnative:scrub_files",
         "//examples/mojo/registry/probe_sys/base_sys:scrub_files",
         "//examples/mojo/registry/probe_sys:scrub_files",
@@ -327,6 +353,7 @@ no_shell(
         "//rules:scrub_files",
         "//site:scrub_files",
         "toolchains//:scrub_files",
+        "//tools/bootstrap:scrub_files",
         "//tools/channels:scrub_files",
         "//tools/deploy:scrub_files",
         "//tools/harness:scrub_files",
@@ -341,7 +368,7 @@ no_shell(
     require = ["BUCK", "ci/no_shell_check.zig", "ci/no_shell_allow.tsv", "rules/zig/zig.bzl", "site/static/install.sh", "tools/held/BUCK", "examples/crates/Cargo.toml", ".github/workflows/ci.yml"],
 )
 
-group(name = "workflow", deps = [":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":pin_mirrors_check", "//ci/negative:negative_check"])
+group(name = "workflow", deps = [":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":publish_unpack_check", ":pin_mirrors_check", ":unpack_macos_check", ":unpack_pin_check", "//ci/negative:negative_check"])
 
 # The coverage of every package with Zig unit tests (rules/coverage/README.md, "Zig coverage"), each held to its floor (`coverage_floor.txt` beside its
 # BUCK file) both ways: a fall fails, and so does a rise the floor has not been raised to. Building this builds the tests again under kcov and with block
@@ -359,6 +386,7 @@ group(name = "floors", deps = [
     "//rules/rust:coverage_floor",
     "//rules/rust:coverage_crate_patch_floor",
     "//rules/toolbox:coverage_floor",
+    "//tools/bootstrap:coverage_floor",
     "//tools/channels:coverage_floor",
     "//tools/deploy:coverage_floor",
     "//tools/release:coverage_floor",
@@ -373,6 +401,8 @@ group(name = "floors", deps = [
 # unlike the rest of the Mojo examples (//ci:mojo).
 group(name = "mojo_tables", deps = [
     "//examples/mojo/copy_of_base:table",
+    "//examples/mojo/reexport:table",
+    "//examples/mojo/reexport_unused:table",
     "//examples/mojo/registry/cnative:table",
     "//examples/mojo/registry/probe_sys:table",
     "//examples/mojo/registry/probe_sys/base_sys:table",
@@ -388,6 +418,10 @@ group(name = "mojo_tables", deps = [
 group(name = "all", deps = [
     ":matrix",
     "//ci/mojo_gate:consumer_of_green",
+    "//ci/cargo_run:env_test",
+    "//ci/cargo_run:bin_test",
+    "//ci/planted:c_check_of_its_stdout",
+    "//ci/planted:table_in_sync",
     "//ci/runners:zig_exe_runs",
     "//ci/runners:c_exe_runs",
     "//ci/runners:c_shared_runs",
@@ -412,6 +446,19 @@ group(name = "all", deps = [
     "//infra/site:test",
     "//infra/site:typecheck",
     "//tools/scrub:scrub",
+    "//tools/bootstrap:unpack",
+    "//tools/bootstrap:unpack_linux_x86_64",
+    "//tools/bootstrap:unpack_linux_aarch64",
+    "//tools/bootstrap:unpack_macos_aarch64",
+    "//tools/bootstrap:linux_x86_64_is_x86_64_linux_musl",
+    "//tools/bootstrap:linux_aarch64_is_aarch64_linux_musl",
+    "//tools/bootstrap:macos_aarch64_is_aarch64_macos",
+    "//tools/bootstrap:real_unit",
+    "//tools/bootstrap:xz_speed_unit",
+    "//tools/bootstrap:mem_zig_xz_unit",
+    "//tools/bootstrap:mem_rustc_xz_unit",
+    "//tools/bootstrap:mem_rustc_gz_unit",
+    "//tools/held:publish_unpack",
     "//tools/release:release",
     "//tools/stage:stage",
     "//tools/channels:channels",
@@ -481,5 +528,22 @@ zig_coverage(
     test_targets = [":workflow_check", ":release_check", ":stages_check", ":no_shell_unit"],
     expect = ["ci/workflow_check.zig", "ci/release_check.zig", "ci/stages_check.zig", "ci/no_shell_check.zig"],
 )
+
+# The `unpack_macos` job of ci.yml (tools/bootstrap): GitHub's macos-14 runner builds the program, runs its tests and unpacks the real darwin zig tarball; ci/unpack_macos_check.zig
+# holds the job's urls and digests to rules/pins/hosts.bzl and every step of it to its text, and plants a defect for each.
+zig_test(
+    name = "unpack_macos_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "unpack_macos_check.zig",
+    data = {
+        ".github/workflows/ci.yml": "//:ci.yml",
+        "rules/pins/hosts.bzl": "//rules/pins:hosts.bzl",
+        "rules/pins/bootstrap.bzl": "//rules/pins:bootstrap.bzl",
+    },
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+# The pins of the unpack program are the programs this tree builds (tools/bootstrap:pin_check_unit): a source change without new rows, and a new release tag, is red.
+group(name = "unpack_pin_check", deps = ["//tools/bootstrap:pin_check_unit"])
 
 scrub_files()

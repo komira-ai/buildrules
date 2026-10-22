@@ -1,6 +1,8 @@
 # check
 
-What a rule's build action runs instead of a shell script, as one static Zig executable. The runner rules start zig through `run` (`zig_exe`, `c_exe`, `c_shared`, Node's `c_shared_lib`, the Rust toolchain's
+What a rule's build action runs instead of a shell script, as one static Zig executable. The checks and markers of the rules run it: `run_check`, `c_check`, `mojo_same`, the run and the gate of a Mojo test,
+`rust_test` and the Rust test runs (`test_run`, the welded copy), the pinned `rustc --version` and the cargo table check; ci/planted holds that each is
+red when its check fails. The runner rules start zig through `run` (`zig_exe`, `c_exe`, `c_shared`, Node's `c_shared_lib`, the Rust toolchain's
 `zig_exe`) and the C/C++ toolchain's refusals are `run --refuse`; the section "What differs: the zig and cc runners" below says what changed. Every command writes its output
 file only when it succeeded, and whole (a temporary file renamed into place). Exit status: 0 done; 1 the check failed; 2 the command line is
 wrong; for `run` and `marker` the program's own status (127 not there, 126 not runnable, 128+signal when a signal ended it).
@@ -23,6 +25,21 @@ absolute path of SUB in the scratch directory, made); `--tmpdir` (TMPDIR is `$BU
 directory it names is made). `--scratch NAME` makes a private directory (`$BUCK_SCRATCH_PATH/NAME`, or `.buildrules_NAME` without one), emptied
 before the run and removed after. The program runs in `--cwd`, or the directory `--cwd-env NAME` names, or the working directory. It is never
 looked for in a `PATH`: its name must contain a `/`, and a relative one is made absolute first.
+
+## What differs from the shell script it replaced
+
+The rules that moved from `sh -c` to `check` (`run_check`, `c_check`, `mojo_same`, the Mojo and Rust test runs, the welds, the version and table checks) see these differences:
+
+- The program gets the environment the action has (on the farm only `HOME`, `HOSTNAME` and `BUCK_SCRATCH_PATH`), plus the options above. A shell set `PWD`, `OLDPWD` and `SHLVL` for what it ran, and `PWD` was the package directory for a cargo test after its `cd`; `check` sets none of them, so they are unset. A test that reads `PWD` now finds it unset and must use its working directory.
+- In capture mode (`expect`, `marker --capture`) the program's stdin is empty. A shell script left it as the action's own.
+- `expect` writes the bytes the program printed, less trailing newlines, and one newline. The old `echo "$GOT" > out` took an output of exactly `-n` for its own flag (`-n x` was printed as it is) and dropped it; `check` keeps it. (The pinned busybox `echo` did not interpret backslash escapes, and neither does `check`.)
+- Exit status: `run_check` and the version check exited with the program's status when it failed (N, or 127 when it was not found); `expect` exits 1 for any failure. (`c_check` always exited 1, and still does.)
+- A failed `marker` exits with the test's own status. The Mojo run already did; the cargo and Rust test scripts exited 1. What is new in the Mojo run is the `TEST FAILED: <program>` line on stderr.
+- The cargo test marker (the test's output, `--stamp-log`) is all of stdout and then all of stderr; the script interleaved them as they came.
+- A file `digest` cannot read says `cannot read`; the script said `STALE`, with an empty hash.
+- The `same` message (the first difference) is on stderr; `cmp` wrote its own.
+- The wording of every message changed. The cases of ci/planted pin the new wording (ci/negative.bzl, `PLANTED`), so a change of it is a change of those rows.
+- The rules no longer take a `busybox` attribute: it is removed from `run_check`, `c_check`, `mojo_same`, `mojo_test_run_rule`, `mojo_gated_lib_rule` and the gate fixture (ci/mojo_gate). A BUCK file that still passes `busybox =` to one of them is an error at once, when the graph is loaded.
 
 ## Tests
 
@@ -68,5 +85,5 @@ The rules no longer take a `busybox` attribute: `zig_exe`, `c_exe`, `c_shared`, 
 
 `//ci/runners` (built by `//ci:all`) builds each runner rule against a stand-in zig (`ci/runners/stand_in.zig`) that accepts only the command line and the
 environment the rule is meant to give: a dropped or changed argument, a missing or misplaced cache directory or `HOME`, a wrong scratch name, or a working directory
-that is not the action's, makes the build red, and the message names the difference. `//ci:negative.bxl:check` also builds the planted defects there (`RUNNERS` in
-ci/negative.bzl) and requires each one red for its reason: a `zig_exe` given another optimize mode and another strip flag, and every tool the C/C++ toolchain refuses.
+that is not the action's, makes the build red, and the message names the difference. `//ci:negative.bxl:check` also builds the targets there that must fail (`RUNNERS` in
+ci/negative.bzl) and requires each to fail with its message: a `zig_exe` given another optimize mode and another strip flag, and every tool the C/C++ toolchain refuses.

@@ -1,0 +1,8 @@
+[package]
+name = "reexport_unused"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[targets]
+lib = { path = "src/reexport_unused" }
+tests = ["tests"]
