@@ -229,7 +229,7 @@ pub fn read(a: std.mem.Allocator, lock_text: []const u8, diag: *Diag) ![]Entry {
             .libc = npm_cmd.strList(a, o, "libc", diag, where),
         });
     }
-    try checkBundled(a, list.items, bundled.items, diag);
+    try checkBundled(a, pk.object, list.items, bundled.items, diag);
     std.mem.sort(Entry, list.items, {}, lessEntry);
     var out = std.ArrayList(Entry).empty;
     for (list.items) |en| {
@@ -251,7 +251,34 @@ fn parentPath(path: []const u8) ?[]const u8 {
 }
 
 /// Every bundled path must have, going up through bundled paths only, a parent that is an accepted package with a tarball.
-fn checkBundled(a: std.mem.Allocator, accepted: []const Entry, bundled: []const []const u8, diag: *Diag) !void {
+/// True when the lock entry at `parent` lists the package `child` among the packages it bundles: `bundleDependencies` is `true` (all of
+/// its dependencies) or an array holding the name. npm decides what is bundled from the PARENT's list, never from the child's own
+/// `inBundle` flag: a child the parent does not list is fetched from the registry by name and version, with nothing pinning it.
+fn parentBundles(pk: std.json.ObjectMap, parent: []const u8, child: []const u8) bool {
+    const p = pk.get(parent) orelse return false;
+    if (p != .object) return false;
+    const list = p.object.get("bundleDependencies") orelse p.object.get("bundledDependencies") orelse return false;
+    switch (list) {
+        .bool => |b| return b,
+        .array => |items| {
+            for (items.items) |item| if (item == .string and std.mem.eql(u8, item.string, child)) return true;
+            return false;
+        },
+        else => return false,
+    }
+}
+
+/// The package name of a lock path: what follows its last `node_modules/`.
+fn lastName(path: []const u8) []const u8 {
+    const marker = "node_modules/";
+    const i = std.mem.lastIndexOf(u8, path, marker) orelse return path;
+    return path[i + marker.len ..];
+}
+
+/// Every bundled path must, going up one level at a time, have an IMMEDIATE parent that is in the lock and lists it in its
+/// `bundleDependencies`, each parent in turn being a bundled path with the same property, until a parent is an accepted package with a
+/// tarball. What this does not prove: that the listed child is really inside the parent's tarball (see `verify-pins`).
+fn checkBundled(a: std.mem.Allocator, pk: std.json.ObjectMap, accepted: []const Entry, bundled: []const []const u8, diag: *Diag) !void {
     var real = std.StringHashMap(void).init(a);
     for (accepted) |e| try real.put(e.path, {});
     var bundled_set = std.StringHashMap(void).init(a);
@@ -259,11 +286,12 @@ fn checkBundled(a: std.mem.Allocator, accepted: []const Entry, bundled: []const 
     for (bundled) |p| {
         var cur = p;
         const reaches = while (parentPath(cur)) |up| {
+            if (!parentBundles(pk, up, lastName(cur))) break false;
             if (real.contains(up)) break true;
             if (!bundled_set.contains(up)) break false;
             cur = up;
         } else false;
-        if (!reaches) diag.add("packages[{s}]: a bundled package whose parent chain does not reach a package that has a tarball", .{p});
+        if (!reaches) diag.add("packages[{s}]: a bundled package whose parent chain does not reach a package that has a tarball and lists it in bundleDependencies", .{p});
     }
 }
 

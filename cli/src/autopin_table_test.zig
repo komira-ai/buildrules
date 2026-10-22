@@ -759,10 +759,10 @@ test "npm names: a name may not start with a hyphen (a bare name, the scope, or 
 /// What an npm 10 lock holds for aws-cdk-lib: the package with its tarball and `bundleDependencies`, and under it the packages it bundles
 /// (`inBundle`, no `resolved`, no `integrity`), some of them with bundled packages of their own.
 const cdk_lib = "\"node_modules/aws-cdk-lib\":{\"version\":\"2.150.0\",\"resolved\":\"" ++ reg ++ "aws-cdk-lib/-/aws-cdk-lib-2.150.0.tgz\",\"integrity\":\"" ++ sri_a ++
-    "\",\"bundleDependencies\":[\"@balena/dockerignore\",\"ajv\",\"table\"],\"license\":\"Apache-2.0\",\"engines\":{\"node\":\">= 14.15.0\"},\"peerDependencies\":{\"constructs\":\"^10.0.0\"}}";
+    "\",\"bundleDependencies\":[\"@balena/dockerignore\",\"ajv\",\"table\",\"@scope/inner\"],\"license\":\"Apache-2.0\",\"engines\":{\"node\":\">= 14.15.0\"},\"peerDependencies\":{\"constructs\":\"^10.0.0\"}}";
 const cdk_bundled = ",\"node_modules/aws-cdk-lib/node_modules/@balena/dockerignore\":{\"version\":\"1.0.2\",\"inBundle\":true,\"license\":\"Apache-2.0\"}" ++
     ",\"node_modules/aws-cdk-lib/node_modules/ajv\":{\"version\":\"8.17.1\",\"inBundle\":true,\"license\":\"MIT\",\"dependencies\":{\"fast-deep-equal\":\"^3.1.3\"}}" ++
-    ",\"node_modules/aws-cdk-lib/node_modules/table\":{\"version\":\"6.8.2\",\"inBundle\":true,\"license\":\"BSD-3-Clause\"}" ++
+    ",\"node_modules/aws-cdk-lib/node_modules/table\":{\"version\":\"6.8.2\",\"inBundle\":true,\"bundleDependencies\":[\"ajv\"],\"license\":\"BSD-3-Clause\"}" ++
     ",\"node_modules/aws-cdk-lib/node_modules/table/node_modules/ajv\":{\"version\":\"8.12.0\",\"inBundle\":true,\"license\":\"MIT\"}" ++
     ",\"node_modules/aws-cdk-lib/node_modules/@scope/inner\":{\"version\":\"1.0.0\",\"inBundle\":true}";
 
@@ -800,4 +800,71 @@ test "lock: a bundled package under a real one is still refused when it is a lin
     try expectRefused("," ++ cdk_lib ++ ",\"node_modules/aws-cdk-lib/node_modules/b\":{\"version\":\"1.0.0\",\"bundled\":true}", "node_modules/aws-cdk-lib/node_modules/b");
     // A package of the lock that is not bundled and has no tarball stays refused, whatever is above it.
     try expectRefused("," ++ cdk_lib ++ ",\"node_modules/aws-cdk-lib/node_modules/b\":{\"version\":\"1.0.0\"}", "node_modules/aws-cdk-lib/node_modules/b");
+}
+
+const cdk_real_open = "\"node_modules/aws-cdk-lib\":{\"version\":\"2.150.0\",\"resolved\":\"" ++ reg ++ "aws-cdk-lib/-/aws-cdk-lib-2.150.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"";
+const child_b = ",\"node_modules/aws-cdk-lib/node_modules/b\":{\"version\":\"6.6.6\",\"inBundle\":true}";
+
+test "lock: a bundled flag the parent does not back is refused (npm reads bundleDependencies of the parent, never the child's flag)" {
+    // The parent has no bundleDependencies at all: npm would fetch b from the registry by name and version, unpinned.
+    try expectRefused("," ++ cdk_real_open ++ "}" ++ child_b, "bundleDependencies");
+    // The parent lists only another package.
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundleDependencies\":[\"other\"]}" ++ child_b, "bundleDependencies");
+    // An empty list, a list of non-strings, a string, false, and the other spelling with the wrong name.
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundleDependencies\":[]}" ++ child_b, "bundleDependencies");
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundleDependencies\":[7,null]}" ++ child_b, "bundleDependencies");
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundleDependencies\":\"b\"}" ++ child_b, "bundleDependencies");
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundleDependencies\":false}" ++ child_b, "bundleDependencies");
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundledDependencies\":[\"other\"]}" ++ child_b, "bundleDependencies");
+}
+
+test "lock: a parent that lists the child (an array holding its name, true, or the other spelling) backs the flag" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const parents = [_][]const u8{
+        ",\"bundleDependencies\":[\"b\"]}",
+        ",\"bundleDependencies\":[\"other\",\"b\"]}",
+        ",\"bundleDependencies\":true}",
+        ",\"bundledDependencies\":[\"b\"]}",
+    };
+    inline for (parents) |tail| {
+        var diag = Diag.init(a);
+        const entries = try readLock(a, try lockWith(a, "," ++ cdk_real_open ++ tail ++ child_b), &diag);
+        try t.expectEqual(@as(usize, 0), diag.count());
+        try t.expectEqual(@as(usize, 3), entries.len);
+    }
+}
+
+test "lock: a scoped child is listed by its full name, and a name that is only the part after the slash is not enough" {
+    const child = ",\"node_modules/aws-cdk-lib/node_modules/@s/inner\":{\"version\":\"1.0.0\",\"inBundle\":true}";
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var diag = Diag.init(a);
+    _ = try readLock(a, try lockWith(a, "," ++ cdk_real_open ++ ",\"bundleDependencies\":[\"@s/inner\"]}" ++ child), &diag);
+    try t.expectEqual(@as(usize, 0), diag.count());
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundleDependencies\":[\"inner\"]}" ++ child, "bundleDependencies");
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundleDependencies\":[\"@t/inner\"]}" ++ child, "bundleDependencies");
+}
+
+test "lock: in a chain every link must be listed by its own parent" {
+    const mid = ",\"node_modules/aws-cdk-lib/node_modules/mid\":{\"version\":\"1.0.0\",\"inBundle\":true";
+    const leaf = ",\"node_modules/aws-cdk-lib/node_modules/mid/node_modules/leaf\":{\"version\":\"1.0.0\",\"inBundle\":true}";
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var diag = Diag.init(a);
+    _ = try readLock(a, try lockWith(a, "," ++ cdk_real_open ++ ",\"bundleDependencies\":[\"mid\"]}" ++ mid ++ ",\"bundleDependencies\":[\"leaf\"]}" ++ leaf), &diag);
+    try t.expectEqual(@as(usize, 0), diag.count());
+    // mid is listed by the real package, but leaf is not listed by mid.
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundleDependencies\":[\"mid\"]}" ++ mid ++ "}" ++ leaf, "leaf");
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundleDependencies\":[\"mid\"]}" ++ mid ++ ",\"bundleDependencies\":[\"other\"]}" ++ leaf, "leaf");
+    // leaf is listed by mid, but mid is not listed by the real package: the whole chain is refused (leaf and mid both).
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundleDependencies\":[\"other\"]}" ++ mid ++ ",\"bundleDependencies\":[\"leaf\"]}" ++ leaf, "leaf");
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundleDependencies\":[\"other\"]}" ++ mid ++ ",\"bundleDependencies\":[\"leaf\"]}" ++ leaf, "mid");
+}
+
+test "lock: an absent middle node is not bridged (real/node_modules/mid/node_modules/b with mid missing)" {
+    try expectRefused("," ++ cdk_real_open ++ ",\"bundleDependencies\":[\"mid\",\"b\"]},\"node_modules/aws-cdk-lib/node_modules/mid/node_modules/b\":{\"version\":\"1.0.0\",\"inBundle\":true}", "does not reach");
 }

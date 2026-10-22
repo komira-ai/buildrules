@@ -663,10 +663,11 @@ test "compute: a lock with the packages aws-cdk-lib bundles is read, pins nothin
         const h = try kit.Harness.create();
         defer h.destroy();
         const cdk = [_]Pkg{ .{ .name = "left-pad", .version = "1.3.0" }, .{ .name = "aws-cdk-lib", .version = "2.150.0" } };
-        const bundled = ",\"node_modules/aws-cdk-lib/node_modules/table\":{\"version\":\"6.8.2\",\"inBundle\":true},\"node_modules/aws-cdk-lib/node_modules/ajv\":{\"version\":\"8.17.1\",\"inBundle\":true,\"license\":\"MIT\"},\"node_modules/aws-cdk-lib/node_modules/table/node_modules/ajv\":{\"version\":\"8.12.0\",\"inBundle\":true}";
+        const cdk_lock_entry = ",\"node_modules/aws-cdk-lib\":{\"version\":\"2.150.0\",\"resolved\":\"" ++ reg ++ "aws-cdk-lib/-/aws-cdk-lib-2.150.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\",\"bundleDependencies\":[\"ajv\",\"table\"]}";
+        const bundled = ",\"node_modules/aws-cdk-lib/node_modules/table\":{\"version\":\"6.8.2\",\"inBundle\":true,\"bundleDependencies\":[\"ajv\"]},\"node_modules/aws-cdk-lib/node_modules/ajv\":{\"version\":\"8.17.1\",\"inBundle\":true,\"license\":\"MIT\"},\"node_modules/aws-cdk-lib/node_modules/table/node_modules/ajv\":{\"version\":\"8.12.0\",\"inBundle\":true}";
         if (comptime std.mem.eql(u8, kind, "buildrules-lock")) try syncedBuildrules(h, "site", &cdk) else try syncedPins(h, "site", &cdk);
         try event(h);
-        try h.put("site/package-lock.json", try lockJson(h.a(), &cdk, bundled));
+        try h.put("site/package-lock.json", try lockJson(h.a(), cdk[0..1], cdk_lock_entry ++ bundled));
         fetches = 0;
         const r = runCompute(h, "artifact", &.{"site=" ++ kind});
         errdefer std.debug.print("err: {s}\n", .{r.err});
