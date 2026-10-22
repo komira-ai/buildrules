@@ -11,7 +11,7 @@ def version_stamp(content, who = "cli_version", refuse = fail):
     """The source `version.zig` holds for a VERSION file with `content`: one `pub const release = "<MAJOR.MINOR>-dev";` line per line of
     the file that is exactly `<digits>.<digits>` (a final newline or none; no spaces, no carriage return). The output always ends in a
     newline. It is identical to what the sed this replaces wrote for a VERSION whose line ends in a newline (the shipped file does); for a
-    VERSION without a final newline busybox sed omitted the trailing newline and this writes it. The file must be valid UTF-8.
+    VERSION without a final newline the sed omitted the trailing newline and this writes it. The file must be valid UTF-8.
     A file with no such line, or with two, is refused; the sed wrote an empty file for the first and two declarations for the second, and
     the program did not compile with either. Returns None after a refusal."""
     found = [line for line in content.split("\n") if regex_match("^[0-9]+\\.[0-9]+$", line)]
