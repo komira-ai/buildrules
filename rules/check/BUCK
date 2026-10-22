@@ -1,7 +1,7 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # check (README.md): what a rule's build action runs instead of a shell script: start a program in a prepared environment (run), compare its output
 # (expect), write a marker only when a test passed (marker), hash files (digest), compare files (same), copy a file (copy), audit machine code (isa).
-# One static Zig executable, built by the pinned zig behind its unit tests. No rule uses it yet.
+# One static Zig executable, built by the pinned zig behind its unit tests. The runner rules (zig_exe, c_exe, c_shared, ...) start zig with it (README.md).
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_test")
 
@@ -46,9 +46,11 @@ zig_test(
     zig = _ZIG,
 )
 
-# The executable, built only when the unit tests passed.
+# The executable, built only when the unit tests passed. Every other zig_exe is built by `check run`, so this one is built by zig directly (`bootstrap`): a
+# build that needed `check` to build `check` could not start. The same holds for the toolbox the unit tests start (rules/toolbox).
 zig_exe(
     name = "check",
+    bootstrap = True,
     src = "check.zig",
     imports = _SRCS,
     unit_tests = [":" + name + "_unit" for name in _TESTS] + [_ZIG_VERSION],

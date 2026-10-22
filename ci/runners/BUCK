@@ -1,0 +1,97 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/cxx:defs.bzl", "c_exe", "c_shared")
+load("@buildrules//rules/node:defs.bzl", "c_shared_lib")
+load("@buildrules//rules/rust:toolchain.bzl", rust_zig_exe = "zig_exe")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe")
+load(":fixture.bzl", "refusal_run", "stand_in_zig")
+load(":tools.bzl", "REFUSED", "refusal_target")
+
+# The runner rules (zig_exe, c_exe, c_shared, node's c_shared_lib, the Rust toolchain's zig_exe) start zig with `check run`, and no shell. Each is built here against
+# a stand-in zig (stand_in.zig) that accepts only the command line and the environment the rule is meant to give (its header lists them): a rule that drops an
+# argument, a cache directory or HOME, or runs zig in another directory, is red here, for the difference the stand-in says. `//ci:all` builds these.
+zig_exe(
+    name = "stand_in",
+    src = "stand_in.zig",
+)
+
+stand_in_zig(
+    name = "stand_in_dist",
+    exe = ":stand_in",
+)
+
+zig_exe(
+    name = "zig_exe_runs",
+    src = "program.zig",
+    visibility = ["//ci:"],
+    zig = ":stand_in_dist",
+)
+
+c_exe(
+    name = "c_exe_runs",
+    exec_compatible_with = LINUX_X86_64,
+    src = "stand_in.c",
+    visibility = ["//ci:"],
+    zig = ":stand_in_dist",
+)
+
+c_shared(
+    name = "c_shared_runs",
+    exec_compatible_with = LINUX_X86_64,
+    soname = "libstand_in.so.1",
+    src = "stand_in.c",
+    visibility = ["//ci:"],
+    zig = ":stand_in_dist",
+)
+
+c_shared_lib(
+    name = "node_c_shared_runs",
+    copts = ["-DSTAND_IN=1"],
+    srcs = ["stand_in.c"],
+    visibility = ["//ci:"],
+    zig = ":stand_in_dist",
+)
+
+rust_zig_exe(
+    name = "rust_zig_exe_runs",
+    exec_compatible_with = LINUX_X86_64,
+    src = "program.zig",
+    visibility = ["//ci:"],
+    zig = ":stand_in_dist",
+)
+
+# PLANTED DEFECTS. Each target below must be red, for the reason ci/negative.bzl (`RUNNERS`) holds it to; they are excluded from the wildcard build (ci/all.bzl) and
+# `buck2 bxl //ci:negative.bxl:check` (a part of //ci:completeness.bxl:check) builds each and requires the failure.
+#
+# zig_exe given another optimize mode, and another strip flag, than the stand-in expects: the rule writes what its attributes say, and the stand-in holds the defaults.
+zig_exe(
+    name = "zig_exe_optimized_for_debug",
+    optimize = "Debug",
+    src = "program.zig",
+    zig = ":stand_in_dist",
+)
+
+zig_exe(
+    name = "zig_exe_not_stripped",
+    src = "program.zig",
+    strip = False,
+    zig = ":stand_in_dist",
+)
+
+# Every tool the C/C++ toolchain does not provide, started with the arguments the prelude gives a tool: the action must fail with the toolchain's message and not with
+# a complaint about the arguments (`check run --refuse MESSAGE --`).
+[
+    refusal_run(
+        name = refusal_target(what),
+        tool = what,
+    )
+    for what in REFUSED
+]
+
+# The interpreter of the Python bootstrap toolchain, which the toolchain does not provide either.
+refusal_run(
+    name = "refused_python_interpreter",
+    tool = "python",
+)
+
+scrub_files()

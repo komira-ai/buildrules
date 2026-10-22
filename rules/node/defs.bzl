@@ -28,7 +28,7 @@ digest.
 """
 
 load("@buildrules//rules/core:test_runtime.bzl", "data_map")
-load("@buildrules//rules/zig:zig.bzl", "busybox_sh")
+load("@buildrules//rules/zig:zig.bzl", "busybox_sh", "zig_run")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/core:rerun.bzl", "RERUN_ATTRS", "rerun_env", "rerun_info")
 load(":checks.bzl", "check_data_is_not_a_source", "check_exe", "check_expect_error", "check_not_a_package", "check_not_listed", "check_not_own_dep", "check_package_pin")
@@ -359,15 +359,6 @@ _esbuild_bundle = rule(
 
 # ---- c_shared_lib ------------------------------------------------------------
 
-_SHARED_SCRIPT = _PRELUDE + """
-ZIG=$(abs "$1"); OUT=$(abs "$2"); TRIPLE="$3"; shift 3
-mkdir -p "$T/zig-global" "$T/zig-local" "$T/home"
-ZIG_GLOBAL_CACHE_DIR="$T/zig-global"; ZIG_LOCAL_CACHE_DIR="$T/zig-local"; HOME="$T/home"
-export ZIG_GLOBAL_CACHE_DIR ZIG_LOCAL_CACHE_DIR HOME
-"$ZIG/zig" cc -target "$TRIPLE" -shared -fPIC -O2 -fvisibility=hidden -Wall -Werror -Wl,-z,undefs -o "$OUT" "$@"
-rm -rf "$T"
-"""
-
 def _c_shared_lib_impl(ctx):
     staged = ctx.actions.copied_dir(ctx.label.name + ".srcs", {s.short_path: s for s in ctx.attrs.srcs + ctx.attrs.headers})
     out = ctx.actions.declare_output(ctx.attrs.out or "lib{}.so".format(ctx.label.name))
@@ -377,8 +368,26 @@ def _c_shared_lib_impl(ctx):
     args.extend(ctx.attrs.copts)
     for s in ctx.attrs.srcs:
         args.append(staged.project(s.short_path))
+    # `check run` (rules/check): zig starts in the action's working directory, with the output named by its path as given (the old script made it absolute).
     ctx.actions.run(
-        busybox_sh(_out(ctx.attrs._busybox), _SHARED_SCRIPT, _out(ctx.attrs._zig), out.as_output(), ctx.attrs.zig_triple, args),
+        zig_run(
+            ctx.attrs._check_exe[RunInfo],
+            "buildrules",
+            _out(ctx.attrs.zig),
+            "cc",
+            "-target",
+            ctx.attrs.zig_triple,
+            "-shared",
+            "-fPIC",
+            "-O2",
+            "-fvisibility=hidden",
+            "-Wall",
+            "-Werror",
+            "-Wl,-z,undefs",
+            "-o",
+            out.as_output(),
+            args,
+        ),
         category = "c_shared_lib",
     )
     return [DefaultInfo(default_output = out)]
@@ -393,8 +402,9 @@ _c_shared_lib = rule(
         "out": attrs.option(attrs.string(), default = None),
         "srcs": attrs.list(attrs.source()),
         "zig_triple": attrs.string(),
-        "_busybox": attrs.exec_dep(default = "buildrules//rules/pins:busybox"),
-        "_zig": attrs.exec_dep(default = "buildrules//rules/pins:zig"),
+        # The compiler: the pinned zig (ci/runners builds against a stand-in).
+        "zig": attrs.exec_dep(default = "buildrules//rules/pins:zig"),
+        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
     },
 )
 

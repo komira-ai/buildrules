@@ -66,7 +66,6 @@ zig_exe(
         ":unpack_unit",
         _ZIG_VERSION,
     ],
-    busybox = "buildrules//rules/pins:busybox",
     zig = _ZIG,
     visibility = ["PUBLIC"],
 )

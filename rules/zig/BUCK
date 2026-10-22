@@ -18,7 +18,6 @@ zig_exe(
     name = "conda_unpack",
     exec_compatible_with = LINUX_X86_64,
     src = "conda_unpack.zig",
-    busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig",
     visibility = ["PUBLIC"],
 )

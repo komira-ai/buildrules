@@ -7,6 +7,8 @@ Make the fixture valid (give it `exec_compatible_with = test_exec_compatible_wit
 control's own error. ci/negative_check.zig holds the wiring of this file to the fixtures, in //ci:all.
 """
 
+load("@buildrules//ci/runners:tools.bzl", "REFUSED", "refusal_target")
+
 PLATFORM = "buildrules//platforms:linux_x86_64_v3"
 FIXTURE = "//ci/negative:v3_test_without_isa_property"
 CONTROL = "//ci/negative:v3_test_with_isa_property"
@@ -27,6 +29,27 @@ CASES = [
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys/base_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
+]
+
+# The runner rules (zig_exe, c_exe, c_shared, node's c_shared_lib, the Rust toolchain's zig_exe) start zig with `check run`, and the C/C++ toolchain's refusals are
+# `check run --refuse` (ci/runners/BUCK). Planted: each row is a target that must be RED, and the text its failure must hold. The refusals must hold the toolchain's own
+# message (and not a complaint about the arguments the prelude appends to a tool); the zig_exe rows must hold what the stand-in zig says of the one argument that differs.
+# The controls, the same rules on the arguments that are right, must build (so the stand-in is red for that argument and not for something else).
+RUNNER_CONTROLS = [
+    "//ci/runners:zig_exe_runs",
+    "//ci/runners:c_exe_runs",
+    "//ci/runners:c_shared_runs",
+    "//ci/runners:node_c_shared_runs",
+    "//ci/runners:rust_zig_exe_runs",
+]
+
+RUNNERS = [
+    ("//ci/runners:zig_exe_optimized_for_debug", "stand-in zig: zig_exe: argument 2 is `-ODebug`, expected `-OReleaseSafe`"),
+    ("//ci/runners:zig_exe_not_stripped", "stand-in zig: zig_exe: argument 5 is `-fno-strip`, expected `-fstrip`"),
+    ("//ci/runners:refused_python_interpreter", "python bootstrap toolchain: no Python interpreter is provided (see rules/cxx/toolchain.bzl)"),
+] + [
+    ("//ci/runners:" + refusal_target(what), "cxx toolchain: {} is not provided (see rules/cxx/toolchain.bzl)".format(what))
+    for what in REFUSED
 ]
 
 def _analyse(ctx, label, platform = PLATFORM):
@@ -55,7 +78,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + gate_problems(ctx)
+    return problems + gate_problems(ctx) + runner_problems(ctx)
 
 # The gate of a Mojo library (docs/contract.md, 12.8): a library's public `.mojoc` exists only if every test of its package passed. Two things are held.
 #
@@ -123,4 +146,28 @@ def gate_problems(ctx):
             problems.append("{}:lib_ungated does not depend on {}:lib: a dependent must read the gated library".format(user, dep))
         if dep + ":lib_ungated" in direct:
             problems.append("{}:lib_ungated depends on {}:lib_ungated: that bypasses the tests of {}".format(user, dep, dep))
+    return problems
+
+def _failures(ctx, label):
+    """The text of what failed when building `label` on GATE_PLATFORM."""
+    text = ""
+    for _, result in ctx.build(label, target_platform = GATE_PLATFORM).items():
+        bad = result.failures()
+        for f in (list(bad) if bad else []):
+            text += str(f) + "\n"
+    return text
+
+def runner_problems(ctx):
+    """Every way a planted runner (RUNNERS) is not red for its reason, or a control (RUNNER_CONTROLS) is not green: a list of strings, empty when all is as planted."""
+    problems = []
+    for label in RUNNER_CONTROLS:
+        built, failed = _built(ctx, label)
+        if failed or not built:
+            problems.append("{} (a runner rule on the arguments that are right) must build, and it built {} artifact(s) and failed {}".format(label, built, failed))
+    for label, reason in RUNNERS:
+        built, failed = _built(ctx, label)
+        if not failed:
+            problems.append("{} built ({} artifact(s)): the defect it plants is gone, a failure leaves the target green".format(label, built))
+        elif reason not in _failures(ctx, label):
+            problems.append("{} is red, but not for the reason it plants (expected \"{}\"): {}".format(label, reason, _failures(ctx, label)))
     return problems
