@@ -83,7 +83,7 @@ TOOLCHAIN_FILE = "mopm-toolchain.toml"
 
 # mopm-toolchain.toml is required: no mopm and no Mojo is chosen for a package that does not name them.
 TOOLCHAIN_FILE_HELP = ("{} is required and there is no default. Create it at or above the package directory, for example:\n\n" +
-                       "[toolchain]\nmopm = \"0.0.20\"\nmojo = \"1.0.0\"\n\n(an exact release each), then run `buildrules mojo sync`.").format(TOOLCHAIN_FILE)
+                       "[toolchain]\nmopm = \"0.0.25\"\nmojo = \"1.0.0\"\n\n(an exact release each), then run `buildrules mojo sync`.").format(TOOLCHAIN_FILE)
 
 def check_toolchain_file_recorded(t, refuse = fail):
     """A table made without mopm-toolchain.toml (or by hand) is refused: the file is what chooses mopm and Mojo. `refuse` is `fail` in a

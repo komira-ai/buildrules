@@ -70,11 +70,11 @@ describe('what is not built is marked planned', () => {
       expect({ what, planned: new RegExp(`<td>${what}</td><td>planned`).test(t) }).toEqual({ what, planned: true });
     }
     expect(t).not.toMatch(/Published releases are planned/);
-    expect(t).toMatch(/mopm 0.0.20 is released and pinned/);
+    expect(t).toMatch(/mopm 0.0.25 is released and pinned/);
     expect(t).not.toMatch(/mopm release is still pending/);
     const mojo = html(files, 'rules/mojo/index.html');
     expect(mojo).toMatch(/<strong>Planned\.<\/strong> Building one package for two Mojo versions is planned/);
-    expect(mojo).toMatch(/mopm 0.0.20 is released and pinned/);
+    expect(mojo).toMatch(/mopm 0.0.25 is released and pinned/);
     expect(mojo).not.toMatch(/stand-in|release is pending/);
   });
 });

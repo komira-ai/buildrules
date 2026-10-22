@@ -9,7 +9,7 @@
 //! rust-toolchain.toml, and required like it, with no default:
 //!
 //!     [toolchain]
-//!     mopm = "0.0.20"     # a version of rules/mopm/pins.bzl, or one buildrules-pins.toml supplies a hash for
+//!     mopm = "0.0.25"     # a version of rules/mopm/pins.bzl, or one buildrules-pins.toml supplies a hash for
 //!     mojo = "1.0.0"     # a version mopm pins a toolchain for: the graph names it, the lock records it
 //!
 //! `sync` runs mopm and (for the pinned mopm) buck2; `check` runs nothing.
@@ -172,7 +172,7 @@ pub fn findToolchain(ctx: *Ctx, pkg: []const u8, why: *[]const u8) !?Tc {
         dir = std.fs.path.dirname(dir) orelse "";
         up = try std.fmt.allocPrint(a, "{s}../", .{up});
     }
-    why.* = try std.fmt.allocPrint(a, "no {s} at or above {s}: it is required, like rust-toolchain.toml, and there is no default. Create it, for example:\n\n[toolchain]\nmopm = \"0.0.20\"\nmojo = \"1.0.0\"\n\n(an exact release each)", .{ contract.mojo_toolchain_file, if (pkg.len == 0) "." else pkg });
+    why.* = try std.fmt.allocPrint(a, "no {s} at or above {s}: it is required, like rust-toolchain.toml, and there is no default. Create it, for example:\n\n[toolchain]\nmopm = \"0.0.25\"\nmojo = \"1.0.0\"\n\n(an exact release each)", .{ contract.mojo_toolchain_file, if (pkg.len == 0) "." else pkg });
     return null;
 }
 
@@ -185,7 +185,7 @@ pub const export_snippet =
     "export_file(\n" ++
     "    name = \"" ++ contract.mojo_toolchain_file ++ "\",\n" ++
     "    src = \"" ++ contract.mojo_toolchain_file ++ "\" if glob([\"" ++ contract.mojo_toolchain_file ++ "\"]) else fail(\"" ++ contract.mojo_toolchain_file ++
-    " is required and there is no default. Create it, for example:\\n\\n[toolchain]\\nmopm = '0.0.20'\\nmojo = '1.0.0'\\n\"),\n" ++
+    " is required and there is no default. Create it, for example:\\n\\n[toolchain]\\nmopm = '0.0.25'\\nmojo = '1.0.0'\\n\"),\n" ++
     "    visibility = [\"PUBLIC\"],\n" ++
     ")\n";
 
