@@ -367,5 +367,5 @@ By behaviour, each run as a build action on the farm, and a defect each catches:
   with lines and no record refused), and every allocation failing.
 - **On real Mojo** (`examples/mojo`): `partial`'s one `if` with one arm run gives `BRDA:5,5:br:0/1,0,0` and `BRDA:5,5:br:0/1,1,1` and the rows `branches ... 1/2 50%` (`:coverage_records`), `reexport`'s code
   with no decision gives `SF:` and `end_of_record` and `0/0`, the rows and the records agree file by file, and the floor of `partial` is held both ways for lines and for branches
-  (`coverage_floors`: a branch figure above and below, a floor with no `branches` figure, a `branches` figure for a package with no branch rows; each red, for its reason, in
-  `ci/negative.bzl`).
+  (`coverage_floors`: a branch figure above and below, a floor with no `branches` figure; each red, for its reason, in `ci/negative.bzl`; a `branches` figure the tests do not record is refused by
+  `coverage_tools_refuse`). Which examples are instrumented, and that a package with a native library (`ws`, `sys_app`) has no branch target, is held by `ci/negative.bzl` (`BRANCH_PACKAGES`).

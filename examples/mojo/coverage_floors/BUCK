@@ -38,12 +38,4 @@ mojo_coverage_floor(
     floor = "no_branches.txt",
 )
 
-# The floor file has a `branches` figure and the tests record none: ../sys_app links a native library, so its tests are not instrumented and its
-# `coverage.txt` has no branch rows; a `branches` floor there is refused rather than read as a package with nothing to take.
-mojo_coverage_floor(
-    name = "branches_floor_without_records",
-    coverage = "//examples/mojo/sys_app:coverage",
-    floor = "branches_unmeasured.txt",
-)
-
 scrub_files()

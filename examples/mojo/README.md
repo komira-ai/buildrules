@@ -9,7 +9,7 @@
     copy_of_base/          base's sources at another path; `:same_bytes` fails unless the two `.mojoc` files are equal
     reexport/              a package whose `__init__.mojo` only re-exports (a docstring and `from .ops import ...`): the Mojo coverage report omits it and `:coverage` lists it `0/0`
     partial/               a package whose test runs one arm of a function (60.00% of its lines, one of the two arms of its `if`: 50.00% of its branches), with a `coverage_floor.txt` of exactly that: its `:coverage_floor` is green
-    coverage_floors/       the same `:coverage` held to a line floor above it and below it, to a branch floor above it and below it, and to a floor with no `branches` figure, and the coverage of `sys_app` (no branch rows) to a floor with one: each fails, saying "coverage fell", "raise the floor to ..." or why the figures disagree (ci/negative.bzl, COVERAGE_REDS)
+    coverage_floors/       the same `:coverage` held to a line floor above it and below it, to a branch floor above it and below it, and to a floor with no `branches` figure: each fails, saying "coverage fell", "raise the floor to ..." or why the figures disagree (ci/negative.bzl, COVERAGE_REDS). Which examples are instrumented for branches (`ws` and `sys_app` link a native library and are not) is held there too (`BRANCH_PACKAGES`)
     coverage_records_test.zig  `:coverage`, `:coverage[reports]` and `:coverage[branches]` of `reexport` and `partial` held to each other, file by file (`:coverage_records`)
     reexport_unused/       PLANTED DEFECT: the same plus a function nothing calls; `:coverage` must stay red with "is in no report" (ci/negative.bzl, COVERAGE_REDS)
     mopm-toolchain.toml    the versions every package here is built with (found by walking up)
