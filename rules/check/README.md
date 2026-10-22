@@ -29,10 +29,10 @@ looked for in a `PATH`: its name must contain a `/`, and a relative one is made 
 
 The rules that moved from `sh -c` to `check` (`run_check`, `c_check`, `mojo_same`, the Mojo and Rust test runs, the welds, the version and table checks) see these differences:
 
-- The program gets the environment the action has, plus the options above. A shell set `OLDPWD` and `SHLVL` for what it ran and changed `PWD` when it did `cd`; `check` sets none of them. `PWD` is the one the action has inherited (the project root), while a cargo test now runs in its package directory: a test that reads `PWD` sees the root, not its working directory. `OLDPWD` and `SHLVL` are not there.
+- The program gets the environment the action has (on the farm only `HOME`, `HOSTNAME` and `BUCK_SCRATCH_PATH`), plus the options above. A shell set `PWD`, `OLDPWD` and `SHLVL` for what it ran, and `PWD` was the package directory for a cargo test after its `cd`; `check` sets none of them, so they are unset. A test that reads `PWD` now finds it unset and must use its working directory.
 - In capture mode (`expect`, `marker --capture`) the program's stdin is empty. A shell script left it as the action's own.
-- `expect` writes the bytes the program printed, less trailing newlines, and one newline. The old `echo "$GOT" > out` took an output of `-n` (or one that began with it) for its own flag and dropped it; `check` keeps it. (The pinned busybox `echo` did not interpret backslash escapes, and neither does `check`.)
-- Exit status: `run_check`, the version check and `c_check` exited with the program's status when it failed (N, or 127 when it was not found); `expect` exits 1 for any of them. A cargo test whose `CARGO_MANIFEST_DIR` is not set exits 2 (a usage error of `--cwd-env`), the script exited 1.
+- `expect` writes the bytes the program printed, less trailing newlines, and one newline. The old `echo "$GOT" > out` took an output of exactly `-n` for its own flag (`-n x` was printed as it is) and dropped it; `check` keeps it. (The pinned busybox `echo` did not interpret backslash escapes, and neither does `check`.)
+- Exit status: `run_check` and the version check exited with the program's status when it failed (N, or 127 when it was not found); `expect` exits 1 for any failure. (`c_check` always exited 1, and still does.)
 - A failed `marker` exits with the test's own status. The Mojo run already did; the cargo and Rust test scripts exited 1. What is new in the Mojo run is the `TEST FAILED: <program>` line on stderr.
 - The cargo test marker (the test's output, `--stamp-log`) is all of stdout and then all of stderr; the script interleaved them as they came.
 - A file `digest` cannot read says `cannot read`; the script said `STALE`, with an empty hash.

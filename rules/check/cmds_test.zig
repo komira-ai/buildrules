@@ -134,6 +134,9 @@ test "expect: only newlines are dropped, not a trailing space or a carriage retu
     // and the program that prints no newline at all (`echo -n`) is its text as it is
     try kit.expectResult(try expectCmd(&c, &.{ "--want", "x " }, &.{ "echo", "-n", "x " }), 0, "", "");
     try t.expectEqualStrings("x \n", try c.read("o"));
+    // an output that is exactly `-n` is kept (a shell `echo "$GOT"` took it for its flag)
+    try kit.expectResult(try expectCmd(&c, &.{ "--want", "-n" }, &.{ "echo", "-e", "-n\\n" }), 0, "", "");
+    try t.expectEqualStrings("-n\n", try c.read("o"));
 }
 
 test "expect: another output is exit 1 with both texts in the message, and the file is not written, nor an earlier one changed" {
