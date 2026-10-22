@@ -49,7 +49,7 @@ gh workflow run publish-unpack.yml -R OWNER/REPO -f apply=true      # the same, 
 
 (`OWNER/REPO` are the two path segments of `https://github.com/komira-ai/buildrules`; the scrub of this repository allows the project's name only in that address.)
 
-Run it with `apply=false` first and read the job's output: it says what `apply=true` would do. The workflow runs only from `main` and only when dispatched. The release bot's token (the mint
+Run it with `apply=false` first and read the job's output: it says what `apply=true` would do. The dry run refuses, as the apply does, a tree whose `git status --porcelain` prints anything (an untracked file counts) and prints that output, so a green dry run predicts the apply; buck2 is installed outside the checkout, and the one thing the build leaves in it, `.zig-cache/`, is in `.gitignore`. The workflow runs only from `main` and only when dispatched. The release bot's token (the mint
 step of release.yml's `tag` job, for this repository alone with `contents: write`) is minted only when `apply` is true, after the dry run has passed, and only the last step holds it. The
 release points at the commit the programs were built from, and nothing is ever replaced or deleted: a second `apply=true` only verifies what is there. If the programs the tree builds are
 not the pinned ones, nothing is uploaded and the output names the values to write (the new programs go under the next tag). `ci/publish_unpack_check.zig` holds the workflow to all of this.

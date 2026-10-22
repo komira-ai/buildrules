@@ -43,10 +43,13 @@ jobs:
         with:
           persist-credentials: false
 
-      # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/workflow_check.zig compares both. The .zst is removed: publish_unpack refuses --apply
-      # in a tree with an untracked file, and the release must be of the commit the programs were built from.
+      # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/workflow_check.zig compares both. It is installed outside the checkout: publish_unpack
+      # refuses (the dry run too) a tree with an untracked file, and the release must be of the commit the programs were built from. The one thing the build leaves in the
+      # tree is .zig-cache/, which the local-mode zig actions write to their working directory and .gitignore lists.
       - name: Install buck2
         run: |
+          mkdir "$RUNNER_TEMP/buck2-bin"
+          cd "$RUNNER_TEMP/buck2-bin"
           curl --fail --silent --show-error --location --retry 3 \
             --output buck2.zst \
             https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
@@ -58,14 +61,15 @@ jobs:
 
       # The program is written outside the checkout, so the tree stays the commit.
       - name: Build publish_unpack
-        run: ./buck2 build --console simple -c buildrules_re.mode=local --out "$RUNNER_TEMP/publish_unpack" //tools/held:publish_unpack
+        run: |
+          "$RUNNER_TEMP/buck2-bin/buck2" build --console simple -c buildrules_re.mode=local --out "$RUNNER_TEMP/publish_unpack" //tools/held:publish_unpack
 
       - name: Dry run
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           chmod +x "$RUNNER_TEMP/publish_unpack"
-          "$RUNNER_TEMP/publish_unpack" --root "$GITHUB_WORKSPACE" --buck2 "$GITHUB_WORKSPACE/buck2" --buck2-config buildrules_re.mode=local
+          "$RUNNER_TEMP/publish_unpack" --root "$GITHUB_WORKSPACE" --buck2 "$RUNNER_TEMP/buck2-bin/buck2" --buck2-config buildrules_re.mode=local
 
       # The token of the release bot, for this repository alone, minted only for an apply and only now: the build and the dry run never held it.
       - name: The token of the release bot, for this repository alone
@@ -85,4 +89,4 @@ jobs:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
         run: |
           mkdir "$RUNNER_TEMP/unpack-work"
-          "$RUNNER_TEMP/publish_unpack" --apply --work "$RUNNER_TEMP/unpack-work" --root "$GITHUB_WORKSPACE" --buck2 "$GITHUB_WORKSPACE/buck2" --buck2-config buildrules_re.mode=local
+          "$RUNNER_TEMP/publish_unpack" --apply --work "$RUNNER_TEMP/unpack-work" --root "$GITHUB_WORKSPACE" --buck2 "$RUNNER_TEMP/buck2-bin/buck2" --buck2-config buildrules_re.mode=local

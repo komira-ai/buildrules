@@ -236,6 +236,7 @@ zig_test(
     imports = ["workflow_check.zig", "release_check.zig"],
     data = {
         ".github/workflows/publish-unpack.yml": "//:publish-unpack.yml",
+        ".gitignore": "//:gitignore",
         "tools/buck2": "//:buck2.pin",
         # the tests of the two files this one imports run here too, and release.yml is where the mint step is read from
         ".github/workflows/release.yml": "//:release.yml",
