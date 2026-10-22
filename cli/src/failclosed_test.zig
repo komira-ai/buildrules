@@ -290,6 +290,34 @@ test "check: the Mojo packages of a repository are checked, or the run fails, wh
     try expectFailsClosed(h, &.{"check"});
 }
 
+test "check: the Mojo part of the top-level check reads the toolchains cell, finds a stale mopm_pins.bzl there, and passes when it is current" {
+    const h = try mojoFresh();
+    defer h.destroy();
+    const cell = "tools/build/cells/toolchains";
+    try h.put(".buckconfig", "[cells]\n  toolchains = " ++ cell ++ "\n");
+    try h.put(cell ++ "/BUCK", "# toolchains\n");
+    try h.put("Cargo.toml", fx.root_cargo);
+    try h.put("Cargo.lock", fx.cargo_lock);
+    try h.put("crates/hello/Cargo.toml", fx.hello_cargo);
+    try h.put("crates/hello/BUCK", fx.hello_buck);
+    try h.put("rust-toolchain.toml", fx.toolchain);
+    try h.put("buildrules.lock.bzl", fx.table);
+    try h.put("buildrules.bzl", fx.bzl);
+    try h.put("toolchains/rust_pins.bzl", pins_toml.empty);
+    try h.put("BUCK", fx.root_buck);
+    try h.put("third_party/buildrules/BUCK", fx.third_party);
+    try h.put("third_party/buildrules/crate_sizes.tsv", fx.sizes);
+    const s = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 0), s.code);
+    try t.expect(h.has(cell ++ "/mopm_pins.bzl"));
+    const good = h.run(&.{"check"});
+    if (good.code != 0) std.debug.panic("check is not green on a synced repository: {s}", .{good.err});
+    try h.put(cell ++ "/mopm_pins.bzl", "# stale\n");
+    const bad = h.run(&.{"check"});
+    try t.expectEqual(@as(u8, 1), bad.code);
+    try t.expect(std.mem.indexOf(u8, bad.err, "STALE: " ++ cell ++ "/mopm_pins.bzl") != null);
+}
+
 test "mojo check: with an allocation failing anywhere, a synced package is not reported in sync" {
     const h = try mojoSynced();
     defer h.destroy();
@@ -304,6 +332,32 @@ test "check: with ONE allocation failing and every other working, a repository a
 
 test "mojo check: with ONE allocation failing and every other working, a synced package still exits non-zero (the `@max(1, count)` sites of mojo_cmd)" {
     const h = try mojoSynced();
+    defer h.destroy();
+    try expectFailsClosedOneShot(h, &.{ "mojo", "check" });
+}
+
+/// A synced Mojo package whose toolchains directory is named by `[cells] toolchains` (the path resolution allocates, and `check` must not pass without it).
+fn mojoSyncedAt(dir: []const u8) !*kit.Harness {
+    const h = try kit.Harness.create();
+    h.ctx.execer = &fakeExec;
+    try h.put(".buckconfig", try std.fmt.allocPrint(h.a(), "[cells]\ntoolchains = {s}\n", .{dir}));
+    try h.put("mopm-toolchain.toml", fx.mojo_toolchain);
+    try h.put(try std.fmt.allocPrint(h.a(), "{s}/BUCK", .{dir}), "# toolchains\n");
+    try putMojoPackage(h, "pkgs/base");
+    const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    if (r.code != 0) std.debug.panic("sync failed: {s}", .{r.err});
+    return h;
+}
+
+test "mojo check: with a toolchains directory named in .buckconfig and an allocation failing anywhere, a synced package is not reported in sync" {
+    const h = try mojoSyncedAt("tools/build/cells/toolchains");
+    defer h.destroy();
+    try expectFailsClosed(h, &.{ "mojo", "check" });
+    try expectFailsClosed(h, &.{ "mojo", "check", "--toolchains", "tools/build/cells/toolchains" });
+}
+
+test "mojo check: with a toolchains directory named in .buckconfig and ONE allocation failing, a synced package still exits non-zero" {
+    const h = try mojoSyncedAt("tools/build/cells/toolchains");
     defer h.destroy();
     try expectFailsClosedOneShot(h, &.{ "mojo", "check" });
 }

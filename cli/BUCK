@@ -78,6 +78,7 @@ _TESTS = [
     "failclosed",
     "mojo_cmd",
     "mojo_lock",
+    "mojo_toolchains",
     "mopm_pins",
     "pins_toml",
     "npm_cmd",
