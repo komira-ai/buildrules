@@ -755,3 +755,49 @@ test "npm names: a name may not start with a hyphen (a bare name, the scope, or 
     try t.expect(lock.isNpmName("a-"));
     try t.expect(lock.isNpmName("a-b"));
 }
+
+/// What an npm 10 lock holds for aws-cdk-lib: the package with its tarball and `bundleDependencies`, and under it the packages it bundles
+/// (`inBundle`, no `resolved`, no `integrity`), some of them with bundled packages of their own.
+const cdk_lib = "\"node_modules/aws-cdk-lib\":{\"version\":\"2.150.0\",\"resolved\":\"" ++ reg ++ "aws-cdk-lib/-/aws-cdk-lib-2.150.0.tgz\",\"integrity\":\"" ++ sri_a ++
+    "\",\"bundleDependencies\":[\"@balena/dockerignore\",\"ajv\",\"table\"],\"license\":\"Apache-2.0\",\"engines\":{\"node\":\">= 14.15.0\"},\"peerDependencies\":{\"constructs\":\"^10.0.0\"}}";
+const cdk_bundled = ",\"node_modules/aws-cdk-lib/node_modules/@balena/dockerignore\":{\"version\":\"1.0.2\",\"inBundle\":true,\"license\":\"Apache-2.0\"}" ++
+    ",\"node_modules/aws-cdk-lib/node_modules/ajv\":{\"version\":\"8.17.1\",\"inBundle\":true,\"license\":\"MIT\",\"dependencies\":{\"fast-deep-equal\":\"^3.1.3\"}}" ++
+    ",\"node_modules/aws-cdk-lib/node_modules/table\":{\"version\":\"6.8.2\",\"inBundle\":true,\"license\":\"BSD-3-Clause\"}" ++
+    ",\"node_modules/aws-cdk-lib/node_modules/table/node_modules/ajv\":{\"version\":\"8.12.0\",\"inBundle\":true,\"license\":\"MIT\"}" ++
+    ",\"node_modules/aws-cdk-lib/node_modules/@scope/inner\":{\"version\":\"1.0.0\",\"inBundle\":true}";
+
+test "lock: the packages an aws-cdk-lib-shaped lock bundles need no row, and the package that bundles them is read as usual" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var diag = Diag.init(a);
+    const text = try lockWith(a, "," ++ cdk_lib ++ cdk_bundled);
+    const entries = try readLock(a, text, &diag);
+    try t.expectEqual(@as(usize, 0), diag.count());
+    // left-pad, @scope/pkg and aws-cdk-lib: nothing of what is bundled.
+    try t.expectEqual(@as(usize, 3), entries.len);
+    var found = false;
+    for (entries) |e| found = found or std.mem.eql(u8, e.key, "aws-cdk-lib@2.150.0");
+    try t.expect(found);
+    for (entries) |e| try t.expect(std.mem.indexOf(u8, e.path, "aws-cdk-lib/") == null);
+}
+
+test "lock: a bundled package whose parent chain does not reach a package with a tarball is refused" {
+    // No parent at all (top level), a parent that is not in the lock, and a chain with a gap.
+    try expectRefused(",\"node_modules/b\":{\"version\":\"1.0.0\",\"inBundle\":true}", "node_modules/b");
+    try expectRefused(",\"node_modules/ghost/node_modules/b\":{\"version\":\"1.0.0\",\"inBundle\":true}", "does not reach");
+    try expectRefused(",\"node_modules/ghost/node_modules/mid/node_modules/b\":{\"version\":\"1.0.0\",\"inBundle\":true},\"node_modules/ghost/node_modules/mid\":{\"version\":\"1.0.0\",\"inBundle\":true}", "does not reach");
+    // A parent that is itself refused (a git dependency) is no tarball either.
+    try expectRefused(",\"node_modules/g\":{\"version\":\"1.0.0\",\"resolved\":\"git+ssh://git@github.com/o/g.git#abc\"},\"node_modules/g/node_modules/b\":{\"version\":\"1.0.0\",\"inBundle\":true}", "does not reach");
+    // A parent that is a link.
+    try expectRefused(",\"node_modules/l\":{\"resolved\":\"../l\",\"link\":true},\"node_modules/l/node_modules/b\":{\"version\":\"1.0.0\",\"inBundle\":true}", "does not reach");
+}
+
+test "lock: a bundled package under a real one is still refused when it is a link, an alias, or names a tarball" {
+    try expectRefused("," ++ cdk_lib ++ ",\"node_modules/aws-cdk-lib/node_modules/b\":{\"resolved\":\"../b\",\"link\":true,\"inBundle\":true}", "node_modules/aws-cdk-lib/node_modules/b");
+    try expectRefused("," ++ cdk_lib ++ ",\"node_modules/aws-cdk-lib/node_modules/b\":{\"name\":\"c\",\"version\":\"1.0.0\",\"inBundle\":true}", "alias");
+    try expectRefused("," ++ cdk_lib ++ ",\"node_modules/aws-cdk-lib/node_modules/b\":{\"version\":\"1.0.0\",\"inBundle\":true,\"resolved\":\"" ++ reg ++ "b/-/b-1.0.0.tgz\",\"integrity\":\"" ++ sri_a ++ "\"}", "also names a tarball");
+    try expectRefused("," ++ cdk_lib ++ ",\"node_modules/aws-cdk-lib/node_modules/b\":{\"version\":\"1.0.0\",\"bundled\":true}", "node_modules/aws-cdk-lib/node_modules/b");
+    // A package of the lock that is not bundled and has no tarball stays refused, whatever is above it.
+    try expectRefused("," ++ cdk_lib ++ ",\"node_modules/aws-cdk-lib/node_modules/b\":{\"version\":\"1.0.0\"}", "node_modules/aws-cdk-lib/node_modules/b");
+}

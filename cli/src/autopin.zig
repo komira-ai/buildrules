@@ -15,18 +15,22 @@ const check = @import("autopin_check.zig");
 const compute = @import("autopin_compute.zig");
 const ctxm = @import("ctx.zig");
 const push = @import("autopin_push.zig");
+const verify = @import("autopin_verify.zig");
 const Ctx = ctxm.Ctx;
 
 pub const usage_text =
     \\usage: buildrules autopin compute      --event FILE --out DIR --set DIR=KIND [--set DIR=KIND ...] [--dir DIR]
     \\       buildrules autopin commit-check --event FILE --out DIR --set DIR=KIND [--set DIR=KIND ...] --app-login LOGIN [--github-output FILE]
     \\       buildrules autopin commit-push  --plan DIR --set DIR=KIND [--set DIR=KIND ...] --author-name NAME --author-email EMAIL
+    \\       buildrules autopin verify-pins  --set DIR=KIND [--set DIR=KIND ...] [--dir DIR]
     \\
     \\  compute       regenerate the pin tables (buildrules.lock.bzl, pins.lock.bzl) of the directories named by --set from their
     \\                package-lock.json, downloading what the table lacks from registry.npmjs.org, and write the tables that changed and
     \\                a manifest.json under --out (its usage text: `autopin compute -h`)
     \\  commit-check  read the artifact of a compute run as untrusted bytes and the pull request from the GitHub API (GH_TOKEN,
     \\                read access), and write under --out the tables that may be committed and plan.json (`autopin commit-check -h`)
+    \\  verify-pins   download EVERY row of the tables of the directories named by --set from registry.npmjs.org and compare sha512, sha256
+    \\                and size with the lock and the row (no token; `autopin verify-pins -h`)
     \\  commit-push   commit the checked tables on the pull request's branch with the Git Data API (GH_TOKEN, write access); the branch
     \\                is moved with force false (`autopin commit-push -h`)
     \\
@@ -61,6 +65,13 @@ pub fn run(ctx: *Ctx, args: []const []const u8) u8 {
             return ctxm.exit_ok;
         }
         return compute.run(ctx, args[1..]);
+    }
+    if (std.mem.eql(u8, sub, "verify-pins")) {
+        if (wantsHelp(args)) {
+            ctx.say("{s}", .{verify.usage_text});
+            return ctxm.exit_ok;
+        }
+        return verify.run(ctx, args[1..]);
     }
     const is_check = std.mem.eql(u8, sub, "commit-check");
     if (is_check or std.mem.eql(u8, sub, "commit-push")) {

@@ -150,6 +150,7 @@ pub fn read(a: std.mem.Allocator, lock_text: []const u8, diag: *Diag) ![]Entry {
         return &.{};
     }
     var list = std.ArrayList(Entry).empty;
+    var bundled = std.ArrayList([]const u8).empty;
     for (pk.object.keys(), pk.object.values()) |path, e| {
         if (path.len == 0) continue;
         if (e != .object) {
@@ -165,8 +166,23 @@ pub fn read(a: std.mem.Allocator, lock_text: []const u8, diag: *Diag) ![]Entry {
             diag.add("packages[{s}]: the path is longer than 512 bytes", .{path});
             continue;
         }
-        if (flag(o, "link") or flag(o, "inBundle") or flag(o, "bundled")) {
+        if (flag(o, "link") or flag(o, "bundled")) {
             diag.add("packages[{s}]: a link or a bundled package has no tarball of its own", .{path});
+            continue;
+        }
+        if (flag(o, "inBundle")) {
+            // A bundled package ships inside the tarball of the package that bundles it, so it has no tarball and no row of its own.
+            // It is skipped only if it has nothing of a package of its own (no tarball, no alias) and, below, its parent chain reaches
+            // a package that has a tarball.
+            if (text(o, "resolved") != null or text(o, "integrity") != null) {
+                diag.add("packages[{s}]: a bundled package that also names a tarball", .{path});
+                continue;
+            }
+            if (text(o, "name")) |n| if (!std.mem.eql(u8, n, derived)) {
+                diag.add("packages[{s}]: an alias (`name` is {s}, the path says {s})", .{ path, n, derived });
+                continue;
+            };
+            try bundled.append(a, path);
             continue;
         }
         const resolved = text(o, "resolved") orelse "";
@@ -213,6 +229,7 @@ pub fn read(a: std.mem.Allocator, lock_text: []const u8, diag: *Diag) ![]Entry {
             .libc = npm_cmd.strList(a, o, "libc", diag, where),
         });
     }
+    try checkBundled(a, list.items, bundled.items, diag);
     std.mem.sort(Entry, list.items, {}, lessEntry);
     var out = std.ArrayList(Entry).empty;
     for (list.items) |en| {
@@ -225,6 +242,29 @@ pub fn read(a: std.mem.Allocator, lock_text: []const u8, diag: *Diag) ![]Entry {
         try out.append(a, en);
     }
     return out.items;
+}
+
+/// The path of the package that holds `path` (`node_modules/a/node_modules/b` is held by `node_modules/a`), or null at the top.
+fn parentPath(path: []const u8) ?[]const u8 {
+    const i = std.mem.lastIndexOf(u8, path, "/node_modules/") orelse return null;
+    return path[0..i];
+}
+
+/// Every bundled path must have, going up through bundled paths only, a parent that is an accepted package with a tarball.
+fn checkBundled(a: std.mem.Allocator, accepted: []const Entry, bundled: []const []const u8, diag: *Diag) !void {
+    var real = std.StringHashMap(void).init(a);
+    for (accepted) |e| try real.put(e.path, {});
+    var bundled_set = std.StringHashMap(void).init(a);
+    for (bundled) |p| try bundled_set.put(p, {});
+    for (bundled) |p| {
+        var cur = p;
+        const reaches = while (parentPath(cur)) |up| {
+            if (real.contains(up)) break true;
+            if (!bundled_set.contains(up)) break false;
+            cur = up;
+        } else false;
+        if (!reaches) diag.add("packages[{s}]: a bundled package whose parent chain does not reach a package that has a tarball", .{p});
+    }
 }
 
 fn nameSegment(x: []const u8) bool {
