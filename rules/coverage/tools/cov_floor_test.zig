@@ -27,6 +27,21 @@ test "parseCoverage: the line total and the branch total, and nothing else count
     try t.expect(only.branches == null);
 }
 
+test "parseCoverage: a branch total of 0/0 is no branch figure, and a lines floor holds such a package" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const text = "pkg/__init__.mojo 0/0 0%\npkg/ops.mojo 4/4 100%\ntotal 4/4 100%\nbranches pkg/ops.mojo 0/0 0%\nbranches total 0/0 0%\n";
+    const c = try F.parseCoverage(text);
+    try t.expect(c.branches == null);
+    const held = try arenaCheck(a, c, try F.parseFloor("lines 100.00\n"));
+    try t.expectEqual(@as(usize, 0), held.len);
+    // A `branches` line has nothing to hold there, and the message says so.
+    const bad = try arenaCheck(a, c, try F.parseFloor("lines 100.00\nbranches 0.00\n"));
+    try t.expectEqual(@as(usize, 1), bad.len);
+    try t.expect(std.mem.indexOf(u8, bad[0], "has no branches to hold (the code has no decision") != null);
+}
+
 test "parseCoverage: malformed text is refused" {
     for ([_][]const u8{
         "",
@@ -139,7 +154,7 @@ test "check: a branch figure on one side only fails" {
     try t.expect(std.mem.indexOf(u8, missing[0], "the floor file has no `branches` figure: add `branches 60.00`") != null);
     const dropped = try arenaCheck(a, try F.parseCoverage("total 80/100 80%\n"), try F.parseFloor("lines 80.00\nbranches 60.00\n"));
     try t.expectEqual(@as(usize, 1), dropped.len);
-    try t.expect(std.mem.indexOf(u8, dropped[0], "the instrumentation was dropped") != null);
+    try t.expect(std.mem.indexOf(u8, dropped[0], "or the branch instrumentation was dropped") != null);
 }
 
 test "check: nothing measured is an error, not a pass" {

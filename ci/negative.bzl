@@ -66,6 +66,7 @@ COVERAGE_REDS = [
     ("//examples/mojo/coverage_floors:branches_floor_above_the_coverage", "branch coverage is 50.00% (1/2), below its floor 60.00%: coverage fell"),
     ("//examples/mojo/coverage_floors:branches_floor_below_the_coverage", "branch coverage is 50.00% (1/2), above its floor 40.00%: raise the floor to 50.00"),
     ("//examples/mojo/coverage_floors:floor_without_branches", "the tests record branches (1/2) and the floor file has no `branches` figure: add `branches 50.00`"),
+    ("//examples/mojo/coverage_floors:branches_floor_on_no_decisions", "the floor file has a `branches` figure and the coverage has no branches to hold"),
 ]
 
 def coverage_red_problems(ctx):
@@ -83,7 +84,7 @@ def coverage_red_problems(ctx):
 # had before floors existed. (package, whether it has a floor file)
 COVERAGE_FLOOR_PACKAGES = [
     ("//examples/mojo/partial", True),
-    ("//examples/mojo/reexport", False),
+    ("//examples/mojo/reexport", True),
     ("//examples/mojo/reexport_unused", False),
     ("//examples/mojo/copy_of_base", False),
     ("//examples/mojo/sys_app", False),

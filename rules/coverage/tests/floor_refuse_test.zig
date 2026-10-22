@@ -11,6 +11,8 @@ const proc = @import("refusal_proc");
 /// A coverage.txt of cov_summary: the line total and, when given, the branch total.
 const COV = "total 95/100 95%\n";
 const COV_BRANCHES = "total 95/100 95%\nbranches total 60/100 60%\n";
+/// A package with code and no decision (a re-export, a table): its branch rows are all 0/0.
+const COV_NO_DECISIONS = "total 95/100 95%\nbranches rules/pkg/a.zig 0/0 0%\nbranches total 0/0 0%\n";
 
 const Case = struct { name: []const u8, coverage: ?[]const u8 = COV, floor: ?[]const u8, code: u8, msgs: []const []const u8 };
 
@@ -33,6 +35,18 @@ test "a floor the coverage meets is accepted, and the report says what the 99% t
     try proc.expectOk("held", try floorRun(a, &tmp, COV, "lines 95.00\n", &.{}));
     const report = try tmp.dir.readFileAlloc(a, "report.txt", 1 << 16);
     try std.testing.expect(std.mem.indexOf(u8, report, "rules/pkg lines 95.00% (95/100); 4 more to 99%") != null);
+}
+
+test "a lines floor holds a package whose code has no decision" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try proc.expectOk("held", try floorRun(a, &tmp, COV_NO_DECISIONS, "lines 95.00\n", &.{}));
+    const report = try tmp.dir.readFileAlloc(a, "report.txt", 1 << 16);
+    try std.testing.expect(std.mem.indexOf(u8, report, "rules/pkg lines 95.00% (95/100); 4 more to 99%") != null);
+    try std.testing.expect(std.mem.indexOf(u8, report, "branches") == null);
 }
 
 test "a floor file that is malformed is refused with the shape it must have" {
@@ -75,7 +89,8 @@ test "a floor the coverage does not meet is refused, with the number to write" {
     const bad = [_]Bad{
         .{ .name = "coverage fell", .coverage = COV, .floor = "lines 96.00\n", .msgs = &.{ "rules/pkg: line coverage is 95.00% (95/100), below its floor 96.00%: coverage fell" } },
         .{ .name = "the floor lags behind the tests", .coverage = COV, .floor = "lines 90.00\n", .msgs = &.{ "above its floor 90.00%", "raise the floor to 95.00" } },
-        .{ .name = "a branch figure the tests lost", .coverage = COV, .floor = "lines 95.00\nbranches 60.00\n", .msgs = &.{ "the floor file has a `branches` figure and the tests record no branches: the instrumentation was dropped" } },
+        .{ .name = "a branch figure the tests lost", .coverage = COV, .floor = "lines 95.00\nbranches 60.00\n", .msgs = &.{ "the floor file has a `branches` figure and the coverage has no branches to hold (the code has no decision, or the branch instrumentation was dropped)" } },
+        .{ .name = "a branches line for code with no decision", .coverage = COV_NO_DECISIONS, .floor = "lines 95.00\nbranches 0.00\n", .msgs = &.{ "the coverage has no branches to hold" } },
         .{ .name = "a branch figure the floor lacks", .coverage = COV_BRANCHES, .floor = "lines 95.00\n", .msgs = &.{ "the floor file has no `branches` figure: add `branches 60.00`" } },
         .{ .name = "branches fell", .coverage = COV_BRANCHES, .floor = "lines 95.00\nbranches 61.00\n", .msgs = &.{ "branch coverage is 60.00% (60/100), below its floor 61.00%: coverage fell" } },
     };

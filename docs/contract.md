@@ -564,7 +564,7 @@ to the records of `:coverage[branches]` file by file). The classifier refuses wh
 *The floor.* A package with a `coverage_floor.txt` beside its BUCK file (the file every other package's floor is, `rules/coverage/README.md`) gets `:coverage_floor`: `lines NN.NN`, the line total of
 `coverage.txt` rounded down to a hundredth, and `branches NN.NN`, the `branches total` likewise. The check is exact in both directions for each figure: lower than the floor fails with `coverage fell`, higher fails
 with `raise the floor to NN.NN`. A package whose `coverage.txt` has branch rows needs a `branches` figure ("the tests record branches ... add `branches NN.NN`"), and one without them is refused a `branches` figure
-("the tests record no branches: the instrumentation was dropped"). With no file there is no target, and the package is as it was. `mojo_coverage_floor(name, coverage, floor)` (`rules/mojo/defs.bzl`) checks a `:coverage` against any other file.
+("the coverage has no branches to hold"); a package whose code has no decision (a re-export, a table) has `branches total 0/0`, which is no branches figure, so its floor is `lines NN.NN` alone. With no file there is no target, and the package is as it was. `mojo_coverage_floor(name, coverage, floor)` (`rules/mojo/defs.bzl`) checks a `:coverage` against any other file.
 
 ### 12.5 Versions: pinned mopm, the Mojo version
 
@@ -592,7 +592,7 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 | a package's line coverage below its `coverage_floor.txt` | `:coverage_floor` | `<package>: line coverage is 60.00% (3/5), below its floor 70.00%: coverage fell` |
 | a package's line coverage above its `coverage_floor.txt` | `:coverage_floor` | `<package>: line coverage is 60.00% (3/5), above its floor 50.00%: raise the floor to 60.00 (floors only rise, ...)` |
 | a package's branch coverage below or above its `branches` figure | `:coverage_floor` | `<package>: branch coverage is 50.00% (1/2), below its floor 60.00%: coverage fell` (or `above its floor 40.00%: raise the floor to 50.00`) |
-| a floor file with no `branches` figure for a package whose tests record branches, or one with it for a package that records none | `:coverage_floor` | `the tests record branches (1/2) and the floor file has no `branches` figure: add `branches 50.00``; `the floor file has a `branches` figure and the tests record no branches: the instrumentation was dropped` |
+| a floor file with no `branches` figure for a package whose tests record branches, or one with it for a package that has none to hold | `:coverage_floor` | `the tests record branches (1/2) and the floor file has no `branches` figure: add `branches 50.00``; `the floor file has a `branches` figure and the coverage has no branches to hold (the code has no decision, or the branch instrumentation was dropped)` |
 | a branch in a library source that is neither a source decision nor a branch the classifier has evidence for | `<stem>__info` (so `:coverage`) | `cov_branch_classify: <file>:<line>:<col>: a br at '<token>' is neither a source decision nor a known compiler-made branch: <source line>` |
 | an expected source with code and no branch record | `:coverage` | `<path> is in no branch record: its tests ran no code of it, or the classifier found none` |
 | an instrumented test that fails, writes no profile or one of another raw profile version | `<stem>__profdata` | `BRANCH COVERAGE RUN FAILED: ...` (`... has raw profile version 12, not 11, the version the pinned llvm-profdata reads`) |
