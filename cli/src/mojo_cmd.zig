@@ -38,9 +38,10 @@ pub const usage_text =
     \\          committed table was made from, or a generated file is hand-edited.
     \\
     \\  --dir DIR  the repository root (default .): holds .buckconfig
-    \\  --toolchains TC_DIR  the directory of the `toolchains` cell, relative to the root (default toolchains), where the two pins tables
-    \\          live. Commit it as `toolchains = TC_DIR` under `[buildrules]` in .buckconfig and every command (also `buildrules check`)
-    \\          agrees; the flag overrides that. A directory that does not exist or is outside the root is refused.
+    \\  --toolchains TC_DIR  asserts the directory of the `toolchains` cell: the two pins tables live in the directory `[cells] toolchains`
+    \\          names in the root .buckconfig (default toolchains), for sync, check and `buildrules check` alike. The flag is not a second
+    \\          place to set it: it is refused unless it names that same directory. A cell directory that does not exist, is outside the
+    \\          root or is inside a Mojo package is refused, and so is a root .buckconfig with an include line (includes are not followed).
     \\
     \\Exit codes: 0 ok, 1 failed or stale, 2 usage.
     \\
@@ -301,71 +302,138 @@ fn originOf(ctx: *Ctx, version: []const u8) ![]const u8 {
 
 // ---- the toolchains directory --------------------------------------------------------------------------
 
-/// Where the two generated pins tables are, relative to the root.
-pub const Tables = struct { mojo_pins: []const u8, mopm_pins: []const u8 };
+/// Where the two generated pins tables are: the directory `dir` (relative to the root, normalized), the files in it, and its real path when it exists.
+pub const Tables = struct { dir: []const u8, real: ?[]const u8, mojo_pins: []const u8, mopm_pins: []const u8 };
 
-/// `[buildrules] toolchains` of the root .buckconfig; the last assignment wins, as in Buck's own files. Null when there is none.
-fn configuredToolchains(ctx: *Ctx) !?[]const u8 {
-    const text = (try ctx.readOpt(".buckconfig")) orelse return null;
+/// What the root .buckconfig says that matters here: the path of the `toolchains` cell (`[cells] toolchains = DIR`; the last assignment wins, as in
+/// Buck's own files) and the first include line (`<file:...>`, `<?file:...>`), which is not followed.
+const Conf = struct { toolchains: ?[]const u8 = null, include: ?[]const u8 = null };
+
+fn isIncludeLine(line: []const u8) bool {
+    return std.mem.startsWith(u8, line, "<file:") or std.mem.startsWith(u8, line, "<?file:");
+}
+
+/// Whether `line` is the header of the section `name`: exactly `[name]`, optionally followed by a comment.
+fn isHeaderOf(line: []const u8, name: []const u8) bool {
+    const close = std.mem.indexOfScalar(u8, line, ']') orelse return false;
+    if (!std.mem.eql(u8, line[1..close], name)) return false;
+    const rest = std.mem.trim(u8, line[close + 1 ..], " \t");
+    return rest.len == 0 or rest[0] == '#' or rest[0] == ';';
+}
+
+fn readConf(ctx: *Ctx) !Conf {
+    const text = (try ctx.readOpt(".buckconfig")) orelse return .{};
+    var conf = Conf{};
     var in_section = false;
-    var found: ?[]const u8 = null;
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0 or line[0] == '#' or line[0] == ';') continue;
+        if (isIncludeLine(line)) {
+            if (conf.include == null) conf.include = line;
+            continue;
+        }
         if (line[0] == '[') {
-            in_section = std.mem.eql(u8, line, "[" ++ contract.buckconfig_section ++ "]");
+            in_section = isHeaderOf(line, contract.buckconfig_section);
             continue;
         }
         if (!in_section) continue;
         const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
         if (!std.mem.eql(u8, std.mem.trim(u8, line[0..eq], " \t"), contract.buckconfig_toolchains_key)) continue;
-        found = std.mem.trim(u8, line[eq + 1 ..], " \t");
+        conf.toolchains = std.mem.trim(u8, line[eq + 1 ..], " \t");
     }
-    return found;
+    return conf;
 }
 
-/// The places of the two pins tables: `--toolchains`, else `[buildrules] toolchains` of .buckconfig, else `toolchains/`. A directory that is named
-/// (by either) must be a directory inside the root, symbolic links followed; otherwise the refusal is printed and the answer is null. The default is
-/// not checked, so a repository without a toolchains directory is where it was (the first sync makes it).
+/// `x` is `base` or a path below it (component-wise, so `ab` is not below `a`).
+fn isUnder(x: []const u8, base: []const u8) bool {
+    return std.mem.eql(u8, x, base) or (std.mem.startsWith(u8, x, base) and x.len > base.len and x[base.len] == '/');
+}
+
+/// The places of the two pins tables: the directory of the `toolchains` cell, `[cells] toolchains = DIR` of the root .buckconfig (the one place the path
+/// is configured, so the tables cannot land where the cell does not look), else `toolchains/`. A cell path that is written must be a directory inside
+/// the root, symbolic links followed; the default is not checked, so a repository without a toolchains directory is where it was (the first sync makes
+/// it). `--toolchains DIR` is an assertion only: it must name that same directory. Each refusal is printed and the answer is null. A root .buckconfig
+/// with an include line is refused: the include is not followed, so the cell path it might hold would be missed.
 pub fn resolveTables(ctx: *Ctx, flag: ?[]const u8) !?Tables {
     const a = ctx.a;
-    const configured = if (flag == null) try configuredToolchains(ctx) else null;
-    const raw = flag orelse configured orelse return Tables{ .mojo_pins = contract.mojo_pins_file, .mopm_pins = contract.mopm_pins_file };
-    const from: []const u8 = if (flag != null) "--toolchains" else ".buckconfig [buildrules] toolchains";
-    if (raw.len == 0) {
-        _ = ctx.fail("{s} is empty: name the directory of the toolchains cell, relative to the repository root", .{from});
+    const conf = try readConf(ctx);
+    if (conf.include) |inc| {
+        _ = ctx.fail(".buckconfig has an include line ({s}): the toolchains cell is read from the root .buckconfig itself and includes are not followed; write the cell's path there", .{inc});
         return null;
     }
-    if (raw[0] == '/') {
-        _ = ctx.fail("{s} = {s} is an absolute path: name the directory of the toolchains cell relative to the repository root", .{ from, raw });
-        return null;
+    const from = ".buckconfig [cells] toolchains";
+    var rel: []const u8 = contract.toolchains_dir;
+    if (conf.toolchains) |raw| {
+        if (raw.len == 0) {
+            _ = ctx.fail("{s} is empty: name the directory of the toolchains cell, relative to the repository root", .{from});
+            return null;
+        }
+        if (raw[0] == '/') {
+            _ = ctx.fail("{s} = {s} is an absolute path: name the directory of the toolchains cell relative to the repository root", .{ from, raw });
+            return null;
+        }
+        rel = try normalize(a, raw);
+        if (rel.len == 0) {
+            _ = ctx.fail("{s} = {s} is the repository root itself: name the directory of the toolchains cell", .{ from, raw });
+            return null;
+        }
+        if (std.mem.eql(u8, rel, "..") or std.mem.startsWith(u8, rel, "../")) {
+            _ = ctx.fail("{s} = {s} is outside the repository: the toolchains directory must be inside the root", .{ from, raw });
+            return null;
+        }
     }
-    const rel = try normalize(a, raw);
-    if (rel.len == 0) {
-        _ = ctx.fail("{s} = {s} is the repository root itself: name the directory of the toolchains cell", .{ from, raw });
-        return null;
+    var real: ?[]const u8 = null;
+    if (ctx.dir.openDir(rel, .{})) |opened| {
+        var d = opened;
+        defer d.close();
+        const root_real = try ctx.dir.realpathAlloc(a, ".");
+        const tc_real = try d.realpathAlloc(a, ".");
+        if (conf.toolchains != null and (std.mem.eql(u8, tc_real, root_real) or !isUnder(tc_real, root_real))) {
+            _ = ctx.fail("{s} = {s} does not lead to a directory below the repository root (a symbolic link takes it out): the toolchains directory must be inside the root", .{ from, rel });
+            return null;
+        }
+        real = tc_real;
+    } else |_| {
+        if (conf.toolchains != null) {
+            _ = ctx.fail("{s} = {s}: no such directory under the repository root", .{ from, rel });
+            return null;
+        }
     }
-    if (std.mem.eql(u8, rel, "..") or std.mem.startsWith(u8, rel, "../")) {
-        _ = ctx.fail("{s} = {s} is outside the repository: the toolchains directory must be inside the root", .{ from, raw });
-        return null;
-    }
-    var d = ctx.dir.openDir(rel, .{}) catch {
-        _ = ctx.fail("{s} = {s}: no such directory under the repository root", .{ from, raw });
-        return null;
-    };
-    defer d.close();
-    const root_real = try ctx.dir.realpathAlloc(a, ".");
-    const tc_real = try d.realpathAlloc(a, ".");
-    const inside = std.mem.startsWith(u8, tc_real, root_real) and tc_real.len > root_real.len and tc_real[root_real.len] == '/';
-    if (!inside) {
-        _ = ctx.fail("{s} = {s} does not lead to a directory below the repository root (a symbolic link takes it out): the toolchains directory must be inside the root", .{ from, raw });
-        return null;
+    if (flag) |f| {
+        if (f.len == 0 or f[0] == '/' or !std.mem.eql(u8, try normalize(a, f), rel)) {
+            _ = ctx.fail("--toolchains {s} is not the toolchains cell: {s} says {s}. The cell is the one place the path is configured; change it there, or drop the flag", .{ f, from, rel });
+            return null;
+        }
     }
     return Tables{
+        .dir = rel,
+        .real = real,
         .mojo_pins = try join(a, rel, contract.mojo_pins_name),
         .mopm_pins = try join(a, rel, contract.mopm_pins_name),
     };
+}
+
+/// The first of `pkgs` whose source tree the tables' directory is in (`mopm` reads the package directory, so a table written there would be an input of its
+/// own table). Compared by real path when the directory exists, so a symbolic link into a package is caught; a package at the root is not considered
+/// (every directory is in it).
+fn packageHolding(ctx: *Ctx, tabs: Tables, pkgs: []const []const u8) !?[]const u8 {
+    for (pkgs) |pkg| {
+        if (pkg.len == 0) continue;
+        const hit = if (tabs.real) |tc_real| blk: {
+            const pr = ctx.dir.realpathAlloc(ctx.a, pkg) catch |e| switch (e) {
+                error.OutOfMemory => return e,
+                else => continue,
+            };
+            break :blk isUnder(tc_real, pr);
+        } else isUnder(tabs.dir, pkg);
+        if (hit) return pkg;
+    }
+    return null;
+}
+
+fn refuseInPackage(ctx: *Ctx, tabs: Tables, pkg: []const u8) u8 {
+    return ctx.fail("the toolchains directory {s} is inside the Mojo package {s}: the pins tables would be among the files the package's table is made from; move the toolchains cell out of the package", .{ tabs.dir, pkg });
 }
 
 // ---- sync ----------------------------------------------------------------------------------------------
@@ -424,6 +492,7 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
     const tabs = (try resolveTables(ctx, tc_flag)) orelse return ctxm.exit_fail;
     const pkgs = if (given.len > 0) given else try discover(ctx);
     if (pkgs.len == 0) return ctx.fail("no package here calls mojo_package(...) in its BUCK file", .{});
+    if (try packageHolding(ctx, tabs, pkgs)) |p| return refuseInPackage(ctx, tabs, p);
     var code: u8 = ctxm.exit_ok;
 
     // buildrules-pins.toml -> toolchains/mopm_pins.bzl first: the build of the pinned mopm loads it.
@@ -615,6 +684,7 @@ pub fn checkAll(ctx: *Ctx, tc_flag: ?[]const u8) !u8 {
         _ = ctx.fail("no package here calls mojo_package(...) in its BUCK file", .{});
         return ctxm.exit_fail;
     }
+    if (try packageHolding(ctx, tabs, pkgs)) |p| return refuseInPackage(ctx, tabs, p);
     var bad: usize = 0;
     var tcs = std.ArrayList(lockm.Tc).empty;
     for (pkgs) |pkg| try checkPackage(ctx, pkg, &bad, &tcs);

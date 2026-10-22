@@ -308,11 +308,11 @@ test "mojo check: with ONE allocation failing and every other working, a synced 
     try expectFailsClosedOneShot(h, &.{ "mojo", "check" });
 }
 
-/// A synced Mojo package whose toolchains directory is named by `[buildrules] toolchains` (the path resolution allocates, and `check` must not pass without it).
+/// A synced Mojo package whose toolchains directory is named by `[cells] toolchains` (the path resolution allocates, and `check` must not pass without it).
 fn mojoSyncedAt(dir: []const u8) !*kit.Harness {
     const h = try kit.Harness.create();
     h.ctx.execer = &fakeExec;
-    try h.put(".buckconfig", try std.fmt.allocPrint(h.a(), "[buildrules]\ntoolchains = {s}\n", .{dir}));
+    try h.put(".buckconfig", try std.fmt.allocPrint(h.a(), "[cells]\ntoolchains = {s}\n", .{dir}));
     try h.put("mopm-toolchain.toml", fx.mojo_toolchain);
     try h.put(try std.fmt.allocPrint(h.a(), "{s}/BUCK", .{dir}), "# toolchains\n");
     try putMojoPackage(h, "pkgs/base");

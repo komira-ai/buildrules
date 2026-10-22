@@ -36,11 +36,11 @@ pub const mojo_toolchain_file = "mopm-toolchain.toml";
 pub const toolchains_dir = "toolchains";
 pub const mojo_pins_name = "mojo_pins.bzl";
 pub const mopm_pins_name = "mopm_pins.bzl";
-/// The default places; `--toolchains DIR` or `[buildrules] toolchains` in .buckconfig moves the directory (mojo_cmd.zig, `resolveTables`).
+/// The default places; the `toolchains` cell of .buckconfig (`[cells] toolchains = DIR`) moves the directory (mojo_cmd.zig, `resolveTables`).
 pub const mojo_pins_file = toolchains_dir ++ "/" ++ mojo_pins_name;
 pub const mopm_pins_file = toolchains_dir ++ "/" ++ mopm_pins_name;
-/// The section and key of .buckconfig that name the toolchains directory.
-pub const buckconfig_section = "buildrules";
+/// The section and key of .buckconfig that name the toolchains directory: the cell itself.
+pub const buckconfig_section = "cells";
 pub const buckconfig_toolchains_key = "toolchains";
 pub const mojo_defs_label = "@buildrules//rules/mojo:defs.bzl";
 

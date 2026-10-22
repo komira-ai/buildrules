@@ -438,11 +438,13 @@ live there; the targets above are fixed and `mojo_package` takes policy as argum
 | `toolchains/mojo_pins.bzl` | `mojo sync` | yes | `toolchains/BUCK` (`mojo_toolchains(MOJO_TOOLCHAINS)`) |
 | `toolchains/mopm_pins.bzl` | `mojo sync` | yes | `toolchains/BUCK` (`mopm_toolchains(extra = EXTRA_MOPM_VERSIONS)`) |
 
-The two `toolchains/` files are in the directory `toolchains/` of the root unless the repository says where its `toolchains` cell is: `--toolchains DIR` on
-`mojo sync` and `mojo check`, or, committed so that `sync`, `check` and `buildrules check` agree, `toolchains = DIR` under `[buildrules]` in the root
-`.buckconfig` (the flag wins). `DIR` is relative to the root and must be an existing directory inside it, symbolic links followed; anything else is refused
-(exit 1, nothing written). The default is not checked, so a repository that has no setting behaves as before. The setting only places these two files: the
-cell itself is still declared under `[cells]`, and the rules find the tables through the cell, not through this path. It does not move `rust_pins.bzl`.
+The two `toolchains/` files are in the directory of the `toolchains` cell: `[cells] toolchains = DIR` in the root `.buckconfig`, read by `mojo sync`,
+`mojo check` and `buildrules check` alike, and `toolchains/` when there is no such line. The cell is the one place the path is configured, so the tables
+cannot land where the cell does not look. `DIR` is relative to the root and must be an existing directory inside it, symbolic links followed, and not inside a
+Mojo package's directory (compared by real path; a package at the root is not considered); anything else is refused (exit 1, nothing written). The default is
+not checked, so a repository that has no such line behaves as before. A root `.buckconfig` with an include line (`<file:...>`, `<?file:...>`) is refused:
+includes are not followed, so a cell path they hold would be missed. `--toolchains DIR` on `mojo sync` and `mojo check` is an assertion only: it must name
+that same directory, else exit 1 with both paths. `rust_pins.bzl` is not covered by this.
 
 `mopm-toolchain.toml` is found by walking up from the package directory to the nearest one, as rustup finds `rust-toolchain.toml`:
 

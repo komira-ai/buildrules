@@ -1,5 +1,6 @@
-//! Where `mojo sync` and `mojo check` keep the two pins tables (mojo_pins.bzl, mopm_pins.bzl): `toolchains/` by default, else the directory named by
-//! `--toolchains` or by `toolchains` under `[buildrules]` in .buckconfig. Every test is named for the defect it catches. (mojo_cmd_test.zig holds the
+//! Where `mojo sync` and `mojo check` keep the two pins tables (mojo_pins.bzl, mopm_pins.bzl): `toolchains/` by default, else the directory the
+//! `toolchains` cell has in the root .buckconfig (`[cells] toolchains = DIR`); `--toolchains` only asserts that directory. Every test is named for the
+//! defect it catches. (mojo_cmd_test.zig holds the
 //! rest of the two commands; the fake below is the smallest one that still checks the tables are where the test says before buck2 is asked.)
 
 const std = @import("std");
@@ -83,44 +84,37 @@ test "default: with neither the flag nor the setting, the tables are toolchains/
     try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check" }).code);
 }
 
-test "default: the [cells] toolchains line of .buckconfig is not the setting (only [buildrules] toolchains is)" {
-    // The cell of a Buck repository is named `toolchains` there and a section-blind reader would take its path for ours.
-    const h = try repo("[cells]\n  toolchains = " ++ custom ++ "\n", "toolchains");
+test "default: a [buildrules] toolchains line is not read (the cell is the one place the path is configured)" {
+    // The setting of the first version of this option: a repository that still has it, with the cell elsewhere, must get the tables where the cell is.
+    const h = try repo("[cells]\n  toolchains = " ++ custom ++ "\n[buildrules]\n  toolchains = alt/tc\n", custom);
     defer h.destroy();
     try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
-    try expectTables(h, "toolchains", true);
-    try expectTables(h, custom, false);
+    try expectTables(h, custom, true);
+    try expectTables(h, "alt/tc", false);
+    try expectTables(h, "toolchains", false);
 }
 
-// ---- a custom directory -------------------------------------------------------------------------------
+// ---- the cell ------------------------------------------------------------------------------------------
 
-test "flag: --toolchains moves both tables, sync --check and check agree, and without the flag check finds them stale" {
-    const h = try repo("[cells]\n", custom);
+test "cell: [cells] toolchains moves both tables for sync, sync --check and check alike, and a stale table there is found" {
+    const h = try repo("[cells]\n  toolchains = " ++ custom ++ "\n", custom);
     defer h.destroy();
-    try t.expectEqual(@as(u8, 0), h.run(&(sync_args ++ [_][]const u8{ "--toolchains", custom })).code);
+    try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
     try expectTables(h, custom, true);
     try expectTables(h, "toolchains", false);
-    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check", "--toolchains", custom }).code);
-    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--check", "--toolchains", custom }).code);
-    // The default directory does not hold them: the gate of a consumer that forgot the setting is red, not green.
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check" }).code);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--check" }).code);
+    try h.put(custom ++ "/mopm_pins.bzl", "# stale\n");
     const r = h.run(&.{ "mojo", "check" });
     try t.expectEqual(@as(u8, 1), r.code);
-    try t.expect(kit.contains(r.err, "STALE: toolchains/mojo_pins.bzl"));
-    try t.expect(kit.contains(r.err, "STALE: toolchains/mopm_pins.bzl"));
+    try t.expect(kit.contains(r.err, "STALE: " ++ custom ++ "/mopm_pins.bzl"));
 }
 
-test "flag: the path is normalized, so ./dir/ and dir name the same files" {
-    const h = try repo("[cells]\n", custom);
-    defer h.destroy();
-    try t.expectEqual(@as(u8, 0), h.run(&(sync_args ++ [_][]const u8{ "--toolchains", "./" ++ custom ++ "/" })).code);
-    const r = h.run(&.{ "mojo", "sync", "--check", "--toolchains", "alt/../" ++ custom });
-    try t.expectEqual(@as(u8, 0), r.code);
-    try t.expect(kit.contains(r.out, custom ++ "/mojo_pins.bzl is up to date"));
-    try t.expect(kit.contains(r.out, custom ++ "/mopm_pins.bzl is up to date"));
-}
-
-test "setting: [buildrules] toolchains in .buckconfig moves the tables for sync and check alike; the last assignment wins; other sections and comments are ignored" {
-    const bc = "[cells]\n  toolchains = decoy\n\n[buildrules]\n  # toolchains = comment\n  toolchains = alt/tc\n  toolchains =  " ++ custom ++ "  \n\n[other]\n  toolchains = other\n";
+test "cell: the last assignment wins; other sections, comments, near-miss keys and near-miss sections are ignored" {
+    // Every near miss comes after the real line, so a reader that takes it for the key (by prefix) ends with the wrong directory.
+    const bc = "[cells]\n  toolchains = decoy\n  # toolchains = comment\n  ; toolchains = comment\n  toolchains =  " ++ custom ++ "  \n" ++
+        "  toolchains_extra = alt/tc\n  toolchain = alt/tc\n  xtoolchains = alt/tc\n\n" ++
+        "[cells_extra]\n  toolchains = alt/tc\n[xcells]\n  toolchains = alt/tc\n[cell]\n  toolchains = alt/tc\n[other]\n  toolchains = alt/tc\n";
     const h = try repo(bc, custom);
     defer h.destroy();
     try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
@@ -128,20 +122,94 @@ test "setting: [buildrules] toolchains in .buckconfig moves the tables for sync 
     try expectTables(h, "alt/tc", false);
     try expectTables(h, "toolchains", false);
     try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check" }).code);
-    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--check" }).code);
 }
 
-test "setting: the flag wins over the setting" {
-    const h = try repo("[buildrules]\ntoolchains = " ++ custom ++ "\n", "alt/tc");
+test "cell: a section header with a trailing comment is still the section, and a header with other text after it is not" {
+    const h = try repo("[cells] # the cells\n  toolchains = " ++ custom ++ "\n", custom);
     defer h.destroy();
-    try t.expectEqual(@as(u8, 0), h.run(&(sync_args ++ [_][]const u8{ "--toolchains", "alt/tc" })).code);
-    try expectTables(h, "alt/tc", true);
-    try expectTables(h, custom, false);
-    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check", "--toolchains", "alt/tc" }).code);
+    try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
+    try expectTables(h, custom, true);
+    const g = try repo("[cells] extra\n  toolchains = alt/tc\n", "toolchains");
+    defer g.destroy();
+    try t.expectEqual(@as(u8, 0), g.run(&sync_args).code);
+    try expectTables(g, "toolchains", true);
+    try expectTables(g, "alt/tc", false);
+}
+
+test "cell: a .buckconfig with CRLF line ends is read the same (the carriage return is not part of the section or the path)" {
+    const h = try repo("[cells]\r\n  toolchains = " ++ custom ++ "\r\n  other = x\r\n", custom);
+    defer h.destroy();
+    try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
+    try expectTables(h, custom, true);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check" }).code);
+}
+
+test "include: a root .buckconfig with an include line is refused (it is not followed, so the cell's path might be missed), and nothing is written" {
+    for ([_][]const u8{ "<file:.buckconfig.farm>\n[cells]\n  toolchains = " ++ custom ++ "\n", "[cells]\n  toolchains = " ++ custom ++ "\n  <?file:.buckconfig.local>\n" }) |bc| {
+        const h = try repo(bc, custom);
+        defer h.destroy();
+        for ([_][]const []const u8{ &sync_args, &.{ "mojo", "check" }, &.{ "mojo", "check", "--toolchains", custom } }) |argv| {
+            const r = h.run(argv);
+            try t.expectEqual(@as(u8, 1), r.code);
+            try t.expect(kit.contains(r.err, "include line"));
+            try t.expect(kit.contains(r.err, "<"));
+        }
+        try expectNothingWritten(h);
+    }
+}
+
+// ---- --toolchains is an assertion ---------------------------------------------------------------------
+
+test "flag: the flag that names the cell's directory is accepted, however it is spelled, by sync, sync --check and check" {
+    const h = try repo("[cells]\n  toolchains = " ++ custom ++ "\n", custom);
+    defer h.destroy();
+    try t.expectEqual(@as(u8, 0), h.run(&(sync_args ++ [_][]const u8{ "--toolchains", custom })).code);
+    try expectTables(h, custom, true);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check", "--toolchains", custom }).code);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check", "--toolchains", "./" ++ custom ++ "/" }).code);
+    const r = h.run(&.{ "mojo", "sync", "--check", "--toolchains", "alt/../" ++ custom });
+    try t.expectEqual(@as(u8, 0), r.code);
+    try t.expect(kit.contains(r.out, custom ++ "/mojo_pins.bzl is up to date"));
+    try t.expect(kit.contains(r.out, custom ++ "/mopm_pins.bzl is up to date"));
+}
+
+test "flag: with no [cells] toolchains line the flag may only name toolchains" {
+    const h = try repo("[cells]\n", "toolchains");
+    defer h.destroy();
+    try t.expectEqual(@as(u8, 0), h.run(&(sync_args ++ [_][]const u8{ "--toolchains", "toolchains" })).code);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check", "--toolchains", "toolchains/" }).code);
+}
+
+test "flag: a flag that is not the cell's directory is refused by sync and check, naming both, and nothing is written" {
+    const Case = struct { bc: []const u8, flag: []const u8, cell: []const u8 };
+    const cases = [_]Case{
+        // The cell is moved and the flag is the old (or another) place.
+        .{ .bc = "[cells]\n  toolchains = " ++ custom ++ "\n", .flag = "alt/tc", .cell = custom },
+        .{ .bc = "[cells]\n  toolchains = " ++ custom ++ "\n", .flag = "toolchains", .cell = custom },
+        // No cell line: the cell is toolchains/.
+        .{ .bc = "[cells]\n", .flag = custom, .cell = "toolchains" },
+        // Spellings that are not the same directory.
+        .{ .bc = "[cells]\n  toolchains = " ++ custom ++ "\n", .flag = "/" ++ custom, .cell = custom },
+        .{ .bc = "[cells]\n  toolchains = " ++ custom ++ "\n", .flag = "", .cell = custom },
+        .{ .bc = "[cells]\n  toolchains = " ++ custom ++ "\n", .flag = ".", .cell = custom },
+        .{ .bc = "[cells]\n  toolchains = " ++ custom ++ "\n", .flag = custom ++ "/..", .cell = custom },
+    };
+    for (cases) |c| {
+        const h = try repo(c.bc, "toolchains");
+        defer h.destroy();
+        for ([_][]const []const u8{ withTc(h, &sync_args, c.flag), withTc(h, &.{ "mojo", "check" }, c.flag) }) |argv| {
+            const r = h.run(argv);
+            if (r.code != 1 or !kit.contains(r.err, "is not the toolchains cell") or !kit.contains(r.err, c.cell)) {
+                std.debug.print("`--toolchains {s}` with {s}: exit {d}; stderr: {s}\n", .{ c.flag, argv[1], r.code, r.err });
+                return error.NotRefused;
+            }
+        }
+        try expectNothingWritten(h);
+    }
 }
 
 test "a stale table is named by its custom path" {
-    const h = try repo("[buildrules]\ntoolchains = " ++ custom ++ "\n", custom);
+    const h = try repo("[cells]\n  toolchains = " ++ custom ++ "\n", custom);
     defer h.destroy();
     try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
     try h.put(custom ++ "/mojo_pins.bzl", "# edited by hand\n");
@@ -153,11 +221,43 @@ test "a stale table is named by its custom path" {
 }
 
 test "a symbolic link that stays inside the repository is a toolchains directory" {
-    const h = try repo("[cells]\n", custom);
+    const h = try repo("[cells]\n  toolchains = alias\n", custom);
     defer h.destroy();
     try h.tmp.dir.symLink(custom, "alias", .{});
-    try t.expectEqual(@as(u8, 0), h.run(&(sync_args ++ [_][]const u8{ "--toolchains", "alias" })).code);
+    try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
     try expectTables(h, custom, true);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check" }).code);
+}
+
+// ---- inside a package ---------------------------------------------------------------------------------
+
+test "a toolchains directory inside a Mojo package's tree is refused by sync and check, also through a symbolic link, and nothing is written" {
+    const h = try repo("[cells]\n  toolchains = pkgs/base/tc\n", "toolchains");
+    defer h.destroy();
+    try h.put("pkgs/base/tc/BUCK", "# toolchains\n");
+    try h.tmp.dir.symLink("pkgs/base", "viapkg", .{});
+    try h.put("pkgs/base/sub/BUCK", "# in the package\n");
+    for ([_][]const u8{ "pkgs/base/tc", "viapkg/sub", "viapkg", "pkgs/base" }) |dir| {
+        try h.put(".buckconfig", try std.fmt.allocPrint(h.a(), "[cells]\n  toolchains = {s}\n", .{dir}));
+        for ([_][]const []const u8{ &sync_args, &.{ "mojo", "check" } }) |argv| {
+            const r = h.run(argv);
+            if (r.code != 1 or !kit.contains(r.err, "inside the Mojo package pkgs/base")) {
+                std.debug.print("cell {s} with {s}: exit {d}; stderr: {s}\n", .{ dir, argv[1], r.code, r.err });
+                return error.NotRefused;
+            }
+        }
+    }
+    try expectNothingWritten(h);
+    if (h.has("pkgs/base/tc/mopm_pins.bzl") or h.has("pkgs/base/mopm_pins.bzl")) return error.ARefusedRunWrote;
+}
+
+test "a toolchains directory next to a package whose name it starts with is not inside the package" {
+    const h = try repo("[cells]\n  toolchains = pkgs/base2/tc\n", "pkgs/base2/tc");
+    defer h.destroy();
+    try h.put("pkgs/base2/tc/BUCK", "# toolchains\n");
+    try t.expectEqual(@as(u8, 0), h.run(&sync_args).code);
+    try expectTables(h, "pkgs/base2/tc", true);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check" }).code);
 }
 
 // ---- refused ------------------------------------------------------------------------------------------
@@ -184,31 +284,16 @@ fn expectNothingWritten(h: *kit.Harness) !void {
     if (h.has("pkgs/base/buildrules.mojo.lock.bzl") or h.has("pkgs/base/buildrules.mojo.bzl")) return error.ARefusedRunWrote;
 }
 
-test "flag: a directory that does not exist, is outside the repository, is absolute, is empty or is the root is refused by sync and check, and nothing is written" {
+test "cell: a directory that does not exist, is outside the repository, is absolute, is empty or is the root is refused by sync and check, naming the .buckconfig line, and nothing is written" {
     for (refusals) |rf| {
-        const h = try repo("[cells]\n", "toolchains");
-        defer h.destroy();
-        for ([_][]const []const u8{ withTc(h, &sync_args, rf.value), withTc(h, &.{ "mojo", "check" }, rf.value) }) |argv| {
-            const r = h.run(argv);
-            if (r.code != 1 or !kit.contains(r.err, rf.message) or !kit.contains(r.err, "--toolchains")) {
-                std.debug.print("`--toolchains {s}` with {s}: exit {d}, wanted 1 and `{s}`; stderr: {s}\n", .{ rf.value, argv[1], r.code, rf.message, r.err });
-                return error.NotRefused;
-            }
-        }
-        try expectNothingWritten(h);
-    }
-}
-
-test "setting: the same refusals for [buildrules] toolchains, naming the .buckconfig line" {
-    for (refusals) |rf| {
-        const bc = try std.fmt.allocPrint(t.allocator, "[buildrules]\ntoolchains = {s}\n", .{rf.value});
+        const bc = try std.fmt.allocPrint(t.allocator, "[cells]\ntoolchains = {s}\n", .{rf.value});
         defer t.allocator.free(bc);
         const h = try repo(bc, "toolchains");
         defer h.destroy();
         for ([_][]const []const u8{ &sync_args, &.{ "mojo", "check" } }) |argv| {
             const r = h.run(argv);
-            if (r.code != 1 or !kit.contains(r.err, rf.message) or !kit.contains(r.err, ".buckconfig [buildrules] toolchains")) {
-                std.debug.print("setting `{s}` with {s}: exit {d}, wanted 1 and `{s}`; stderr: {s}\n", .{ rf.value, argv[1], r.code, rf.message, r.err });
+            if (r.code != 1 or !kit.contains(r.err, rf.message) or !kit.contains(r.err, ".buckconfig [cells] toolchains")) {
+                std.debug.print("cell `{s}` with {s}: exit {d}, wanted 1 and `{s}`; stderr: {s}\n", .{ rf.value, argv[1], r.code, rf.message, r.err });
                 return error.NotRefused;
             }
         }
@@ -235,10 +320,11 @@ test "a symbolic link that leads out of the repository is refused, also when the
     // And a link to the root itself, which is not below it.
     try h.tmp.dir.symLink(".", "linkroot", .{});
     for ([_][]const u8{ "linkout", "linksibling", "linkroot" }) |link| {
-        const r = h.run(withTc(h, &sync_args, link));
+        try h.put(".buckconfig", try std.fmt.allocPrint(h.a(), "[cells]\n  toolchains = {s}\n", .{link}));
+        const r = h.run(&sync_args);
         try t.expectEqual(@as(u8, 1), r.code);
         try t.expect(kit.contains(r.err, "does not lead to a directory below the repository root"));
-        const c = h.run(withTc(h, &.{ "mojo", "check" }, link));
+        const c = h.run(&.{ "mojo", "check" });
         try t.expectEqual(@as(u8, 1), c.code);
         try t.expect(kit.contains(c.err, "a symbolic link takes it out"));
     }
@@ -255,11 +341,11 @@ test "flag: --toolchains without a value is a usage error for sync and check" {
     }
 }
 
-test "the usage text names --toolchains and the setting" {
+test "the usage text names --toolchains and the cell" {
     const h = try repo("[cells]\n", "toolchains");
     defer h.destroy();
     const r = h.run(&.{ "mojo", "--help" });
     try t.expectEqual(@as(u8, 0), r.code);
     try t.expect(kit.contains(r.out, "[--toolchains TC_DIR]"));
-    try t.expect(kit.contains(r.out, "toolchains = TC_DIR"));
+    try t.expect(kit.contains(r.out, "`[cells] toolchains`"));
 }
