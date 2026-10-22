@@ -55,7 +55,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + gate_problems(ctx)
+    return problems + gate_problems(ctx) + planted_problems(ctx)
 
 # The gate of a Mojo library (docs/contract.md, 12.8): a library's public `.mojoc` exists only if every test of its package passed. Two things are held.
 #
@@ -123,4 +123,32 @@ def gate_problems(ctx):
             problems.append("{}:lib_ungated does not depend on {}:lib: a dependent must read the gated library".format(user, dep))
         if dep + ":lib_ungated" in direct:
             problems.append("{}:lib_ungated depends on {}:lib_ungated: that bypasses the tests of {}".format(user, dep, dep))
+    return problems
+
+# The checks and markers of the rules (ci/planted/BUCK): each rule runs `check` (rules/check) to compare, hash, copy or run a test, and writes its output
+# only when that passed. For each rule a planted input that must make the action fail, and a control, the same rule on an input that is right, that must
+# build (so the planted one is red for its input and not for something else). The Mojo test run has no control here: its stand-in program cannot pass,
+# and the real runs are built by //ci:mojo.
+PLANTED = [
+    ("//ci/planted:run_check_of_other_stdout", "//examples/hello:hello_runs"),
+    ("//ci/planted:c_check_of_other_stdout", "//ci/planted:c_check_of_its_stdout"),
+    ("//ci/planted:mojo_same_of_other_bytes", "//ci/mojo_gate:consumer_of_green"),
+    ("//ci/planted:table_of_other_bytes", "//ci/planted:table_in_sync"),
+    ("//ci/planted:rust_toolchain_of_other_version", "toolchains//:rust"),
+    ("//ci/planted:fails", "//examples/hello:hello_lib_test"),
+    ("//ci/planted:lib_behind_a_failing_test", "//examples/hello:hello_lib"),
+    ("//ci/planted:mojo_test_that_fails", None),
+]
+
+def planted_problems(ctx):
+    """Every way a planted check or marker is not red, or its control is not green: a list of strings, empty when all is as planted."""
+    problems = []
+    for planted, control in PLANTED:
+        built, failed = _built(ctx, planted)
+        if not failed:
+            problems.append("{} built ({} artifact(s)): the check it plants is gone, a failure leaves the target green".format(planted, built))
+        if control:
+            built, failed = _built(ctx, control)
+            if failed or not built:
+                problems.append("{} (the control of {}) must build, and it built {} artifact(s) and failed {}".format(control, planted, built, failed))
     return problems

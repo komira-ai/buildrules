@@ -1,6 +1,8 @@
 # check
 
-What a rule's build action runs instead of a shell script, as one static Zig executable. No rule uses it yet. Every command writes its output
+What a rule's build action runs instead of a shell script, as one static Zig executable. The checks and markers of the rules run it: `run_check`, `c_check`, `mojo_same`, the run and the gate of a Mojo test,
+`rust_test` and the Rust test runs (`test_run`, the welded copy), the pinned `rustc --version` and the cargo table check; ci/planted holds that each is
+red when its check fails. Every command writes its output
 file only when it succeeded, and whole (a temporary file renamed into place). Exit status: 0 done; 1 the check failed; 2 the command line is
 wrong; for `run` and `marker` the program's own status (127 not there, 126 not runnable, 128+signal when a signal ended it).
 

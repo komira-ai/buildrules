@@ -19,8 +19,11 @@ def _impl(ctx):
               "that has it: set exec_compatible_with = test_exec_compatible_with() (rules/isa.bzl), which the cargo_unit and rust_test " +
               "macros do, so the farm schedules the run on a worker of at least that level.").format(ctx.label, want, have))
     marker = ctx.actions.declare_output(ctx.label.name + ".passed")
+    check = ctx.attrs._check_exe[RunInfo]
+
+    # `check marker` (rules/check): the marker is written only when the binary exited 0, and a failed run is the binary's output and its status.
     ctx.actions.run(
-        cmd_args(info.busybox, "sh", "-c", info.script, "sh", info.exe, marker.as_output(), hidden = info.hidden),
+        cmd_args(check, "marker", "--out", marker.as_output(), info.marker, info.start, "--", info.exe, hidden = info.hidden),
         category = "rust_test",
         identifier = ctx.label.name,
         env = info.env,
@@ -29,11 +32,11 @@ def _impl(ctx):
         DefaultInfo(default_output = marker, sub_targets = {"bin": [DefaultInfo(default_output = info.exe)]}),
         RustTestInfo(marker = marker),
     ]
-    if info.cli_script:
+    if info.cli:
         # `buck2 test` runs the same pinned binary with the same environment and working directory, outside the build (no marker).
         out.append(ExternalRunnerTestInfo(
             type = "custom",
-            command = [cmd_args(info.busybox, "sh", "-c", info.cli_script, "sh", info.exe, "/dev/null", hidden = info.hidden)],
+            command = [cmd_args(check, "run", info.start, "--", info.exe, hidden = info.hidden)],
             env = info.env,
             labels = ["test"] + list(info.labels),
         ))
@@ -44,6 +47,7 @@ test_run = rule(
     attrs = {
         "required_isa": attrs.string(default = ""),
         "unit": attrs.dep(providers = [TestUnitInfo]),
-        "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
+        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
+        "_exec_isa":attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
     },
 )

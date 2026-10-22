@@ -36,7 +36,6 @@ never take a Cargo.toml as an input, so editing policy or metadata re-runs the c
 
 load(":cargo_unit.bzl", "cargo_unit", "unit_group")
 load(":pins.bzl", "RUST_VERSIONS")
-load(":providers.bzl", "RustToolchainInfo")
 
 _STEPS = ["lint", "debug", "test", "release", "coverage"]
 
@@ -362,31 +361,15 @@ def cargo_workspace(path = ".", table = None):
 
 # ---- :check ----------------------------------------------------------------------
 
-_CHECK = """set -eu
-BB="$1"; OUT="$2"; shift 2
-BAD=0
-# arguments come in triples: expected sha256, file, the name to report
-while [ $# -gt 0 ]; do
-    got=$("$BB" sha256sum "$2" | "$BB" cut -d' ' -f1)
-    if [ "$got" != "$1" ]; then
-        echo "STALE: $3 changed since the cargo table was generated (table has $1, file has $got)" >&2
-        BAD=1
-    fi
-    shift 3
-done
-if [ "$BAD" != 0 ]; then
-    echo "buildrules: the generated cargo table is stale: run \\`buildrules sync\\` and commit the regenerated table" >&2
-    exit 1
-fi
-echo '{"version": 1, "data": {"status": "success"}}' > "$OUT"
-"""
+# `check digest` (rules/check): the arguments come in triples, the expected sha256, the file and the name to report. Every file that is not what the
+# table was generated from is said by name with the digest it has (status 1, and no output); only when all match is the output written.
+_SUCCESS = '{"version": 1, "data": {"status": "success"}}\n'
 
 def _check_impl(ctx):
-    tc = ctx.attrs._toolchain[RustToolchainInfo]
     out = ctx.actions.declare_output("table_in_sync")
-    args = cmd_args(tc.busybox, "sh", "-c", _CHECK, "sh", tc.busybox, out.as_output())
+    args = cmd_args(ctx.attrs._check_exe[RunInfo], "digest", "--out", out.as_output(), "--stamp", _SUCCESS)
     for h, f, n in zip(ctx.attrs.hashes, ctx.attrs.files, ctx.attrs.names):
-        args.add(h, f[DefaultInfo].default_outputs[0], n)
+        args.add("sha256:" + h, f[DefaultInfo].default_outputs[0], "STALE " + n + " (run `buildrules sync` and commit the regenerated table)")
     ctx.actions.run(args, category = "cargo_table_check", identifier = ctx.label.name)
     return [DefaultInfo(default_output = out)]
 
@@ -396,6 +379,9 @@ _check = rule(
         "files": attrs.list(attrs.dep()),
         "hashes": attrs.list(attrs.string()),
         "names": attrs.list(attrs.string()),
-        "_toolchain": attrs.exec_dep(default = "toolchains//:rust", providers = [RustToolchainInfo]),
+        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
     },
 )
+
+# The same rule under a public name, for the planted stale table of ci/planted.
+cargo_table_check = _check

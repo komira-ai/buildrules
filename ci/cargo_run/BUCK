@@ -1,0 +1,28 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# Kept by hand, in the unit-level form (see examples/p4ws): an integration test of a cargo package, whose run //ci:all builds. The test reads back how it was started
+# (tests/env.rs): in its package directory, with CARGO_MANIFEST_DIR, TMPDIR and CARGO_TARGET_TMPDIR absolute and the last one made. They are the options of
+# `check marker` that rules/rust/cargo_unit.bzl gives (`_START`); drop one and this test is red.
+load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit")
+
+cargo_unit(
+    name = "env_test",
+    pkg = "cargo_run",
+    version = "0.1.0",
+    crate_name = "env",
+    mode = "test",
+    crate_type = "bin",
+    side = "target",
+    target_kind = "test",
+    target_name = "env",
+    edition = "2021",
+    root = "tests/env.rs",
+    crate_hash = "0123456789",
+    opt_level = "0",
+    debuginfo = "0",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["tests/**"]),
+    visibility = ["//ci:"],
+)
+
+scrub_files()
