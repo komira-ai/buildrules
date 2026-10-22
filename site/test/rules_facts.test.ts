@@ -409,7 +409,7 @@ describe('the Mojo page against the Mojo rules, mopm\'s pins and the contract', 
     expect(cmd).toContain('quotedValue(line, "mojo")');
     expect(mojo).toContain('[toolchain]');
     expect(cmd).toContain('there is no default. Create it, for example');
-    expect(cmd).toContain('[toolchain]\\nmopm = \\"0.0.24\\"');
+    expect(cmd).toContain('[toolchain]\\nmopm = \\"0.0.25\\"');
     const dflt = /MOPM_DEFAULT = "([^"]+)"/.exec(mopm)![1];
     expect(mojo).toContain(`mopm = "${dflt}"`);
   });
@@ -424,14 +424,14 @@ describe('the Mojo page against the Mojo rules, mopm\'s pins and the contract', 
     expect(mojo).toContain('toolchains//:mopm_<version>');
   });
 
-  test('the pinned mopm is the published 0.0.24 release: its asset digest and size, no release_pending, and the page says released', () => {
+  test('the pinned mopm is the published 0.0.25 release: its asset digest and size, no release_pending, and the page says released', () => {
     const row = /MOPM_VERSIONS = \{[^]*?\n {4}\},/.exec(mopm)![0];
-    expect(row).toContain('"url": "https://github.com/komira-ai/mopm/releases/download/v0.0.24/mopm-0.0.24-linux-x86_64.tar.gz"');
-    expect(row).toContain('"sha256": "1ded65259851ff7a6751e98005d14d9014aeb5e64fb3966b2ec5f0c7179fd5b1"');
+    expect(row).toContain('"url": "https://github.com/komira-ai/mopm/releases/download/v0.0.25/mopm-0.0.25-linux-x86_64.tar.gz"');
+    expect(row).toContain('"sha256": "1848ffbb6c3f3522e95c36d3d5f7d4260abb8dde2cb3c415b17ca94dc48edeac"');
     expect(row).toContain('"size": 1074723');
-    expect(row).toContain('"dir": "mopm-0.0.24-linux-x86_64"');
+    expect(row).toContain('"dir": "mopm-0.0.25-linux-x86_64"');
     expect(mopm).not.toContain('release_pending');
-    expect(mojo).toContain('mopm 0.0.24 is released and pinned');
+    expect(mojo).toContain('mopm 0.0.25 is released and pinned');
     expect(mojo).not.toContain('stand-in');
     expect(mojo).not.toContain('release is pending');
     expect(mojo).toContain('`url_map`');
@@ -663,7 +663,7 @@ describe('the stages of the release: the page, RELEASING.md, beta.yml and releas
     expect(beta).not.toContain("github.event_name == 'planned'");
     expect(beta.match(/native, no build yet/g)!.length).toBe(2);
     expect(releasing).toContain('**No build**');
-    expect(rulesText).toContain('The Mojo leg builds a Mojo package with the pinned mopm 0.0.24 release, the same way, and two native legs run the command line the release ships for Arm Linux and for macOS');
+    expect(rulesText).toContain('The Mojo leg builds a Mojo package with the pinned mopm 0.0.25 release, the same way, and two native legs run the command line the release ships for Arm Linux and for macOS');
     expect(rulesText).toContain('They do not build, because no toolchain of the rules runs on those hosts yet.');
     expect(rulesText).not.toContain("Mojo leg is planned");
     // the Mojo leg is not waiting for anything: no pending pin, no planned-until line, and RELEASING.md lists it as running

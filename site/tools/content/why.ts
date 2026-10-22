@@ -137,7 +137,7 @@ export const why: Page = {
       ['Zig', '`rules/pins/pins.bzl`', '0.12.0 (default), 0.15.2'],
       ['busybox (the shell and file utilities)', '`rules/pins/pins.bzl`', '1.35.0, static'],
       ['Node.js', '`rules/node/pins.bzl`', '24.21.0, linux x64'],
-      ['mopm', '`rules/mopm/pins.bzl`', '0.0.24 (a stand-in only if the row is marked `release_pending`)'],
+      ['mopm', '`rules/mopm/pins.bzl`', '0.0.25 (a stand-in only if the row is marked `release_pending`)'],
       ['Mojo', 'not pinned by buildrules: named by mopm\'s graph', 'the one version mopm pins'],
       ['libgcc, libstdcxx (conda-forge)', '`rules/pins/pins.bzl`', '15.3.0'],
     ),
