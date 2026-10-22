@@ -51,7 +51,7 @@ _STAMPS = [
     refuses("stamp_two_version_lines", version_stamp, ["1.2\n3.4\n", "//cli:version_zig"], ["found 2"]),
 ]
 
-group(name = "version_stamps", deps = _STAMPS)
+group(name = "version_stamps", deps = _STAMPS, visibility = ["PUBLIC"])
 
 _TESTS = [
     "autopin_api",
