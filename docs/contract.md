@@ -441,7 +441,7 @@ live there; the targets above are fixed and `mojo_package` takes policy as argum
 The two `toolchains/` files are in the directory of the `toolchains` cell: `[cells] toolchains = DIR` in the root `.buckconfig`, read by `mojo sync`,
 `mojo check` and `buildrules check` alike, and `toolchains/` when there is no such line. The cell is the one place the path is configured, so the tables
 cannot land where the cell does not look. `DIR` is relative to the root and must be an existing directory inside it, symbolic links followed, and not inside a
-Mojo package's directory (compared by real path); anything else is refused (exit 1, nothing written). The default is not checked, so a repository that has
+Mojo package's directory (compared by real path; a package whose real path cannot be resolved is refused too); anything else is refused (exit 1, nothing written). The default is not checked, so a repository that has
 no such line behaves as before. Four rules, each the reading of Buck's own configuration that the committed tables need:
 - A toolchains directory inside a package at the repository root is accepted: every directory is inside such a package, and refusing it would refuse the
   default. Only a package in a subdirectory holds its toolchains directory out.
