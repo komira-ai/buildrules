@@ -1,6 +1,10 @@
 //! cov_summary: the line coverage of a package, from the normalized Cobertura reports of its tests (cov_normalize's output).
 //!
-//!   cov_summary --out <file> [--expect <repository path>]... [--blocks <blocks file>]... <report.xml>...
+//!   cov_summary --out <file> [--expect <repository path>]... [--src <repository path>=<file>]... [--blocks <blocks file>]... <report.xml>...
+//!
+//! `--src` gives the file behind an `--expect` path (Mojo only). The Mojo report omits a source with no executable line, so an expected source that
+//! no report names but whose text has no statement beyond comments, docstrings and `import` lines (a re-export `__init__.mojo`) is listed as 0/0
+//! instead of refused; one with any other statement stays refused (`hasNoStatements`).
 //!
 //! `--blocks` is a zig_cover.zig block report (Zig's branch figure: the compiler's basic blocks, `<file> TAB <line> TAB <column> TAB <hit> TAB <total>`).
 //! With any, the output continues after the line total with the same listing prefixed `branches `: the blocks at a position that ran are the most
@@ -164,6 +168,101 @@ pub fn missing(rows: []const FileCov, expect: []const []const u8) ?[]const u8 {
     return null;
 }
 
+/// Whether a continuation line of a parenthesised import holds only what one may hold: names, dots, commas, `as`, parentheses, and a comment.
+fn importContinuation(line: []const u8) bool {
+    for (line) |c| {
+        if (c == '#') return true;
+        const ok = std.ascii.isAlphanumeric(c) or c == '_' or c == ' ' or c == '\t' or c == ',' or c == '.' or c == '(' or c == ')' or c == '\\';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+/// Folds the parentheses of one import line into `depth`. The only `(` an import has opens its name list, right after `import` and not inside
+/// another (`from a import f()` and `from a import (f(), g)` are calls); a `)` with nothing open is refused.
+fn parens(code: []const u8, depth: *i32) bool {
+    for (code, 0..) |c, i| {
+        if (c == '(') {
+            if (depth.* != 0 or !std.mem.endsWith(u8, std.mem.trimRight(u8, code[0..i], " \t"), "import")) return false;
+            depth.* += 1;
+        } else if (c == ')') {
+            depth.* -= 1;
+            if (depth.* < 0) return false;
+        }
+    }
+    return true;
+}
+
+/// Whether a Mojo source has no executable line: only blank lines, comments, docstrings (a triple-quoted string on its own lines) and top-level
+/// `from ... import ...` / `import ...` statements (a re-export file, `__init__.mojo`). The Mojo coverage report omits such a file, and so it
+/// does a file with code that no test compiled; this is what tells them apart, so it is strict: any other statement, a `;`, a quote on an import,
+/// or an unclosed docstring or parenthesis makes it false.
+pub fn hasNoStatements(text: []const u8) bool {
+    var in_doc: ?[]const u8 = null; // the closing triple quote while inside a docstring
+    var depth: i32 = 0; // open parentheses of an import
+    var cont = false; // the previous import line ended with a backslash
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (in_doc) |q| {
+            const at = std.mem.indexOf(u8, line, q) orelse continue;
+            const rest = std.mem.trim(u8, line[at + 3 ..], " \t");
+            if (rest.len != 0 and rest[0] != '#') return false;
+            in_doc = null;
+            continue;
+        }
+        if (depth > 0 or cont) {
+            if (!importContinuation(line)) return false;
+            const code = line[0 .. std.mem.indexOfScalar(u8, line, '#') orelse line.len];
+            if (!parens(code, &depth)) return false;
+            cont = std.mem.endsWith(u8, std.mem.trimRight(u8, code, " \t"), "\\");
+            continue;
+        }
+        if (line.len == 0 or line[0] == '#') continue;
+        if (std.mem.startsWith(u8, line, "\"\"\"") or std.mem.startsWith(u8, line, "'''")) {
+            const q = line[0..3];
+            if (std.mem.indexOf(u8, line[3..], q)) |at| {
+                const rest = std.mem.trim(u8, line[3 + at + 3 ..], " \t");
+                if (rest.len != 0 and rest[0] != '#') return false;
+            } else in_doc = q;
+            continue;
+        }
+        // Only a statement at column 0 is an import of the module.
+        if (raw[0] == ' ' or raw[0] == '\t') return false;
+        const is_import = (std.mem.startsWith(u8, line, "from ") and std.mem.indexOf(u8, line, " import ") != null) or std.mem.startsWith(u8, line, "import ");
+        if (!is_import or !importContinuation(line)) return false;
+        const code = line[0 .. std.mem.indexOfScalar(u8, line, '#') orelse line.len];
+        if (!parens(code, &depth)) return false;
+        cont = std.mem.endsWith(u8, std.mem.trimRight(u8, code, " \t"), "\\");
+    }
+    return in_doc == null and depth == 0 and !cont;
+}
+
+/// `rows` plus a 0/0 row for each file of `expect` that no row names and whose source (`srcs`: expected path, then the file to read) has no
+/// statement. A file the report lacks that has statements stays missing, so `missing` still refuses it.
+pub fn withEmptySources(a: std.mem.Allocator, rows: []const FileCov, expect: []const []const u8, srcs: []const [2][]const u8, read: *const fn (std.mem.Allocator, []const u8) []const u8) ![]FileCov {
+    var out = std.ArrayList(FileCov).empty;
+    try out.appendSlice(a, rows);
+    for (expect) |e| {
+        var found = false;
+        for (rows) |r| found = found or std.mem.eql(u8, r.path, e);
+        if (found) continue;
+        for (srcs) |s| {
+            if (std.mem.eql(u8, s[0], e) and hasNoStatements(read(a, s[1]))) try out.append(a, .{ .path = e, .hit = 0, .total = 0 });
+        }
+    }
+    std.mem.sort(FileCov, out.items, {}, struct {
+        fn lt(_: void, x: FileCov, y: FileCov) bool {
+            return std.mem.lessThan(u8, x.path, y.path);
+        }
+    }.lt);
+    return out.toOwnedSlice(a);
+}
+
+fn readSource(a: std.mem.Allocator, p: []const u8) []const u8 {
+    return std.fs.cwd().readFileAlloc(a, p, 64 << 20) catch |e| die(1, "cannot read {s}: {s}", .{ p, @errorName(e) });
+}
+
 fn die(code: u8, comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("cov_summary: " ++ fmt ++ "\n", args);
     std.process.exit(code);
@@ -177,6 +276,7 @@ pub fn main() !void {
     var expect = std.ArrayList([]const u8).empty;
     var reports = std.ArrayList([]const u8).empty;
     var block_reports = std.ArrayList([]const u8).empty;
+    var srcs = std.ArrayList([2][]const u8).empty;
     var i: usize = 1;
     while (i < argv.len) : (i += 1) {
         if (std.mem.eql(u8, argv[i], "--out") and i + 1 < argv.len) {
@@ -185,6 +285,10 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, argv[i], "--expect") and i + 1 < argv.len) {
             i += 1;
             try expect.append(a, argv[i]);
+        } else if (std.mem.eql(u8, argv[i], "--src") and i + 1 < argv.len) {
+            i += 1;
+            const eq = std.mem.indexOfScalar(u8, argv[i], '=') orelse die(2, "--src wants <expected path>=<file>, got {s}", .{argv[i]});
+            try srcs.append(a, .{ argv[i][0..eq], argv[i][eq + 1 ..] });
         } else if (std.mem.eql(u8, argv[i], "--blocks") and i + 1 < argv.len) {
             i += 1;
             try block_reports.append(a, argv[i]);
@@ -200,7 +304,7 @@ pub fn main() !void {
         const text = std.fs.cwd().readFileAlloc(a, p, 64 << 20) catch |e| die(1, "cannot read {s}: {s}", .{ p, @errorName(e) });
         addReport(a, &files, text) catch die(1, "{s} is not a normalized Cobertura report", .{p});
     }
-    const rows = try summarize(a, &files);
+    const rows = try withEmptySources(a, try summarize(a, &files), expect.items, srcs.items, readSource);
     if (missing(rows, expect.items)) |m| die(1, "{s} is in no report: no test compiled it, or kcov could not open it", .{m});
     var text = try render(a, rows, expect.items);
     if (block_reports.items.len != 0) {
