@@ -438,6 +438,12 @@ live there; the targets above are fixed and `mojo_package` takes policy as argum
 | `toolchains/mojo_pins.bzl` | `mojo sync` | yes | `toolchains/BUCK` (`mojo_toolchains(MOJO_TOOLCHAINS)`) |
 | `toolchains/mopm_pins.bzl` | `mojo sync` | yes | `toolchains/BUCK` (`mopm_toolchains(extra = EXTRA_MOPM_VERSIONS)`) |
 
+The two `toolchains/` files are in the directory `toolchains/` of the root unless the repository says where its `toolchains` cell is: `--toolchains DIR` on
+`mojo sync` and `mojo check`, or, committed so that `sync`, `check` and `buildrules check` agree, `toolchains = DIR` under `[buildrules]` in the root
+`.buckconfig` (the flag wins). `DIR` is relative to the root and must be an existing directory inside it, symbolic links followed; anything else is refused
+(exit 1, nothing written). The default is not checked, so a repository that has no setting behaves as before. The setting only places these two files: the
+cell itself is still declared under `[cells]`, and the rules find the tables through the cell, not through this path. It does not move `rust_pins.bzl`.
+
 `mopm-toolchain.toml` is found by walking up from the package directory to the nearest one, as rustup finds `rust-toolchain.toml`:
 
 ```toml
