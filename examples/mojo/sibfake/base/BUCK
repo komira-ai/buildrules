@@ -2,7 +2,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load(":buildrules.mojo.bzl", "mojo_package")
 
 # The leaf of examples/mojo/sibfake: a package that a sibling imports. Its table is written by hand with `"workspace_root": True`, as the sync of a mopm
-# that takes --workspace-root (0.0.33 and later) writes it; the pinned mopm does not, so `:table` is not built for it (ci/all.bzl).
+# whose `--help` lists --workspace-root writes it; the pinned mopm does not, so `:table` is not built for it (ci/all.bzl).
 mojo_package(path = ".")
 
 scrub_files()

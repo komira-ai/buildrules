@@ -113,20 +113,22 @@ def coverage_floor_wiring_problems(ctx):
             problems.append("{} has a :coverage_floor and no coverage_floor.txt: a package without a floor must be as it was".format(package))
     return problems
 
-# Every package with a test has the five branch coverage actions of each test, and its `:coverage` waits for the last: also a package whose tests link native
+# A package whose tests run in the default layout has the five branch coverage actions of each test, and its `:coverage` waits for the last: also a package whose tests link native
 # libraries (`ws`: a shared object; `sys_app`: two static archives), because the instrumented link is given them as the ordinary link is (rules/mojo/defs.bzl,
-# rules/coverage/branch/README.md). (package, the stem of its test)
+# rules/coverage/branch/README.md). One whose tests run in the installed layout has none of them (the branch run has no installed layout), so its `coverage.txt` has no `branches` rows
+# and a floor may not hold a `branches` figure. (package, the stem of its test, whether it is instrumented)
 BRANCH_PACKAGES = [
-    ("//examples/mojo/partial", "test_partial"),
-    ("//examples/mojo/reexport", "test_ops"),
-    ("//examples/mojo/copy_of_base", "test_base"),
-    ("//examples/mojo/ws/util", "test_util"),
-    ("//examples/mojo/ws/util/base", "test_base"),
-    ("//examples/mojo/testdata", "test_data_files"),
-    ("//examples/mojo/sibfake/app", "test_util"),
-    ("//examples/mojo/sibfake/base", "test_base"),
-    ("//examples/mojo/ws", "test_app"),
-    ("//examples/mojo/sys_app", "test_sys_app"),
+    ("//examples/mojo/partial", "test_partial", True),
+    ("//examples/mojo/reexport", "test_ops", True),
+    ("//examples/mojo/copy_of_base", "test_base", True),
+    ("//examples/mojo/ws/util", "test_util", True),
+    ("//examples/mojo/ws/util/base", "test_base", True),
+    ("//examples/mojo/testdata", "test_data_files", True),
+    ("//examples/mojo/sibfake/app", "test_util", True),
+    ("//examples/mojo/sibfake/base", "test_base", True),
+    ("//examples/mojo/ws", "test_app", True),
+    ("//examples/mojo/sys_app", "test_sys_app", True),
+    ("//examples/mojo/installed", "test_installed_layout", False),
 ]
 
 # The packages whose tests link native libraries, with their committed graphs: what `__pgo` is held to (`native_link_problems`).
@@ -139,13 +141,15 @@ def coverage_branch_wiring_problems(ctx):
     """Every example package against the branch coverage targets of its test: a list of strings, empty when all are there and `:coverage` waits for them."""
     problems = []
     q = ctx.uquery()
-    for package, stem in BRANCH_PACKAGES:
+    for package, stem, instrumented in BRANCH_PACKAGES:
         names = [t.label.name for t in q.eval(package + ":")]
         mine = [stem + "__" + step for step in ["bc", "pgo", "profdata", "ir", "info"]]
         have = [n for n in mine if n in names]
         waits = (stem + "__info") in [t.label.name for t in q.eval("deps({}:coverage, 1)".format(package))]
-        if len(have) != len(mine) or not waits:
+        if instrumented and (len(have) != len(mine) or not waits):
             problems.append("{} has {} of the {} branch coverage targets of {} and its :coverage {} wait for {}__info: its branch figure is not made".format(package, len(have), len(mine), stem, "does" if waits else "does not", stem))
+        elif not instrumented and (have or waits):
+            problems.append("{} runs its tests in the installed layout and has branch coverage targets ({}): its tests are not instrumented, so it must have none".format(package, ", ".join(have) if have else stem + "__info is a dependency of :coverage"))
     return problems
 
 def _test_natives(graph):
@@ -290,6 +294,11 @@ PLANTED = [
     ("//ci/mojo_data:run_red_env", "//ci/mojo_data:run_green", "data_probe: PROBE_MODE is lax, not strict"),
     ("//ci/mojo_data:run_red_no_program", "//ci/mojo_data:run_green", "data_probe: cannot start bin/hello: FileNotFound"),
     ("//ci/mojo_data:run_red_not_executable", "//ci/mojo_data:run_green", "data_probe: cannot start bin/hello: AccessDenied"),
+    # The installed layout (`test_layout = "installed"`): the control is the run in which the probe finds everything where the layout puts it.
+    ("//ci/mojo_data:run_red_installed_probe_in_default_layout", "//ci/mojo_data:run_green_installed", "is not in a bin/ directory"),
+    ("//ci/mojo_data:run_red_default_probe_in_installed_layout", "//ci/mojo_data:run_green", "is not BUILDRULES_TEST_DATA"),
+    ("//ci/mojo_data:run_red_installed_no_greeting", "//ci/mojo_data:run_green_installed", "data_probe: cannot read share/greeting.txt: FileNotFound"),
+    ("//ci/mojo_data:run_red_installed_content", "//ci/mojo_data:run_green_installed", "data_probe: share/greeting.txt holds other data"),
 ]
 
 def _failures(ctx, label):
@@ -337,14 +346,22 @@ TEST_COMMANDS = [
     ], _CARGO_ENV, ["CARGO_TARGET_TMPDIR"], ["test"], ["hidden=[", "src/lib.rs"]),
     ("//ci/planted:mojo_test_that_fails", [
         "\"run\", \"--ld-library-path\", cmd_args(<build artifact check",
-        "\"/lib\", delimiter=\"\"), \"--\", <build artifact check",
+        "\"/lib\", delimiter=\"\"), \"--private-scratch\", \"--\", <build artifact check",
     ], [], [], ["test", "mojo"], ["hidden=[<build artifact check"]),
-    # A Mojo test with data and variables: the data directory is the working directory and named by BUILDRULES_TEST_DATA, made absolute (the command starts in
-    # the execution root), and the variable is given; the directory is an input of the command.
+    # A Mojo test with data and variables: the private scratch (always), the data directory as the working directory and named by BUILDRULES_TEST_DATA, made
+    # absolute (the command starts in the execution root), and the variable is given; the directory is an input of the command.
     ("//ci/mojo_data:run_green", [
+        "\"--private-scratch\", \"--env\"",
         "\"--abs\", \"BUILDRULES_TEST_DATA\", \"--cwd-env\", \"BUILDRULES_TEST_DATA\"",
         "\"PROBE_MODE=strict\"",
         "cmd_args(\"BUILDRULES_TEST_DATA=\"",
+    ], [], [], ["test", "mojo"], ["hidden=["]),
+    # The installed layout: the private scratch, `--installed` (the fresh root, the binary at `<root>/bin/`), the data directory copied to `<root>/share` and named by
+    # BUILDRULES_TEST_DATA; the default layout's working-directory options are not in it.
+    ("//ci/mojo_data:run_green_installed", [
+        "\"--private-scratch\", \"--installed\", \"--install-share\", <build artifact",
+        "\"--share-env\", \"BUILDRULES_TEST_DATA\"",
+        "\"PROBE_LAYOUT=installed\"",
     ], [], [], ["test", "mojo"], ["hidden=["]),
 ]
 
