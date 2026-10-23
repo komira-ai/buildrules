@@ -12,6 +12,7 @@
 //!    `$BUCK2`, or a shell wrapper (`bash -c`, `eval`, `env`, `sudo`, ...) around one is refused, because a command this check cannot
 //!    read as `./buck2 <subcommand> <args>` is a command whose mode it cannot check), or names a remote-execution endpoint;
 //!  - a buck2 install that drifted from the release pinned in tools/buck2 (url or sha256).
+//!  - a package installed from the runner's archive without an exact version (`apt-get install name`, not `name=version`): the gate would change with the archive.
 //!  - a `push` trigger on ci.yml: a push to main is tested through release.yml (ci/release_check.zig), which calls this workflow.
 //!
 //! The pure checks that release.yml shares with this file (`pinnedUses`, `localMode`, `buck2Install`) are public here.
@@ -443,6 +444,27 @@ fn inlineExprs(a: std.mem.Allocator, f: *Findings, text: []const u8) !void {
     }
 }
 
+/// Every package an `apt-get install` or `apt install` of `workflow` names carries an exact version (`name=version`). A package installed by name alone is
+/// whatever the runner's archive holds that day, so the gate would change with no change of ours; this workflow installs nothing from an archive.
+pub fn aptInstalls(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !void {
+    for (try commands(a, workflow)) |cmd| {
+        var words = std.mem.tokenizeAny(u8, cmd, " \t");
+        var prev: []const u8 = "";
+        var installing = false;
+        while (words.next()) |w| {
+            if (std.mem.eql(u8, w, "&&") or std.mem.eql(u8, w, "||") or std.mem.eql(u8, w, ";") or std.mem.eql(u8, w, "|")) {
+                installing = false;
+            } else if (installing) {
+                if (w[0] != '-' and std.mem.indexOfScalar(u8, w, '=') == null)
+                    try add(a, f, "`{s}` is installed from the archive without an exact version (`name=version`): {s}", .{ w, cmd });
+            } else if (std.mem.eql(u8, w, "install") and (std.mem.eql(u8, prev, "apt-get") or std.mem.eql(u8, prev, "apt") or std.mem.eql(u8, prev, "aptitude"))) {
+                installing = true;
+            }
+            prev = w;
+        }
+    }
+}
+
 /// `text` without its comment-only lines.
 fn withoutComments(a: std.mem.Allocator, text: []const u8) ![]u8 {
     var out = std.ArrayList(u8).init(a);
@@ -461,6 +483,7 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
 
     try noContinueOnError(a, &f, workflow);
     try noInlineContext(a, &f, workflow);
+    try aptInstalls(a, &f, workflow);
 
     // Every `uses:` is pinned to a full commit.
     const uses = try pinnedUses(a, &f, workflow, &.{});
@@ -1018,4 +1041,25 @@ test "ci.yml: continue-on-error and an inline vars or github.event expansion in 
     try expectFinding(a, r, try mutate(a, r.wf, "    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    continue-on-error: true\n"), "`continue-on-error` is set to");
     try expectFinding(a, r, try mutate(a, r.wf, "        run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check\n", "        run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check ${{ vars.X }}\n"), "expands `vars.` inline");
     try expectFinding(a, r, try mutate(a, r.wf, "          ./buck2 --version\n", "          ./buck2 --version ${{ github.event.pull_request.title }}\n"), "expands `github.event.` inline");
+}
+
+test "ci.yml: a package installed from the archive without an exact version is found" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const stop = "      - name: Stop buck2\n";
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt-get install -y -qq lintian\n" ++ stop), "`lintian` is installed");
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt install lintian=2.1 file\n" ++ stop), "`file` is installed");
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt-get update -qq && sudo apt-get install -y lintian\n" ++ stop), "`lintian` is installed");
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: |\n          sudo apt-get install -y \\\n            lintian\n" ++ stop), "`lintian` is installed");
+    // an exact version, an update, and a comment that names the command are not installs of an unpinned package
+    for ([_][]const u8{
+        "      - run: sudo apt-get install -y -qq lintian=2.122.0ubuntu2.1\n",
+        "      - run: sudo apt-get update -qq\n",
+        "      # sudo apt-get install lintian\n",
+    }) |ok| {
+        const f = try check(a, try mutate(a, r.wf, stop, try std.mem.concat(a, u8, &.{ ok, stop })), r.ds, r.cb);
+        for (f.items) |m| try t.expect(std.mem.indexOf(u8, m, "installed from the archive") == null);
+    }
 }
