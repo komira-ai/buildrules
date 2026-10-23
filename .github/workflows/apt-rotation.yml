@@ -3,8 +3,8 @@
 # with them, with keys that are made in the job and thrown away with it (no secret of the repository is used or needed):
 #
 #   job `repo`   builds tools/deploy:apt_rotation, tools/deploy:apt_publish and tools/channels:channels (the repository's own apt tooling, local mode) and runs `apt_rotation make`:
-#                (1) it signs a Release with two `--local-user <fingerprint>!` (`apt_publish sign`) and shows with `gpg --list-packets` that InRelease and Release.gpg carry exactly
-#                    two signatures, one by each key;
+#                (1) it signs a Release with two `--local-user <fingerprint>!` (`apt_publish sign`) and shows with `gpg --list-packets` that Release.gpg carries exactly two signatures, one by each
+#                    key, and with gpgv and both keyrings together that InRelease and Release.gpg each have exactly two good signatures, by the two keys;
 #                (2) it shows with gpgv that either key alone in the keyring verifies both files, that an unrelated key verifies neither, and that a changed Release verifies under no key;
 #                it also builds the repository (`channels apt-index`, with a package of Architecture all, so the repository has a binary-all index) and uploads it, the three public keyrings
 #                and the static program.

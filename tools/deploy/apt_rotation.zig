@@ -6,7 +6,7 @@
 //!       Makes three throwaway keys (a, b and an unrelated one: a signing subkey each, under a passphrase), then
 //!         1. builds an apt repository with the `channels` program (a data package of Architecture all, so the repository has a binary-all index) and signs its Release
 //!            with the keys a and b together, with `apt_publish sign` (one `--local-user <fingerprint>!` each): InRelease and Release.gpg;
-//!         2. shows with `gpg --list-packets` that both files carry exactly two signatures, one by each key;
+//!         2. shows with `gpg --list-packets` that Release.gpg carries exactly two signatures, one by each key (gpg lists none for a clear-signed file), and with gpgv and both keyrings together that both files have exactly two good signatures, by the two keys;
 //!         3. shows with `gpgv` that either key alone in the keyring verifies both files (the signature of the other key is reported as unverifiable and the file is good), that the
 //!            unrelated key verifies neither, and that a Release changed by one byte is not verified by either key.
 //!       Writes <out>/repo (the repository), <out>/keys/{a,b,other}.gpg (the public keyrings, one key each) and <out>/apt_rotation (this program, for the containers).
@@ -176,12 +176,13 @@ fn signersOf(a: Allocator, gpg: []const u8, home: []const u8, file: []const u8) 
 
 const Checked = struct { ran: Ran, v: parse.Verdict };
 
-fn gpgvOf(a: Allocator, gpgv: []const u8, home: []const u8, keyring: []const u8, files: []const []const u8) Checked {
+fn gpgvOf(a: Allocator, gpgv: []const u8, home: []const u8, keyrings: []const []const u8, files: []const []const u8) Checked {
     var v = std.ArrayList([]const u8).init(a);
-    v.appendSlice(&.{ gpgv, "--homedir", home, "--status-fd", "1", "--keyring", keyring }) catch oom();
+    v.appendSlice(&.{ gpgv, "--homedir", home, "--status-fd", "1" }) catch oom();
+    for (keyrings) |k| v.appendSlice(&.{ "--keyring", k }) catch oom();
     v.appendSlice(files) catch oom();
     const r = run(a, v.items, null);
-    say("gpgv --keyring {s} {s} (exit {d})\n{s}{s}", .{ std.fs.path.basename(keyring), files[files.len - 1], r.code, r.out, r.err });
+    say("gpgv --keyring {s} (and {d} more) {s} (exit {d})\n{s}{s}", .{ std.fs.path.basename(keyrings[0]), keyrings.len - 1, files[files.len - 1], r.code, r.out, r.err });
     return .{ .ran = r, .v = parse.verdict(a, r.out) catch oom() };
 }
 
@@ -248,16 +249,20 @@ fn cmdMake(a: Allocator, args: []const []const u8) void {
     const in_release = join(a, &.{ dists, "InRelease" });
     const detached = join(a, &.{ dists, "Release.gpg" });
     expect(parse.sameTwo(signersOf(a, gpg_exe, vhome, detached), id_a, id_b), "Release.gpg carries exactly two signatures, by the subkeys of a and b", .{});
-    expect(parse.sameTwo(signersOf(a, gpg_exe, vhome, in_release), id_a, id_b), "InRelease carries exactly two signatures, by the subkeys of a and b", .{});
-
-    // (2) Either key alone verifies; the other key's signature is unverifiable, not bad.
+    // gpg lists no signature packet of a clear-signed file, so InRelease is counted by what verifies: with the keyrings of both keys together, exactly two good signatures, by a and b.
     const sets = [_][]const []const u8{ &.{ detached, release }, &.{in_release} };
     for (sets) |files| {
-        const only_a = gpgvOf(a, gpgv_exe, vhome, ring_a, files);
+        const both = gpgvOf(a, gpgv_exe, vhome, &.{ ring_a, ring_b }, files);
+        expect(parse.sameTwo(both.v.good, id_a, id_b) and both.v.missing.len == 0 and both.v.bad == 0 and both.ran.ok, "gpgv with both keyrings finds exactly two good signatures, by the subkeys of a and b, and none it cannot check ({s})", .{std.fs.path.basename(files[0])});
+    }
+
+    // (2) Either key alone verifies; the other key's signature is unverifiable, not bad.
+    for (sets) |files| {
+        const only_a = gpgvOf(a, gpgv_exe, vhome, &.{ring_a}, files);
         expect(parse.onlyId(only_a.v.good, id_a) and parse.hasId(only_a.v.missing, id_b) and only_a.v.bad == 0, "gpgv with the keyring of a alone: a's signature is good, b's cannot be checked ({s})", .{std.fs.path.basename(files[0])});
-        const only_b = gpgvOf(a, gpgv_exe, vhome, ring_b, files);
+        const only_b = gpgvOf(a, gpgv_exe, vhome, &.{ring_b}, files);
         expect(parse.onlyId(only_b.v.good, id_b) and parse.hasId(only_b.v.missing, id_a) and only_b.v.bad == 0, "gpgv with the keyring of b alone: b's signature is good, a's cannot be checked ({s})", .{std.fs.path.basename(files[0])});
-        const none = gpgvOf(a, gpgv_exe, vhome, ring_o, files);
+        const none = gpgvOf(a, gpgv_exe, vhome, &.{ring_o}, files);
         expect(none.v.good.len == 0 and !none.ran.ok, "gpgv with an unrelated keyring verifies nothing and fails ({s})", .{std.fs.path.basename(files[0])});
     }
 
@@ -265,7 +270,7 @@ fn cmdMake(a: Allocator, args: []const []const u8) void {
     const tampered = join(a, &.{ work, "Release" });
     writeFileMode(tampered, concat(a, readFile(a, release), "\n"), 0o644);
     for ([_]struct { ring: []const u8, who: []const u8 }{ .{ .ring = ring_a, .who = "a" }, .{ .ring = ring_b, .who = "b" } }) |e| {
-        const r = gpgvOf(a, gpgv_exe, vhome, e.ring, &.{ detached, tampered });
+        const r = gpgvOf(a, gpgv_exe, vhome, &.{e.ring}, &.{ detached, tampered });
         expect(r.v.good.len == 0 and r.v.bad >= 1 and !r.ran.ok, "a Release changed by one byte is not verified by the keyring of {s}", .{e.who});
     }
 

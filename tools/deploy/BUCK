@@ -42,7 +42,6 @@ zig_test(
     exec_compatible_with = LINUX_X86_64,
     src = "apt_rotation/lib.zig",
     imports = _ROT_SRCS,
-    busybox = _BB,
 )
 
 # The program is static (musl): the workflow copies it into containers of other distributions. Not built unless its unit tests pass.
@@ -52,7 +51,6 @@ zig_exe(
     src = "apt_rotation.zig",
     imports = _ROT_SRCS,
     unit_tests = [":apt_rotation_unit"],
-    busybox = _BB,
     visibility = ["PUBLIC"],
 )
 
@@ -113,7 +111,6 @@ zig_test(
         "APT_ROTATION": ":apt_rotation",
         "FAKE_APT": ":fake_apt",
     },
-    busybox = _BB,
     visibility = ["//ci:"],
 )
 
