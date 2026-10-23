@@ -472,7 +472,7 @@ the Rust side is, and one rule is easier to teach; the other choice, a default i
 
 ```python
 SCHEMA = 1
-MOPM = {"version": "0.0.33", "origin": "builtin", "workspace_root": True}   # origin: "builtin" or "buildrules-pins.toml"; workspace_root only when true, spelled True (Starlark)
+MOPM = {"version": "0.0.40", "origin": "builtin", "workspace_root": True}   # origin: "builtin" or "buildrules-pins.toml"; workspace_root only when true, spelled True (Starlark)
 MOJO = "1.0.0"
 CLOSURE_SHA256 = "<mopm's hash of the toolchain closure>"  # a second copy of the graph's, see 12.6
 MANIFEST_SHA256 = {"mopm.toml": "<sha256>", "mopm.lock": "...", "../../mopm-toolchain.toml": "...", "../util/mopm.toml": "..."}
@@ -489,11 +489,11 @@ the committed text. A graph without a path dependency is mopm's text as it is. `
 from that the graph does not hash itself: the package's `mopm.toml` and `mopm.lock`, the toolchain file (path relative to the package) and the
 `mopm.toml` of every path dependency (a version or a dependency of it changes the graph). The package's own sources and their sha256 are in the graph.
 
-**Where the graph's paths start.** A mopm that has `plan --unit-graph --workspace-root DIR` (0.0.33 on; `cli/src/toolchain.zig` `workspace_root_since`) is given
+**Where the graph's paths start.** A mopm that has `plan --unit-graph --workspace-root DIR` (`sync` asks the pinned mopm binary: `mopm --help` lists `--workspace-root` when it has it, once per binary; no release number is compared, and a mopm whose help cannot be read is an error) is given
 the repository root, the directory of the root `.buckconfig`: every path of the graph (roots, sources, dependency roots) is then relative to it, and the package
 may import path dependencies that are its siblings (`../util` in `mopm.toml`), not only ones below it. `sync` records that it asked (`"workspace_root": True`, Starlark's spelling: a lowercase
-`true` is not a name Buck2 knows and the table would not load, so `check` refuses it; `check` also refuses a table whose record is not what its mopm release does), and the rules read the record, never the version. An older mopm prints paths
-relative to the package and takes path dependencies below it only (the release pinned in rules/mopm/pins.bzl is one of them until it moves to the first release with the flag, and a mopm that fails on a sibling says so); a table made by one is as it was. Either way a path dependency is the target
+`true` is not a name Buck2 knows and the table would not load, so `check` refuses it; `check` is offline and never runs mopm, so it trusts the record), and the rules read the record, never the version. An older mopm prints paths
+relative to the package and takes path dependencies below it only (the release pinned in rules/mopm/pins.bzl is one of them until it moves to a release that has the flag; a mopm without it that fails on a sibling says "this mopm does not support --workspace-root (needs a release containing it); pin one in mopm-toolchain.toml"); a table made by one is as it was. Either way a path dependency is the target
 `//<its directory>:lib`, the directory taken from the repository path of its root (`<dir>/src/<name>`), and one outside the repository root is refused
 (`sync`, `check`, and the analysis of the package), as is one whose directory is the importing package's own (its library would be the package's `:lib`, which
 waits for the tests that import it: a path dependency is a package of its own). The analysis also requires each library a unit imports to have been built as
