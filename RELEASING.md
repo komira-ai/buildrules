@@ -247,7 +247,7 @@ attribute (no default), and `ci/negative` holds a planted copy of a program with
   (header, version, reproduction) and started on their own platform, but not walked by a user beta. The workflow names the targets, so the day a leg builds the list grows with it. `tested` also requires, for the two `.deb`s of `DIR`, that each holds the program of the tarball
   of its architecture (the user beta ran `linux-x86_64`, so the `amd64` package carries the very file it ran; the `arm64` one carries the aarch64 file that is attested but not walked).
 - `release sums --dist DIR` writes `SHA256SUMS` over the source archive, the three tarballs and the two `.deb`s in name order (six lines) and reads it back; it refuses a missing, stray or other-version tarball or `.deb`.
-- `release sign --dist DIR [--cosign PATH] [--dry true|false]` runs keyless `cosign sign-blob` on those six files and `SHA256SUMS`, and refuses a bundle that is missing, empty or already there. With `--dry true` it makes every check and the list of files it would sign, and runs no `cosign`; `release.yml` always passes `--dry false`, as it passes it to `plan` and `verify`, since no pull request runs it (the dry form stays in the tool and its tests, and nothing in the workflow uses it).
+- `release sign --dist DIR [--cosign PATH] [--dry true|false]` runs keyless `cosign sign-blob` on those six files and `SHA256SUMS`, and refuses a bundle that is missing, empty or already there. Every call is `cosign sign-blob --yes --oidc-provider github-actions --fulcio-auth-flow token --timeout 90s --bundle <file>.sigstore.json <file>`. The guard against a wait for a person is `--fulcio-auth-flow token`: a missing token fails the call at once (unset, cosign falls back to the OAuth device flow and waits until the device code expires). `--oidc-provider github-actions` is defence in depth only: cosign v3.0.6's `sign-blob` ignores it (`cmd/cosign/cli/signblob.go` builds its key options without the provider; only `sign`, `attest` and `attest-blob` set it). Cosign's own deadline is 90 seconds. A call that fails the way a network failure does (the token endpoint, Fulcio, Rekor or the timestamp authority did not answer) is tried again, up to three tries per file with 5 s and then 10 s between them; any other failure is final. The tries share a time budget of 10 minutes for the whole step: once it has passed no new try starts (a try in flight ends by cosign's 90 s deadline), so the step ends well inside the `attest` job's 15 minutes; the job's timeout is unchanged. A retried call can leave one orphan Rekor entry, with a different signature, for the same file; it is harmless, because the bundle is written only by the call that succeeds. With `--dry true` it makes every check and the list of files it would sign, and runs no `cosign`; `release.yml` always passes `--dry false`, as it passes it to `plan` and `verify`, since no pull request runs it (the dry form stays in the tool and its tests, and nothing in the workflow uses it).
 
 ## What is released
 
@@ -301,7 +301,7 @@ consumer relies on the published file and its sha256, not on making the file aga
 trusted root (the TUF repository), the call is tried up to 3 times, waiting 2 s and then 4 s between the tries. Only the final line of cosign's error
 output decides: it must hold `tuf refresh failed`, `Could not fetch trusted_root.json` or `error getting live trusted root`. Any other refusal, a
 signature or certificate mismatch above all, is a finding on the first try; so is a mismatch that follows the legacy-bundle
-`Could not fetch trusted_root.json ... Continuing` warning. One more shape is retried: cosign v3.0.6 (the version the release installs) ends a failed fetch with `trusted root is required when using new bundle format` (the fetch error is only the warning line before it), and that final line retries only when an earlier line holds one of the three fetch texts; alone it is a finding. An outage longer than about 6 s still fails the release, and the finding says it is "a network
+`Could not fetch trusted_root.json ... Continuing` warning. One more shape is retried: cosign v3.0.6 (the version the release installs) ends a failed fetch with `trusted root is required when using new bundle format` (the fetch error is only the warning line before it), and that final line retries only when an earlier line holds one of the three fetch texts; alone it is a finding. Both installs of cosign in the workflow name `cosign-release: 'v3.0.6'` (a check of the workflow refuses an install that does not), because the retry reads that release's error text. The waits of all the retries of one run together never pass 12 s, so a long outage does not hold the release file after file. An outage longer than about 6 s still fails the release, and the finding says it is "a network
 failure, not a verdict on the signature"; re-run the job.
 
 `publish` repeats the check of `SHA256SUMS` and requires all seven signature bundles to be there and not empty.
@@ -502,17 +502,23 @@ step that reads, signs, writes or assumes the role is skipped by `if: steps.gate
 condition and that each gate is the exact command. So a release that runs before the settings exist (or with only half of them) releases exactly as before and the apt jobs leave a notice; a half-made setting (the role
 without the key, or the key without the role) leaves the repository unchanged. Once both are made, the next release publishes without any other change. The region of the repository is `us-east-1`.
 
-Installing from the apt repository (**after setup**: the settings above made, and the public half of the signing key uploaded where the repository documents it; `<apt host>` is `APT_HOSTNAME`):
+Installing from the apt repository (**after setup**: the settings above made, and the public half of the signing key uploaded as `apt/<keyring>.gpg`; `<apt host>` is `APT_HOSTNAME` and `<keyring>` is the file name the owner chose for the key):
 
-```
+```sh
 sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://<apt host>/apt/keyring.gpg | sudo tee /etc/apt/keyrings/<owner>.gpg > /dev/null
-echo "deb [signed-by=/etc/apt/keyrings/<owner>.gpg] https://<apt host>/apt stable main" | sudo tee /etc/apt/sources.list.d/<owner>.list
+sudo curl -fsSL -o /etc/apt/keyrings/<keyring>.gpg https://<apt host>/apt/<keyring>.gpg
+sudo tee /etc/apt/sources.list.d/buildrules.sources > /dev/null <<'EOF'
+Types: deb
+URIs: https://<apt host>/apt
+Suites: stable
+Components: main
+Signed-By: /etc/apt/keyrings/<keyring>.gpg
+EOF
 sudo apt update
 sudo apt install buildrules
 ```
 
-The keyring file name is decided when the owner uploads it. `apt update` verifies `InRelease` against it before it trusts a `Packages` file. Until then, install the `.deb` of a release by hand
+The keyring is the binary public key the repository serves as `apt/<keyring>.gpg` (an armored copy, `apt/<keyring>.asc`, is beside it), and `Signed-By` names the path the first command installs it to. `apt update` verifies `InRelease` against it before it trusts a `Packages` file. Until then, install the `.deb` of a release by hand
 (`sudo apt install ./buildrules_<version>_amd64.deb`, after the checks of "Installing the command line").
 
 ## What the first release after this change does with no setup

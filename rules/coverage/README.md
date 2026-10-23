@@ -14,8 +14,24 @@ the line tables and rewrites the action's directories out of them, run under kco
 Every tool is built behind its unit tests; the process cases of `cov_zig`, `debug_relocate` and `cov_normalize` are `zig_test`s that run the executable
 and are validations of the public target.
 
-Not included: kcov's own check suite (`kcov_check`, `loader_closure_check`, the identity and reproducibility checks), branch coverage of Mojo (LLVM profile counters), `covcheck` (policy,
-holds, the census, the PR check run). The floors of the Zig and Node packages are below. kcov is GPL-2.0 and build-only: it runs in actions and is never packaged.
+Not included: kcov's own check suite (`kcov_check`, `loader_closure_check`, the identity and reproducibility checks), branch coverage of Mojo (kcov records none for a Mojo executable, and the
+LLVM IR classifier behind `covcheck`'s branch records is not ported), `covcheck` (policy, holds, the census, the PR check run). The floors of the Zig, Node and Mojo packages are below.
+
+## Mojo coverage
+
+`mojo_package` (`rules/mojo/defs.bzl`, docs/contract.md section 12.4) builds each test again as a debug build and runs it under kcov (`:cov_run`, `:cov_normalize`); `cov_summary` folds the reports into `:coverage`.
+
+| output | what |
+|---|---|
+| `:coverage` | `coverage.txt`: `<path> <hit>/<total> <n>%` per file, then `total`; a source with no executable line is `0/0`; red if a source of the library is in no report |
+| `:coverage[reports]` | the per-line records the file was counted from: one Cobertura XML per test, `<line number hits>` per recorded line under a `<class filename>` in repository paths, branch attributes as kcov wrote them (none for Mojo today) |
+| `:coverage_floor` | present only with a `coverage_floor.txt` beside the BUCK file; the check below |
+
+`covcheck` takes the files of `:coverage[reports]` as `--cobertura` inputs, one per test: `buck2 build //pkg:coverage[reports] --show-full-output` prints their paths.
+
+The floor is the file every package here uses (`coverage_floor.txt` next to the BUCK file, checked by `cov_floor`; a package with Zig tests names it in `zig_coverage`, a Node package in `jest_coverage_floor`),
+so a Mojo package follows the Zig and Node ones and not an attribute: the figure sits in a file a reviewer sees change, the check is the one `cov_floor` already has, and no file means no check. A Mojo
+floor file holds `lines NN.NN` only: a `branches` figure is refused ("the tests record no branches") because the reports hold none. It is exact both ways (`coverage fell`; `raise the floor to NN.NN`). kcov is GPL-2.0 and build-only: it runs in actions and is never packaged.
 
 **No ASLR patch.** kcov disables address randomization with `personality(ADDR_NO_RANDOMIZE)` and stops when it fails. buildrules once let the run go on after a refusal (a farm sandbox answered ENOSYS); every farm node now allows the call, so kcov's own handling is kept. `kcov_build_test` fails if any patch touches that code.
 

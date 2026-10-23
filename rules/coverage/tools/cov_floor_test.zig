@@ -200,3 +200,22 @@ test "parseJestSummary: anything else is refused" {
         try t.expectError(error.BadSummary, F.parseJestSummary(a, text));
     }
 }
+
+test "check: a package whose files are all alias-only counts nothing, so a floor on it is refused, not passed" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const listing = "p/src/aliases.mojo 0/0 0%\np/src/types.mojo 0/0 0%\ntotal 0/0 0%\n";
+    try t.expectError(error.Nothing, arenaCheck(arena.allocator(), try F.parseCoverage(listing), try F.parseFloor("lines 0.00\n")));
+    try t.expectError(error.Nothing, arenaCheck(arena.allocator(), try F.parseCoverage(listing), try F.parseFloor("lines 100.00\n")));
+}
+
+test "check: an alias-only file beside measured files leaves the floor judged on the measured lines" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const listing = "p/src/aliases.mojo 0/0 0%\np/src/ops.mojo 3/5 60%\ntotal 3/5 60%\n";
+    try t.expectEqual(@as(usize, 0), (try arenaCheck(a, try F.parseCoverage(listing), try F.parseFloor("lines 60.00\n"))).len);
+    const low = try arenaCheck(a, try F.parseCoverage(listing), try F.parseFloor("lines 70.00\n"));
+    try t.expectEqual(@as(usize, 1), low.len);
+    try t.expect(std.mem.indexOf(u8, low[0], "below its floor 70.00%: coverage fell") != null);
+}

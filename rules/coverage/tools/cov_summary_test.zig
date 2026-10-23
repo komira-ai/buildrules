@@ -269,3 +269,26 @@ test "withEmptySources: only a source with no statement is listed 0/0; the rest 
     // listed and counted, as 0/0: the total does not move
     try t.expectEqualStrings("p/src/__init__.mojo 0/0 0%\np/src/a.mojo 1/3 33%\np/tests/test_a.mojo 1/1 100% (not counted)\ntotal 1/3 33%\n", try S.render(a, out, &.{ "p/src/a.mojo", "p/src/__init__.mojo" }));
 }
+
+fn readAliasOnly(_: std.mem.Allocator, p: []const u8) []const u8 {
+    if (std.mem.eql(u8, p, "alias")) return "\"\"\"doc\"\"\"\nfrom .a import A\ncomptime Count = Int\ncomptime Ints = List[\n    Count\n]\n";
+    return "comptime Count = Int\ndef f():\n    pass\n";
+}
+
+test "withEmptySources: a package of alias-only files is listed 0/0 and a file with code and no coverage stays missing" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var files: std.StringArrayHashMapUnmanaged(std.AutoArrayHashMapUnmanaged(usize, bool)) = .empty;
+    const rows = try S.summarize(a, &files);
+    const only = [_][]const u8{ "p/src/aliases.mojo", "p/src/types.mojo" };
+    const srcs = [_][2][]const u8{ .{ "p/src/aliases.mojo", "alias" }, .{ "p/src/types.mojo", "alias" } };
+    const out = try S.withEmptySources(a, rows, &only, &srcs, readAliasOnly);
+    try t.expect(S.missing(out, &only) == null);
+    try t.expectEqualStrings("p/src/aliases.mojo 0/0 0%\np/src/types.mojo 0/0 0%\ntotal 0/0 0%\n", try S.render(a, out, &only));
+    // an alias beside a function is code: with no coverage the file is reported missing
+    const mixed = [_][]const u8{ "p/src/aliases.mojo", "p/src/code.mojo" };
+    const msrcs = [_][2][]const u8{ .{ "p/src/aliases.mojo", "alias" }, .{ "p/src/code.mojo", "code" } };
+    const out2 = try S.withEmptySources(a, rows, &mixed, &msrcs, readAliasOnly);
+    try t.expectEqualStrings("p/src/code.mojo", S.missing(out2, &mixed).?);
+}
