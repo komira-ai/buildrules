@@ -518,3 +518,62 @@ test "run and parseArgs: every allocation failing in turn is an error, on every 
     };
     try sweepOom(Json{});
 }
+
+/// `obj` (made with one extra section named `version`) with that section made a SHT_GNU_verneed that needs the version of that name from a
+/// library; the name is in `.shstrtab`, which the section links to, so the object needs no string table of its own for it.
+fn withVerneed(a: std.mem.Allocator, obj: []const u8, version: []const u8) ![]u8 {
+    const sh_off: usize = @intCast(std.mem.readInt(u64, obj[0x28..][0..8], .little));
+    const shstr_off: usize = @intCast(std.mem.readInt(u64, obj[sh_off + 3 * 64 + 0x18 ..][0..8], .little));
+    const name_at = std.mem.indexOf(u8, obj[shstr_off..sh_off], version).?;
+    const b = try a.alloc(u8, obj.len + 32);
+    @memcpy(b[0..obj.len], obj);
+    @memset(b[obj.len..], 0);
+    const vn = obj.len;
+    std.mem.writeInt(u16, b[vn + 2 ..][0..2], 1, .little); // one Vernaux
+    std.mem.writeInt(u32, b[vn + 8 ..][0..4], 16, .little); // at 16 bytes from the Verneed
+    std.mem.writeInt(u32, b[vn + 16 + 8 ..][0..4], @intCast(name_at), .little); // vna_name
+    const sh = sh_off + 4 * 64;
+    std.mem.writeInt(u32, b[sh + 4 ..][0..4], 0x6ffffffe, .little);
+    std.mem.writeInt(u64, b[sh + 0x18 ..][0..8], vn, .little);
+    std.mem.writeInt(u32, b[sh + 0x28 ..][0..4], 3, .little);
+    std.mem.writeInt(u32, b[sh + 0x2C ..][0..4], 1, .little);
+    return b;
+}
+
+test "a member that needs a glibc version newer than the floor is a finding naming it; at the floor or under it, none" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try withVerneed(a, try object(a, &.{.{ .name = "f", .kind = .def }}, &.{"GLIBC_2.38"}), "GLIBC_2.38");
+    const lib = try archive(a, &.{.{ .name = "a.o", .data = o }});
+    const over = try A.check(a, "libx.a", lib, .{});
+    try t.expectEqual(@as(usize, 1), over.findings.len);
+    try t.expect(hasFinding(over, "libx.a: member a.o needs GLIBC_2.38, newer than the floor 2.34"));
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", lib, .{ .max_glibc = "2.38" })).findings.len);
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", lib, .{ .max_glibc = "2.39" })).findings.len);
+    // A floor that is not a version is its own finding, and compares with nothing.
+    const bad = try A.check(a, "libx.a", lib, .{ .max_glibc = "newest" });
+    try t.expectEqual(@as(usize, 1), bad.findings.len);
+    try t.expect(hasFinding(bad, "newest is not a glibc version"));
+}
+
+test "symbols: a symbol table or a string table that runs past the end of the file is refused, whichever it is" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{.{ .name = "f", .kind = .def }}, &.{});
+    const sh_off: usize = @intCast(std.mem.readInt(u64, o[0x28..][0..8], .little));
+    const symtab = sh_off + 1 * 64;
+    const strtab = sh_off + 2 * 64;
+    const cases = [_]struct { at: usize, value: u64 }{
+        .{ .at = strtab + 0x18, .value = o.len + 10 }, // the string table starts past the end
+        .{ .at = strtab + 0x20, .value = o.len }, // it starts inside and is longer than what is left
+        .{ .at = symtab + 0x18, .value = o.len + 10 }, // the symbol table starts past the end
+        .{ .at = symtab + 0x20, .value = o.len }, // it starts inside and is longer than what is left
+    };
+    for (cases) |c| {
+        const cut = try a.dupe(u8, o);
+        std.mem.writeInt(u64, cut[c.at..][0..8], c.value, .little);
+        try t.expectError(error.Truncated, A.symbols(a, cut));
+    }
+}

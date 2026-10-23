@@ -16,6 +16,10 @@
 //!
 //! Writes a validation result (`{"version":1,"data":{"status",...}}`) and exits 0 when every rule holds; exits 1 after writing "failure" when
 //! one does not, and prints every finding. With `--symbols`, writes the sorted defined global symbols, one per line.
+//!
+//! Allocation: the lists are built with `Acc` and `Set`, which note a failed allocation in one flag instead of returning it from each of the
+//! many places that add to them; the function that owns the flag returns `OutOfMemory` once, at its end. What they return stays with the
+//! allocator, which is an arena in the program.
 
 const std = @import("std");
 const hermetic = @import("cxx_hermetic");
@@ -37,11 +41,83 @@ fn trim(s: []const u8) []const u8 {
     return std.mem.trim(u8, s, " ");
 }
 
+/// A list whose failed allocation is noted in `oom` (shared by the lists of one function) and not returned.
+fn Acc(comptime T: type) type {
+    return struct {
+        a: std.mem.Allocator,
+        oom: *bool,
+        items: std.ArrayList(T) = .empty,
+
+        const Self = @This();
+
+        fn push(self: *Self, item: T) void {
+            self.items.append(self.a, item) catch {
+                self.oom.* = true;
+            };
+        }
+
+        fn pushAll(self: *Self, more: []const T) void {
+            self.items.appendSlice(self.a, more) catch {
+                self.oom.* = true;
+            };
+        }
+    };
+}
+
+/// A set of strings whose failed allocation is noted in `oom`.
+const Set = struct {
+    m: std.StringHashMap(void),
+    oom: *bool,
+
+    fn init(a: std.mem.Allocator, oom: *bool) Set {
+        return .{ .m = std.StringHashMap(void).init(a), .oom = oom };
+    }
+
+    fn add(self: *Set, k: []const u8) void {
+        self.m.put(k, {}) catch {
+            self.oom.* = true;
+        };
+    }
+};
+
+/// Adds the formatted finding to `f`.
+fn say(f: *Acc([]const u8), comptime fmt: []const u8, args: anytype) void {
+    if (std.fmt.allocPrint(f.a, fmt, args)) |s| {
+        f.push(s);
+    } else |_| {
+        f.oom.* = true;
+    }
+}
+
+/// Adds the finding for the error `e`, which is the failure of the whole check when it is `OutOfMemory`.
+fn blame(f: *Acc([]const u8), e: anyerror, comptime fmt: []const u8, args: anytype) void {
+    if (e == error.OutOfMemory) {
+        f.oom.* = true;
+    } else {
+        say(f, fmt, args);
+    }
+}
+
+/// Notes `OutOfMemory` and nothing else.
+fn lost(e: anyerror, oom: *bool) void {
+    if (e == error.OutOfMemory) oom.* = true;
+}
+
+fn get(comptime T: type, b: []const u8, off: usize) T {
+    return std.mem.readInt(T, b[off..][0..@sizeOf(T)], .little);
+}
+
+fn rd(comptime T: type, b: []const u8, off: usize) Error!T {
+    if (off > b.len or b.len - off < @sizeOf(T)) return error.Truncated;
+    return get(T, b, off);
+}
+
 /// The object members of an `ar` archive, in file order. The symbol table (`/`, `/SYM64/`) and the long-name table (`//`) are not members.
 /// BSD-style names (`#1/N`) are refused: the C++ toolchain writes the GNU format.
 pub fn members(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.Error)![]const Member {
     if (!std.mem.startsWith(u8, b, "!<arch>\n")) return error.NotArchive;
-    var out = std.ArrayList(Member).empty;
+    var oom = false;
+    var out = Acc(Member){ .a = a, .oom = &oom };
     var long: []const u8 = "";
     var off: usize = 8;
     while (off < b.len) {
@@ -55,31 +131,25 @@ pub fn members(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.
         off = start + size;
         if (size & 1 == 1 and off < b.len) off += 1;
         const raw = trim(h[0..16]);
-        if (std.mem.eql(u8, raw, "/") or std.mem.eql(u8, raw, "/SYM64/")) continue;
         if (std.mem.eql(u8, raw, "//")) {
             long = data;
-            continue;
+        } else if (!std.mem.eql(u8, raw, "/") and !std.mem.eql(u8, raw, "/SYM64/")) {
+            var name = raw;
+            if (raw.len > 1 and raw[0] == '/') {
+                const at = std.fmt.parseInt(usize, raw[1..], 10) catch return error.BadHeader;
+                if (at >= long.len) return error.BadHeader;
+                const end = std.mem.indexOfScalarPos(u8, long, at, '\n') orelse long.len;
+                name = std.mem.trimRight(u8, long[at..end], "/");
+            } else if (std.mem.startsWith(u8, raw, "#1/")) {
+                return error.BadHeader;
+            } else {
+                name = std.mem.trimRight(u8, raw, "/");
+            }
+            out.push(.{ .name = name, .data = data, .time = trim(h[16..28]), .owner = trim(h[28..34]), .group = trim(h[34..40]) });
         }
-        var name = raw;
-        if (raw.len > 1 and raw[0] == '/') {
-            const at = std.fmt.parseInt(usize, raw[1..], 10) catch return error.BadHeader;
-            if (at >= long.len) return error.BadHeader;
-            const end = std.mem.indexOfScalarPos(u8, long, at, '\n') orelse long.len;
-            name = std.mem.trimRight(u8, long[at..end], "/");
-        } else if (std.mem.startsWith(u8, raw, "#1/")) {
-            return error.BadHeader;
-        } else {
-            name = std.mem.trimRight(u8, raw, "/");
-        }
-        try out.append(a, .{ .name = name, .data = data, .time = trim(h[16..28]), .owner = trim(h[28..34]), .group = trim(h[34..40]) });
     }
-    return out.toOwnedSlice(a);
-}
-
-fn rd(comptime T: type, b: []const u8, off: usize) Error!T {
-    const n = @sizeOf(T);
-    if (off > b.len or b.len - off < n) return error.Truncated;
-    return std.mem.readInt(T, b[off..][0..n], .little);
+    if (oom) return error.OutOfMemory;
+    return out.items.items;
 }
 
 pub const Syms = struct {
@@ -92,45 +162,50 @@ pub const Syms = struct {
 /// The global symbols of one relocatable ELF64 little-endian object, from its `.symtab`.
 pub fn symbols(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.Error)!Syms {
     if (b.len < 64 or !std.mem.eql(u8, b[0..4], "\x7fELF") or b[4] != 2 or b[5] != 1) return error.NotElf64;
-    if (try rd(u16, b, 0x10) != 1) return error.NotRelocatable;
-    const shoff: usize = @intCast(try rd(u64, b, 0x28));
-    const shentsize: usize = try rd(u16, b, 0x3A);
-    const shnum: usize = try rd(u16, b, 0x3C);
-    var def = std.ArrayList([]const u8).empty;
-    var und = std.ArrayList([]const u8).empty;
+    // The header is 64 bytes, which the test above has: its fields are read without a bound.
+    if (get(u16, b, 0x10) != 1) return error.NotRelocatable;
+    const shoff: usize = @intCast(get(u64, b, 0x28));
+    const shentsize: usize = get(u16, b, 0x3A);
+    const shnum: usize = get(u16, b, 0x3C);
+    var oom = false;
+    var def = Acc([]const u8){ .a = a, .oom = &oom };
+    var und = Acc([]const u8){ .a = a, .oom = &oom };
     var i: usize = 0;
     while (i < shnum) : (i += 1) {
         const sh = shoff + i * shentsize;
-        if (try rd(u32, b, sh + 4) != 2) continue; // SHT_SYMTAB
-        const off: usize = @intCast(try rd(u64, b, sh + 0x18));
-        const size: usize = @intCast(try rd(u64, b, sh + 0x20));
-        const link: usize = @intCast(try rd(u32, b, sh + 0x28));
-        const str_sh = shoff + link * shentsize;
-        const str_off: usize = @intCast(try rd(u64, b, str_sh + 0x18));
-        const str_size: usize = @intCast(try rd(u64, b, str_sh + 0x20));
-        if (str_off > b.len or b.len - str_off < str_size) return error.Truncated;
-        if (off > b.len or b.len - off < size) return error.Truncated;
-        const strs = b[str_off .. str_off + str_size];
-        var k: usize = 1;
-        while ((k + 1) * 24 <= size) : (k += 1) {
-            const at = off + k * 24;
-            const info = b[at + 4];
-            const bind = info >> 4;
-            const typ = info & 0xf;
-            if (bind == 0 or typ == 3 or typ == 4) continue; // local, section, file
-            const name_off: usize = try rd(u32, b, at);
-            if (name_off >= strs.len) continue;
-            const name = std.mem.sliceTo(strs[name_off..], 0);
-            if (name.len == 0) continue;
-            const shndx = try rd(u16, b, at + 6);
-            if (shndx != 0) {
-                try def.append(a, name);
-            } else if (bind != 2) {
-                try und.append(a, name);
+        if (try rd(u32, b, sh + 4) == 2) { // SHT_SYMTAB
+            const off: usize = @intCast(try rd(u64, b, sh + 0x18));
+            const size: usize = @intCast(try rd(u64, b, sh + 0x20));
+            const link: usize = @intCast(try rd(u32, b, sh + 0x28));
+            const str_sh = shoff + link * shentsize;
+            const str_off: usize = @intCast(try rd(u64, b, str_sh + 0x18));
+            const str_size: usize = @intCast(try rd(u64, b, str_sh + 0x20));
+            if (str_off > b.len or b.len - str_off < str_size) return error.Truncated;
+            if (off > b.len or b.len - off < size) return error.Truncated;
+            const strs = b[str_off .. str_off + str_size];
+            var k: usize = 1;
+            while ((k + 1) * 24 <= size) : (k += 1) {
+                // A symbol lies inside the section, which the tests above keep inside the file.
+                const at = off + k * 24;
+                const info = b[at + 4];
+                const bind = info >> 4;
+                const typ = info & 0xf;
+                const name_off: usize = get(u32, b, at);
+                const shndx = get(u16, b, at + 6);
+                // Not a local, section or file symbol, and one that has a name.
+                if (bind != 0 and typ != 3 and typ != 4 and name_off < strs.len) {
+                    const name = std.mem.sliceTo(strs[name_off..], 0);
+                    if (name.len != 0 and shndx != 0) {
+                        def.push(name);
+                    } else if (name.len != 0 and bind != 2) {
+                        und.push(name);
+                    }
+                }
             }
         }
     }
-    return .{ .defined = try def.toOwnedSlice(a), .undef = try und.toOwnedSlice(a) };
+    if (oom) return error.OutOfMemory;
+    return .{ .defined = def.items.items, .undef = und.items.items };
 }
 
 fn lessThan(_: void, x: []const u8, y: []const u8) bool {
@@ -153,99 +228,100 @@ pub const Report = struct {
     defined: []const []const u8,
 };
 
+fn report(oom: bool, findings: []const []const u8, defined: []const []const u8) std.mem.Allocator.Error!Report {
+    if (oom) return error.OutOfMemory;
+    return .{ .findings = findings, .defined = defined };
+}
+
 /// Every finding about the archive `b` (named `name` in messages), empty when it is as a native library must be.
 pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) std.mem.Allocator.Error!Report {
-    var f = std.ArrayList([]const u8).empty;
-    const none = Report{ .findings = &.{}, .defined = &.{} };
+    var oom = false;
+    var f = Acc([]const u8){ .a = a, .oom = &oom };
     const ms = members(a, b) catch |e| {
-        if (e == error.OutOfMemory) return error.OutOfMemory;
-        try f.append(a, try std.fmt.allocPrint(a, "{s} is not an archive of objects I can read: {s}", .{ name, @errorName(e) }));
-        return .{ .findings = try f.toOwnedSlice(a), .defined = none.defined };
+        blame(&f, e, "{s} is not an archive of objects I can read: {s}", .{ name, @errorName(e) });
+        return report(oom, f.items.items, &.{});
     };
-    if (ms.len == 0) try f.append(a, try std.fmt.allocPrint(a, "{s} has no object: an empty library", .{name}));
+    if (ms.len == 0) say(&f, "{s} has no object: an empty library", .{name});
     const max = floor.Version.parse(o.max_glibc);
-    if (max == null) try f.append(a, try std.fmt.allocPrint(a, "{s} is not a glibc version", .{o.max_glibc}));
+    if (max == null) say(&f, "{s} is not a glibc version", .{o.max_glibc});
 
-    var defined = std.StringHashMap(void).init(a);
-    var undef = std.ArrayList([]const u8).empty;
+    var defined = Set.init(a, &oom);
+    var undef = Acc([]const u8){ .a = a, .oom = &oom };
     var prev: []const u8 = "";
     for (ms) |m| {
         if (!std.mem.eql(u8, m.time, "0") or !std.mem.eql(u8, m.owner, "0") or !std.mem.eql(u8, m.group, "0"))
-            try f.append(a, try std.fmt.allocPrint(a, "{s}: member {s} records a time or an owner (time {s}, owner {s}, group {s}): the archive is not deterministic", .{ name, m.name, m.time, m.owner, m.group }));
+            say(&f, "{s}: member {s} records a time or an owner (time {s}, owner {s}, group {s}): the archive is not deterministic", .{ name, m.name, m.time, m.owner, m.group });
         if (prev.len != 0 and std.mem.lessThan(u8, m.name, prev))
-            try f.append(a, try std.fmt.allocPrint(a, "{s}: member {s} comes after {s}: the members are not in the order of their names", .{ name, m.name, prev }));
+            say(&f, "{s}: member {s} comes after {s}: the members are not in the order of their names", .{ name, m.name, prev });
         prev = m.name;
-        const dbg = hermetic.debugSections(a, m.data) catch |e| {
-            if (e == error.OutOfMemory) return error.OutOfMemory;
-            try f.append(a, try std.fmt.allocPrint(a, "{s}: member {s} is not a 64-bit little-endian ELF object: {s}", .{ name, m.name, @errorName(e) }));
-            continue;
-        };
-        if (dbg.len != 0)
-            try f.append(a, try std.fmt.allocPrint(a, "{s}: member {s} has {d} debug section(s), first {s}: the compile directory is in them (compile with -g0)", .{ name, m.name, dbg.len, dbg[0] }));
-        if (floor.newest(m.data)) |v| {
-            if (v != null and max != null and floor.Version.order(v.?, max.?) == .gt)
-                try f.append(a, try std.fmt.allocPrint(a, "{s}: member {s} needs GLIBC_{d}.{d}, newer than the floor {s}", .{ name, m.name, v.?.major, v.?.minor, o.max_glibc }));
-        } else |_| {}
-        const s = symbols(a, m.data) catch |e| {
-            if (e == error.OutOfMemory) return error.OutOfMemory;
-            try f.append(a, try std.fmt.allocPrint(a, "{s}: member {s} is not a relocatable object: {s}", .{ name, m.name, @errorName(e) }));
-            continue;
-        };
-        for (s.defined) |d| try defined.put(d, {});
-        for (s.undef) |u| try undef.append(a, u);
+        if (hermetic.debugSections(a, m.data)) |dbg| {
+            if (dbg.len != 0)
+                say(&f, "{s}: member {s} has {d} debug section(s), first {s}: the compile directory is in them (compile with -g0)", .{ name, m.name, dbg.len, dbg[0] });
+            if (floor.newest(m.data)) |v| {
+                if (v != null and max != null and floor.Version.order(v.?, max.?) == .gt)
+                    say(&f, "{s}: member {s} needs GLIBC_{d}.{d}, newer than the floor {s}", .{ name, m.name, v.?.major, v.?.minor, o.max_glibc });
+            } else |_| {}
+            if (symbols(a, m.data)) |s| {
+                for (s.defined) |d| defined.add(d);
+                for (s.undef) |u| undef.push(u);
+            } else |e| {
+                blame(&f, e, "{s}: member {s} is not a relocatable object: {s}", .{ name, m.name, @errorName(e) });
+            }
+        } else |e| {
+            blame(&f, e, "{s}: member {s} is not a 64-bit little-endian ELF object: {s}", .{ name, m.name, @errorName(e) });
+        }
     }
     if (o.dir.len != 0 and hermetic.mentions(b, o.dir))
-        try f.append(a, try std.fmt.allocPrint(a, "{s} contains the absolute path of the directory it was built in ({s})", .{ name, o.dir }));
+        say(&f, "{s} contains the absolute path of the directory it was built in ({s})", .{ name, o.dir });
 
     // What the library may leave to the final link.
-    var known = std.StringHashMap(void).init(a);
+    var known = Set.init(a, &oom);
     var lines = std.mem.splitScalar(u8, floor_symbols, '\n');
     while (lines.next()) |l| {
         const t = std.mem.trim(u8, l, " \r");
-        if (t.len != 0 and t[0] != '#') try known.put(t, {});
+        if (t.len != 0 and t[0] != '#') known.add(t);
     }
-    for (o.allow) |s| try known.put(s, {});
+    for (o.allow) |s| known.add(s);
     for (o.needs) |nb| {
-        const nms = members(a, nb) catch |e| {
-            if (e == error.OutOfMemory) return error.OutOfMemory;
-            continue;
-        };
-        for (nms) |m| {
-            const s = symbols(a, m.data) catch |e| {
-                if (e == error.OutOfMemory) return error.OutOfMemory;
-                continue;
-            };
-            for (s.defined) |d| try known.put(d, {});
+        if (members(a, nb)) |nms| {
+            for (nms) |m| {
+                if (symbols(a, m.data)) |s| {
+                    for (s.defined) |d| known.add(d);
+                } else |e| lost(e, &oom);
+            }
+        } else |e| lost(e, &oom);
+    }
+    var seen = Set.init(a, &oom);
+    for (undef.items.items) |u| {
+        if (!(defined.m.contains(u) or known.m.contains(u) or seen.m.contains(u))) {
+            seen.add(u);
+            say(&f, "{s}: undefined symbol: {s} (not defined by this library, a `needs` library, the C library at the floor or the compiler runtime)", .{ name, u });
         }
     }
-    var seen = std.StringHashMap(void).init(a);
-    for (undef.items) |u| {
-        if (defined.contains(u) or known.contains(u) or seen.contains(u)) continue;
-        try seen.put(u, {});
-        try f.append(a, try std.fmt.allocPrint(a, "{s}: undefined symbol: {s} (not defined by this library, a `needs` library, the C library at the floor or the compiler runtime)", .{ name, u }));
-    }
 
-    var all = std.ArrayList([]const u8).empty;
-    var it = defined.keyIterator();
-    while (it.next()) |k| try all.append(a, k.*);
-    std.mem.sort([]const u8, all.items, {}, lessThan);
-    return .{ .findings = try f.toOwnedSlice(a), .defined = try all.toOwnedSlice(a) };
+    var all = Acc([]const u8){ .a = a, .oom = &oom };
+    var it = defined.m.keyIterator();
+    while (it.next()) |k| all.push(k.*);
+    std.mem.sort([]const u8, all.items.items, {}, lessThan);
+    return report(oom, f.items.items, all.items.items);
 }
 
 /// The JSON a validation result is: only the first finding is the message.
 pub fn resultJson(a: std.mem.Allocator, ok: bool, msg: []const u8) std.mem.Allocator.Error![]const u8 {
-    var o = std.ArrayList(u8).empty;
-    try o.appendSlice(a, "{\"version\": 1, \"data\": {\"status\": \"");
-    try o.appendSlice(a, if (ok) "success" else "failure");
-    try o.appendSlice(a, "\", \"message\": \"");
+    var oom = false;
+    var o = Acc(u8){ .a = a, .oom = &oom };
+    o.pushAll("{\"version\": 1, \"data\": {\"status\": \"");
+    o.pushAll(if (ok) "success" else "failure");
+    o.pushAll("\", \"message\": \"");
     for (msg) |c| switch (c) {
-        '"' => try o.appendSlice(a, "\\\""),
-        '\\' => try o.appendSlice(a, "\\\\"),
-        '\n' => try o.appendSlice(a, "\\n"),
-        else => try o.append(a, c),
+        '"' => o.pushAll("\\\""),
+        '\\' => o.pushAll("\\\\"),
+        '\n' => o.pushAll("\\n"),
+        else => o.push(c),
     };
-    try o.appendSlice(a, "\"}}\n");
-    return o.toOwnedSlice(a);
+    o.pushAll("\"}}\n");
+    if (oom) return error.OutOfMemory;
+    return o.items.items;
 }
 
 pub const Cli = struct {
@@ -261,8 +337,9 @@ pub const usage = "usage: archive_check <lib.a> <result.json> [--needs <lib.a>].
 
 pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocator.Error!?Cli {
     if (args.len < 2) return null;
-    var needs = std.ArrayList([]const u8).empty;
-    var allow = std.ArrayList([]const u8).empty;
+    var oom = false;
+    var needs = Acc([]const u8){ .a = a, .oom = &oom };
+    var allow = Acc([]const u8){ .a = a, .oom = &oom };
     var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34" };
     var i: usize = 2;
     while (i < args.len) : (i += 2) {
@@ -270,59 +347,74 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocat
         const flag = args[i];
         const val = args[i + 1];
         if (std.mem.eql(u8, flag, "--needs")) {
-            try needs.append(a, val);
+            needs.push(val);
         } else if (std.mem.eql(u8, flag, "--allow")) {
-            try allow.append(a, val);
+            allow.push(val);
         } else if (std.mem.eql(u8, flag, "--symbols")) {
             c.symbols = val;
         } else if (std.mem.eql(u8, flag, "--max-glibc")) {
             c.max_glibc = val;
         } else return null;
     }
-    c.needs = try needs.toOwnedSlice(a);
-    c.allow = try allow.toOwnedSlice(a);
+    if (oom) return error.OutOfMemory;
+    c.needs = needs.items.items;
+    c.allow = allow.items.items;
     return c;
+}
+
+fn tell(a: std.mem.Allocator, err: *std.ArrayList(u8), oom: *bool, comptime fmt: []const u8, args: anytype) void {
+    err.print(a, fmt, args) catch {
+        oom.* = true;
+    };
+}
+
+fn exit(oom: bool, code: u8) !u8 {
+    if (oom) return error.OutOfMemory;
+    return code;
+}
+
+/// Exit 2 with the reason a file could not be read, which is the failure of the program when it is `OutOfMemory`.
+fn unreadable(a: std.mem.Allocator, err: *std.ArrayList(u8), path: []const u8, e: anyerror) !u8 {
+    var oom = e == error.OutOfMemory;
+    tell(a, err, &oom, "archive_check: cannot read {s}: {s}\n", .{ path, @errorName(e) });
+    return exit(oom, 2);
+}
+
+fn writeResult(a: std.mem.Allocator, cwd: std.fs.Dir, path: []const u8, ok: bool, msg: []const u8) !void {
+    const json = try resultJson(a, ok, msg);
+    try cwd.writeFile(.{ .sub_path = path, .data = json });
 }
 
 /// The program: 0 when the archive is as a native library must be, 1 (after writing a failing result) when it is not, 2 for a bad command line.
 pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, dir: []const u8, args: []const []const u8, err: *std.ArrayList(u8)) !u8 {
+    var oom = false;
     const c = (try parseArgs(a, args)) orelse {
-        try err.appendSlice(a, usage);
-        try err.append(a, '\n');
-        return 2;
+        tell(a, err, &oom, "{s}\n", .{usage});
+        return exit(oom, 2);
     };
-    const bytes = cwd.readFileAlloc(a, c.archive, 1 << 30) catch |e| {
-        if (e == error.OutOfMemory) return error.OutOfMemory;
-        try err.print(a, "archive_check: cannot read {s}: {s}\n", .{ c.archive, @errorName(e) });
-        return 2;
-    };
-    var needs = std.ArrayList([]const u8).empty;
+    const bytes = cwd.readFileAlloc(a, c.archive, 1 << 30) catch |e| return unreadable(a, err, c.archive, e);
+    var needs = Acc([]const u8){ .a = a, .oom = &oom };
     for (c.needs) |n| {
-        const nb = cwd.readFileAlloc(a, n, 1 << 30) catch |e| {
-            if (e == error.OutOfMemory) return error.OutOfMemory;
-            try err.print(a, "archive_check: cannot read {s}: {s}\n", .{ n, @errorName(e) });
-            return 2;
-        };
-        try needs.append(a, nb);
+        const nb = cwd.readFileAlloc(a, n, 1 << 30) catch |e| return unreadable(a, err, n, e);
+        needs.push(nb);
     }
     const name = std.fs.path.basename(c.archive);
-    const rep = try check(a, name, bytes, .{ .needs = needs.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir });
-    if (c.symbols) |sp| {
-        var o = std.ArrayList(u8).empty;
-        for (rep.defined) |s| {
-            try o.appendSlice(a, s);
-            try o.append(a, '\n');
-        }
-        try cwd.writeFile(.{ .sub_path = sp, .data = o.items });
+    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir });
+    var out = Acc(u8){ .a = a, .oom = &oom };
+    for (rep.defined) |s| {
+        out.pushAll(s);
+        out.push('\n');
     }
-    if (rep.findings.len == 0) {
-        const msg = try std.fmt.allocPrint(a, "{s}: {d} global symbols defined; deterministic, no debug section, no build path, nothing undefined that the link will lack", .{ name, rep.defined.len });
-        try cwd.writeFile(.{ .sub_path = c.result, .data = try resultJson(a, true, msg) });
-        return 0;
-    }
-    try cwd.writeFile(.{ .sub_path = c.result, .data = try resultJson(a, false, rep.findings[0]) });
-    for (rep.findings) |f| try err.print(a, "archive_check: {s}\n", .{f});
-    return 1;
+    const ok = rep.findings.len == 0;
+    const msg = if (ok)
+        try std.fmt.allocPrint(a, "{s}: {d} global symbols defined; deterministic, no debug section, no build path, nothing undefined that the link will lack", .{ name, rep.defined.len })
+    else
+        rep.findings[0];
+    for (rep.findings) |f| tell(a, err, &oom, "archive_check: {s}\n", .{f});
+    if (oom) return error.OutOfMemory;
+    if (c.symbols) |sp| try cwd.writeFile(.{ .sub_path = sp, .data = out.items.items });
+    try writeResult(a, cwd, c.result, ok, msg);
+    return if (ok) 0 else 1;
 }
 
 pub fn main() !void {
