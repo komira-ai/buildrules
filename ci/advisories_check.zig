@@ -102,7 +102,7 @@ fn ghUses(a: std.mem.Allocator, f: *Findings, c: []const u8) !void {
         pos = i + 1;
         if (i > 0 and !has(" (;\"", c[i - 1 .. i])) continue;
         var ok = false;
-        for ([_][]const u8{ "gh issue list ", "gh issue view ", "gh issue create ", "gh issue edit ", "gh issue reopen ", "gh issue close " }) |p| {
+        for ([_][]const u8{ "gh label create advisory --force ", "gh issue list ", "gh issue view ", "gh issue create ", "gh issue edit ", "gh issue reopen ", "gh issue close " }) |p| {
             if (std.mem.startsWith(u8, c[i..], p)) ok = true;
         }
         if (!ok) try add(a, f, "{s}: `{s}`: only `gh issue list|view|create|edit|reopen|close` may run", .{ file, c });
@@ -227,8 +227,9 @@ pub fn check(a: std.mem.Allocator, raw: []const u8, pins: []const u8) !Findings 
     for ([_][]const u8{
         "title=Advisories",
         "gh issue list --state all",
-        "gh issue create --title \"$title\" --body-file body.md",
-        "gh issue edit \"$number\" --body-file body.md",
+        "gh label create advisory --force ",
+        "gh issue create --title \"$title\" --label advisory --body-file body.md",
+        "gh issue edit \"$number\" --add-label advisory --body-file body.md",
         "gh issue reopen \"$number\"",
         "gh issue close \"$number\"",
         "cat body.md >> \"$GITHUB_STEP_SUMMARY\"",
@@ -463,10 +464,14 @@ test "mutant: a report that is not one issue" {
     try expectMutant(a, r, "gh issue list --state all", "gh issue list --state open", "missing `gh issue list --state all`");
     try expectMutant(a, r, "gh issue reopen \"$number\"", "true", "missing `gh issue reopen");
     try expectMutant(a, r, "gh issue close \"$number\"", "true", "missing `gh issue close");
-    try expectMutant(a, r, "gh issue edit \"$number\" --body-file body.md", "true", "missing `gh issue edit");
+    try expectMutant(a, r, "gh issue edit \"$number\" --add-label advisory --body-file body.md", "true", "missing `gh issue edit");
+    try expectMutant(a, r, "gh issue edit \"$number\" --add-label advisory --body-file body.md", "gh issue edit \"$number\" --body-file body.md", "missing `gh issue edit");
+    try expectMutant(a, r, "gh issue create --title \"$title\" --label advisory --body-file body.md", "gh issue create --title \"$title\" --body-file body.md", "missing `gh issue create --title");
+    try expectMutant(a, r, "gh label create advisory --force ", "gh label create other --force ", "missing `gh label create advisory --force");
     try expectMutant(a, r, "            cat body.md >> \"$GITHUB_STEP_SUMMARY\"\n", "", "missing `cat body.md >> ");
-    try expectMutant(a, r, "gh issue edit \"$number\" --body-file body.md", "gh issue create --title \"$title\" --body-file body.md", "not used exactly once");
-    try expectMutant(a, r, "gh issue create --title \"$title\" --body-file body.md", "gh issue create --title \"$title\" --body-file body.md; gh issue delete 1", "only `gh issue list");
+    try expectMutant(a, r, "gh issue edit \"$number\" --add-label advisory --body-file body.md", "gh issue create --title \"$title\" --label advisory --body-file body.md", "not used exactly once");
+    try expectMutant(a, r, "gh issue create --title \"$title\" --label advisory --body-file body.md", "gh issue create --title \"$title\" --label advisory --body-file body.md; gh issue delete 1", "only `gh issue list");
+    try expectMutant(a, r, "gh label create advisory --force ", "gh label delete advisory; gh label create advisory --force ", "only `gh issue list");
     try expectMutant(a, r, "gh issue close \"$number\" --comment", "gh pr create --title x --body y; gh issue close \"$number\" --comment", "only `gh issue list");
     try expectMutant(a, r, "          set -euo pipefail\n          title=Advisories", "          set -euo pipefail\n          gh api -X DELETE repos/o/r\n          title=Advisories", "only `gh issue list");
     try expectMutant(a, r, "          set -euo pipefail\n          title=Advisories", "          set -euo pipefail\n          gh workflow run ci.yml\n          title=Advisories", "only `gh issue list");

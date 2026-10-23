@@ -7,15 +7,17 @@ toolchains/mojo_pins.bzl. A change to any of them without a sync leaves a table 
 
     the files     an action (rules/mojo/tools/files_check.zig) hashes each file and compares it with the table's value
     the graph     `:table`, a target of its own (in //ci:all for every example): an action (rules/mojo/tools/table_check.zig) runs the pinned mopm's
-                  `plan --unit-graph --locked` over the package and its members and requires the table's graph to be that output, byte for byte (the keys,
-                  the order of units, natives and dependencies, every sha256), so a table that was edited, or left behind by a change, is red
+                  `plan --unit-graph --locked` over the package and its path dependencies (laid out flat at their repository paths) and requires the
+                  table's graph to be that output, byte for byte (the order of units, natives and dependencies, every sha256 of the package's own
+                  sources), so a table that was edited, or left behind by a change, is red. A path dependency is held by identity only (id, version,
+                  root, dependencies, outputs): its sources and keys are proved by its own `:table`, so editing one does not turn this one red
     the pins      at analysis: the toolchain the package builds with (`toolchains//:mojo_<v>`, declared from mojo_pins.bzl) must hold exactly
                   the toolchain section of the table's graph (version, cc_target, closure hash, the zig, every component)
 
 The fix is always `buildrules mojo sync`.
 """
 
-load(":providers.bzl", "MojoToolchainInfo")
+load(":providers.bzl", "MojoToolchainInfo", "MojoWorkspaceInfo")
 
 def _differs(have, want):
     keys = {}
@@ -56,49 +58,77 @@ mojo_check_rule = rule(
     },
 )
 
-def _workspace_impl(ctx):
-    # The workspace as the repository has it, in one directory: this package's files (paths relative to the package, less the project directory) and
-    # each member's workspace (under the member's directory). mopm reads mopm.toml, mopm.lock and every source of it.
+def repo_path(package, short_path):
+    """The path from the repository root of a file of a Buck2 package (`short_path` is relative to the package)."""
+    return package + "/" + short_path if package else short_path
+
+def workspace_tree(package, files, member_trees):
+    """The workspace of a package, flat: `{repository path: file}`. `files` are the package's own, as `(short_path, file)` pairs, and `member_trees`
+    the same maps of the workspaces of the path dependencies it imports. Every file is at the path the repository has it, whatever the nesting of
+    the packages, so a dependency that is a sibling is laid out like one below the package; a file two workspaces both hold (a dependency two
+    others import) is one entry."""
     tree = {}
-    for f in ctx.attrs.files:
-        rel = f.short_path
-        if ctx.attrs.project:
-            if not rel.startswith(ctx.attrs.project + "/"):
-                continue
-            rel = rel[len(ctx.attrs.project) + 1:]
-        tree[rel] = f
-    for member, dep in ctx.attrs.members.items():
-        tree[member] = dep[DefaultInfo].default_outputs[0]
-    return [DefaultInfo(default_output = ctx.actions.copied_dir("workspace", tree))]
+    for short_path, f in files:
+        tree[repo_path(package, short_path)] = f
+    for member in member_trees:
+        for path, f in member.items():
+            if path not in tree:
+                tree[path] = f
+    return tree
+
+def _workspace_impl(ctx):
+    # The workspace as the repository has it, in one directory: this package's files and the files of each path dependency's own workspace, every one
+    # at its path from the repository root. mopm reads mopm.toml, mopm.lock and every source of them.
+    tree = workspace_tree(
+        ctx.label.package,
+        [(f.short_path, f) for f in ctx.attrs.files],
+        [m[MojoWorkspaceInfo].files for m in ctx.attrs.members],
+    )
+    return [
+        DefaultInfo(default_output = ctx.actions.copied_dir("workspace", tree)),
+        MojoWorkspaceInfo(files = tree),
+    ]
 
 mojo_workspace_rule = rule(
     impl = _workspace_impl,
-    doc = "The files of a Mojo package and of its workspace members, laid out as the repository has them (the input of `:table`).",
+    doc = "The files of a Mojo package and of its path dependencies' workspaces, flat, at their paths from the repository root (the input of `:table`).",
     attrs = {
         "files": attrs.list(attrs.source()),
-        # `{"<directory below this one>": "<that package's :workspace>"}`, the outermost members only (a member's own members are in its workspace).
-        "members": attrs.dict(attrs.string(), attrs.dep()),
-        "project": attrs.string(default = ""),
+        # The `:workspace` of every path dependency the package's graph names (a dependency's own dependencies are in its workspace; one that two share is
+        # one entry).
+        "members": attrs.list(attrs.dep(providers = [MojoWorkspaceInfo]), default = []),
     },
 )
 
 def _table_impl(ctx):
     out = ctx.actions.declare_output("table_is_mopms")
-    ctx.actions.run(
-        cmd_args(ctx.attrs._tool[RunInfo], ctx.attrs.mopm[RunInfo], ctx.attrs.workspace[DefaultInfo].default_outputs[0], ctx.attrs.mojo, ctx.attrs.table, out.as_output()),
-        category = "mojo_table",
-        identifier = ctx.label.name,
+    cmd = cmd_args(ctx.attrs._tool[RunInfo])
+    if ctx.attrs.workspace_root:
+        # The graph's paths start at the repository root: mopm is told where it is (the staged workspace) and the table was made that way.
+        cmd.add("--workspace-root")
+    cmd.add(
+        ctx.attrs.mopm[RunInfo],
+        ctx.attrs.workspace[DefaultInfo].default_outputs[0],
+        ctx.attrs.package_dir or ".",
+        ctx.attrs.mojo,
+        ctx.attrs.table,
+        out.as_output(),
     )
+    ctx.actions.run(cmd, category = "mojo_table", identifier = ctx.label.name)
     return [DefaultInfo(default_output = out)]
 
 mojo_table_rule = rule(
     impl = _table_impl,
-    doc = "Fails unless the committed graph (buildrules.mojo.lock.bzl) is, byte for byte, what the pinned mopm's `plan --unit-graph --locked` prints for the package and its members now.",
+    doc = "Fails unless the committed graph (buildrules.mojo.lock.bzl) is, byte for byte, what the pinned mopm's `plan --unit-graph --locked` prints for the package and its path dependencies now (they are held by identity only: graph_norm.zig).",
     attrs = {
         "mojo": attrs.string(),
         "mopm": attrs.exec_dep(providers = [RunInfo]),
+        # The package's directory from the repository root: where mopm runs inside the staged workspace.
+        "package_dir": attrs.string(default = ""),
         "table": attrs.source(),
         "workspace": attrs.dep(),
+        # The table was made by a mopm given --workspace-root (`MOPM.workspace_root`).
+        "workspace_root": attrs.bool(default = False),
         "_tool": attrs.exec_dep(default = "buildrules//rules/mojo:table_check", providers = [RunInfo]),
     },
 )

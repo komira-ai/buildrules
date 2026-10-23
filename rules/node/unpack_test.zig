@@ -76,3 +76,65 @@ test "unpackTgz: a stream that is not gzip, and a truncated one, are errors" {
     const z = try tartest.tgz(arena.allocator(), "p", "1.0.0", &.{.{ .name = "package/a", .data = "0123456789" }});
     try std.testing.expect(std.meta.isError(unpack.unpackTgz(tmp.dir, z[0 .. z.len - 20])));
 }
+
+test "stripFirst: an empty name is the package itself, and a path that does not fit the buffer is refused" {
+    var buf: [8]u8 = undefined;
+    try std.testing.expectEqualStrings("", try unpack.stripFirst("", &buf));
+    try std.testing.expectEqualStrings("abcdefg", try unpack.stripFirst("package/abcdefg", &buf));
+    try std.testing.expectError(error.PathEscapes, unpack.stripFirst("package/abcdefgh", &buf));
+    try std.testing.expectEqualStrings("ab/cdefg", try unpack.stripFirst("package/ab/cdefg", &buf));
+    try std.testing.expectError(error.PathEscapes, unpack.stripFirst("package/ab/cdefgh", &buf));
+}
+
+test "unpackTgz: a gzip stream cut inside its trailer is an error, not a package" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const z = try tartest.tgz(arena.allocator(), "p", "1.0.0", &.{.{ .name = "package/a", .data = "0123456789" }});
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // the whole stream unpacks; the same stream without the last four bytes of its eight-byte trailer does not
+    const whole = try unpack.unpackTgz(tmp.dir, z);
+    try std.testing.expectEqual(@as(usize, 2), whole.files);
+    try std.testing.expectError(error.CorruptGzip, unpack.unpackTgz(tmp.dir, z[0 .. z.len - 4]));
+}
+
+test "unpackTgz: a tar that ends inside a file's data is an error, not a short file" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const tar = try tartest.tar(arena.allocator(), &.{.{ .name = "package/a", .data = "0123456789" }});
+    // the header block and three bytes of the data
+    const z = try tartest.gzip(arena.allocator(), tar[0 .. 512 + 3]);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try std.testing.expect(std.meta.isError(unpack.unpackTgz(tmp.dir, z)));
+}
+
+test "unpackTgz: an entry that needs a file to be a directory, or a directory to be a file, is an error and the file stays" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const x = arena.allocator();
+    const cases = [_][]const tartest.Entry{
+        // a file, then a file below it
+        &.{ .{ .name = "package/a", .data = "first" }, .{ .name = "package/a/b", .data = "below" } },
+        // a file, then a directory of its name
+        &.{ .{ .name = "package/a", .data = "first" }, .{ .name = "package/a/", .kind = '5', .mode = 0o755 } },
+    };
+    for (cases) |entries| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try std.testing.expect(std.meta.isError(unpack.unpackTgz(tmp.dir, try tartest.tgz(x, "p", "1.0.0", entries))));
+        const kept = try tmp.dir.readFileAlloc(a, "a", 100);
+        defer a.free(kept);
+        try std.testing.expectEqualStrings("first", kept);
+    }
+    // a directory, then a file of its name
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const z = try tartest.tgz(x, "p", "1.0.0", &.{ .{ .name = "package/d/", .kind = '5', .mode = 0o755 }, .{ .name = "package/d", .data = "file" } });
+    try std.testing.expect(std.meta.isError(unpack.unpackTgz(tmp.dir, z)));
+    var d = try tmp.dir.openDir("d", .{});
+    d.close();
+}

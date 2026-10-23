@@ -36,11 +36,14 @@ const file = "publish-unpack.yml";
 const guard = "github.ref == 'refs/heads/main'";
 const apply_if = "if: inputs.apply";
 const tool = "\"$RUNNER_TEMP/publish_unpack\"";
-const common = " --root \"$GITHUB_WORKSPACE\" --buck2 \"$GITHUB_WORKSPACE/buck2\" --buck2-config buildrules_re.mode=local";
+/// buck2 is installed outside the checkout, so the tree stays the commit (publish_unpack refuses an untracked file, in the dry run too).
+const buck2_dir = "\"$RUNNER_TEMP/buck2-bin\"";
+const buck2_bin = "\"$RUNNER_TEMP/buck2-bin/buck2\"";
+const common = " --root \"$GITHUB_WORKSPACE\" --buck2 " ++ buck2_bin ++ " --buck2-config buildrules_re.mode=local";
 const dry_cmd = tool ++ common;
 const apply_cmd = tool ++ " --apply --work \"$RUNNER_TEMP/unpack-work\"" ++ common;
 const apply_body = "          mkdir \"$RUNNER_TEMP/unpack-work\"\n          " ++ apply_cmd;
-const build_cmd ="./buck2 build --console simple -c buildrules_re.mode=local --out \"$RUNNER_TEMP/publish_unpack\" //tools/held:publish_unpack";
+const build_cmd = buck2_bin ++ " build --console simple -c buildrules_re.mode=local --out \"$RUNNER_TEMP/publish_unpack\" //tools/held:publish_unpack";
 const mode_flag = "buildrules_re.mode=local";
 
 /// The lines of the top-level block `key:` (column 0), trimmed, up to the next line in column 0.
@@ -235,7 +238,7 @@ pub fn check(a: std.mem.Allocator, raw: []const u8, release_raw: []const u8, dot
         if (mint_at != null and d >= mint_at.?) try add(a, &f, "{s}: the dry run does not come before the mint step", .{file});
     } else try add(a, &f, "{s}: no dry run step with the command `{s}`", .{ file, dry_cmd });
     if (build_at) |b| {
-        if (!has(sts[b], "\n        run: " ++ build_cmd ++ "\n")) try add(a, &f, "{s}: the build of the tool is not exactly `{s}`", .{ file, build_cmd });
+        if (!has(sts[b], "\n        run: |\n          " ++ build_cmd ++ "\n")) try add(a, &f, "{s}: the build of the tool is not exactly `{s}`", .{ file, build_cmd });
         if (dry_at != null and b >= dry_at.?) try add(a, &f, "{s}: the build of the tool does not come before the dry run", .{file});
     } else try add(a, &f, "{s}: no step builds //tools/held:publish_unpack", .{file});
 
@@ -295,12 +298,15 @@ pub fn check(a: std.mem.Allocator, raw: []const u8, release_raw: []const u8, dot
     if (count(wf, "buildrules_re.mode") != count(wf, "buildrules_re.mode=local")) try add(a, &f, "{s}: `buildrules_re.mode` is set to something other than `local`", .{file});
     var graph_cmds: usize = 0;
     for (cmds) |c| {
-        if (std.mem.startsWith(u8, c, "./buck2 ") and !std.mem.startsWith(u8, c, "./buck2 kill") and !std.mem.startsWith(u8, c, "./buck2 --version")) {
+        if (std.mem.startsWith(u8, c, buck2_bin ++ " ") and !std.mem.startsWith(u8, c, buck2_bin ++ " kill") and !std.mem.startsWith(u8, c, buck2_bin ++ " --version")) {
             graph_cmds += 1;
-            if (!has(c, " -c " ++ mode_flag ++ " ")) try add(a, &f, "{s}: a `./buck2` command that loads the graph does not pass `-c {s}`: {s}", .{ file, mode_flag, c });
+            if (!has(c, " -c " ++ mode_flag ++ " ")) try add(a, &f, "{s}: a buck2 command that loads the graph does not pass `-c {s}`: {s}", .{ file, mode_flag, c });
         }
+        // The binary lives outside the checkout; a `./buck2` is only the version check, run in the directory it was installed in.
+        if (std.mem.startsWith(u8, c, "./buck2 ") and !std.mem.eql(u8, c, "./buck2 --version")) try add(a, &f, "{s}: `{s}`: buck2 is run from the checkout (only `./buck2 --version` is, in its install directory)", .{ file, c });
     }
-    if (graph_cmds != 1) try add(a, &f, "{s}: {d} `./buck2` commands that load the graph (exactly one, the build of the tool)", .{ file, graph_cmds });
+    if (graph_cmds != 1) try add(a, &f, "{s}: {d} buck2 commands that load the graph (exactly one, the build of the tool)", .{ file, graph_cmds });
+    if (has(wf, "GITHUB_WORKSPACE/buck2") or has(wf, "github.workspace")) try add(a, &f, "{s}: buck2 or something else is placed in the workspace (the tree must stay the commit)", .{file});
     for ([_][]const u8{ "engine_address", "cas_address", "action_cache_address", "linux_x86_64_properties" }) |bad| {
         if (has(wf, bad)) try add(a, &f, "{s}: the workflow mentions `{s}`", .{ file, bad });
     }
@@ -310,16 +316,35 @@ pub fn check(a: std.mem.Allocator, raw: []const u8, release_raw: []const u8, dot
     var checked: ?usize = null;
     var removed: ?usize = null;
     var first_tool: ?usize = null;
+    var made: ?usize = null;
+    var entered: ?usize = null;
+    var fetched: ?usize = null;
     for (cmds, 0..) |c, i| {
+        if (std.mem.eql(u8, c, "mkdir " ++ buck2_dir)) made = i;
+        if (std.mem.eql(u8, c, "cd " ++ buck2_dir)) entered = i;
+        if (std.mem.startsWith(u8, c, "curl ") and has(c, " --output buck2.zst ")) fetched = i;
         if (has(c, "sha256sum --check --strict -")) checked = i;
         if (std.mem.eql(u8, c, "rm buck2.zst")) removed = i;
         if (first_tool == null and has(c, "publish_unpack")) first_tool = i;
     }
+    // The download, its check and the binary are in a directory of the runner, not of the checkout: the directory is made, entered, and only then is anything fetched.
+    if (made == null or entered == null or fetched == null or !(made.? < entered.? and entered.? < fetched.?))
+        try add(a, &f, "{s}: buck2 is not installed in `{s}` (mkdir, cd, then the download), outside the checkout", .{ file, buck2_dir });
     if (checked == null) try add(a, &f, "{s}: the download of buck2 is not checked with `sha256sum --check --strict -` (the sha256 of tools/buck2, before it runs)", .{file});
     if (removed == null) {
         try add(a, &f, "{s}: `rm buck2.zst` is missing (an untracked download makes the tree differ from the commit)", .{file});
     } else if (checked == null or removed.? < checked.? or (first_tool != null and removed.? > first_tool.?)) {
         try add(a, &f, "{s}: `rm buck2.zst` is not after the sha256 check and before the build of the tool", .{file});
+    }
+    return f;
+}
+
+/// What the build leaves in the checkout is ignored: publish_unpack refuses (the dry run too) a tree whose `git status --porcelain` prints anything, and an untracked
+/// file counts. The zig actions that run in local mode write `.zig-cache/` to the checkout, buck2 writes `buck-out/`, and a buck2 binary may sit at the root.
+pub fn checkIgnore(a: std.mem.Allocator, gitignore: []const u8) !Findings {
+    var f = Findings.init(a);
+    for ([_][]const u8{ ".zig-cache/", "buck-out/", "/buck2", ".buckconfig.local" }) |want| {
+        if (!wc.hasLine(gitignore, want)) try add(a, &f, ".gitignore: `{s}` is not listed (a build leaves it in the checkout, and the tree must stay the commit)", .{want});
     }
     return f;
 }
@@ -520,9 +545,16 @@ test "rule: a build that is not local, an unpinned buck2, a tree that is not the
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectRefused(a, r, "./buck2 build --console simple -c buildrules_re.mode=local --out", "./buck2 build --console simple --out", "does not pass `-c buildrules_re.mode=local`");
+    try expectRefused(a, r, "buck2\" build --console simple -c buildrules_re.mode=local --out", "buck2\" build --console simple --out", "does not pass `-c buildrules_re.mode=local`");
+    // buck2 installed in the checkout (an untracked file), or run from it
+    try expectRefused(a, r, "          mkdir \"$RUNNER_TEMP/buck2-bin\"\n          cd \"$RUNNER_TEMP/buck2-bin\"\n", "", "outside the checkout");
+    try expectRefused(a, r, "          cd \"$RUNNER_TEMP/buck2-bin\"\n", "", "outside the checkout");
+    try expectRefused(a, r, "          mkdir \"$RUNNER_TEMP/buck2-bin\"\n", "", "outside the checkout");
+    try expectRefused(a, r, "          mkdir \"$RUNNER_TEMP/buck2-bin\"\n          cd \"$RUNNER_TEMP/buck2-bin\"\n", "          cd \"$RUNNER_TEMP/buck2-bin\"\n          mkdir \"$RUNNER_TEMP/buck2-bin\"\n", "outside the checkout");
+    try expectRefused(a, r, "--buck2 \"$RUNNER_TEMP/buck2-bin/buck2\" --buck2-config", "--buck2 \"$GITHUB_WORKSPACE/buck2\" --buck2-config", "placed in the workspace");
+    try expectRefused(a, r, "          \"$RUNNER_TEMP/buck2-bin/buck2\" build", "          ./buck2 build", "buck2 is run from the checkout");
+    try expectRefused(a, r, "      - name: Dry run\n", "      - run: \"$RUNNER_TEMP/buck2-bin/buck2\" build -c buildrules_re.mode=local //ci:all\n      - name: Dry run\n", "2 buck2 commands");
     try expectRefused(a, r, "--buck2-config buildrules_re.mode=local", "--buck2-config buildrules_re.mode=remote", "something other than `local`");
-    try expectRefused(a, r, "      - name: Dry run\n", "      - run: ./buck2 build -c buildrules_re.mode=local //ci:all\n      - name: Dry run\n", "2 `./buck2` commands");
     try expectRefused(a, r, "sha256sum --check --strict -", "sha256sum --check -", "is not checked with `sha256sum --check --strict -`");
     try expectRefused(a, r, "2026-09-15/buck2-x86_64", "latest/buck2-x86_64", "does not download the url pinned");
     try expectRefused(a, r, "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89", "0000000000000000000000000000000000000000000000000000000000000000", "does not check the sha256 pinned");
@@ -550,6 +582,25 @@ test "rule: the runner, the concurrency, the checkout and the body that holds th
     try expectRefused(a, r, "          mkdir \"$RUNNER_TEMP/unpack-work\"\n", "          mkdir \"$RUNNER_TEMP/unpack-work\"\n          echo \"$GH_TOKEN\" | base64\n", "run body of the apply step");
     try expectRefused(a, r, "          mkdir \"$RUNNER_TEMP/unpack-work\"\n", "          env > \"$RUNNER_TEMP/env.txt\"\n          mkdir \"$RUNNER_TEMP/unpack-work\"\n", "run body of the apply step");
     try expectRefused(a, r, "          mkdir \"$RUNNER_TEMP/unpack-work\"\n", "", "run body of the apply step");
+}
+
+test "rule: everything a build leaves in the checkout is ignored by git" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const gi = try work(a, ".gitignore");
+    const f = try checkIgnore(a, gi);
+    for (f.items) |m| std.debug.print("{s}\n", .{m});
+    try t.expectEqual(@as(usize, 0), f.items.len);
+    for ([_][]const u8{ ".zig-cache/\n", "buck-out/\n", "/buck2\n", ".buckconfig.local\n" }) |line| {
+        const without = try edited(a, gi, line, "");
+        const got = try checkIgnore(a, without);
+        try t.expectEqual(@as(usize, 1), got.items.len);
+        try t.expect(has(got.items[0], "is not listed"));
+    }
+    // a line that only looks like the entry (a comment, a different path) is not the entry
+    try t.expectEqual(@as(usize, 1), (try checkIgnore(a, try edited(a, gi, "\n.zig-cache/\n", "\n# .zig-cache/\n"))).items.len);
+    try t.expectEqual(@as(usize, 1), (try checkIgnore(a, try edited(a, gi, "\n.zig-cache/\n", "\nzig-cache/\n"))).items.len);
 }
 
 test "rule: an inline expansion of event data" {

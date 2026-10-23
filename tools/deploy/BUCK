@@ -33,6 +33,34 @@ zig_exe(
     visibility = ["PUBLIC"],
 )
 
+# The keyring-rotation proof (apt_rotation.zig, run by .github/workflows/apt-rotation.yml with the real gpg, gpgv and apt): what it reads out of their words is unit tested here,
+# and its judgement of what apt did is driven below against a fake apt-get.
+_ROT_SRCS = glob(["apt_rotation/*.zig"], exclude = ["apt_rotation/lib.zig"])
+
+zig_test(
+    name = "apt_rotation_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "apt_rotation/lib.zig",
+    imports = _ROT_SRCS,
+)
+
+# The program is static (musl): the workflow copies it into containers of other distributions. Not built unless its unit tests pass.
+zig_exe(
+    name = "apt_rotation",
+    exec_compatible_with = LINUX_X86_64,
+    src = "apt_rotation.zig",
+    imports = _ROT_SRCS,
+    unit_tests = [":apt_rotation_unit"],
+    visibility = ["PUBLIC"],
+)
+
+# Read by the keyring-rotation workflow check (//ci:apt_rotation_check), which holds the workflow to the names this program uses.
+export_file(
+    name = "apt_rotation.zig",
+    src = "apt_rotation.zig",
+    visibility = ["//ci:"],
+)
+
 # The pull request against the tap. The program has no unit tests of its own: tap_driver runs it, against a fake `gh` and `git`.
 zig_exe(
     name = "tap",
@@ -51,7 +79,7 @@ zig_exe(
         src = "drivers/fake_" + n + ".zig",
         busybox = _BB,
     )
-    for n in ["aws", "gpg", "curl", "gh", "git"]
+    for n in ["aws", "gpg", "curl", "gh", "git", "apt"]
 ]
 
 # apt_publish against the fake aws, gpg and curl: the order of the writes, If-None-Match, If-Match and the 412 retry, the signing, the gate, and a write
@@ -70,6 +98,19 @@ zig_test(
         "FAKE_GPG": ":fake_gpg",
     },
     busybox = _BB,
+    visibility = ["//ci:"],
+)
+
+# apt_rotation apt-check against the fake apt-get and dpkg-query: the verdict on a good run, on each way an `ok` run can go wrong, and on a `refused` run.
+zig_test(
+    name = "apt_rotation_driver",
+    exec_compatible_with = LINUX_X86_64,
+    src = "drivers/apt_rotation_test.zig",
+    deps = ["//tools/harness:harness"],
+    exec_tools = {
+        "APT_ROTATION": ":apt_rotation",
+        "FAKE_APT": ":fake_apt",
+    },
     visibility = ["//ci:"],
 )
 

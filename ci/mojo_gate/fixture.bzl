@@ -12,7 +12,7 @@ def _lib_impl(ctx):
     mojoc = ctx.actions.write(ctx.attrs.package + ".mojoc", ctx.attrs.text)
     return [
         DefaultInfo(default_output = mojoc),
-        MojoLibInfo(id = ctx.label.name, mojoc = mojoc, closure = {ctx.attrs.package: mojoc}),
+        MojoLibInfo(id = ctx.label.name, mojoc = mojoc, closure = {ctx.attrs.package: mojoc}, ids = {ctx.attrs.package: ctx.label.name}),
     ]
 
 _gate_fixture_lib = rule(impl = _lib_impl, attrs = {

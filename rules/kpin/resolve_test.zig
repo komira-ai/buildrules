@@ -159,3 +159,81 @@ test "compareToPrevious: a hash edited in the lock itself is an alarm against th
     resolve.compareToPrevious(try prevNpm(a, fx.ABC_SRI512), .{ .npm = &.{n} }, &rep4);
     try t.expectEqual(@as(usize, 1), rep4.alarms.count());
 }
+
+test "compute: a template that does not expand is reported by pin and platform, and writes no file for it" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    // pins.load refuses such a template, so the pin is built by hand: compute does not rely on its caller having checked.
+    var plats = [_]pins.Platform{
+        .{ .id = "linux", .token = "linux", .sha256 = fx.ABC_SHA256, .size = 3 },
+        .{ .id = "bad\"", .token = "l", .sha256 = fx.ABC_SHA256, .size = 3 },
+    };
+    const bad = [_]pins.Pin{.{ .name = "tool", .version = "1.0.0", .url = "https://h.example/{nope}", .platforms = &plats }};
+    var rep = Report.init(a);
+    const lock = try resolve.compute(a, .{ .pins = &bad }, .{}, &rep);
+    try t.expectEqual(@as(usize, 2), rep.errors.count());
+    try t.expectEqualStrings("tool: url template does not expand for linux", rep.errors.msgs.items[0]);
+    try t.expectEqual(@as(usize, 0), rep.alarms.count());
+    try t.expectEqual(@as(usize, 1), lock.pins.len);
+    try t.expectEqual(@as(usize, 0), lock.pins[0].files.len);
+}
+
+test "compute: a hash written in pins.toml is the lock's when the lock has none for that platform" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    var plats = [_]pins.Platform{.{ .id = "linux", .token = "linux", .sha256 = fx.ABC_SHA256, .size = 3 }};
+    const p = [_]pins.Pin{.{ .name = "tool", .version = "1.0.0", .url = "https://h.example/{platform}", .platforms = &plats }};
+    var rep = Report.init(a);
+    const lock = try resolve.compute(a, .{ .pins = &p }, .{}, &rep);
+    try t.expect(rep.clean());
+    try t.expectEqualStrings(fx.ABC_SHA256, lock.pins[0].files[0].sha256);
+    try t.expectEqual(@as(u64, 3), lock.pins[0].files[0].size);
+    // The same claim with another size, against a lock that has the file, is an alarm on the size alone.
+    plats[0].size = 4;
+    var rep2 = Report.init(a);
+    _ = try resolve.compute(a, .{ .pins = &p }, lock, &rep2);
+    try t.expectEqual(@as(usize, 1), rep2.alarms.count());
+    try t.expect(std.mem.indexOf(u8, rep2.alarms.msgs.items[0], "size 4, the lock has " ++ fx.ABC_SHA256 ++ " size 3") != null);
+}
+
+test "compareToPrevious: a changed size alone is an alarm; a platform or a pin that went away is not" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const base = try prevLock(a, "1.0.0", fx.ABC_SHA256);
+    var resized_files = try a.dupe(lockfmt.File, base.pins[0].files);
+    resized_files[0].size = 4;
+    const resized = [_]lockfmt.LockPin{.{ .name = "tool", .version = "1.0.0", .files = resized_files }};
+    var rep = Report.init(a);
+    resolve.compareToPrevious(base, .{ .pins = &resized }, &rep);
+    try t.expectEqual(@as(usize, 1), rep.alarms.count());
+    try t.expect(std.mem.indexOf(u8, rep.alarms.msgs.items[0], "was sha256 " ++ fx.ABC_SHA256 ++ " size 3, is now " ++ fx.ABC_SHA256 ++ " size 4") != null);
+    // One platform gone, and then the whole pin gone: removal is a normal edit.
+    const fewer = [_]lockfmt.LockPin{.{ .name = "tool", .version = "1.0.0", .files = base.pins[0].files[0..1] }};
+    var rep2 = Report.init(a);
+    resolve.compareToPrevious(base, .{ .pins = &fewer }, &rep2);
+    resolve.compareToPrevious(base, .{}, &rep2);
+    try t.expect(rep2.clean());
+}
+
+test "compareToPrevious: npm integrity or size changed alone is an alarm; a package that went away is not" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const base = try prevNpm(a, fx.ABC_SRI512);
+    var other_sri = base.npm[0];
+    other_sri.sri512 = try fx.sri512(a, fx.ABD);
+    var other_size = base.npm[0];
+    other_size.size = 4;
+    for ([_]lockfmt.Npm{ other_sri, other_size }) |changed| {
+        var rep = Report.init(a);
+        resolve.compareToPrevious(base, .{ .npm = &.{changed} }, &rep);
+        try t.expectEqual(@as(usize, 1), rep.alarms.count());
+        try t.expect(std.mem.indexOf(u8, rep.alarms.msgs.items[0], "left-pad@1.3.0: was sha256 ") != null);
+    }
+    var rep = Report.init(a);
+    resolve.compareToPrevious(base, .{}, &rep);
+    try t.expect(rep.clean());
+}

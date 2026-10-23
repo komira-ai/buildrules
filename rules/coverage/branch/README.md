@@ -112,10 +112,10 @@ link, and `mojo_package` gives `__pgo` nothing else to decide from:
 ## cov_branch run
 
 `cov_branch run` ([`cov_branch_run.zig`](cov_branch_run.zig)), with `--compiler`, `--share`, `--label`, `--profdata`, `--raw-version`, `--binary`, `--out`, a `--lib-dir <directory>` for each
-directory of shared native libraries ([above](#native-libraries)) and the test's `--env NAME=VALUE`s.
+directory of shared native libraries ([above](#native-libraries)), the test's `--env NAME=VALUE`s and, when the test has staged data, `--data-env NAME` (the variable that names `--share`, made absolute: `mojo_package`'s `test_data` is copied into that tree, which is the test's working directory here as under kcov).
 
 1. The test runs in `--share`, the tree of copies of the test source and the library's sources at the relative names the line tables use (the tree `cov_run` gives kcov), with exactly this
-   environment: `PATH=/usr/bin:/bin`, `LD_LIBRARY_PATH=<compiler>/lib` followed by each `--lib-dir` (made absolute), the `--env` entries, and `LLVM_PROFILE_FILE=<scratch>/prof/%p.profraw` (`%p`, the pid: a child the test starts writes
+   environment: `PATH=/usr/bin:/bin`, `LD_LIBRARY_PATH=<compiler>/lib` followed by each `--lib-dir` (made absolute), the `--env` entries, `--data-env`'s variable, and `LLVM_PROFILE_FILE=<scratch>/prof/%p.profraw` (`%p`, the pid: a child the test starts writes
    a profile of its own; setting it by `--env` is a usage error). Nothing of the tool's own environment reaches the test. The test must pass; when it fails, so does the action, with the
    test's output and `BRANCH COVERAGE RUN FAILED`.
 2. At least one `.profraw` was written there; otherwise `The test passed but wrote no .profraw` (the runtime was not linked, the variable did not reach the test, or the test left without
@@ -398,10 +398,10 @@ By behaviour, each run as a build action on the farm, and a defect each catches:
 - **The records and the summary** (`rules/coverage/tools/branch_lcov_test.zig`): the format and each refusal, the sum by id across tests (an arm is hit when any test took it, `-` adds nothing, an
   arm one test did not give is never a pass), the disagreement of two tests about a location's decisions or a decision's arms, the listing (0/0 for a source with no code or no decision, a source
   with lines and no record refused), and every allocation failing.
-- **On real Mojo** (`examples/mojo`): `partial`'s one `if` with one arm run gives `BRDA:5,5:br:0/1,0,0` and `BRDA:5,5:br:0/1,1,1` and the rows `branches ... 1/2 50%` (`:coverage_records`), `reexport`'s code
-  with no decision gives `SF:` and `end_of_record` and `0/0`, the rows and the records agree file by file, and the floor of `partial` is held both ways for lines and for branches
-  (`coverage_floors`: a branch figure above and below, a floor with no `branches` figure; each red, for its reason, in `ci/negative.bzl`; a `branches` figure the tests do not record is refused by
-  `coverage_tools_refuse`). `sys_app`, whose test links two static archives, gives `BRDA:18,5:select:0/1,0,1` and `BRDA:18,5:select:0/1,1,1` for the `if` of `clamped_answer`, whose test takes
+- **On real Mojo** (`examples/mojo`): `partial`'s one `if` with one arm run gives `BRDA:5,5:br:0/1,0,0` and `BRDA:5,5:br:0/1,1,1` and the rows `branches ... 1/2 50%` (`:coverage_records`), `reexport`'s `if` and `for` give
+  `select` and `br` records with their exact counts, `testdata`'s code with no decision gives `SF:` and `end_of_record` and `0/0`, the rows and the records agree file by file, and the floor of
+  `partial` is held as a minimum for lines and for branches (`coverage_floors`: a figure above the coverage is red, for its reason, in `ci/negative.bzl`; one below it is green; a floor with no
+  `branches` figure is red; a `branches` figure for code with no decision is red; a `branches` figure the tests do not record is refused by `coverage_tools_refuse`). `sys_app`, whose test links two static archives, gives `BRDA:18,5:select:0/1,0,1` and `BRDA:18,5:select:0/1,1,1` for the `if` of `clamped_answer`, whose test takes
   both arms (rows `branches ... 2/2 100%`, a floor of `lines 100.00` and `branches 100.00` that holds); `ws`, whose test loads a shared object, gives `SF:` and `end_of_record` and `0/0` (its
   library has no decision): the records and the rows agree for both. That every example, those two included, has the five branch targets of its test and that its `:coverage` waits for them
   is held by `ci/negative.bzl` (`BRANCH_PACKAGES`); a unit's library missing from the instrumented link, and two archives in an order the linker would leave symbols undefined in, are must-fail

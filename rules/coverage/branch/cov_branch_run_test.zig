@@ -231,7 +231,7 @@ test "--lib-dir is repeatable, and an empty one is a usage error" {
     const a = arena.allocator();
     var why: []const u8 = "";
     const full = [_][]const u8{ "--compiler", "c", "--share", "s", "--label", "l", "--profdata", "p", "--raw-version", "11", "--binary", "b", "--out", "o" };
-    const none = (try r.parseArgs(a, &full, &why)).?;
+    const none =(try r.parseArgs(a, &full, &why)).?;
     try testing.expectEqual(@as(usize, 0), none.lib_dirs.len);
     const two = (try r.parseArgs(a, &([_][]const u8{ "--lib-dir", "x" } ++ full ++ [_][]const u8{ "--lib-dir", "y" }), &why)).?;
     try testing.expectEqual(@as(usize, 2), two.lib_dirs.len);
@@ -241,6 +241,40 @@ test "--lib-dir is repeatable, and an empty one is a usage error" {
     try testing.expectEqualStrings("--lib-dir is empty", why);
     try testing.expect((try r.parseArgs(a, &(full ++ [_][]const u8{"--lib-dir"}), &why)) == null);
     try testing.expectEqualStrings("unknown argument --lib-dir", why);
+}
+
+test "--data-env names the tree the test runs in, absolute, after the --env entries and the library path; the test's working directory is that tree" {
+    var c = try Case.init();
+    defer c.deinit();
+    var fake = Fake.init();
+    const b = good();
+    fake.raw_bytes = &b;
+    var full = std.ArrayList([]const u8).empty;
+    try full.appendSlice(c.a(), c.argv());
+    try full.appendSlice(c.a(), &.{ "--lib-dir", c.p("natives"), "--env", "A=1", "--data-env", "BUILDRULES_TEST_DATA" });
+    try testing.expectEqual(@as(u8, 0), try r.cli(c.a(), full.items, c.where(), fake.runner(), &c.err));
+    const t = fake.calls.items[0];
+    try testing.expectEqual(@as(usize, 5), t.env.len);
+    try testing.expectEqualStrings("A=1", t.env[2]);
+    try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "BUILDRULES_TEST_DATA={s}", .{c.p("share")}), t.env[3]);
+    try testing.expectEqualStrings(c.p("share"), t.cwd.?);
+    try testing.expect(std.mem.startsWith(u8, t.env[4], "LLVM_PROFILE_FILE="));
+}
+
+test "--data-env: a name the run sets itself, an empty one, one with '=' and a repeat are usage errors" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    const full = [_][]const u8{ "--compiler", "c", "--share", "s", "--label", "l", "--profdata", "p", "--raw-version", "11", "--binary", "b", "--out", "o" };
+    for ([_][]const u8{ "PATH", "LD_LIBRARY_PATH", "LLVM_PROFILE_FILE", "", "A=B" }) |n| {
+        try testing.expect((try r.parseArgs(a, &(full ++ [_][]const u8{ "--data-env", n }), &why)) == null);
+        try testing.expectEqualStrings(try std.fmt.allocPrint(a, "--data-env '{s}' is not a variable name a branch coverage run may set", .{n}), why);
+    }
+    try testing.expect((try r.parseArgs(a, &(full ++ [_][]const u8{ "--data-env", "X", "--data-env", "Y" }), &why)) == null);
+    try testing.expectEqualStrings("--data-env given twice", why);
+    const ok = (try r.parseArgs(a, &(full ++ [_][]const u8{ "--data-env", "X" }), &why)).?;
+    try testing.expectEqualStrings("X", ok.data_env);
 }
 
 test "a test that fails fails the action with its own exit status, the label and the reason; nothing is merged" {

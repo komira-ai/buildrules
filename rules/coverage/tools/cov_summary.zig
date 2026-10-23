@@ -248,14 +248,82 @@ fn hasLineBreakChar(s: []const u8) bool {
     return std.mem.indexOfAny(u8, s, "\x0b\x0c") != null;
 }
 
-/// Whether a Mojo source has no executable line: only blank lines, comments, docstrings (a triple-quoted string on its own lines) and top-level
-/// `from ... import ...` / `import ...` statements (a re-export file, `__init__.mojo`). The Mojo coverage report omits such a file, and so it
-/// does a file with code that no test compiled; this is what tells them apart, so it is strict: any other statement, a `;`, a quote on an import,
-/// or an unclosed docstring or parenthesis makes it false.
+/// The text of a top-level alias declaration after its name, when `line` is one: `alias NAME ...` or `comptime NAME ...` where NAME is followed by a
+/// parameter list (`[`), an annotation (`:`) or the `=` itself. `comptime if`, `comptime for`, `comptime assert` and every other `comptime` that does
+/// not declare a name are statements of the compile-time evaluator, not declarations, and give null.
+fn aliasTail(line: []const u8) ?[]const u8 {
+    const kw: usize = if (std.mem.startsWith(u8, line, "alias ")) 6 else if (std.mem.startsWith(u8, line, "comptime ")) 9 else return null;
+    var i = kw;
+    while (i < line.len and line[i] == ' ') i += 1;
+    const start = i;
+    while (i < line.len and (std.ascii.isAlphanumeric(line[i]) or line[i] == '_')) i += 1;
+    const name = line[start..i];
+    if (name.len == 0 or std.ascii.isDigit(name[0])) return null;
+    for ([_][]const u8{ "if", "for", "while", "assert", "else", "elif", "with", "try", "except", "raise", "return" }) |k| {
+        if (std.mem.eql(u8, name, k)) return null;
+    }
+    while (i < line.len and line[i] == ' ') i += 1;
+    if (i >= line.len) return null;
+    if (line[i] == '=' and i + 1 < line.len and line[i + 1] == '=') return null;
+    if (line[i] != '[' and line[i] != ':' and line[i] != '=') return null;
+    return line[i..];
+}
+
+/// Folds one line of an alias declaration into the state of its statement: `depth` (open brackets), `saw_eq` (the `=` of the declaration, outside every
+/// bracket) and `cont` (the line ends with a backslash). False for what a declaration does not hold: a `;`, a triple-quoted string, a string that does not
+/// end on its line, a backslash that is not the last character, a bracket closed before it was opened.
+fn scanExpr(line: []const u8, depth: *i32, saw_eq: *bool, cont: *bool) bool {
+    cont.* = false;
+    var quote: u8 = 0;
+    var i: usize = 0;
+    while (i < line.len) : (i += 1) {
+        const c = line[i];
+        if (quote != 0) {
+            if (c == '\\') {
+                i += 1;
+                if (i >= line.len) return false;
+            } else if (c == quote) quote = 0;
+            continue;
+        }
+        switch (c) {
+            '"', '\'' => {
+                if (std.mem.startsWith(u8, line[i..], "\"\"\"") or std.mem.startsWith(u8, line[i..], "'''")) return false;
+                quote = c;
+            },
+            '#' => return true,
+            ';' => return false,
+            '(', '[', '{' => depth.* += 1,
+            ')', ']', '}' => {
+                depth.* -= 1;
+                if (depth.* < 0) return false;
+            },
+            '=' => {
+                if (i + 1 < line.len and line[i + 1] == '=') {
+                    i += 1;
+                } else if (depth.* == 0 and (i == 0 or std.mem.indexOfScalar(u8, "!<>=:", line[i - 1]) == null)) saw_eq.* = true;
+            },
+            '\\' => {
+                if (std.mem.trim(u8, line[i + 1 ..], " \t").len != 0) return false;
+                cont.* = true;
+            },
+            else => {},
+        }
+    }
+    return quote == 0;
+}
+
+/// Whether a Mojo source has no executable line: only blank lines, comments, docstrings (a triple-quoted string on its own lines), top-level
+/// `from ... import ...` / `import ...` statements (a re-export file, `__init__.mojo`) and top-level alias declarations (`alias` or `comptime NAME = ...`,
+/// with an annotation or a parameter list, the value running over several lines inside brackets or after a backslash), which emit no code. The Mojo
+/// coverage report omits such a file, and so it does a file with code that no test compiled; this is what tells them apart, so it is strict: any other
+/// statement (a function, a struct, a `var`, a `comptime if` / `for` / `assert`), a `;`, an indented line outside a continuation, or an unclosed
+/// docstring or bracket makes it false.
 pub fn hasNoStatements(text: []const u8) bool {
     var in_doc: ?[]const u8 = null; // the closing triple quote while inside a docstring
-    var depth: i32 = 0; // open parentheses of an import
-    var cont = false; // the previous import line ended with a backslash
+    var depth: i32 = 0; // open parentheses of an import, or brackets of an alias
+    var cont = false; // the previous import or alias line ended with a backslash
+    var in_alias = false; // inside an alias declaration that runs over more lines
+    var saw_eq = false; // the alias declaration has its `=`
     // A carriage return that does not end a CRLF is a line break to some readers and not to this one: refuse the file rather than guess.
     for (text, 0..) |c, i| {
         if (c == '\r' and (i + 1 >= text.len or text[i + 1] != '\n')) return false;
@@ -275,6 +343,16 @@ pub fn hasNoStatements(text: []const u8) bool {
         const doc_start = std.mem.startsWith(u8, line, "\"\"\"") or std.mem.startsWith(u8, line, "'''");
         if (!doc_start and hasLineBreakChar(raw)) return false;
         if (depth > 0 or cont) {
+            if (in_alias) {
+                // A backslash joins the next line: a blank line (or the end of the text) after it leaves the statement unfinished.
+                if (depth == 0 and line.len == 0) return false;
+                if (!scanExpr(line, &depth, &saw_eq, &cont)) return false;
+                if (depth == 0 and !cont) {
+                    if (!saw_eq) return false;
+                    in_alias = false;
+                }
+                continue;
+            }
             if (!importContinuation(line)) return false;
             const code = line[0 .. std.mem.indexOfScalar(u8, line, '#') orelse line.len];
             if (!parens(code, &depth)) return false;
@@ -293,6 +371,15 @@ pub fn hasNoStatements(text: []const u8) bool {
         }
         // Only a statement at column 0 is an import of the module.
         if (raw[0] == ' ' or raw[0] == '\t') return false;
+        if (std.mem.startsWith(u8, line, "alias ") or std.mem.startsWith(u8, line, "comptime ")) {
+            const tail = aliasTail(line) orelse return false;
+            saw_eq = false;
+            if (!scanExpr(tail, &depth, &saw_eq, &cont)) return false;
+            if (depth == 0 and !cont) {
+                if (!saw_eq) return false;
+            } else in_alias = true;
+            continue;
+        }
         const is_import = (std.mem.startsWith(u8, line, "from ") and std.mem.indexOf(u8, line, " import ") != null) or std.mem.startsWith(u8, line, "import ");
         if (!is_import or !importContinuation(line)) return false;
         const code = line[0 .. std.mem.indexOfScalar(u8, line, '#') orelse line.len];

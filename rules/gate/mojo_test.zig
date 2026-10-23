@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const kit = @import("testkit.zig");
+const posix = std.posix;
 const supervise = @import("supervise.zig");
 const sys = @import("sys.zig");
 const util = @import("util.zig");
@@ -104,7 +105,7 @@ test "G1 usage: every bad command line exits 2 with its runner's message, and no
         .{ .argv = &.{ "mojo", "--busybox", e.bb, "--runtime-lib", "l", "--label", label, "--test", "root/x", "--marker", "passed" }, .msg = "gate_runner: " },
     };
     for (cases) |c| {
-        const r = try e.run(c.argv, .{});
+        const r = try kit.runInline(e.a, e.dir, c.argv);
         if (r.status != 2 or !std.mem.startsWith(u8, r.err, c.msg)) {
             std.debug.print("argv {s}: exit {d}, stderr {s}\n", .{ std.mem.join(std.heap.page_allocator, " ", c.argv) catch "", r.status, r.err });
             return error.TestUnexpectedResult;
@@ -112,9 +113,9 @@ test "G1 usage: every bad command line exits 2 with its runner's message, and no
         try std.testing.expect(!kit.exists(try e.path("passed")));
     }
     // G2: the test must be <root>/bin/<name>.
-    const r = try e.run(&.{ "mojo", "--busybox", e.bb, "--runtime-lib", "l", "--label", label, "--test", "root/x", "--marker", "passed" }, .{});
+    const r = try kit.runInline(e.a, e.dir, &.{ "mojo", "--busybox", e.bb, "--runtime-lib", "l", "--label", label, "--test", "root/x", "--marker", "passed" });
     try std.testing.expect(std.mem.endsWith(u8, r.err, "/root/x is not <root>/bin/<name>\n"));
-    try std.testing.expectEqualStrings("gate: usage: gate mojo|rust|step <options> (README.md)\n", (try e.run(&.{}, .{})).err);
+    try std.testing.expectEqualStrings("gate: usage: gate mojo|rust|step <options> (README.md)\n", (try kit.runInline(e.a, e.dir, &.{})).err);
 }
 
 // G3. Mutant: drop LD_PRELOAD from the list (its case passes the run).
@@ -123,7 +124,7 @@ test "G3 reserved names: each of the ten is refused with exit 2" {
     defer e.deinit();
     for ([_][]const u8{ "PATH", "LD_LIBRARY_PATH", "LD_PRELOAD", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "TMPDIR", "TEST_TMPDIR", "HOME", "PWD" }) |n| {
         const kv = try std.fmt.allocPrint(e.a, "{s}=x", .{n});
-        const r = try e.run(try e.args("exit", &.{ "--env", kv }), .{});
+        const r = try kit.runInline(e.a, e.dir, try e.args("exit", &.{ "--env", kv }));
         const want = try std.fmt.allocPrint(e.a, "gate_runner: --env may not set {s}; the runner sets it\n", .{n});
         if (r.status != 2 or !std.mem.eql(u8, r.err, want)) {
             std.debug.print("--env {s}: exit {d}, stderr {s}\n", .{ kv, r.status, r.err });
@@ -323,4 +324,74 @@ test "a real program: execve of the test, its status and the environment it sees
     // A test that cannot be executed is red (127), not a pass.
     const r2 = try e.run(try e.args("missing", &.{}), .{ .setup = setup });
     try std.testing.expectEqual(@as(u8, 127), r2.status);
+}
+
+fn leftovers(dir: []const u8, prefix: []const u8) !usize {
+    var d = try std.fs.cwd().openDir(dir, .{ .iterate = true });
+    defer d.close();
+    var n: usize = 0;
+    var it = d.iterate();
+    while (try it.next()) |entry| {
+        if (std.mem.startsWith(u8, entry.name, prefix)) n += 1;
+    }
+    return n;
+}
+
+test "applet tool that cannot install the applets: the program and its exit status are named, and the run directory is gone" {
+    const e = try Env.init();
+    defer e.deinit();
+    // Not there at all: the exec fails, which is 127.
+    var l = std.ArrayList([]const u8).empty;
+    for (try e.args("exit", &.{ "--arg", "0" })) |x| try l.append(e.a, if (std.mem.eql(u8, x, e.bb)) "/nonexistent/applets" else x);
+    const r = try e.run(l.items, .{});
+    try std.testing.expectEqual(@as(u8, 127), r.status);
+    try std.testing.expect(std.mem.startsWith(u8, r.err, "gate: cannot run /nonexistent/applets: FileNotFound\ngate_runner: /nonexistent/applets --install -s "));
+    try std.testing.expect(std.mem.endsWith(u8, r.err, "/bin exited 127\n"));
+    try std.testing.expectEqualStrings("", r.out);
+    // There, but an applet that fails (`false` is the applet tool run under that name): its own status.
+    try std.posix.symlink(e.bb, try e.path("false"));
+    var m = std.ArrayList([]const u8).empty;
+    for (try e.args("exit", &.{ "--arg", "0" })) |x| try m.append(e.a, if (std.mem.eql(u8, x, e.bb)) "false" else x);
+    const r2 = try e.run(m.items, .{});
+    try std.testing.expectEqual(@as(u8, 1), r2.status);
+    try std.testing.expect(std.mem.startsWith(u8, r2.err, try std.fmt.allocPrint(e.a, "gate_runner: {s}/false --install -s {s}/.buildrules_test.", .{ e.real, e.real })));
+    try std.testing.expect(std.mem.endsWith(u8, r2.err, "/bin exited 1\n"));
+    try std.testing.expect(!kit.exists(try e.path("passed")));
+    try std.testing.expectEqual(@as(usize, 0), try leftovers(e.dir, ".buildrules_test."));
+}
+
+test "a marker that cannot be written fails the passing test with exit 2, naming the marker and the error" {
+    const e = try Env.init();
+    defer e.deinit();
+    var l = std.ArrayList([]const u8).empty;
+    for (try e.args("exit", &.{ "--arg", "0" })) |x| try l.append(e.a, if (std.mem.eql(u8, x, "passed")) "nodir/passed" else x);
+    const r = try e.run(l.items, .{});
+    try std.testing.expectEqual(@as(u8, 2), r.status);
+    try std.testing.expectEqualStrings("gate_runner: cannot write the marker nodir/passed: FileNotFound\n", r.err);
+    try std.testing.expectEqualStrings("", r.out);
+    try std.testing.expect(!kit.exists(try e.path("nodir")));
+}
+
+test "a working directory that no longer exists is an error of the runner: exit 2 and the error's name, nothing run" {
+    const e = try Env.init();
+    defer e.deinit();
+    const r = try e.run(try e.args("exit", &.{ "--arg", "0" }), .{ .setup = kit.unlinkCwd, .env = &.{"GATE_TEST=1"} });
+    try std.testing.expectEqual(@as(u8, 2), r.status);
+    try std.testing.expectEqualStrings("gate_runner: CurrentWorkingDirectoryUnlinked\n", r.err);
+    try std.testing.expectEqualStrings("", r.out);
+}
+
+test "a share directory the test cannot enter: the test does not run, and the banner carries the reason with exit 2" {
+    // Root enters any directory; the case is for the users that cannot.
+    if (std.os.linux.getuid() == 0) return error.SkipZigTest;
+    const e = try Env.init();
+    defer e.deinit();
+    const share = try e.path("root/share");
+    try std.fs.cwd().makePath(share);
+    try posix.fchmodat(posix.AT.FDCWD, share, 0o000, 0);
+    defer posix.fchmodat(posix.AT.FDCWD, share, 0o755, 0) catch {};
+    const r = try e.run(try e.args("exit", &.{ "--arg", "0" }), .{});
+    try std.testing.expectEqual(@as(u8, 2), r.status);
+    try std.testing.expect(std.mem.indexOf(u8, r.err, "gate: cannot change to the test's directory\n") != null);
+    try std.testing.expect(!kit.exists(try e.path("passed")));
 }

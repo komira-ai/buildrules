@@ -33,14 +33,10 @@ GRAPH_JSON = r'''{
       "version": "0.1.0",
       "kind": "lib",
       "root": "base/src/base",
-      "srcs": [
-        {"path": "base/src/base/__init__.mojo", "sha256": "fb0f853364953595d2c32433c6ffc27013146e9afbbb8e8e12ff472453038116"}
-      ],
       "deps": [],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
-      "outputs": ["base.mojoc"],
-      "key": "d715b62a885a57fd0a30bd0a6678f89895d25d92cbc48640ffed1e82a49f3e1a"
+      "outputs": ["base.mojoc"]
     },
     {
       "id": "util@0.1.0#mojo1.0.0/lib",
@@ -54,8 +50,7 @@ GRAPH_JSON = r'''{
       "deps": ["base@0.1.0#mojo1.0.0/lib"],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
-      "outputs": ["util.mojoc"],
-      "key": "e52762bc3940433af47842e131fbe8051f1ac42332ced6e11cbebeda4d68d8c4"
+      "outputs": ["util.mojoc"]
     },
     {
       "id": "util@0.1.0#mojo1.0.0/test:tests/test_util.mojo",
@@ -68,8 +63,7 @@ GRAPH_JSON = r'''{
       "deps": ["util@0.1.0#mojo1.0.0/lib"],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
-      "outputs": ["test_util.pass"],
-      "key": "d0f0597de8d8f5d2c4231174ae582d8791ab198cfec0ee35726f81a757d82bca"
+      "outputs": ["test_util.pass"]
     }
   ]
 }

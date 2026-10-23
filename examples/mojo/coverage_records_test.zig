@@ -1,8 +1,10 @@
 //! What `:coverage` of a mojo_package gives a consumer (docs/contract.md, section 12.4): `coverage.txt`, the count per file (lines, then branches),
 //! `:coverage[reports]`, the line records it was counted from (one kcov Cobertura file per test), and `:coverage[branches]`, the branch records (one
-//! lcov file per test, the classifier's output). All are the zig_test's `data` (under BUILDRULES_TEST_WORK), the real outputs of example packages (`reexport` and `partial` for lines and branches, `sys_app` and `ws`, whose tests link native libraries, for branches):
-//! `reexport` (its `__init__.mojo` only re-exports, so the line report omits it; `ops.mojo` has code and no decision) and `partial` (a test that takes
-//! one arm of a function, so a line is recorded and does not run, and one branch arm never runs).
+//! lcov file per test, the classifier's output). All are the zig_test's `data` (under BUILDRULES_TEST_WORK), the real outputs of example packages
+//! (`reexport`, `partial` and `testdata` for lines and branches, `sys_app` and `ws`, whose tests link native libraries, for branches):
+//! `reexport` (its `__init__.mojo` only re-exports and `aliases.mojo` only declares aliases, so the line report omits both; `ops.mojo` has two decisions),
+//! `partial` (a test that takes one arm of a function, so a line is recorded and does not run, and one branch arm never runs) and `testdata` (code and no
+//! decision).
 //!
 //! A consumer reads the records, not the count, so the cases hold the two to each other: every file with a line in the summary has a class in the
 //! records with the same lines hit and recorded, a file with none has no class, and the records hold no file the summary lacks; and every file of the
@@ -120,6 +122,9 @@ test "a source with no executable line is 0/0 in the summary and has no class in
     const records = try work(a, "reexport/reports.cobertura.xml");
     try t.expect(std.mem.indexOf(u8, summary, "examples/mojo/reexport/src/reexport/__init__.mojo 0/0 0%\n") != null);
     try t.expect(std.mem.indexOf(u8, records, "reexport/__init__.mojo") == null);
+    // a file of alias declarations only is listed, not refused, and likewise has no class
+    try t.expect(std.mem.indexOf(u8, summary, "examples/mojo/reexport/src/reexport/aliases.mojo 0/0 0%\n") != null);
+    try t.expect(std.mem.indexOf(u8, records, "reexport/aliases.mojo") == null);
     try t.expect((try classOf(a, records, "examples/mojo/reexport/src/reexport/ops.mojo")) != null);
 }
 
@@ -226,25 +231,31 @@ test "one if with one arm run: the records and the summary give its exact counts
     );
 }
 
-test "a package with code and no decision reports 0/0 branches, consistently in the records and the summary" {
+test "a package whose code has decisions in some files and none in others: exact records and counts for each" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    // ops.mojo has code and no `if`: the classifier names the file with no record, so the package reads as measured with nothing to take; the
-    // re-export `__init__.mojo` has no code and no record, and is 0/0 in both figures.
+    // ops.mojo has the `if` of `clamp` at line 13 (the compiler made a `select` of it; both arms run once) and the `for` of `total` at line 20 (a `br`;
+    // one arm ran once and the other three times). The re-export `__init__.mojo` and the alias file `aliases.mojo` have no code, no record, and are 0/0 in both figures.
     try t.expectEqualStrings(
         "SF:examples/mojo/reexport/src/reexport/ops.mojo\n" ++
+            "BRDA:13,5:select:0/1,0,1\n" ++
+            "BRDA:13,5:select:0/1,1,1\n" ++
+            "BRDA:20,19:br:0/1,0,1\n" ++
+            "BRDA:20,19:br:0/1,1,3\n" ++
             "end_of_record\n",
         try work(a, "reexport/branches.info"),
     );
     try t.expectEqualStrings(
         "examples/mojo/reexport/src/reexport/__init__.mojo 0/0 0%\n" ++
-            "examples/mojo/reexport/src/reexport/ops.mojo 4/4 100%\n" ++
-            "examples/mojo/reexport/tests/test_ops.mojo 6/6 100% (not counted)\n" ++
-            "total 4/4 100%\n" ++
+            "examples/mojo/reexport/src/reexport/aliases.mojo 0/0 0%\n" ++
+            "examples/mojo/reexport/src/reexport/ops.mojo 10/10 100%\n" ++
+            "examples/mojo/reexport/tests/test_ops.mojo 16/16 100% (not counted)\n" ++
+            "total 10/10 100%\n" ++
             "branches examples/mojo/reexport/src/reexport/__init__.mojo 0/0 0%\n" ++
-            "branches examples/mojo/reexport/src/reexport/ops.mojo 0/0 0%\n" ++
-            "branches total 0/0 0%\n",
+            "branches examples/mojo/reexport/src/reexport/aliases.mojo 0/0 0%\n" ++
+            "branches examples/mojo/reexport/src/reexport/ops.mojo 4/4 100%\n" ++
+            "branches total 4/4 100%\n",
         try work(a, "reexport/coverage.txt"),
     );
 }
@@ -291,6 +302,27 @@ test "a package whose test links a shared native library has branch records too:
             "branches examples/mojo/ws/src/app/__init__.mojo 0/0 0%\n" ++
             "branches total 0/0 0%\n",
         try work(a, "ws/coverage.txt"),
+    );
+}
+
+test "a package with code and no decision reports 0/0 branches, consistently in the records and the summary" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // testdata's library is one function with no `if`: the classifier names the file with no arm, so the package reads as measured with nothing to take.
+    try t.expectEqualStrings(
+        "SF:examples/mojo/testdata/src/testdata/__init__.mojo\n" ++
+            "end_of_record\n",
+        try work(a, "testdata/branches.info"),
+    );
+    try t.expectEqualStrings(
+        "examples/mojo/testdata/src/testdata/__init__.mojo 2/2 100%\n" ++
+            "examples/mojo/testdata/tests/test_data_files.mojo 16/16 100% (not counted)\n" ++
+            "examples/mojo/testdata/tests/test_data_program.mojo 7/7 100% (not counted)\n" ++
+            "total 2/2 100%\n" ++
+            "branches examples/mojo/testdata/src/testdata/__init__.mojo 0/0 0%\n" ++
+            "branches total 0/0 0%\n",
+        try work(a, "testdata/coverage.txt"),
     );
 }
 

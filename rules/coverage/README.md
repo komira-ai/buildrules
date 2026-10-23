@@ -8,7 +8,7 @@ the line tables and rewrites the action's directories out of them, run under kco
 | `:kcov` | kcov v42 built from source with the pinned zig 0.12: `bin/kcov`, `lib/libgcc_s.so.1` | `kcov_build`, `conda_payload`, `elf_rpath`, the curl shim |
 | `:debug_relocate`, `:cov_zig` | the `real/zig`-fronting link directory of a coverage build (`cov_link`, one per Mojo version, in `toolchains//:mojo_<v>_cov_link`) | `cov_link` tools |
 | `:cov_normalize` | a kcov report in repository paths, with bytes that do not depend on the run | same |
-| `:cov_run` | runs one test binary under kcov in a tree of copies of its sources, then `cov_normalize` | new: the part a mopm unit needs |
+| `:cov_run` | runs one test binary under kcov in a tree of copies of its sources, then `cov_normalize` | new: the part a mopm unit needs; `--env NAME=VALUE` and `--data-env NAME` give the test its variables and the tree it runs in as its staged-data directory (docs/contract.md section 12.9) |
 | `:cov_summary` | the package's lines hit and recorded, from the reports; fails when a source of the library is in none | new |
 
 Every tool is built behind its unit tests; the process cases of `cov_zig`, `debug_relocate` and `cov_normalize` are `zig_test`s that run the executable
@@ -35,7 +35,7 @@ branches of the library's sources in the annotated IR are classified (`branch/RE
 The floor is the file every package here uses (`coverage_floor.txt` next to the BUCK file, checked by `cov_floor`; a package with Zig tests names it in `zig_coverage`, a Node package in `jest_coverage_floor`),
 so a Mojo package follows the Zig and Node ones and not an attribute: the figure sits in a file a reviewer sees change, the check is the one `cov_floor` already has, and no file means no check. A Mojo
 floor file holds `lines NN.NN` and, when the package's tests are instrumented for branches, `branches NN.NN`: a package whose `coverage.txt` has branch rows needs the figure ("the floor file has no `branches` figure"), and a package
-without branch rows is refused one ("the coverage has no branches to hold"), as is a package whose branch total is 0/0 (its code has no decision: a re-export; its floor is `lines NN.NN` alone). It is exact both ways (`coverage fell`; `raise the floor to NN.NN`). kcov is GPL-2.0 and build-only: it runs in actions and is never packaged.
+without branch rows is refused one ("the coverage has no branches to hold"), as is a package whose branch total is 0/0 (its code has no decision: a table; its floor is `lines NN.NN` alone). Each figure is a minimum (`coverage fell` below it; at or above it passes, and above it the check says the floor may be raised). kcov is GPL-2.0 and build-only: it runs in actions and is never packaged.
 
 **No ASLR patch.** kcov disables address randomization with `personality(ADDR_NO_RANDOMIZE)` and stops when it fails. buildrules once let the run go on after a refusal (a farm sandbox answered ENOSYS); every farm node now allows the call, so kcov's own handling is kept. `kcov_build_test` fails if any patch touches that code.
 
@@ -75,8 +75,10 @@ What both figures leave out:
   upper bound. `expect` names a package's own sources; a file in it that no test compiled fails the summary (`... is in no report`), and the files a package
   leaves out of `expect` (an entry point no test imports, a file of constants) say why in its BUCK file. One exception, for Mojo: its report omits a source
   with no executable line, so `mojo_package` also gives `cov_summary` the text of each source (`--src <expected path>=<file>`), and an expected source that no
-  report names but that holds nothing beyond comments, docstrings and `import` / `from ... import` statements (a re-export `__init__.mojo`) is listed as `0/0`
-  instead of refused. Any other statement (a function, a struct, an assignment, a `;`, an indented line) leaves the source refused: a file the report merely
+  report names but that holds nothing beyond comments, docstrings, `import` / `from ... import` statements (a re-export `__init__.mojo`) and top-level alias
+  declarations (`alias` or `comptime NAME = ...`, with an annotation or a parameter list, the value over several lines inside brackets or after a backslash;
+  they emit no code) is listed as `0/0` instead of refused. Any other statement (a function, a struct, a `var`, `comptime if` / `for` / `assert`, an assignment,
+  a `;`, an indented line outside a continuation) leaves the source refused: a file the report merely
   missed is told from a file with nothing to run by reading it (`hasNoStatements` in `tools/cov_summary.zig`, strict by construction).
 - **A block that one test runs exactly 255 more times (after an earlier test left its counter at 1).** The counters are one byte and wrap. The runner sets every non-zero counter to one between the tests, so a block that ran in
   one test is still a block that ran after the next tests run it (a counter that wrapped to zero used to read as a block that did not run); a single test that runs one block
@@ -89,9 +91,9 @@ What both figures leave out:
   and a test that starts a thread crashed in them.
 
 **The floor.** `coverage_floor.txt` holds `lines NN.NN` and `branches NN.NN` (hit over recorded, rounded down to a hundredth). A figure below its floor fails, naming the
-fall; a figure above it fails too, naming the number to write, so the floor is always what the tests reach. A figure the file has and the measurement lacks, or the other way,
-fails. A figure that the tests do not reproduce (`rules/gate`'s tests race a clock and signals: the lines they reach differ by a few between machines) says so with
-`lines 95.51 slack 1.00`: it holds anywhere from the floor to the floor plus the slack, and a fall below the floor still fails. A pin bump of zig or kcov can move the numbers: raise or lower the floor in the same change and say why. The success output of `:coverage_floor` says how many more
+fall; a figure at its floor passes; a figure above it passes too and the check prints `you may raise the floor to NN.NN` (to stderr and in the success output), which is optional. A figure the file has and the measurement lacks, or the other way,
+fails. A figure that the tests do not reproduce (`rules/gate`'s tests race a clock and signals: the lines they reach differ by a few between machines) may be written
+`lines 95.51 slack 1.00`: the hint to raise the floor is then given only above the floor plus the slack, and a fall below the floor fails. A pin bump of zig or kcov can move the numbers: raise or lower the floor in the same change and say why. The success output of `:coverage_floor` says how many more
 hits the 99% target needs.
 
 To add a package: `zig_coverage(test_targets = [":a_unit", ...], expect = ["pkg/a.zig", ...])` after its `zig_test` targets, a `coverage_floor.txt` with today's figures

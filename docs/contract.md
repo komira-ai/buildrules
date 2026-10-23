@@ -417,11 +417,11 @@ Each package is a mopm project: its own `mopm.toml`, `mopm.lock` and graph (`mop
 | `:test` | every test run |
 | `:bin_<name>`, `:build` | the `[targets] bins` of `mopm.toml`; `:build` is the library and the binaries |
 | `:<stem>__cov_bin`, `:<stem>__cov` | the same test as a debug build, and its run under kcov: a Cobertura report in repository paths |
-| `:<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info` | the same test as LLVM bitcode, instrumented and linked, run for its profile, the profile applied to the bitcode, and the library's branches in that IR classified: the branch records (12.4). A test that links native libraries has them too: its instrumented link is given the same libraries in the same order |
+| `:<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info` | the same test as LLVM bitcode, instrumented and linked, run for its profile (in the working directory and with the `test_data` and `test_env` its other runs have, 12.9), the profile applied to the bitcode, and the library's branches in that IR classified: the branch records (12.4). A test that links native libraries has them too: its instrumented link is given the same libraries in the same order |
 | `:coverage` | the package's line and branch coverage from those reports and records (`coverage.txt`); red if a source of the library is in no report. `:coverage[reports]` is the reports themselves, the per-line records, and `:coverage[branches]` the branch records (12.4) |
-| `:coverage_floor` | only if `coverage_floor.txt` is beside the BUCK file: green while `coverage.txt` is exactly that floor (12.4) |
+| `:coverage_floor` | only if `coverage_floor.txt` is beside the BUCK file: green while `coverage.txt` is at least that floor (12.4) |
 | `:ci` | `:build` and `:test` |
-| `:table` | the committed graph is what the pinned mopm's `plan --unit-graph --locked` prints for the package and its members now, byte for byte (an action; not part of `:ci`, but of `//ci:all` for every example). `:workspace` is the files it reads |
+| `:table` | the committed graph is what the pinned mopm's `plan --unit-graph --locked` prints for the package and its path dependencies now, byte for byte, the dependencies held by identity only (an action; not part of `:ci`, but of `//ci:all` for every example). `:workspace` is the files it reads: the package's and its dependencies', flat, each at its path from the repository root |
 | `:check` | the validation every step above carries: the files the table was made from still hash to what it recorded, and `toolchains/mojo_pins.bzl` still holds the table's toolchain (12.6) |
 | `:mopm.toml`, `:mopm.lock` | the package's own manifest and lock as targets, so a package that imports it as a member can name them in its `:check` |
 
@@ -443,7 +443,7 @@ live there; the targets above are fixed and `mojo_package` takes policy as argum
 The two `toolchains/` files are in the directory of the `toolchains` cell: `[cells] toolchains = DIR` in the root `.buckconfig`, read by `mojo sync`,
 `mojo check` and `buildrules check` alike, and `toolchains/` when there is no such line. The cell is the one place the path is configured, so the tables
 cannot land where the cell does not look. `DIR` is relative to the root and must be an existing directory inside it, symbolic links followed, and not inside a
-Mojo package's directory (compared by real path); anything else is refused (exit 1, nothing written). The default is not checked, so a repository that has
+Mojo package's directory (compared by real path; a package whose real path cannot be resolved is refused too); anything else is refused (exit 1, nothing written). The default is not checked, so a repository that has
 no such line behaves as before. Four rules, each the reading of Buck's own configuration that the committed tables need:
 - A toolchains directory inside a package at the repository root is accepted: every directory is inside such a package, and refusing it would refuse the
   default. Only a package in a subdirectory holds its toolchains directory out.
@@ -473,17 +473,32 @@ the Rust side is, and one rule is easier to teach; the other choice, a default i
 
 ```python
 SCHEMA = 1
-MOPM = {"version": "0.0.25", "origin": "builtin"}          # origin: "builtin" or "buildrules-pins.toml"
+MOPM = {"version": "0.0.33", "origin": "builtin", "workspace_root": True}   # origin: "builtin" or "buildrules-pins.toml"; workspace_root only when true, spelled True (Starlark)
 MOJO = "1.0.0"
 CLOSURE_SHA256 = "<mopm's hash of the toolchain closure>"  # a second copy of the graph's, see 12.6
-MANIFEST_SHA256 = {"mopm.toml": "<sha256>", "mopm.lock": "...", "../../mopm-toolchain.toml": "...", "util/mopm.toml": "..."}
-GRAPH_JSON = r'''<`mopm plan --unit-graph --locked --mojo M`, byte for byte>'''
+MANIFEST_SHA256 = {"mopm.toml": "<sha256>", "mopm.lock": "...", "../../mopm-toolchain.toml": "...", "../util/mopm.toml": "..."}
+GRAPH_JSON = r'''<`mopm plan --unit-graph --locked --mojo M`, path dependencies by identity only>'''
 GRAPH = json.decode(GRAPH_JSON)
 ```
 
-The graph is mopm's text, so reviewing the diff of the table is reviewing mopm's output. `MANIFEST_SHA256` lists every file the graph was made
+The graph is mopm's text, so reviewing the diff of the table is reviewing mopm's output, with one exception: a **path dependency** (a library of another
+package that mopm read from a directory) is committed by identity (id, version, root, its own dependencies and outputs), without its `srcs` and without
+`key`, and the `key` of every unit that imports one is left out as well (mopm's key hashes the keys below a unit). A dependency's sources are proved by the
+dependency's own table (`mojo check`, `:check` and `:table` of its package), so editing a leaf does not turn the table of every package above it red until each
+is synced again. `rules/mojo/tools/graph_norm.zig` makes this form; `sync` writes it and `:table` compares mopm's output, put into it by the same function, with
+the committed text. A graph without a path dependency is mopm's text as it is. `MANIFEST_SHA256` lists every file the graph was made
 from that the graph does not hash itself: the package's `mopm.toml` and `mopm.lock`, the toolchain file (path relative to the package) and the
-`mopm.toml` of every path dependency. The sources and their sha256 are in the graph.
+`mopm.toml` of every path dependency (a version or a dependency of it changes the graph). The package's own sources and their sha256 are in the graph.
+
+**Where the graph's paths start.** A mopm that has `plan --unit-graph --workspace-root DIR` (0.0.33 on; `cli/src/toolchain.zig` `workspace_root_since`) is given
+the repository root, the directory of the root `.buckconfig`: every path of the graph (roots, sources, dependency roots) is then relative to it, and the package
+may import path dependencies that are its siblings (`../util` in `mopm.toml`), not only ones below it. `sync` records that it asked (`"workspace_root": True`, Starlark's spelling: a lowercase
+`true` is not a name Buck2 knows and the table would not load, so `check` refuses it; `check` also refuses a table whose record is not what its mopm release does), and the rules read the record, never the version. An older mopm prints paths
+relative to the package and takes path dependencies below it only (the release pinned in rules/mopm/pins.bzl is one of them until it moves to the first release with the flag, and a mopm that fails on a sibling says so); a table made by one is as it was. Either way a path dependency is the target
+`//<its directory>:lib`, the directory taken from the repository path of its root (`<dir>/src/<name>`), and one outside the repository root is refused
+(`sync`, `check`, and the analysis of the package), as is one whose directory is the importing package's own (its library would be the package's `:lib`, which
+waits for the tests that import it: a path dependency is a package of its own). The analysis also requires each library a unit imports to have been built as
+the graph says (the unit id, version and Mojo included), and refuses a dependency target that says nothing about a package of the unit's closure.
 
 `toolchains/mojo_pins.bzl` is the `toolchain` object of the graphs, copied (two packages' graphs for one Mojo version must agree):
 `subdir`, `cc_target`, `closure_sha256`, `zig` (version, url, sha256, size) and `components` (`mojo-compiler`, `libgcc`, `libstdcxx`, each with url, sha256,
@@ -498,9 +513,10 @@ every declared input, then executes `T/mojo_compile` with an empty environment).
 - `--graph`: the unit's **slice**: the graph's header, the unit's entry without its `key`, and every unit it imports reduced to `id, package, version, kind, root, deps, outputs, mojoc`.
   mopm's `key` hashes every dependency's key, so it moves with any edit below the unit; Buck2's own key (the digests of the inputs) replaces it, and a
   dependency's sources, key and profile are not inputs of the unit that imports it. This is what makes unchanged `.mojoc` bytes stop a cascade.
-- `--src`: the unit's sources at the paths the graph names; the target's `srcs` are the graph's, so a file the graph does not name is not an input.
+- `--src`: the unit's sources at the paths the graph names (from the package, or from the repository root when the table's `workspace_root` is true); the target's `srcs` are the graph's, so a file the graph does not name is not an input.
 - `--deps`: `<package>.mojoc` of every unit in the closure, flat: the outputs of the dependency targets (a member's `:lib`, a registry package's `prebuilt_<name>`),
-  checked against the graph's closure at analysis.
+  checked against the graph's closure at analysis: the same packages, and each built as the graph names it (the unit id, `<package>@<version>#mojo<Mojo version>/lib`, of the
+  dependency target's `MojoLibInfo` is the graph's), so a sibling on another version or another Mojo is refused, naming both ids.
 - `--natives`: the native libraries by soname. mopm checks each against the sha256 in the graph before it compiles anything. A static library (`lib<stem>.a`) of a registry package is
   not named in the BUCK file: it is the sub-target `:prebuilt_<package>[<soname>]` of the package's unpacked `.conda`, chosen from the graph (`kind` static, the package of the unit that ships it). Every other
   native is a target of `natives = {...}`, and one the lock provides may not be named there. mopm lists the libraries of a unit in link order (a library before every library it needs), `native_sonames` keeps
@@ -564,14 +580,14 @@ buck2 build //pkg:coverage[branches] --show-full-output
 to the records of `:coverage[branches]` file by file). The classifier refuses what it has no evidence for, naming `file:line:col`; the shapes that stay refused are in `rules/coverage/branch/README.md`.
 
 *The floor.* A package with a `coverage_floor.txt` beside its BUCK file (the file every other package's floor is, `rules/coverage/README.md`) gets `:coverage_floor`: `lines NN.NN`, the line total of
-`coverage.txt` rounded down to a hundredth, and `branches NN.NN`, the `branches total` likewise. The check is exact in both directions for each figure: lower than the floor fails with `coverage fell`, higher fails
-with `raise the floor to NN.NN`. A package whose `coverage.txt` has branch rows needs a `branches` figure ("the tests record branches ... add `branches NN.NN`"), and one without them is refused a `branches` figure
-("the coverage has no branches to hold"); a package whose code has no decision (a re-export, a table) has `branches total 0/0`, which is no branches figure, so its floor is `lines NN.NN` alone. With no file there is no target, and the package is as it was. `mojo_coverage_floor(name, coverage, floor)` (`rules/mojo/defs.bzl`) checks a `:coverage` against any other file.
+`coverage.txt` rounded down to a hundredth, and `branches NN.NN`, the `branches total` likewise. Each figure is a minimum: lower than the floor fails with `coverage fell`, equal passes, and higher passes and prints
+`you may raise the floor to NN.NN` (optional). A package whose `coverage.txt` has branch rows needs a `branches` figure ("the tests record branches ... add `branches NN.NN`"), and one without them is refused a `branches` figure
+("the coverage has no branches to hold"); a package whose code has no decision (a table) has `branches total 0/0`, which is no branches figure, so its floor is `lines NN.NN` alone. With no file there is no target, and the package is as it was. `mojo_coverage_floor(name, coverage, floor)` (`rules/mojo/defs.bzl`) checks a `:coverage` against any other file.
 
 ### 12.5 Versions: pinned mopm, the Mojo version
 
-`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.25` is the published mopm release (its linux-x86_64 tarball,
-sha256 80ac2ed4...23dc, checked against the release's `SHA256SUMS`); a machine that mirrors the download points it at its copy with `url_map`.
+`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.25` is the published mopm release (its linux-x86_64 tarball;
+the digest and size are the row's in `rules/mopm/pins.bzl`, the source of truth, which match the release's `SHA256SUMS`); a machine that mirrors the download points it at its copy with `url_map`.
 A version not in the table is refused by `mojo sync` (the message names `buildrules-pins.toml` and the table to add) unless `buildrules-pins.toml` has `[mopm."V"]` with `url`, `sha256`, `size`.
 The mopm binary is an input of every unit action: a mopm bump re-keys every unit on purpose. The Mojo version comes from the graph: mopm pins one (`1.0.0`) today, so no package here
 builds for two Mojo versions; `mopm lock` writes the lock for each version `[package] mojo` lists and `plan --mojo M` makes the graph for one, so two versions would be two units, two actions,
@@ -590,10 +606,9 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 | the two copies of the closure hash in the table differ | analysis; `mojo check` | `the table records toolchain closure A but its unit graph pins B: the file was edited by hand` |
 | the table's Mojo is not the graph's, or mopm-toolchain.toml names another | analysis; `mojo check`; `mojo sync` (mopm exit 4) | `the table says Mojo 1.1.0 but its unit graph is for Mojo 1.0.0`; `mopm has no pinned toolchain for mojo 1.1.0` |
 | a native library other than the pinned one | `mopm unit build` | `native library X has sha256 B, but the graph declares A` |
-| a library source no test compiled, that has any statement beyond comments, docstrings and imports (a re-export-only `__init__.mojo` has none, is omitted by the report, and is listed `0/0`) | `:coverage` | `<file> is in no report: no test compiled it, or kcov could not open it` |
+| a library source no test compiled, that has any statement beyond comments, docstrings, imports and alias declarations (a re-export-only `__init__.mojo`, or a file of `comptime NAME = ...` aliases, has none, is omitted by the report, and is listed `0/0`) | `:coverage` | `<file> is in no report: no test compiled it, or kcov could not open it` |
 | a package's line coverage below its `coverage_floor.txt` | `:coverage_floor` | `<package>: line coverage is 60.00% (3/5), below its floor 70.00%: coverage fell` |
-| a package's line coverage above its `coverage_floor.txt` | `:coverage_floor` | `<package>: line coverage is 60.00% (3/5), above its floor 50.00%: raise the floor to 60.00 (floors only rise, ...)` |
-| a package's branch coverage below or above its `branches` figure | `:coverage_floor` | `<package>: branch coverage is 50.00% (1/2), below its floor 60.00%: coverage fell` (or `above its floor 40.00%: raise the floor to 50.00`) |
+| a package's branch coverage below its `branches` figure | `:coverage_floor` | `<package>: branch coverage is 50.00% (1/2), below its floor 60.00%: coverage fell` |
 | a floor file with no `branches` figure for a package whose tests record branches, or one with it for a package that has none to hold | `:coverage_floor` | `the tests record branches (1/2) and the floor file has no `branches` figure: add `branches 50.00``; `the floor file has a `branches` figure and the coverage has no branches to hold (the code has no decision, or the branch instrumentation was dropped)` |
 | a branch in a library source that is neither a source decision nor a branch the classifier has evidence for | `<stem>__info` (so `:coverage`) | `cov_branch_classify: <file>:<line>:<col>: a br at '<token>' is neither a source decision nor a known compiler-made branch: <source line>` |
 | an expected source with code and no branch record | `:coverage` | `<path> is in no branch record: its tests ran no code of it, or the classifier found none` |
@@ -619,6 +634,44 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 ### 12.8 The gate
 
 A library that is not tested is not a library: `:lib` is the `.mojoc` behind the run of every test of its package (`mojo_gated_lib_rule`, rules/mojo/unit.bzl). `:lib_ungated` is the compile (`mopm unit build`), the package's own tests import it (they cannot import `:lib`, which waits for them), and `:lib` is a copy of its bytes made by the `mojo_gate` action, whose inputs are the compiled file and the marker each test run writes after the test exited 0. A failing test leaves no marker, so the action never runs; everything that reads `:lib` (a member's unit through `--deps`, a binary, `:build`, `:ci`, `mopm pack`) is red with it. The bytes are the compiled ones, so a dependent's key moves only when the library does and not when only a test changes. A package with no test has nothing to wait for; `:coverage` is what refuses it. The proof is a pair of fixtures that need no compiler (`ci/mojo_gate`): a library behind a failing test makes its consumer red, the same behind a passing one is green, and `ci/negative.bzl` requires both outcomes, plus the wiring: the real packages' `:lib` has every test run among its dependencies.
+
+### 12.9 Test data and variables
+
+A test that reads a golden file, a fixture, a pinned third-party file (a `.thrift` specification), library sources, or starts a program, needs those files where it runs. The
+build action of a test sees only its inputs, and its working directory is the execution root, so `mojo_package` takes them as arguments and makes them inputs of the test run
+and of the coverage run:
+
+```python
+mojo_package(
+    path = ".",
+    test_data = {
+        "*": {"golden/out.txt": "golden/out.txt"},                          # every test of the package: {staged path: file or target}
+        "tests/test_tool.mojo": {"bin/tool": "//tools:tool"},               # one test, named as the graph names its source; its entries are added to `*`
+    },
+    test_env = {"MODE": "strict"},                                          # every test of the package: {NAME: value}
+)
+```
+
+- **Where the files are.** Each test has a directory of its own, `data`, made by copying every staged file to its staged path. It is the test's working directory, so a relative path opens
+  a staged file, and the variable `BUILDRULES_TEST_DATA` holds its absolute path. A test without data has neither: its working directory and environment are as before. The directory is an input, so
+  treat it as read-only and write under `TMPDIR`.
+- **Files and programs.** A value is a file of the package or a target (`//pkg:name`, `:name`, resolved from the BUCK file's directory); a target is staged as its default output, with the executable bit it has,
+  so a program built by another target starts from the staged path. A target with more than one default output is refused by Buck2.
+- **The test run and the coverage run.** `:<stem>` (and `buck2 test`, whose command is the same start without a marker) runs `check marker|run --env BUILDRULES_TEST_DATA=<dir> --abs BUILDRULES_TEST_DATA
+  --cwd-env BUILDRULES_TEST_DATA`, then one `--env NAME=VALUE` per `test_env` entry. `:<stem>__cov` stages the same files into the tree that is kcov's working directory (`cov_run --data-env BUILDRULES_TEST_DATA
+  --env NAME=VALUE`): that tree also holds the test's source and the library's sources under the names the line tables use, so the test sees the same files plus those.
+- **The action key.** The staged files are inputs of both actions by their digests, and the variables are arguments, so a change to a staged file, to which file a path names, or to a variable runs the test again, and a
+  test that depends on the new content can turn red; a change that touches none of them is a cache hit. On the farm a file that is not an input is not there at all, so a test cannot read what it did not declare.
+- **Refused at load** (rules/mojo/test_data.bzl, each an analysis test in rules/mojo/tests): a key that is no test of the package (a mistyped path stages nothing); a staged path that is empty, absolute, ends in `/`, or holds `.`, `..` or an empty
+  segment (it would leave the directory); a staged path that is also the directory of another, or that is staged twice for one test (by `*` and by the test); a staged path that is, or is inside, a path the coverage tree holds (the test's
+  source, a library source) or holds one; a staged value that is not a string; a variable name that is not a shell name or that the runner sets (`PATH`, `LD_LIBRARY_PATH`, `LD_PRELOAD`, `DYLD_*`, `TMPDIR`, `TEST_TMPDIR`, `HOME`, `PWD`,
+  `BUILDRULES_TEST_DATA`, `BUILDRULES_UNIT_NONCE`, `BUCK_SCRATCH_PATH`); a `test_env` value that is not a string. `mojo_test_run_rule` and `mojo_cov_run_rule` (`data`, `test_env`) repeat the checks on their own arguments.
+- **Proof.** `ci/mojo_data` runs a stand-in test (a program that reads the staged file by a relative path, checks the working directory against `BUILDRULES_TEST_DATA`, checks a variable, and starts a staged program) with the
+  Mojo test run rule, without a compiler: green when everything is staged, and red, for its reason, with other content, another variable value, no program, and a program without the executable bit (`ci/negative.bzl`, `PLANTED`).
+  `examples/mojo/testdata` is the real thing: a package whose tests read a golden file, a third-party file, a library source and a variable, and start a program, in `:ci` and in `:coverage`.
+
+Not in `mopm.toml`: the unit graph is mopm's, and a test's data is how a build system gives a test its files, not what a package is. When mopm's graph carries a package's test files (a `[tests]` table of globs), `buildrules mojo sync` could
+generate `test_data` from it; until then the declaration is the BUCK file's, and nothing in mopm changes.
 
 ### Status
 
@@ -741,7 +794,7 @@ The public CI (`.github/workflows/ci.yml`) builds `//ci:all` this way on `ubuntu
 (`probe_env`, `probe_tree`, `probe_usr`, and the `:coverage` of `cnative`, `probe_sys` and `base_sys`, which are red by design) and `ci/negative` (a planted defect that a wildcard build skips; the completeness check analyses it on the platform it breaks on and fails unless it is red for the reason it plants, `ci/negative.bzl`). Before it builds, the workflow runs
 `buck2 bxl //ci:completeness.bxl:check`, which fails and names every target of `//...` and `crates//...` that is in the closure of neither `//ci:all` nor `//ci:mojo` and is not excluded, so a new target cannot go unbuilt.
 `//ci:all` also builds `//ci:floors`: the Zig tests of each package run again under kcov and with LLVM's block counters, and the Node tests under `jest --coverage`, and each package's lines and branches
-are held to its `coverage_floor.txt` both ways (a fall fails, and so does a rise the floor has not been raised to); `rules/coverage/README.md` says what is measured and what is not.
+are held to their `coverage_floor.txt` as a minimum (a fall below it fails; above it passes with a hint that the floor may be raised); `rules/coverage/README.md` says what is measured and what is not.
 `//ci:mojo` is not built there: its packages need a package channel for `cnative` (the pinned mopm tarball is the published release, section 12.5); it is fetched
 through `buildrules.url_map` from a mirror a public runner does not have. `//ci:mojo` is built on a farm that has the mirror.
 

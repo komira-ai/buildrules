@@ -177,7 +177,7 @@ pub const PlanError = error{ AssetDiffers, AssetDigestUnknown, OutOfMemory };
 pub const bundle_suffix = ".sigstore.json";
 
 /// The digest the release reports for `name`, or null when the release holds no such asset or reports no digest.
-fn heldDigest(have: []const Asset, name: []const u8) ?[]const u8 {
+pub fn heldDigest(have: []const Asset, name: []const u8) ?[]const u8 {
     for (have) |h| {
         if (std.mem.eql(u8, h.name, name)) return h.sha256;
     }
@@ -220,7 +220,15 @@ pub fn publishPlan(a: std.mem.Allocator, existing: ?[]const Asset, ours: []const
     return .{ .upload = try missing.toOwnedSlice(a) };
 }
 
-/// The assets of `GET /repos/{repo}/releases/tags/{tag}` (its `assets[].name` and `assets[].digest`, `sha256:<hex>`).
+/// True when the release already holds every one of `expected`, byte for byte: what `publishPlan` calls `.nothing`, so the plan step and the publish step
+/// judge a release by one rule. No release, a missing file, a different digest and a digest GitHub does not report are all false (the build then runs, and
+/// publish decides what to add or refuse). So is an error of any kind, running out of memory included: not knowing costs a build, never a skipped release.
+pub fn releaseHolds(a: std.mem.Allocator, existing: ?[]const Asset, expected: []const File) bool {
+    const doing = publishPlan(a, existing, expected) catch return false;
+    return doing == .nothing;
+}
+
+/// The assets of `GET /repos/{repo}/releases/tags/{tag}`(its `assets[].name` and `assets[].digest`, `sha256:<hex>`).
 pub fn parseAssets(a: std.mem.Allocator, json: []const u8) ![]Asset {
     const Doc = struct { assets: []const struct { name: []const u8, digest: ?[]const u8 = null } = &.{} };
     const parsed = try std.json.parseFromSlice(Doc, a, json, .{ .ignore_unknown_fields = true });
@@ -412,6 +420,19 @@ test "a release that exists is never changed: same bytes, a missing file added, 
     try t.expectError(error.AssetDiffers, publishPlan(a, &.{ .{ .name = "x.tar.gz", .sha256 = "ab" }, .{ .name = "SHA256SUMS", .sha256 = "bb" } }, &ours));
     try t.expectError(error.AssetDiffers, publishPlan(a, &.{.{ .name = "SHA256SUMS", .sha256 = "ff" }}, &ours));
     try t.expectError(error.AssetDigestUnknown, publishPlan(a, &.{.{ .name = "x.tar.gz", .sha256 = null }}, &ours));
+}
+
+test "releaseHolds: true only when the release has every file with the expected digest" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const ours = [_]File{ .{ .name = "x.tar.gz", .sha256 = "aa" }, .{ .name = "SHA256SUMS", .sha256 = "bb" } };
+    const same = [_]Asset{ .{ .name = "x.tar.gz", .sha256 = "aa" }, .{ .name = "SHA256SUMS", .sha256 = "bb" } };
+    try t.expect(releaseHolds(a, &same, &ours) and
+        !releaseHolds(a, null, &ours) and
+        !releaseHolds(a, same[0..1], &ours) and
+        !releaseHolds(a, &.{ .{ .name = "x.tar.gz", .sha256 = "ab" }, same[1] }, &ours) and
+        !releaseHolds(a, &.{ same[0], .{ .name = "SHA256SUMS", .sha256 = null } }, &ours));
 }
 
 test "a re-run of a released commit: other signature bundles over the same bytes are kept, nothing else may differ" {

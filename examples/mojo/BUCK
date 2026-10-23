@@ -9,9 +9,9 @@ export_file(
     visibility = ["PUBLIC"],
 )
 
-# What `:coverage` gives a consumer, held to the real outputs of two packages (coverage_records_test.zig): the count per file and the records
+# What `:coverage` gives a consumer, held to the real outputs of five packages (coverage_records_test.zig): the count per file and the records
 # it was counted from (`:coverage[reports]`, the per-line records; `:coverage[branches]`, the branch records) agree file by file. The branch records
-# and rows of the two packages whose tests link native libraries (`sys_app`: static archives, `ws`: a shared object) are held too. Needs the Mojo
+# and rows of `testdata` and of the two packages whose tests link native libraries (`sys_app`: static archives, `ws`: a shared object) are held too. Needs the Mojo
 # toolchain, so //ci:mojo builds it.
 zig_test(
     name = "coverage_records",
@@ -28,6 +28,8 @@ zig_test(
         "sys_app/branches.info": "//examples/mojo/sys_app:coverage[branches]",
         "ws/coverage.txt": "//examples/mojo/ws:coverage",
         "ws/branches.info": "//examples/mojo/ws:coverage[branches]",
+        "testdata/coverage.txt": "//examples/mojo/testdata:coverage",
+        "testdata/branches.info": "//examples/mojo/testdata:test_data_files__info",
     },
     zig ="buildrules//rules/pins:zig_next",
     visibility = ["//ci:"],
