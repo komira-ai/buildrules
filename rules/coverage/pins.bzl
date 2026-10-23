@@ -1,4 +1,4 @@
-"""Downloads of kcov v42 and what it links (linux x86_64): URL, sha256, size in bytes.
+"""Downloads of kcov v42 and what it links, and of the LLVM pieces of Mojo branch coverage (linux x86_64): URL, sha256, size in bytes.
 
 The values are the pinned `linux-x86_64` kcov rows, so a hash here is
 the hash the coverage builds use: the tag's source archive of kcov (GPL-2.0, build-only: the tool runs in actions and is never
@@ -41,5 +41,54 @@ KCOV_PINS = {
         "url": "https://conda.anaconda.org/conda-forge/linux-64/zstd-static-1.5.7-hb72f32e_7.conda",
         "sha256": "62e9e4b9274c2c7028e0bcdf80c254ee95499d4860e7c13d8926485d03b0d27b",
         "size": 475941,
+    },
+}
+
+# The LLVM pieces of Mojo branch coverage (rules/coverage/branch/README.md): llvm-profdata 23.1.3, libLLVM and the libraries it loads, and
+# the compiler-rt 23.1.3 profile runtime, all from conda-forge. (Mojo's own lld, LLVM 24, comes from the pinned Mojo compiler package.)
+# Apache-2.0 WITH LLVM-exception (LLVM, compiler-rt), MIT (libxml2), BSD-3-Clause (zstd), Zlib (libzlib), LGPL-2.1 (libiconv, loaded as a
+# shared library by the tools and linked into nothing). Nothing here is packed into a release artifact: these are build tools.
+LLVM_BRANCH_PINS = {
+    "libiconv": {
+        "name": "libiconv_1.18_linux-64.conda",
+        "url": "https://conda.anaconda.org/conda-forge/linux-64/libiconv-1.18-h0cb94f2_3.conda",
+        "sha256": "f943117edb9cd4d9c61cc972eee5a34291dc55ea7a6e9e38da104995841cbcb6",
+        "size": 789471,
+    },
+    "libllvm": {
+        "name": "libllvm23_23.1.3_linux-64.conda",
+        "url": "https://conda.anaconda.org/conda-forge/linux-64/libllvm23-23.1.3-h474f4eb_0.conda",
+        "sha256": "7ce347e2da1502442d4df406101cfaf429927b7a9410badadd3f147d3cbf2d00",
+        "size": 45082185,
+    },
+    "libxml2": {
+        "name": "libxml2-16_2.15.4_linux-64.conda",
+        "url": "https://conda.anaconda.org/conda-forge/linux-64/libxml2-16-2.15.4-hbdfff7e_0.conda",
+        "sha256": "b6f96287c408269f5067bb4f7a61693ff5c856152902362964d9807152b9c146",
+        "size": 565717,
+    },
+    "libzlib": {
+        "name": "libzlib_1.3.1_linux-64.conda",
+        "url": "https://conda.anaconda.org/conda-forge/linux-64/libzlib-1.3.1-hb9d3cd8_2.conda",
+        "sha256": "d4bfe88d7cb447768e31650f06257995601f89076080e76df55e3112d4e47dc4",
+        "size": 60963,
+    },
+    "rt": {
+        "name": "compiler-rt23_linux-64_23.1.3_noarch.conda",
+        "url": "https://conda.anaconda.org/conda-forge/noarch/compiler-rt23_linux-64-23.1.3-h0e38de2_0.conda",
+        "sha256": "7a044f184a5ed44fb905882c25ba950ec7a5b53c8f46ad40cba5c1a079d8d6a3",
+        "size": 46990831,
+    },
+    "tools": {
+        "name": "llvm-tools-23_23.1.3_linux-64.conda",
+        "url": "https://conda.anaconda.org/conda-forge/linux-64/llvm-tools-23-23.1.3-h7399f5f_0.conda",
+        "sha256": "2d948bde496207d44846b580ab683157305860edadf3dec1a6860073bfd1b837",
+        "size": 25434792,
+    },
+    "zstd": {
+        "name": "zstd_1.5.7_linux-64.conda",
+        "url": "https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb78ec9c_7.conda",
+        "sha256": "47d682b9f6d6ec9eb1a6e6c3e75ea6273e899e78fb7fc59f81d39745009fbc60",
+        "size": 601301,
     },
 }

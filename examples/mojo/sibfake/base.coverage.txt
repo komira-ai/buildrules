@@ -1,3 +1,5 @@
 examples/mojo/sibfake/base/src/base/__init__.mojo 4/4 100%
 examples/mojo/sibfake/base/tests/test_base.mojo 6/6 100% (not counted)
 total 4/4 100%
+branches examples/mojo/sibfake/base/src/base/__init__.mojo 0/0 0%
+branches total 0/0 0%

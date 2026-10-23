@@ -10,10 +10,13 @@ One line per package. The targets come from the package's unit graph, which `bui
     :lib_ungated  the same `.mojoc` as compiled, which the package's own tests import (what `:lib` waits for)
     :test       every test file, built once and run: `:<stem>` (the run) behind `:<stem>__bin` (the compile)
     :build      the library and the binaries of `[targets] bins`
-    :coverage   every test again as a debug build run under kcov, one Cobertura report per test file; `coverage.txt` is the per-file count, and
-                `:coverage[reports]` is the per-line records of every test (kcov's Cobertura XML in repository paths)
-    :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green while `:coverage` is at least that floor (below it:
-                "coverage fell"; at or above it passes, and above it prints "you may raise the floor to X"), the check of every other package's floor (rules/coverage/README.md, "The floor")
+    :coverage   every test again as a debug build run under kcov, one Cobertura report per test file, and as LLVM bitcode instrumented for branch counts
+                (`<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info`: rules/coverage/branch/README.md); `coverage.txt` is the per-file count of lines, then of
+                branch arms; `:coverage[reports]` is the per-line records of every test (kcov's Cobertura XML in repository paths) and `:coverage[branches]` the
+                branch records (lcov `BRDA` lines in repository paths). A package whose tests link a native library, or run in the installed layout, has no branch rows and no `[branches]`.
+    :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green while `:coverage` is at least that floor (`lines NN.NN`, and
+                `branches NN.NN` when `coverage.txt` has branch rows; below it: "coverage fell"; at or above it passes, and above it prints "you may raise the
+                floor to X"), the check of every other package's floor (rules/coverage/README.md, "The floor")
     :ci        `:build` and `:test`
     :table      the committed graph is, byte for byte, what the pinned mopm prints now (a check of its own; `:workspace` holds the files it reads)
 
@@ -53,7 +56,7 @@ load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
 load(":check.bzl", "mojo_check_rule", "mojo_table_rule", "mojo_workspace_rule")
 load(":test_data.bzl", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_env", "check_test_layout", "stage_test_data")
-load(":unit.bzl", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_gated_lib_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
+load(":unit.bzl", "mojo_cov_branch_annotate_rule", "mojo_cov_branch_classify_rule", "mojo_cov_branch_run_rule", "mojo_cov_pgo_rule", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_gated_lib_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
 
 SCHEMA = 1
 
@@ -62,6 +65,11 @@ _DEP_FIELDS = ["id", "package", "version", "kind", "root", "deps", "outputs", "m
 
 # The profile of a coverage build: no optimisation, every assertion, debug information (`mopm unit build` passes -g).
 _COVERAGE_PROFILE = {"opt": 0, "assert": "all", "debug": True}
+
+# The profile of a test's bitcode for branch coverage: the same program as the coverage build (-O0, every assertion), with line tables instead of
+# `-g` (the build arguments below ask for `--debug-level line-tables` and for the bitcode in place of the executable).
+_BITCODE_PROFILE = {"opt": 0, "assert": "all", "debug": False}
+_BITCODE_ARGS = ["--emit", "llvm-bitcode", "--debug-level", "line-tables"]
 
 def _closure(units, uid):
     """Every unit `uid` imports, directly or not (not itself), as sorted ids."""
@@ -376,13 +384,24 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         if units[uid]["kind"] == "lib" and units[uid]["package"] == root:
             own_lib = units[uid]
     here_repo = _join(here, project)
+    branches = []
+    branch_tc = "toolchains//:mojo_{}_cov_branch".format(vname(mojo))
+    # Branch coverage of the package's tests (rules/coverage/branch/README.md): bitcode, an instrumented binary, its run, the annotated IR and
+    # the classified records, five actions after the compile. A test that links a native library is not yet instrumented (the link line of the
+    # instrumented binary has no native libraries), so a package with one has the line figure alone. A package with `test_layout = "installed"` has the line figure alone too: the branch run has no installed layout yet.
+    branches_on = test_layout != LAYOUT_INSTALLED and own_lib != None and bool([x for x in units.values() if x["kind"] == "test"]) and not [x for x in units.values() if x["kind"] == "test" and x["natives"]]
+
+    # The library's sources: in the coverage tree at the names its `.mojoc` gives them (`<import>/<file>`), and for the classifier by the name relative
+    # to the library root.
     lib_share = {}
+    lib_srcs = {}
     if own_lib:
         prefix = own_lib["root"] + "/"
         for s in own_lib["srcs"]:
             if not s["path"].startswith(prefix):
                 fail("{}: source {} is not under the library root {}".format(here, s["path"], own_lib["root"]))
             lib_share[root + "/" + s["path"][len(prefix):]] = _join(project, in_package(s["path"]))
+            lib_srcs[s["path"][len(prefix):]] = _join(project, in_package(s["path"]))
 
     # What the tests are given besides their binaries (rules/mojo/test_data.bzl): `test_data` per test file, `test_env` for all. The coverage run's
     # working directory holds the test's source and the library's sources, so a staged path may not be one of those.
@@ -479,6 +498,59 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 visibility = visibility,
             )
             covs.append(":" + stem + "__cov")
+            if branches_on:
+                # The test as bitcode (`mojo build --emit llvm-bitcode`), compiled as the coverage build is; then the five actions.
+                mojo_unit_rule(
+                    name = name_once(stem + "__bc"),
+                    build_args = build_args + _BITCODE_ARGS,
+                    **common(uid, "test", stem, _BITCODE_PROFILE)
+                )
+                mojo_cov_pgo_rule(
+                    name = name_once(stem + "__pgo"),
+                    bc = ":" + stem + "__bc",
+                    branch = branch_tc,
+                    check = ":check",
+                    toolchain = toolchain,
+                    exec_compatible_with = LINUX_X86_64,
+                    visibility = visibility,
+                )
+                mojo_cov_branch_run_rule(
+                    name = name_once(stem + "__profdata"),
+                    branch = branch_tc,
+                    check = ":check",
+                    # The test's staged data and variables, as in its run and its kcov run: it must find the same files here.
+                    data = staged[test_graph],
+                    pgo = ":" + stem + "__pgo",
+                    required_isa = required_isa(),
+                    share = share,
+                    test_env = test_env,
+                    toolchain = toolchain,
+                    exec_compatible_with = test_exec_compatible_with(),
+                    visibility = visibility,
+                )
+                mojo_cov_branch_annotate_rule(
+                    name = name_once(stem + "__ir"),
+                    bc = ":" + stem + "__bc",
+                    branch = branch_tc,
+                    check = ":check",
+                    pgo = ":" + stem + "__pgo",
+                    profdata = ":" + stem + "__profdata",
+                    exec_compatible_with = LINUX_X86_64,
+                    visibility = visibility,
+                )
+                mojo_cov_branch_classify_rule(
+                    name = name_once(stem + "__info"),
+                    check = ":check",
+                    # The packages the test imports other than the library are named in the IR by their import names and are not measured.
+                    excludes = [units[c]["package"] + "/" for c in _closure(units, uid) if units[c]["package"] != root],
+                    exclude_files = [test_graph],
+                    ir = ":" + stem + "__ir",
+                    map = root + "/=" + _join(here_repo, in_package(own_lib["root"])) + "/",
+                    srcs = lib_srcs,
+                    exec_compatible_with = LINUX_X86_64,
+                    visibility = visibility,
+                )
+                branches.append(":" + stem + "__info")
     # `:lib`, the library as every other target sees it, exists only if every test of the package passed: its `.mojoc` is made by an
     # action that takes each test run's marker as an input (mojo_gated_lib_rule). The package's own tests import `:lib_ungated`.
     if libs:
@@ -495,6 +567,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     # Line coverage of the package from its tests' reports. Fails when a source of the library is in no report.
     mojo_cov_summary_rule(
         name = name_once("coverage"),
+        branches = branches,
         check = ":check",
         expect = [_join(here_repo, in_package(own_lib["root"]), s["path"][len(own_lib["root"]) + 1:]) for s in own_lib["srcs"]] if own_lib and covs else [],
         reports = covs,

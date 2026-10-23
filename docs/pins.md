@@ -48,6 +48,9 @@ with the pin's (2026-10-20):
 | `https://conda.anaconda.org/conda-forge/` | `https://repo.prefix.dev/conda-forge/` | libgcc, libstdcxx | yes, both |
 | `https://nodejs.org/dist/` | `https://registry.npmmirror.com/-/binary/node/` | node 24 | yes |
 
+The conda-forge pins of `rules/coverage/pins.bzl` (kcov's static libraries and the LLVM 23 pieces of the branch coverage of Mojo, `LLVM_BRANCH_PINS`, about 120 MB) are on the
+primary host only: they have not been compared with the mirror.
+
 busybox.net is a single origin and has timed out for hours, so busybox 1.35.0 is pinned to a copy: the asset `busybox` of the release `mirror-busybox-1.35.0` of this repository
 (`rules/pins/pins.bzl` and `rules/rust/pins.bzl`; the same sha256 and size as before). The upstream URL stays in a comment on the row, and the beta stage's retry maps the asset's prefix
 back to busybox.net (first row above). buck2's `download_file` takes one URL, so the fallback is that map and not a second URL on the pin. The asset is uploaded by

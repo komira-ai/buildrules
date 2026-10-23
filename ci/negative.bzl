@@ -57,13 +57,16 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx)
+    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
 COVERAGE_REDS = [
     ("//examples/mojo/reexport_unused:coverage", "is in no report: no test compiled it, or kcov could not open it"),
     ("//examples/mojo/coverage_floors:floor_above_the_coverage", "line coverage is 60.00% (3/5), below its floor 70.00%: coverage fell"),
+    ("//examples/mojo/coverage_floors:branches_floor_above_the_coverage", "branch coverage is 50.00% (1/2), below its floor 60.00%: coverage fell"),
+    ("//examples/mojo/coverage_floors:floor_without_branches", "the tests record branches (1/2) and the floor file has no `branches` figure: add `branches 50.00`"),
+    ("//examples/mojo/coverage_floors:branches_floor_on_no_decisions", "the floor file has a `branches` figure and the coverage has no branches to hold"),
 ]
 
 def coverage_red_problems(ctx):
@@ -81,7 +84,8 @@ def coverage_red_problems(ctx):
 # had before floors existed. (package, whether it has a floor file)
 COVERAGE_FLOOR_PACKAGES = [
     ("//examples/mojo/partial", True),
-    ("//examples/mojo/reexport", False),
+    ("//examples/mojo/reexport", True),
+    ("//examples/mojo/testdata", True),
     ("//examples/mojo/reexport_unused", False),
     ("//examples/mojo/copy_of_base", False),
     ("//examples/mojo/sys_app", False),
@@ -102,6 +106,38 @@ def coverage_floor_wiring_problems(ctx):
             problems.append("{} has a coverage_floor.txt and no :coverage_floor: its floor is read by nothing".format(package))
         elif not has_floor_file and "coverage_floor" in names:
             problems.append("{} has a :coverage_floor and no coverage_floor.txt: a package without a floor must be as it was".format(package))
+    return problems
+
+# A package whose tests link no native library and run in the default layout has the five branch coverage actions of each test, and its `:coverage` waits for the last; one whose tests do has
+# none of them (rules/mojo/defs.bzl: the instrumented link line carries no native library, and the branch run has no installed layout), so its `coverage.txt` has no `branches` rows and a floor may not
+# hold a `branches` figure. (package, the stem of its test, whether it is instrumented)
+BRANCH_PACKAGES = [
+    ("//examples/mojo/partial", "test_partial", True),
+    ("//examples/mojo/reexport", "test_ops", True),
+    ("//examples/mojo/copy_of_base", "test_base", True),
+    ("//examples/mojo/ws/util", "test_util", True),
+    ("//examples/mojo/ws/util/base", "test_base", True),
+    ("//examples/mojo/testdata", "test_data_files", True),
+    ("//examples/mojo/sibfake/app", "test_util", True),
+    ("//examples/mojo/sibfake/base", "test_base", True),
+    ("//examples/mojo/ws", "test_app", False),
+    ("//examples/mojo/sys_app", "test_sys_app", False),
+    ("//examples/mojo/installed", "test_installed_layout", False),
+]
+
+def coverage_branch_wiring_problems(ctx):
+    """Every example package against whether its tests are instrumented for branches: a list of strings, empty when all agree."""
+    problems = []
+    q = ctx.uquery()
+    for package, stem, instrumented in BRANCH_PACKAGES:
+        names = [t.label.name for t in q.eval(package + ":")]
+        mine = [stem + "__" + step for step in ["bc", "pgo", "profdata", "ir", "info"]]
+        have = [n for n in mine if n in names]
+        waits = (stem + "__info") in [t.label.name for t in q.eval("deps({}:coverage, 1)".format(package))]
+        if instrumented and (len(have) != len(mine) or not waits):
+            problems.append("{} has {} of the {} branch coverage targets of {} and its :coverage {} wait for {}__info: its branch figure is not made".format(package, len(have), len(mine), stem, "does" if waits else "does not", stem))
+        elif not instrumented and (have or waits):
+            problems.append("{} links a native library or runs its tests in the installed layout, and has branch coverage targets ({}): its tests are not instrumented, so it must have none".format(package, ", ".join(have) if have else stem + "__info is a dependency of :coverage"))
     return problems
 
 def _built_with_why(ctx, label):
