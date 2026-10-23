@@ -175,7 +175,7 @@ actionlint_check(
     name = "workflow_lint",
     exec_compatible_with = LINUX_X86_64,
     actionlint = "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
-    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml", "//:site.yml", "//:site-publish.yml", "//:advisories.yml", "//:lintian.yml", "//:publish-unpack.yml", "//:mopm-pin.yml"],
+    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml", "//:site.yml", "//:site-publish.yml", "//:advisories.yml", "//:lintian.yml", "//:publish-unpack.yml", "//:mopm-pin.yml", "//:apt-rotation.yml"],
 )
 
 zig_test(
@@ -262,6 +262,26 @@ zig_test(
         ".github/workflows/release.yml": "//:release.yml",
         ".github/workflows/ci.yml": "//:ci.yml",
         "tools/buck2": "//:buck2.pin",
+        "ci/BUCK": "BUCK",
+    },
+)
+
+# The keyring-rotation workflow (.github/workflows/apt-rotation.yml, tools/deploy/apt_rotation.zig): actionlint accepts it (above), and ci/apt_rotation_check.zig holds it to its
+# triggers (a pull request on the apt tooling, a week, a person), a read-only token and no secret, the repository's own programs built by the pinned buck2 in local mode, the three
+# distributions by digest, both keys and the control that must be refused, and to the names apt_rotation.zig uses. It reuses the rules of workflow_check.zig and the job parser of
+# release_check.zig, and each of its rules is tested against an edited copy of the file that breaks it.
+zig_test(
+    name = "apt_rotation_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "apt_rotation_check.zig",
+    imports = ["workflow_check.zig", "release_check.zig"],
+    data = {
+        ".github/workflows/apt-rotation.yml": "//:apt-rotation.yml",
+        "tools/deploy/apt_rotation.zig": "//tools/deploy:apt_rotation.zig",
+        "tools/buck2": "//:buck2.pin",
+        # the tests of the two files this one imports run here too
+        ".github/workflows/release.yml": "//:release.yml",
+        ".github/workflows/ci.yml": "//:ci.yml",
         "ci/BUCK": "BUCK",
     },
 )
@@ -473,7 +493,7 @@ zig_test(
     },
 )
 
-group(name = "workflow", deps = [":mopm_pin_workflow_check", ":mopm_pin_unit", ":mopm_pin", ":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":lintian_check", ":publish_unpack_check", ":pin_mirrors_check", ":unpack_macos_check", ":unpack_pin_check", "//ci/negative:negative_check"])
+group(name = "workflow", deps = [":mopm_pin_workflow_check", ":mopm_pin_unit", ":mopm_pin", ":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":apt_rotation_check", ":lintian_check", ":publish_unpack_check", ":pin_mirrors_check", ":unpack_macos_check", ":unpack_pin_check", "//ci/negative:negative_check"])
 
 # The coverage of every package with Zig unit tests (rules/coverage/README.md, "Zig coverage"), each held to its floor (`coverage_floor.txt` beside its
 # BUCK file) both ways: a fall fails, and so does a rise the floor has not been raised to. Building this builds the tests again under kcov and with block
@@ -568,6 +588,8 @@ group(name = "all", deps = [
     "//tools/channels:channels_cli",
     "//tools/deploy:apt_publish",
     "//tools/deploy:apt_publish_driver",
+    "//tools/deploy:apt_rotation",
+    "//tools/deploy:apt_rotation_driver",
     "//tools/deploy:tap",
     "//tools/deploy:tap_driver",
     "//tools/stage:stage_linux_aarch64",
