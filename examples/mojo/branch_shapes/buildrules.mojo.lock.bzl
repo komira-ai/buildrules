@@ -33,13 +33,14 @@ GRAPH_JSON = r'''{
       "kind": "lib",
       "root": "src/branch_shapes",
       "srcs": [
-        {"path": "src/branch_shapes/__init__.mojo", "sha256": "c0eefc1f9aaf992b9479dd74470f8841852bd3bfde4b14e40edfcb87d38e8e2b"}
+        {"path": "src/branch_shapes/__init__.mojo", "sha256": "7f23ede37053ef7880e910bd9d361d97ef03bb95be0dbb369c1c693b2fe7ae64"},
+        {"path": "src/branch_shapes/folded.mojo", "sha256": "d96acb19119c7b0e29f5837502f4b08ef0f0e9d44a383d5b6c4099ca86beb8c5"}
       ],
       "deps": [],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["branch_shapes.mojoc"],
-      "key": "726075182bf22f38e97ff8e76d245330dbc06940ca9a00d05d0afd522d762daf"
+      "key": "ac67612ad9b05f5296d158bcdeb3a39cda64fa1eb01544a394829668511e8fb2"
     },
     {
       "id": "branch_shapes@0.1.0#mojo1.0.0/test:tests/test_branch_shapes.mojo",
@@ -47,13 +48,13 @@ GRAPH_JSON = r'''{
       "version": "0.1.0",
       "kind": "test",
       "srcs": [
-        {"path": "tests/test_branch_shapes.mojo", "sha256": "48f74d5fbbae23f2eaebfa4b5fbd77b3cf59b36238e8c7b01a4fe4f2310d66ae"}
+        {"path": "tests/test_branch_shapes.mojo", "sha256": "b08cc389907bafae0c130b5c7452e05dcb1f9ea476f71ef74a14bbc6dc075181"}
       ],
       "deps": ["branch_shapes@0.1.0#mojo1.0.0/lib"],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_branch_shapes.pass"],
-      "key": "f711aa02246e52d530770dcba0b9f2730a3bb53825d5daeb7aca9f9106cb3972"
+      "key": "91942abce7e4f18ee5d4ff235f94b90681cba8a4d30ecc244beaf33a73c1ee5f"
     }
   ]
 }

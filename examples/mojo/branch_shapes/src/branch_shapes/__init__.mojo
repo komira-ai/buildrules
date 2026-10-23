@@ -1,6 +1,6 @@
 """branch_shapes: three constructs the branch classifier must read without refusing them, and without counting a decision that is not one. See each function."""
 
-from std.sys import CompilationTarget, simd_width_of
+from std.sys import CompilationTarget
 
 
 struct Stamp:
@@ -24,11 +24,6 @@ def compress[N: Int](vec: SIMD[DType.uint32, N], mask: SIMD[DType.bool, N], mut 
             out[c] = vec[k]
             c = c + 1
     return c
-
-
-def wide_x86() -> Bool:
-    # Every operand is a compile-time constant: folded when the module is compiled, no decision at run time.
-    return CompilationTarget.is_x86() and simd_width_of[DType.uint32]() == 16
 
 
 def x86_linux() -> Bool:

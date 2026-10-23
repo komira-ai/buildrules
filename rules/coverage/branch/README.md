@@ -236,7 +236,7 @@ Known shapes, with what each gives:
 **What stays refused** (the classifier fails the action naming `file:line:col`; none is read as a pass): copies holding different numbers of decisions at a location (but not those of a `comptime for` body, which are one decision, [unrolled loops](#unrolled-loops); a `comptime for` whose
 unrolled calls share one `inlinedAt`); a br at a call in a `try:` body on something else than the call's flag; a short-circuit and/or with no result phi (an `if` folded away when both arms
 return alike; a `debug_assert` condition; a non-`Bool` `and` whose result goes through memory); a select at a call on something else than a raising call's flag or a select between 0 and 1; a phi at an and/or that is no
-short-circuit one's (a reload of the left operand after String destructor code); copies computing a condition in different headers; zero branches parsed in a file with code on a decision line;
+short-circuit one's (a reload of the left operand after String destructor code); copies computing a condition in different headers; zero branches parsed in a file with a branch-like instruction on a decision line (a decision line the build folded to straight-line code is 0/0);
 a `with` in measured code, whose branches (the `__exit__(err)` result that suppresses the error, and the context manager's state) no rule reads. The refusal of a library is a failed
 `:coverage`, not a figure: a package that hits one has the line figure from its `[reports]` and no branch figure until the classifier learns the shape, from evidence, in a test.
 

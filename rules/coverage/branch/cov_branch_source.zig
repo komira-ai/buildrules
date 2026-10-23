@@ -30,6 +30,8 @@ pub const File = struct {
     repo: []const u8 = "",
     lines: [][]const u8 = &.{},
     exec: std.AutoHashMap(u64, void),
+    // Lines whose IR holds a branch-like instruction (a conditional br, a switch, a select, an invoke, indirectbr or callbr), read loosely, not by the parser's shapes.
+    branchy: std.AutoHashMap(u64, void),
     branches: usize = 0,
     // Per line: no statement's first line (quotedLines; null: not read yet).
     quoted: ?[]bool = null,
@@ -66,7 +68,7 @@ pub fn cleanRel(rel: []const u8) bool {
 }
 
 pub fn placeFile(alloc: Alloc, o: *const Opts, name: []const u8) File {
-    var f = File{ .where = .unmapped, .name = name, .exec = std.AutoHashMap(u64, void).init(alloc) };
+    var f = File{ .where = .unmapped, .name = name, .exec = std.AutoHashMap(u64, void).init(alloc), .branchy = std.AutoHashMap(u64, void).init(alloc) };
     if (std.mem.startsWith(u8, name, o.prefix)) {
         const rel = name[o.prefix.len..];
         for (o.gens) |g| {

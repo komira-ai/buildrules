@@ -482,6 +482,22 @@ fn endFunction(st: *State) void {
     st.awaits.clearRetainingCapacity();
 }
 
+/// Whether instruction `t` is branch-like, read loosely (by its first word,
+/// not by the shapes `walk` parses): a conditional br (two labels), a
+/// switch, a select, or an invoke, indirectbr or callbr. A decision-looking
+/// line the build folded to straight-line code holds none.
+fn branchLike(t: []const u8) bool {
+    const eq = std.mem.indexOf(u8, t, " = ");
+    const body = std.mem.trimLeft(u8, if (eq) |e| t[e + 3 ..] else t, " ");
+    const end = std.mem.indexOfAny(u8, body, " \t") orelse body.len;
+    const word = body[0..end];
+    if (std.mem.eql(u8, word, "br")) return std.mem.count(u8, body, "label ") >= 2;
+    for ([_][]const u8{ "switch", "select", "invoke", "indirectbr", "callbr" }) |w| {
+        if (std.mem.eql(u8, word, w)) return true;
+    }
+    return false;
+}
+
 /// One function, its lines read into st.fun: its branches and phis, in
 /// order.
 fn walk(st: *State) void {
@@ -503,7 +519,10 @@ fn walk(st: *State) void {
         const dbg = metaId(t, "!dbg !");
         if (dbg) |d| {
             if (st.locate(d)) |at| {
-                if (at.file.where == .measured) at.file.exec.put(at.line, {}) catch oom();
+                if (at.file.where == .measured) {
+                    at.file.exec.put(at.line, {}) catch oom();
+                    if (branchLike(t)) at.file.branchy.put(at.line, {}) catch oom();
+                }
             }
         }
         const eq = std.mem.indexOf(u8, t, " = ");
@@ -726,8 +745,11 @@ pub fn main() void {
         }
     }
 
-    // A measured file with code on a decision line but no branch: the
-    // branches were not parsed (or the location format moved).
+    // A measured file with a branch-like instruction on a decision line but
+    // no branch parsed: the branches were not parsed (or the location
+    // format moved). A decision line whose IR holds code but no branch-like
+    // instruction (`CompilationTarget.is_x86() and ...`, which the build
+    // folded to straight-line code) is 0/0, not a refusal.
     var fi = st.files.valueIterator();
     var measured_files: usize = 0;
     while (fi.next()) |fp| {
@@ -739,7 +761,7 @@ pub fn main() void {
         var at: u64 = 0;
         while (li.next()) |k| {
             if (k.* < 1 or k.* > f.lines.len) continue;
-            if (decisionLine(f.lines[@intCast(k.* - 1)]) and (at == 0 or k.* < at)) at = k.*;
+            if (f.branchy.contains(k.*) and decisionLine(f.lines[@intCast(k.* - 1)]) and (at == 0 or k.* < at)) at = k.*;
         }
         if (at != 0) st.err("{s}: zero branches parsed, yet the IR has code on its decision line {d}: the branches of this file were not read", .{ f.repo, at });
     }

@@ -1,7 +1,8 @@
 from std.sys import CompilationTarget, simd_width_of
 from std.testing import TestSuite, assert_equal
 
-from branch_shapes import Stamp, compress, dst_flag, wide_x86, x86_linux
+from branch_shapes import Stamp, compress, dst_flag, x86_linux
+from branch_shapes.folded import wide_x86
 
 
 def test_a_bool_converted_to_an_int_is_its_digit() raises:
