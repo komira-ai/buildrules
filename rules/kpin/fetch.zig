@@ -168,8 +168,17 @@ pub const HttpFetcher = struct {
             var buf: [64 * 1024]u8 = undefined;
             var total: u64 = 0;
             while (true) {
-                // Less than a full buffer only at the end of the body.
-                const n = body.readSliceShort(&buf) catch {
+                // With a declared length, ask for exactly what is left (at most one
+                // buffer): the reader is never asked for a byte past the end of the
+                // body, which the standard library's body reader cannot answer once
+                // the body is done (it panics on a union field).
+                var want: usize = buf.len;
+                if (content_length) |cl| {
+                    if (total >= cl) break;
+                    want = @intCast(@min(@as(u64, buf.len), cl - total));
+                }
+                // Less than the asked size only at the end of the body.
+                const n = body.readSliceShort(buf[0..want]) catch {
                     // A body that ended early must not be pinned as if it were whole.
                     if (content_length != null) return error.TruncatedBody;
                     return response.bodyErr() orelse error.ReadFailed;
@@ -178,7 +187,7 @@ pub const HttpFetcher = struct {
                     total += n;
                     try sink.write(buf[0..n]);
                 }
-                if (n < buf.len) break;
+                if (n < want) break;
             }
             if (content_length) |cl| {
                 if (total != cl) return error.TruncatedBody;
