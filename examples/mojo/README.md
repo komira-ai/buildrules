@@ -6,6 +6,9 @@
     registry/probe_sys/    the publisher's side of probe_sys: a `-sys` package (an empty Mojo module over a static C library) that needs base_sys's
       base_sys/            the other `-sys` package, a workspace member of probe_sys
     sys_app/               imports probe_sys from the registry stand-in: both static archives come out of the `.conda` files, with no `natives` in its BUCK file
+    sibfake/base, app/     `app` imports `../base`, a sibling rather than a directory below it. Their tables are written by hand with `"workspace_root": True` (the record of a mopm that
+                           takes --workspace-root, 0.0.33 and later) and hold the member by identity only; the pinned mopm rejects the flag, so `:table` is not built for them
+    sibfake/stale/         PLANTED DEFECT: `app` synced when `base` was 0.2.0; its library is built from 0.1.0, so analysis of `:lib_ungated` must stay red (ci/negative.bzl, CASES)
     copy_of_base/          base's sources at another path; `:same_bytes` fails unless the two `.mojoc` files are equal
     reexport/              a package whose `__init__.mojo` only re-exports (a docstring and `from .ops import ...`): the Mojo coverage report omits it and `:coverage` lists it `0/0`, and so it does `aliases.mojo`, a file of `comptime` aliases only
     partial/               a package whose test runs one arm of a function (60.00% of its lines), with a `coverage_floor.txt` of exactly that: its `:coverage_floor` is green

@@ -1,17 +1,20 @@
 //! table_check: is the committed table what the pinned mopm says now?
 //!
-//! usage: table_check <mopm> <project-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>
+//! usage: table_check [--workspace-root] <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>
 //!
-//! `buildrules mojo sync` commits mopm's `plan --unit-graph --locked` output, verbatim, between `GRAPH_JSON = r'''` and
-//! `'''` in buildrules.mojo.lock.bzl. This is the build's copy of that comparison (the `:table` validation of a package,
-//! rules/mojo/check.bzl): it runs the same command, offline, in `<project-dir>` (the package and its workspace members laid out as
-//! they are in the repository) and writes `<out>` (a JSON validation result) only if the committed text is byte for byte mopm's
-//! output. Everything the rules read from the graph (the keys, the order of units, natives and dependencies, the `needs` of a
-//! native, the sha256 of every source and archive) is in that text, so a table edited by hand, or left behind by a change to
-//! a source, a lock or the pinned mopm, is red. The one difference from the committed text that is allowed is the newline
-//! `sync` adds when mopm's output does not end with one.
+//! `buildrules mojo sync` commits mopm's `plan --unit-graph --locked` output between `GRAPH_JSON = r'''` and `'''` in
+//! buildrules.mojo.lock.bzl, with the path dependencies reduced to their identity (graph_norm.zig). This is the build's copy of that
+//! comparison (the `:table` validation of a package, rules/mojo/check.bzl): it runs the same command, offline, in `<workspace>/<package-dir>`
+//! (`<workspace>` holds the package and every path dependency at the paths the repository has them; `<package-dir>` is the package's
+//! directory below it, `.` for the root) and writes `<out>` (a JSON validation result) only if the committed text is byte for byte mopm's
+//! output in the same form. With `--workspace-root` mopm is told the workspace is `<workspace>` (a mopm that has the flag; the graph's paths
+//! are then relative to it), else the paths are relative to the package. Everything the rules read from the graph (the order of units, natives
+//! and dependencies, the `needs` of a native, the sha256 of every source and archive of the package itself) is in that text, so a table edited
+//! by hand, or left behind by a change to a source, a lock or the pinned mopm, is red. The one difference from the committed text that is
+//! allowed is the newline `sync` adds when mopm's output does not end with one.
 
 const std = @import("std");
+const norm = @import("mojo_graph_norm");
 
 const graph_open = "GRAPH_JSON = r'''";
 const graph_close = "'''\n";
@@ -57,18 +60,21 @@ pub fn check(a: std.mem.Allocator, table: []const u8, mopm_out: []const u8, why:
     return error.Differs;
 }
 
-const usage = "usage: table_check <mopm> <project-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>";
+const usage = "usage: table_check [--workspace-root] <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>";
 
 /// What running mopm gave: how it ended, and what it printed.
 pub const Ran = struct { exited: bool, code: u8 = 0, stdout: []const u8 = "", stderr: []const u8 = "" };
 
-/// Runs `<mopm> plan --unit-graph --locked --mojo <mojo>` in `project`. A test passes its own.
-pub const Spawn = *const fn (a: std.mem.Allocator, mopm: []const u8, project: []const u8, mojo: []const u8) anyerror!Ran;
+/// Runs `<mopm> plan --unit-graph --locked --mojo <mojo>` in `project`, followed by `--workspace-root <root>` when `root` is given. A test
+/// passes its own.
+pub const Spawn = *const fn (a: std.mem.Allocator, mopm: []const u8, project: []const u8, mojo: []const u8, root: ?[]const u8) anyerror!Ran;
 
-pub fn spawnMopm(a: std.mem.Allocator, mopm: []const u8, project: []const u8, mojo: []const u8) anyerror!Ran {
+pub fn spawnMopm(a: std.mem.Allocator, mopm: []const u8, project: []const u8, mojo: []const u8, root: ?[]const u8) anyerror!Ran {
+    const base = [_][]const u8{ mopm, "plan", "--unit-graph", "--locked", "--mojo", mojo };
+    const argv = if (root) |r| try std.mem.concat(a, []const u8, &.{ &base, &.{ "--workspace-root", r } }) else try a.dupe([]const u8, &base);
     const r = try std.process.Child.run(.{
         .allocator = a,
-        .argv = &.{ mopm, "plan", "--unit-graph", "--locked", "--mojo", mojo },
+        .argv = argv,
         .cwd = project,
         .max_output_bytes = 64 << 20,
     });
@@ -78,30 +84,44 @@ pub fn spawnMopm(a: std.mem.Allocator, mopm: []const u8, project: []const u8, mo
     };
 }
 
-/// The whole program: `args` are the five arguments after the program's name. Every refusal is `error.Refused` with the words in `msg.*`.
-pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, args: []const []const u8, spawn: Spawn, msg: *[]const u8) !void {
-    if (args.len != 5) {
+/// The whole program: `args` are the arguments after the program's name. Every refusal is `error.Refused` with the words in `msg.*`.
+pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, all_args: []const []const u8, spawn: Spawn, msg: *[]const u8) !void {
+    const with_root = all_args.len > 0 and std.mem.eql(u8, all_args[0], "--workspace-root");
+    const args = if (with_root) all_args[1..] else all_args;
+    if (args.len != 6) {
         msg.* = usage;
         return error.Refused;
     }
     const mopm = try cwd.realpathAlloc(a, args[0]);
-    const project = try cwd.realpathAlloc(a, args[1]);
-    const table = cwd.readFileAlloc(a, args[3], 64 << 20) catch |e| {
-        msg.* = try std.fmt.allocPrint(a, "cannot read {s}: {s}", .{ args[3], @errorName(e) });
+    const workspace = try cwd.realpathAlloc(a, args[1]);
+    const project = cwd.realpathAlloc(a, try std.fs.path.join(a, &.{ args[1], args[2] })) catch |e| {
+        msg.* = try std.fmt.allocPrint(a, "the package directory {s} is not in the workspace {s}: {s}", .{ args[2], args[1], @errorName(e) });
         return error.Refused;
     };
-    const r = spawn(a, mopm, project, args[2]) catch |e| {
+    const table = cwd.readFileAlloc(a, args[4], 64 << 20) catch |e| {
+        msg.* = try std.fmt.allocPrint(a, "cannot read {s}: {s}", .{ args[4], @errorName(e) });
+        return error.Refused;
+    };
+    const r = spawn(a, mopm, project, args[3], if (with_root) workspace else null) catch |e| {
         msg.* = try std.fmt.allocPrint(a, "cannot run {s}: {s}", .{ mopm, @errorName(e) });
         return error.Refused;
     };
     if (!r.exited or r.code != 0) {
-        msg.* = try std.fmt.allocPrint(a, "`mopm plan --unit-graph --locked --mojo {s}` did not succeed (exit {d}): {s}", .{ args[2], r.code, r.stderr });
+        msg.* = try std.fmt.allocPrint(a, "`mopm plan --unit-graph --locked --mojo {s}` did not succeed (exit {d}): {s}", .{ args[3], r.code, r.stderr });
         return error.Refused;
     }
+    // The committed form: the path dependencies by identity only (graph_norm.zig).
+    const printed = norm.identityOnly(a, r.stdout) catch |e| switch (e) {
+        error.OutOfMemory => return e,
+        error.Broken => {
+            msg.* = "mopm's unit graph is not in the layout this check reads (a unit block it cannot edit): the pinned mopm and buildrules disagree";
+            return error.Refused;
+        },
+    };
     var why: []const u8 = "";
-    check(a, table, r.stdout, &why) catch |e| switch (e) {
+    check(a, table, printed, &why) catch |e| switch (e) {
         error.NoGraph => {
-            msg.* = try std.fmt.allocPrint(a, "{s} has no GRAPH_JSON = r'''...''' block", .{args[3]});
+            msg.* = try std.fmt.allocPrint(a, "{s} has no GRAPH_JSON = r'''...''' block", .{args[4]});
             return error.Refused;
         },
         error.EmptyOutput => {
@@ -109,13 +129,13 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, args: []const []const u8, spaw
             return error.Refused;
         },
         error.Differs => {
-            msg.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ args[3], why });
+            msg.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ args[4], why });
             return error.Refused;
         },
         error.OutOfMemory => return e,
     };
     // A validation result is JSON (Buck2 rejects any other content).
-    try cwd.writeFile(.{ .sub_path = args[4], .data = "{\"version\": 1, \"data\": {\"status\": \"success\", \"message\": \"the committed graph is what the pinned mopm says\"}}\n" });
+    try cwd.writeFile(.{ .sub_path = args[5], .data = "{\"version\": 1, \"data\": {\"status\": \"success\", \"message\": \"the committed graph is what the pinned mopm says\"}}\n" });
 }
 
 pub fn main() !void {

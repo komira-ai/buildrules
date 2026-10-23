@@ -27,6 +27,8 @@ CASES = [
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys/base_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
+    # A sibling whose table names another version of the library than the one next to it is (rules/mojo/unit.bzl, `check_closure_ids`).
+    ("//examples/mojo/sibfake/stale:lib_ungated", "buildrules//platforms:linux_x86_64", "the graph imports base as base@0.2.0#mojo1.0.0/lib but the dependency target provides base@0.1.0#mojo1.0.0/lib"),
 ]
 
 def _analyse(ctx, label, platform = PLATFORM):
@@ -128,9 +130,12 @@ GATE_REDS = ["//ci/mojo_gate:consumer_of_red", "//ci/mojo_gate:consumer_of_red_f
 GATE_EDGES = [
     ("//examples/mojo/ws", "//examples/mojo/ws/util"),
     ("//examples/mojo/ws/util", "//examples/mojo/ws/util/base"),
+    ("//examples/mojo/sibfake/app", "//examples/mojo/sibfake/base"),
 ]
 GATE_PACKAGES = [
     "//examples/mojo/copy_of_base",
+    "//examples/mojo/sibfake/app",
+    "//examples/mojo/sibfake/base",
     "//examples/mojo/ws",
     "//examples/mojo/ws/util",
     "//examples/mojo/ws/util/base",

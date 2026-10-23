@@ -1,0 +1,7 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# Imports ../base, a sibling: not a directory below this one. The table says `"workspace_root": True`, so the graph's paths start at the repository root.
+mojo_package(path = ".")
+
+scrub_files()

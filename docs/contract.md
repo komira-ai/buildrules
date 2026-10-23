@@ -420,7 +420,7 @@ Each package is a mopm project: its own `mopm.toml`, `mopm.lock` and graph (`mop
 | `:coverage` | the package's line coverage from those reports (`coverage.txt`); red if a source of the library is in no report. `:coverage[reports]` is the reports themselves, the per-line records (12.4) |
 | `:coverage_floor` | only if `coverage_floor.txt` is beside the BUCK file: green while `coverage.txt` is at least that floor (12.4) |
 | `:ci` | `:build` and `:test` |
-| `:table` | the committed graph is what the pinned mopm's `plan --unit-graph --locked` prints for the package and its members now, byte for byte (an action; not part of `:ci`, but of `//ci:all` for every example). `:workspace` is the files it reads |
+| `:table` | the committed graph is what the pinned mopm's `plan --unit-graph --locked` prints for the package and its path dependencies now, byte for byte, the dependencies held by identity only (an action; not part of `:ci`, but of `//ci:all` for every example). `:workspace` is the files it reads: the package's and its dependencies', flat, each at its path from the repository root |
 | `:check` | the validation every step above carries: the files the table was made from still hash to what it recorded, and `toolchains/mojo_pins.bzl` still holds the table's toolchain (12.6) |
 | `:mopm.toml`, `:mopm.lock` | the package's own manifest and lock as targets, so a package that imports it as a member can name them in its `:check` |
 
@@ -472,17 +472,32 @@ the Rust side is, and one rule is easier to teach; the other choice, a default i
 
 ```python
 SCHEMA = 1
-MOPM = {"version": "0.0.25", "origin": "builtin"}          # origin: "builtin" or "buildrules-pins.toml"
+MOPM = {"version": "0.0.33", "origin": "builtin", "workspace_root": True}   # origin: "builtin" or "buildrules-pins.toml"; workspace_root only when true, spelled True (Starlark)
 MOJO = "1.0.0"
 CLOSURE_SHA256 = "<mopm's hash of the toolchain closure>"  # a second copy of the graph's, see 12.6
-MANIFEST_SHA256 = {"mopm.toml": "<sha256>", "mopm.lock": "...", "../../mopm-toolchain.toml": "...", "util/mopm.toml": "..."}
-GRAPH_JSON = r'''<`mopm plan --unit-graph --locked --mojo M`, byte for byte>'''
+MANIFEST_SHA256 = {"mopm.toml": "<sha256>", "mopm.lock": "...", "../../mopm-toolchain.toml": "...", "../util/mopm.toml": "..."}
+GRAPH_JSON = r'''<`mopm plan --unit-graph --locked --mojo M`, path dependencies by identity only>'''
 GRAPH = json.decode(GRAPH_JSON)
 ```
 
-The graph is mopm's text, so reviewing the diff of the table is reviewing mopm's output. `MANIFEST_SHA256` lists every file the graph was made
+The graph is mopm's text, so reviewing the diff of the table is reviewing mopm's output, with one exception: a **path dependency** (a library of another
+package that mopm read from a directory) is committed by identity (id, version, root, its own dependencies and outputs), without its `srcs` and without
+`key`, and the `key` of every unit that imports one is left out as well (mopm's key hashes the keys below a unit). A dependency's sources are proved by the
+dependency's own table (`mojo check`, `:check` and `:table` of its package), so editing a leaf does not turn the table of every package above it red until each
+is synced again. `rules/mojo/tools/graph_norm.zig` makes this form; `sync` writes it and `:table` compares mopm's output, put into it by the same function, with
+the committed text. A graph without a path dependency is mopm's text as it is. `MANIFEST_SHA256` lists every file the graph was made
 from that the graph does not hash itself: the package's `mopm.toml` and `mopm.lock`, the toolchain file (path relative to the package) and the
-`mopm.toml` of every path dependency. The sources and their sha256 are in the graph.
+`mopm.toml` of every path dependency (a version or a dependency of it changes the graph). The package's own sources and their sha256 are in the graph.
+
+**Where the graph's paths start.** A mopm that has `plan --unit-graph --workspace-root DIR` (0.0.33 on; `cli/src/toolchain.zig` `workspace_root_since`) is given
+the repository root, the directory of the root `.buckconfig`: every path of the graph (roots, sources, dependency roots) is then relative to it, and the package
+may import path dependencies that are its siblings (`../util` in `mopm.toml`), not only ones below it. `sync` records that it asked (`"workspace_root": True`, Starlark's spelling: a lowercase
+`true` is not a name Buck2 knows and the table would not load, so `check` refuses it; `check` also refuses a table whose record is not what its mopm release does), and the rules read the record, never the version. An older mopm prints paths
+relative to the package and takes path dependencies below it only (the release pinned in rules/mopm/pins.bzl is one of them until it moves to the first release with the flag, and a mopm that fails on a sibling says so); a table made by one is as it was. Either way a path dependency is the target
+`//<its directory>:lib`, the directory taken from the repository path of its root (`<dir>/src/<name>`), and one outside the repository root is refused
+(`sync`, `check`, and the analysis of the package), as is one whose directory is the importing package's own (its library would be the package's `:lib`, which
+waits for the tests that import it: a path dependency is a package of its own). The analysis also requires each library a unit imports to have been built as
+the graph says (the unit id, version and Mojo included), and refuses a dependency target that says nothing about a package of the unit's closure.
 
 `toolchains/mojo_pins.bzl` is the `toolchain` object of the graphs, copied (two packages' graphs for one Mojo version must agree):
 `subdir`, `cc_target`, `closure_sha256`, `zig` (version, url, sha256, size) and `components` (`mojo-compiler`, `libgcc`, `libstdcxx`, each with url, sha256,
@@ -497,9 +512,10 @@ every declared input, then executes `T/mojo_compile` with an empty environment).
 - `--graph`: the unit's **slice**: the graph's header, the unit's entry without its `key`, and every unit it imports reduced to `id, package, version, kind, root, deps, outputs, mojoc`.
   mopm's `key` hashes every dependency's key, so it moves with any edit below the unit; Buck2's own key (the digests of the inputs) replaces it, and a
   dependency's sources, key and profile are not inputs of the unit that imports it. This is what makes unchanged `.mojoc` bytes stop a cascade.
-- `--src`: the unit's sources at the paths the graph names; the target's `srcs` are the graph's, so a file the graph does not name is not an input.
+- `--src`: the unit's sources at the paths the graph names (from the package, or from the repository root when the table's `workspace_root` is true); the target's `srcs` are the graph's, so a file the graph does not name is not an input.
 - `--deps`: `<package>.mojoc` of every unit in the closure, flat: the outputs of the dependency targets (a member's `:lib`, a registry package's `prebuilt_<name>`),
-  checked against the graph's closure at analysis.
+  checked against the graph's closure at analysis: the same packages, and each built as the graph names it (the unit id, `<package>@<version>#mojo<Mojo version>/lib`, of the
+  dependency target's `MojoLibInfo` is the graph's), so a sibling on another version or another Mojo is refused, naming both ids.
 - `--natives`: the native libraries by soname. mopm checks each against the sha256 in the graph before it compiles anything. A static library (`lib<stem>.a`) of a registry package is
   not named in the BUCK file: it is the sub-target `:prebuilt_<package>[<soname>]` of the package's unpacked `.conda`, chosen from the graph (`kind` static, the package of the unit that ships it). Every other
   native is a target of `natives = {...}`, and one the lock provides may not be named there. mopm lists the libraries of a unit in link order (a library before every library it needs), `native_sonames` keeps
