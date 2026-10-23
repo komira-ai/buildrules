@@ -3,7 +3,8 @@
 //! machine whose cache lacks them.
 //!
 //!     publish_unpack             dry run: builds the programs, checks them against rules/pins/bootstrap.bzl, reads the release, says what --apply would do.
-//!                                Changes nothing on GitHub (it reads the release's asset names with a GET).
+//!                                Changes nothing on GitHub (it reads the release's asset names with a GET). It refuses, as --apply does, a tree whose
+//!                                `git status --porcelain` prints anything (an untracked file counts), and prints that output: a green dry run predicts the apply.
 //!     publish_unpack --apply --work DIR
 //!                                the same, then creates the release (if absent), uploads the assets it does not hold, downloads each asset again and checks it
 //!                                against the pin.
@@ -190,11 +191,12 @@ pub fn publish(a: std.mem.Allocator, o: Options, r: Runner, say: Say) !u8 {
     const dirty = try r.run(a, &.{ o.git, "-C", o.root, "status", "--porcelain" }, o.root);
     defer a.free(dirty.out);
     const is_dirty = dirty.code != 0 or std.mem.trim(u8, dirty.out, " \r\n").len > 0;
-    if (is_dirty and o.apply) {
-        say.say(a, "the tree has changes that are not committed: the programs built from it are not those of the commit {s}. Nothing was changed.", .{sha});
+    // The dry run refuses what --apply would refuse, so a green dry run predicts the apply.
+    if (is_dirty) {
+        say.say(a, "the tree has changes that are not committed (git status --porcelain, exit {d}):\n{s}", .{ dirty.code, std.mem.trim(u8, dirty.out, "\r\n") });
+        say.say(a, "the programs built from it are not those of the commit {s}. Nothing was changed.", .{sha});
         return 2;
     }
-    if (is_dirty) say.say(a, "WARNING: the tree has changes that are not committed; --apply would refuse", .{});
     say.say(a, "0. the commit: {s}", .{sha});
 
     // 1. build

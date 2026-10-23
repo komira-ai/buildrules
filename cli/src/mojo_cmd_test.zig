@@ -619,7 +619,13 @@ test "arguments: -h, a flag without its value, package directories in their seve
     // A package that has no mopm.toml, and the root, which has none either.
     var r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2", "pkgs/none" });
     try t.expectEqual(@as(u8, 1), r.code);
-    try t.expect(kit.contains(r.err, "pkgs/none: no mopm.toml here"));
+    // (A package that does not exist at all is refused by the toolchains-directory guard before the package is looked at; one that exists without a
+    // mopm.toml gets the message below.)
+    try t.expect(kit.contains(r.err, "cannot resolve the Mojo package pkgs/none"));
+    try h.put("pkgs/empty/BUCK", "# no mopm.toml here\n");
+    r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2", "pkgs/empty" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "pkgs/empty: no mopm.toml here"));
     r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2", "." });
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, ".: no mopm.toml here"));

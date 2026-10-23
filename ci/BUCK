@@ -111,6 +111,10 @@ group(name = "mojo", deps = [
     "//examples/mojo/copy_of_base:ci",
     "//examples/mojo/copy_of_base:coverage",
     "//examples/mojo/copy_of_base:same_bytes",
+    "//examples/mojo:coverage_records",
+    "//examples/mojo/partial:ci",
+    "//examples/mojo/partial:coverage",
+    "//examples/mojo/partial:coverage_floor",
     "//examples/mojo/reexport:ci",
     "//examples/mojo/reexport:coverage",
     "//examples/mojo/reexport_unused:ci",
@@ -267,6 +271,7 @@ zig_test(
     imports = ["workflow_check.zig", "release_check.zig"],
     data = {
         ".github/workflows/publish-unpack.yml": "//:publish-unpack.yml",
+        ".gitignore": "//:gitignore",
         "tools/buck2": "//:buck2.pin",
         # the tests of the two files this one imports run here too, and release.yml is where the mint step is read from
         ".github/workflows/release.yml": "//:release.yml",
@@ -333,6 +338,8 @@ no_shell(
         "//examples/hello:scrub_files",
         "//examples/isa:scrub_files",
         "//examples/mojo/copy_of_base:scrub_files",
+        "//examples/mojo/coverage_floors:scrub_files",
+        "//examples/mojo/partial:scrub_files",
         "//examples/mojo/reexport:scrub_files",
         "//examples/mojo/reexport_unused:scrub_files",
         "//examples/mojo/registry/cnative:scrub_files",
@@ -435,6 +442,7 @@ group(name = "floors", deps = [
 # unlike the rest of the Mojo examples (//ci:mojo).
 group(name = "mojo_tables", deps = [
     "//examples/mojo/copy_of_base:table",
+    "//examples/mojo/partial:table",
     "//examples/mojo/reexport:table",
     "//examples/mojo/reexport_unused:table",
     "//examples/mojo/registry/cnative:table",

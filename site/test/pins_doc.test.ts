@@ -141,5 +141,66 @@ describe('docs/pins.md figures are the figures in the pin tables', () => {
   planted('the oldest cargo sha prefix differs', '`e27ffcaf...c372`', '`e27ffcae...c372`', /Rust 1\.85\.0 cargo sha256/);
   planted('the llvm-tools size is one more', '66089964 bytes', '66089965 bytes', /llvm-tools size/);
   planted('a new row nothing compares', '| busybox 1.35.0 |', '| newpin 1.0 | f | 1 | ab |\n| busybox 1.35.0 |', /row newpin 1\.0 is not compared/);
-  planted('a row is deleted', '| zig 0.15.2 | zig-x86_64-linux-0.15.2.tar.xz | 53733924 | 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239 |\n', '', /0 rows for zig 0\.15\.2/);
+  planted('a row is deleted','| zig 0.15.2 | zig-x86_64-linux-0.15.2.tar.xz | 53733924 | 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239 |\n', '', /0 rows for zig 0\.15\.2/);
+});
+
+// A digest copied into prose goes stale when the pin moves. Pages other than docs/pins.md (which the tests above compare row by row) point at the
+// pin table instead; where a page does quote a digest, in full or as `head...tail`, it must be one a pin table holds, and a line about mopm must
+// quote mopm's.
+const PIN_TABLES = [RUST, PINS, MOPM, repoFile('rules/node/pins.bzl')];
+const PINNED = new Set(PIN_TABLES.flatMap((t) => t.match(/\b[0-9a-f]{64}\b/g) ?? []));
+
+/** The digests a page quotes that no pin table holds, and the digests on mopm lines that are not mopm's. */
+export function strayDigests(md: string, pinned: ReadonlySet<string>, mopmDigest: string): string[] {
+  const bad: string[] = [];
+  const held = [...pinned];
+  md.split('\n').forEach((line, i) => {
+    if (line.includes('(not used)')) return; // the page says so of artifacts no table pins (the .tar.xz variants of the Rust components)
+    const quoted: { text: string; ok: (d: string) => boolean }[] = [];
+    for (const m of line.matchAll(/\b[0-9a-f]{64}\b/g)) quoted.push({ text: m[0], ok: (d) => d === m[0] });
+    for (const m of line.matchAll(/\b([0-9a-f]{8})\.\.\.([0-9a-f]{4,5})\b/g)) quoted.push({ text: m[0], ok: (d) => d.startsWith(m[1]) && d.endsWith(m[2]) });
+    for (const q of quoted) {
+      if (!held.some(q.ok)) bad.push(`line ${i + 1}: ${q.text} is in no pin table`);
+      else if (/\bmopm\b/i.test(line) && !q.ok(mopmDigest)) bad.push(`line ${i + 1}: ${q.text} is on a mopm line and is not mopm's pin`);
+    }
+  });
+  return bad;
+}
+
+describe('pages quote no digest that a pin table does not hold', () => {
+  const mopmDigest = entry(MOPM, one(MOPM, /MOPM_DEFAULT = "([^"]+)"/)).sha256;
+  // The pages the jest_test's `data` stages (site/BUCK): a page added there is added here.
+  const pages = ['contract', 'cxx_mutants', 'how', 'pins', 'why'].map((n) => `docs/${n}.md`);
+
+  test('there are pages to read, among them the contract', () => {
+    expect(pages).toContain('docs/contract.md');
+    expect(pages).toContain('docs/pins.md');
+  });
+  for (const p of pages) {
+    test(`${p} quotes only pinned digests`, () => {
+      expect(strayDigests(repoFile(p), PINNED, mopmDigest)).toEqual([]);
+    });
+  }
+
+  test('the contract section on the mopm pin names the table and quotes no digest', () => {
+    const sec = /### 12\.5 [^\n]*\n([^]*?)(?=\n### |$(?![^]))/.exec(repoFile('docs/contract.md'));
+    expect(sec).not.toBeNull();
+    expect(sec![1]).toContain('rules/mopm/pins.bzl');
+    expect(sec![1]).not.toMatch(/[0-9a-f]{8}\.\.\.|[0-9a-f]{64}/);
+  });
+
+  test('a stale mopm digest in prose is named', () => {
+    const old = 'sha256 80ac2ed4...23dc, checked against the release\'s `SHA256SUMS`';
+    expect(strayDigests(`the mopm tarball, ${old}`, PINNED, mopmDigest).join('\n')).toMatch(/80ac2ed4\.\.\.23dc is in no pin table/);
+  });
+
+  test('another pin\'s digest on a mopm line is named', () => {
+    const zig = entry(PINS, 'zig_next').sha256;
+    expect(strayDigests(`the mopm tarball has sha256 ${zig}`, PINNED, mopmDigest).join('\n')).toMatch(/is on a mopm line/);
+  });
+
+  test('the pinned mopm digest, in full or abbreviated, passes on a mopm line', () => {
+    const d = mopmDigest;
+    expect(strayDigests(`mopm sha256 ${d}\nmopm ${d.slice(0, 8)}...${d.slice(-4)}`, PINNED, mopmDigest)).toEqual([]);
+  });
 });

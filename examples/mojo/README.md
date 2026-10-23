@@ -11,6 +11,9 @@
     sibfake/stale/         PLANTED DEFECT: `app` synced when `base` was 0.2.0; its library is built from 0.1.0, so analysis of `:lib_ungated` must stay red (ci/negative.bzl, CASES)
     copy_of_base/          base's sources at another path; `:same_bytes` fails unless the two `.mojoc` files are equal
     reexport/              a package whose `__init__.mojo` only re-exports (a docstring and `from .ops import ...`): the Mojo coverage report omits it and `:coverage` lists it `0/0`
+    partial/               a package whose test runs one arm of a function (60.00% of its lines), with a `coverage_floor.txt` of exactly that: its `:coverage_floor` is green
+    coverage_floors/       the same `:coverage` held to a floor above it and to one below it: each fails, saying "coverage fell" or "raise the floor to 60.00" (ci/negative.bzl, COVERAGE_REDS)
+    coverage_records_test.zig  `:coverage` and `:coverage[reports]` of `reexport` and `partial` held to each other, file by file (`:coverage_records`)
     reexport_unused/       PLANTED DEFECT: the same plus a function nothing calls; `:coverage` must stay red with "is in no report" (ci/negative.bzl, COVERAGE_REDS)
     mopm-toolchain.toml    the versions every package here is built with (found by walking up)
 

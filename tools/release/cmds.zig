@@ -399,6 +399,13 @@ fn tarballBinary(a: std.mem.Allocator, number: []const u8, target: []const u8, t
 /// Tries of `cosign verify-blob` per file when it cannot fetch the Sigstore trusted root.
 const cosign_tries: u32 = 3;
 
+/// The default delay before the second try (ms); the third waits twice as long.
+pub const default_retry_ms: u32 = 2000;
+
+/// The most that one `verify` waits in all, across every file (ms). A try whose wait would pass it is not made: the fetch failure is reported at once.
+/// The default waits cost 6000 ms for a file whose fetch never works, so the budget lets two such files retry fully and no more.
+pub const max_total_wait_ms: u64 = 12_000;
+
 /// cosign's FINAL stderr line says the trusted root (the TUF repository) could not be fetched: a network failure that says nothing about the
 /// signature. Only these retry; any other refusal (a signature or certificate mismatch) is final. Only the last line counts: in legacy-bundle
 /// mode cosign prints the `Could not fetch trusted_root.json ... Continuing` warning and may then report a real mismatch, which is a verdict.
@@ -425,7 +432,7 @@ fn isTrustedRootFetchFailure(stderr: []const u8) bool {
 
 /// The waits (in ms) that `verify` would have slept between the tries of `cosign verify-blob`; for tests.
 pub const Waits = struct {
-    ms: [16]u64 = undefined,
+    ms: [16]u64 = [_]u64{0} ** 16,
     n: usize = 0,
 };
 
@@ -458,7 +465,7 @@ pub const VerifyOpts = struct {
     dry: bool = false,
     cosign: []const u8 = "cosign",
     /// The delay before the second try of a `cosign verify-blob` that could not fetch the trusted root; the third waits twice as long.
-    retry_ms: u32 = 2000,
+    retry_ms: u32 = default_retry_ms,
     /// A test seam: when set, the waits between the tries are recorded here and not slept.
     waits: ?*Waits = null,
 };
@@ -519,6 +526,7 @@ pub fn verify(a: std.mem.Allocator, io: Io, o: VerifyOpts) !assets.Findings {
     if (!o.dry) {
         const signer = try std.fmt.allocPrint(a, "{s}/{s}", .{ o.repo, o.workflow });
         const identity = try std.fmt.allocPrint(a, "https://github.com/{s}/{s}@refs/heads/main", .{ o.repo, o.workflow });
+        var waited_ms: u64 = 0; // all the waiting of the retries below, bounded by max_total_wait_ms
         for (signed.items) |file| {
             const path = try std.fmt.allocPrint(a, "{s}/{s}", .{ o.dist, file });
             const r = try io.run(a, &.{
@@ -540,6 +548,8 @@ pub fn verify(a: std.mem.Allocator, io: Io, o: VerifyOpts) !assets.Findings {
                 // Only a failure to fetch the Sigstore trusted root is retried (a network flake, not a verdict on the signature).
                 if (got.code == 0 or tries >= cosign_tries or !isTrustedRootFetchFailure(got.stderr)) break got;
                 const wait_ms = @as(u64, o.retry_ms) * tries;
+                if (waited_ms + wait_ms > max_total_wait_ms) break got;
+                waited_ms += wait_ms;
                 if (o.waits) |w| {
                     w.ms[w.n] = wait_ms;
                     w.n += 1;
@@ -1508,6 +1518,22 @@ test "verify: a Sigstore trusted-root fetch failure is retried up to 3 tries; a 
         try t.expectEqual(c.extra_calls, waited.n);
         for (waited.ms[0..waited.n], 0..) |ms, i| try t.expectEqual(@as(u64, 7 * (i + 1)), ms);
     }
+
+    // The default wait is the named 2000 ms (which the docs state), and the waits of all the retries of one run together stay within the budget: with the fetch
+    // never working and each wait large (5 s, then 10 s), the first file waits once, its second wait would pass the budget, so it stops after 2 tries,
+    // and the files after it do not wait on and on either.
+    comptime std.debug.assert(default_retry_ms == 2000 and max_total_wait_ms == 12_000);
+    const default_is_named = (opts(r)).retry_ms == default_retry_ms;
+    waited = Waits{};
+    o.retry_ms = 5000;
+    var down = Fake{ .a = a, .rules = &rules, .flaky_n = 1000, .flaky_out = fail(1, "Error: tuf refresh failed: i/o timeout") };
+    const got = try verify(a, down.io(), o);
+    const total = @reduce(.Add, @as(@Vector(16, u64), waited.ms)); // the unused entries are 0
+    // every file is a finding, the waits were made but stayed within the budget, and the calls are fewer than the unbounded 3 tries of each file
+    const held = [_]bool{ default_is_named, got.items.len == base, std.mem.indexOf(u8, got.items[0], "could not fetch the Sigstore trusted root in 2 tries") != null, total > 0, total <= max_total_wait_ms, down.count("cosign verify-blob") < 3 * base };
+    var n_held: u8 = 0;
+    for (held) |h| n_held += @intFromBool(h);
+    try t.expectEqual(@as(u8, held.len), n_held);
 }
 
 test "verify --dry checks everything but the signatures and attestations, which a pull request does not make" {

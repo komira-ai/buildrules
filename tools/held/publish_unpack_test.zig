@@ -23,6 +23,7 @@ const Fake = struct {
     head: []const u8 = "0123456789abcdef0123456789abcdef01234567\n",
     head_code: u8 = 0,
     status: []const u8 = "",
+    status_code: u8 = 0,
 
     fn deinit(self: *Fake) void {
         for (self.calls.items) |c| a.free(c);
@@ -41,7 +42,7 @@ const Fake = struct {
         const prog = argv[0];
         if (std.mem.eql(u8, prog, "fake-git")) {
             if (std.mem.eql(u8, argv[3], "rev-parse")) return .{ .code = self.head_code, .out = try alloc.dupe(u8, self.head) };
-            return .{ .code = 0, .out = try alloc.dupe(u8, self.status) };
+            return .{ .code = self.status_code, .out = try alloc.dupe(u8, self.status) };
         }
         if (std.mem.eql(u8, prog, "fake-buck2")) {
             if (self.build_code != 0) return .{ .code = self.build_code, .out = try alloc.dupe(u8, "") };
@@ -600,14 +601,26 @@ test "the release points at the commit the programs were built from, and a tree 
         try t.expect(out.has("changes that are not committed"));
         try t.expectEqual(@as(usize, 0), f.called("fake-gh"));
         try t.expectEqual(@as(usize, 0), f.called("fake-buck2"));
-        // a dry run only warns
+        try t.expect(out.has(" M tools/bootstrap/src/tar.zig"));
+        // a dry run refuses it too, names the files, and builds and reads nothing
         var f2 = w.fake();
         defer f2.deinit();
-        f2.status = " M x\n";
+        f2.status = "?? .zig-cache/\n";
         var out2 = Lines{};
         defer out2.deinit();
-        try t.expectEqual(@as(u8, 0), try pub_.publish(a, w.options(false), f2.runner(), out2.say()));
-        try t.expect(out2.has("WARNING: the tree has changes"));
+        try t.expectEqual(@as(u8, 2), try pub_.publish(a, w.options(false), f2.runner(), out2.say()));
+        try t.expect(out2.has("changes that are not committed"));
+        try t.expect(out2.has("?? .zig-cache/"));
+        try t.expectEqual(@as(usize, 0), f2.called("fake-gh"));
+        try t.expectEqual(@as(usize, 0), f2.called("fake-buck2"));
+        // a status that cannot be read is a refusal too
+        var f3 = w.fake();
+        defer f3.deinit();
+        f3.status_code = 128;
+        var out3 = Lines{};
+        defer out3.deinit();
+        try t.expectEqual(@as(u8, 2), try pub_.publish(a, w.options(false), f3.runner(), out3.say()));
+        try t.expect(out3.has("changes that are not committed"));
     }
     for ([_][]const u8{ "", "not a sha\n", "ABCDEF9876543210fedcba9876543210fedcba98\n" }) |bad| {
         var w = try World.init(null);

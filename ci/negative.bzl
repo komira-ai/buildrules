@@ -57,12 +57,14 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx)
+    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
 COVERAGE_REDS = [
     ("//examples/mojo/reexport_unused:coverage", "is in no report: no test compiled it, or kcov could not open it"),
+    ("//examples/mojo/coverage_floors:floor_above_the_coverage", "line coverage is 60.00% (3/5), below its floor 70.00%: coverage fell"),
+    ("//examples/mojo/coverage_floors:floor_below_the_coverage", "line coverage is 60.00% (3/5), above its floor 50.00%: raise the floor to 60.00"),
 ]
 
 def coverage_red_problems(ctx):
@@ -74,6 +76,33 @@ def coverage_red_problems(ctx):
             problems.append("{} built ({} artifact(s)): the planted defect is no longer red".format(label, built))
         elif reason not in failed:
             problems.append("{} is red, but not for the reason it plants (expected \"{}\"): {}".format(label, reason, failed))
+    return problems
+
+# A package has a `:coverage_floor` exactly when it has a coverage_floor.txt beside its BUCK file (rules/mojo/defs.bzl): a package without one has the targets it
+# had before floors existed. (package, whether it has a floor file)
+COVERAGE_FLOOR_PACKAGES = [
+    ("//examples/mojo/partial", True),
+    ("//examples/mojo/reexport", False),
+    ("//examples/mojo/reexport_unused", False),
+    ("//examples/mojo/copy_of_base", False),
+    ("//examples/mojo/sys_app", False),
+    ("//examples/mojo/ws", False),
+    ("//examples/mojo/ws/util", False),
+    ("//examples/mojo/ws/util/base", False),
+]
+
+def coverage_floor_wiring_problems(ctx):
+    """Every package that has (or lacks) a `:coverage_floor` against its coverage_floor.txt: a list of strings, empty when all agree."""
+    problems = []
+    q = ctx.uquery()
+    for package, has_floor_file in COVERAGE_FLOOR_PACKAGES:
+        names = [t.label.name for t in q.eval(package + ":")]
+        if "coverage" not in names:
+            problems.append("{} has no :coverage: the floor check has nothing to hold there".format(package))
+        elif has_floor_file and "coverage_floor" not in names:
+            problems.append("{} has a coverage_floor.txt and no :coverage_floor: its floor is read by nothing".format(package))
+        elif not has_floor_file and "coverage_floor" in names:
+            problems.append("{} has a :coverage_floor and no coverage_floor.txt: a package without a floor must be as it was".format(package))
     return problems
 
 def _built_with_why(ctx, label):
