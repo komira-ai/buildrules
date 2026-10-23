@@ -1022,17 +1022,31 @@ test "check: the toolchain tables that are missing are stale, a glue file that i
 
 const lock_path = "pkgs/base/buildrules.mojo.lock.bzl";
 
-test "mopm takes --workspace-root from 0.0.26 on, and nothing else is guessed" {
+test "mopm takes --workspace-root from 0.0.33 on, the pinned release and every earlier one do not, and nothing else is guessed" {
     const tc = @import("toolchain.zig");
-    for ([_][]const u8{ "0.0.26", "0.0.27", "0.0.100", "0.1.0", "1.0.0", "9.9.9" }) |v| try t.expect(tc.supportsWorkspaceRoot(v));
-    for ([_][]const u8{ "0.0.1", "0.0.20", "0.0.25", "0.0.9", "" }) |v| try t.expect(!tc.supportsWorkspaceRoot(v));
+    try t.expectEqual([3]u32{ 0, 0, 33 }, tc.workspace_root_since);
+    for ([_][]const u8{ "0.0.33", "0.0.34", "0.0.100", "0.1.0", "1.0.0", "9.9.9" }) |v| try t.expect(tc.supportsWorkspaceRoot(v));
+    // the release pinned today (rules/mopm/pins.bzl), the latest release at the time of writing, and the ones in between
+    for ([_][]const u8{ "0.0.25", "0.0.26", "0.0.32" }) |v| try t.expect(!tc.supportsWorkspaceRoot(v));
+    for ([_][]const u8{ "0.0.1", "0.0.20", "0.0.9", "0.0.0", "" }) |v| try t.expect(!tc.supportsWorkspaceRoot(v));
     // not an exact release: no version is assumed to have the flag
-    for ([_][]const u8{ "0.0", "0.0.26-rc1", "latest", "0.0.x", "1.0.0-beta" }) |v| try t.expect(!tc.supportsWorkspaceRoot(v));
+    for ([_][]const u8{ "0.0", "0.0.33-rc1", "latest", "0.0.x", "1.0.0-beta" }) |v| try t.expect(!tc.supportsWorkspaceRoot(v));
+}
+
+test "sync: with the release pinned today nothing is asked of mopm, and a mopm that fails says what a sibling path dependency needs" {
+    const h = try fresh();
+    defer h.destroy();
+    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.25\"\nmojo = \"1.0.0\"\n");
+    plan_code = 4;
+    const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expectEqual(@as(usize, 0), called("--workspace-root"));
+    try t.expect(kit.contains(r.err, "mopm 0.0.25 does not take --workspace-root (mopm 0.0.33 and later do), which a path dependency next to the package needs"));
 }
 
 /// The repository of `fresh` for a mopm that takes `--workspace-root`, with `util` a sibling of `base` (`pkgs/util`): the graph's paths start at the repository root.
 fn rootedWithSibling(h: *kit.Harness, src: []const u8, key: []const u8) !void {
-    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.26\"\nmojo = \"1.0.0\"\n");
+    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.33\"\nmojo = \"1.0.0\"\n");
     try h.put("pkgs/util/mopm.toml", "[package]\nname = \"util\"\nversion = \"0.1.0\"\n");
     try h.put("pkgs/util/src/util/__init__.mojo", src);
     plan_graph = try memberGraph(h, src, key, "pkgs/util/src/util", "pkgs/util/src/util/__init__.mojo", "pkgs/base/");
@@ -1052,7 +1066,7 @@ test "sync: a mopm that takes --workspace-root is given the repository root, and
         if (kit.contains(c, "plan --unit-graph")) try t.expectEqualStrings("package", mopm_dir_seen[i]);
     }
     const lock = h.read(lock_path);
-    try t.expect(kit.contains(lock, "MOPM = {\"version\": \"0.0.26\", \"origin\": \"builtin\", \"workspace_root\": True}\n"));
+    try t.expect(kit.contains(lock, "MOPM = {\"version\": \"0.0.33\", \"origin\": \"builtin\", \"workspace_root\": True}\n"));
     // the sibling is a path dependency: its manifest, found from the package, is in the table; its sources are not
     try t.expect(kit.contains(lock, "\"../util/mopm.toml\": \""));
     try t.expect(!kit.contains(lock, "pkgs/util/src/util/__init__.mojo"));
@@ -1116,7 +1130,7 @@ test "sync: a path dependency is in the table by identity, so editing its source
 test "sync: a path dependency outside the repository root is refused, naming it, and writes nothing" {
     // rooted: the graph's own path leaves the root; older mopm: the package's path does
     const cases = [_]struct { toolchain: []const u8, root: []const u8, path: []const u8, prefix: []const u8 }{
-        .{ .toolchain = "0.0.26", .root = "../outside/src/util", .path = "../outside/src/util/__init__.mojo", .prefix = "pkgs/base/" },
+        .{ .toolchain = "0.0.33", .root = "../outside/src/util", .path = "../outside/src/util/__init__.mojo", .prefix = "pkgs/base/" },
         .{ .toolchain = "0.0.1", .root = "../../../outside/src/util", .path = "../../../outside/src/util/__init__.mojo", .prefix = "" },
     };
     for (cases) |c| {
@@ -1147,7 +1161,7 @@ test "sync: a graph in a layout the committed form cannot edit is refused with t
 test "sync: a mopm that was given --workspace-root and failed says so" {
     const h = try fresh();
     defer h.destroy();
-    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.26\"\nmojo = \"1.0.0\"\n");
+    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.33\"\nmojo = \"1.0.0\"\n");
     plan_code = 4;
     const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
     try t.expectEqual(@as(u8, 1), r.code);
@@ -1157,7 +1171,7 @@ test "sync: a mopm that was given --workspace-root and failed says so" {
 test "sync: a path dependency at the repository root itself is a directory like another, and its manifest is found from the package" {
     const h = try fresh();
     defer h.destroy();
-    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.26\"\nmojo = \"1.0.0\"\n");
+    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.33\"\nmojo = \"1.0.0\"\n");
     try h.put("mopm.toml", "[package]\nname = \"util\"\nversion = \"0.1.0\"\n");
     try h.put("src/util/__init__.mojo", util_src);
     plan_graph = try memberGraph(h, util_src, "k0", "src/util", "src/util/__init__.mojo", "pkgs/base/");
@@ -1169,7 +1183,7 @@ test "sync: a path dependency at the repository root itself is a directory like 
 test "sync: every path dependency outside the repository root is refused, an absolute path and a bare .. as much as a path up, and the first is named" {
     const h = try fresh();
     defer h.destroy();
-    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.26\"\nmojo = \"1.0.0\"\n");
+    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.33\"\nmojo = \"1.0.0\"\n");
     const graph = try memberGraph(h, util_src, "k0", "/opt/outside/src/util", "/opt/outside/src/util/__init__.mojo", "pkgs/base/");
     // a second dependency, also outside, as a bare `..`
     const second = try std.mem.replaceOwned(u8, h.a(), try std.mem.replaceOwned(u8, h.a(), util_graph_unit, "@ROOT@", ".."), "util", "other");
@@ -1206,9 +1220,9 @@ test "check: what the table says about --workspace-root must be what its mopm re
     try h.put(lock_path, try std.mem.replaceOwned(u8, h.a(), lock, ", \"workspace_root\": True", ""));
     var r = h.run(&.{ "mojo", "check" });
     try t.expectEqual(@as(u8, 1), r.code);
-    try t.expect(kit.contains(r.err, "records mopm 0.0.26 without --workspace-root, but that release takes it"));
+    try t.expect(kit.contains(r.err, "records mopm 0.0.33 without --workspace-root, but that release takes it"));
     // and put on a table of a mopm that does not have it
-    try h.put(lock_path, try std.mem.replaceOwned(u8, h.a(), lock, "\"version\": \"0.0.26\"", "\"version\": \"0.0.20\""));
+    try h.put(lock_path, try std.mem.replaceOwned(u8, h.a(), lock, "\"version\": \"0.0.33\"", "\"version\": \"0.0.20\""));
     r = h.run(&.{ "mojo", "check" });
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "records mopm 0.0.20 with --workspace-root, but that release does not take it"));

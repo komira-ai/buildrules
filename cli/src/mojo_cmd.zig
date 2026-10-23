@@ -3,7 +3,7 @@
 //! mopm owns what "build Mojo" means. `sync` asks the pinned mopm for each package's unit graph (`mopm plan --unit-graph
 //! --locked`, offline: it never resolves) and commits mopm's answer as buildrules.mojo.lock.bzl next to the package's
 //! mopm.toml, plus the toolchain facts the graphs carry as toolchains/mojo_pins.bzl. A path dependency is committed by identity only (its
-//! sources and key are its own table's business). From mopm 0.0.26 the plan is asked for with `--workspace-root <the repository root>`, so the
+//! sources and key are its own table's business). From mopm 0.0.33 the plan is asked for with `--workspace-root <the repository root>`, so the
 //! graph's paths start at the root and the package and its path dependencies may be siblings; before that they start at the package and the
 //! dependencies are below it. `check` is the offline gate: it reads the files and fails when the committed table no longer describes them.
 //!
@@ -611,6 +611,9 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
                 if (pkg.len == 0) "." else pkg,                           tc.mojo,
                 if (rooted) " --workspace-root <the repository root>" else "", r.code,
                 if (r.code == 3) " (no usable mopm.lock, or it is out of date with mopm.toml: run `mopm lock`)" else if (r.code == 4) " (mopm cannot make a graph from this project and lock; its message is above)" else "",
+            });
+            if (!rooted) _ = ctx.fail("{s}: mopm {s} does not take --workspace-root (mopm {d}.{d}.{d} and later do), which a path dependency next to the package needs: pin a release that does in mopm-toolchain.toml", .{
+                if (pkg.len == 0) "." else pkg, tc.mopm, toolchain.workspace_root_since[0], toolchain.workspace_root_since[1], toolchain.workspace_root_since[2],
             });
             continue;
         }
