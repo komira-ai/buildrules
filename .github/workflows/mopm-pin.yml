@@ -1,0 +1,57 @@
+# The mopm that buildrules runs (rules/mopm/pins.bzl) is checked by who signed it, and not only by its digest. On every pull request this downloads each pinned mopm release
+# tarball and its Sigstore bundle and runs `cosign verify-blob` with the identity of mopm's release workflow on main and the GitHub Actions issuer; the job fails when the
+# signature does not verify, and when the downloaded bytes are not the pinned size and sha256. The pin values are read from pins.bzl by ci/mopm_pin.zig (the program this
+# workflow builds), never copied into this file. It is a workflow of its own because ci.yml, the pull-request build, holds no signing vocabulary (ci/workflow_check.zig); the
+# job is `mopm-pin / verify`, for the repository's branch protection to require, and ci/mopm_pin_workflow_check.zig (`//ci:workflow`) holds this file to what makes it blocking:
+# it cannot be removed, skipped, made non-blocking or pointed at another signer or another cosign.
+name: mopm-pin
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mopm-pin-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/workflow_check.zig compares both.
+      - name: Install buck2
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
+          echo "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst" | sha256sum --check --strict -
+          zstd --decompress --quiet buck2.zst -o buck2
+          chmod +x buck2
+          ./buck2 --version
+
+      # The program that reads rules/mopm/pins.bzl, built with its unit tests (the build waits for them).
+      - name: Build the verifier
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out mopm-pin //ci:mopm_pin
+
+      # The same cosign as release.yml, named here and not left to the action's default: the retry of the verifier reads cosign's stderr, whose shape is that of this release.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.0.6'
+
+      - name: Verify the pinned mopm release against its signature
+        run: |
+          chmod +x mopm-pin
+          mkdir "$RUNNER_TEMP/mopm-pin"
+          ./mopm-pin verify --pins rules/mopm/pins.bzl --work "$RUNNER_TEMP/mopm-pin" --cosign cosign
+
+      - name: Stop buck2
+        if: always()
+        run: ./buck2 kill
