@@ -418,7 +418,7 @@ Each package is a mopm project: its own `mopm.toml`, `mopm.lock` and graph (`mop
 | `:bin_<name>`, `:build` | the `[targets] bins` of `mopm.toml`; `:build` is the library and the binaries |
 | `:<stem>__cov_bin`, `:<stem>__cov` | the same test as a debug build, and its run under kcov: a Cobertura report in repository paths |
 | `:coverage` | the package's line coverage from those reports (`coverage.txt`); red if a source of the library is in no report. `:coverage[reports]` is the reports themselves, the per-line records (12.4) |
-| `:coverage_floor` | only if `coverage_floor.txt` is beside the BUCK file: green while `coverage.txt` is exactly that floor (12.4) |
+| `:coverage_floor` | only if `coverage_floor.txt` is beside the BUCK file: green while `coverage.txt` is at least that floor (12.4) |
 | `:ci` | `:build` and `:test` |
 | `:table` | the committed graph is what the pinned mopm's `plan --unit-graph --locked` prints for the package and its members now, byte for byte (an action; not part of `:ci`, but of `//ci:all` for every example). `:workspace` is the files it reads |
 | `:check` | the validation every step above carries: the files the table was made from still hash to what it recorded, and `toolchains/mojo_pins.bzl` still holds the table's toolchain (12.6) |
@@ -546,7 +546,7 @@ buck2 build //pkg:coverage[reports] --show-full-output
 holds both to that). The branch records `covcheck` reads with `--branch-lcov` are written by a classifier of the compiled code's LLVM IR, which is not ported; they are not in this output.
 
 *The floor.* A package with a `coverage_floor.txt` beside its BUCK file (the file every other package's floor is, `rules/coverage/README.md`) gets `:coverage_floor`: `lines NN.NN`, the line total of
-`coverage.txt` rounded down to a hundredth. The check is exact in both directions: lower than the floor fails with `coverage fell`, higher fails with `raise the floor to NN.NN`. A `branches` figure is
+`coverage.txt` rounded down to a hundredth. The floor is a minimum: lower than it fails with `coverage fell`, equal passes, and higher passes and prints `you may raise the floor to NN.NN` (optional). A `branches` figure is
 refused while the tests record no branches. With no file there is no target, and the package is as it was. `mojo_coverage_floor(name, coverage, floor)` (`rules/mojo/defs.bzl`) checks a `:coverage` against any other file.
 
 ### 12.5 Versions: pinned mopm, the Mojo version
@@ -571,9 +571,8 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 | the two copies of the closure hash in the table differ | analysis; `mojo check` | `the table records toolchain closure A but its unit graph pins B: the file was edited by hand` |
 | the table's Mojo is not the graph's, or mopm-toolchain.toml names another | analysis; `mojo check`; `mojo sync` (mopm exit 4) | `the table says Mojo 1.1.0 but its unit graph is for Mojo 1.0.0`; `mopm has no pinned toolchain for mojo 1.1.0` |
 | a native library other than the pinned one | `mopm unit build` | `native library X has sha256 B, but the graph declares A` |
-| a library source no test compiled, that has any statement beyond comments, docstrings and imports (a re-export-only `__init__.mojo` has none, is omitted by the report, and is listed `0/0`) | `:coverage` | `<file> is in no report: no test compiled it, or kcov could not open it` |
+| a library source no test compiled, that has any statement beyond comments, docstrings, imports and alias declarations (a re-export-only `__init__.mojo`, or a file of `comptime NAME = ...` aliases, has none, is omitted by the report, and is listed `0/0`) | `:coverage` | `<file> is in no report: no test compiled it, or kcov could not open it` |
 | a package's line coverage below its `coverage_floor.txt` | `:coverage_floor` | `<package>: line coverage is 60.00% (3/5), below its floor 70.00%: coverage fell` |
-| a package's line coverage above its `coverage_floor.txt` | `:coverage_floor` | `<package>: line coverage is 60.00% (3/5), above its floor 50.00%: raise the floor to 60.00 (floors only rise, ...)` |
 | `toolchains/mojo_pins.bzl` edited without a sync (a `cc_target`, a hash, a component) | `:check` at analysis; `mojo check` | `toolchains/mojo_pins.bzl and the table's unit graph disagree about the Mojo 1.0.0 toolchain (cc_target)` |
 | `mopm-toolchain.toml` says another Mojo than the table was made for | `:check` (the file's hash); `mojo check` | `examples/mojo/mopm-toolchain.toml is not what the Mojo table was made from (sha256 A, the table says B): run `buildrules mojo sync``  |
 | a test at an ISA level on a platform without it | analysis | as section 11 |
@@ -715,7 +714,7 @@ The public CI (`.github/workflows/ci.yml`) builds `//ci:all` this way on `ubuntu
 (`probe_env`, `probe_tree`, `probe_usr`, and the `:coverage` of `cnative`, `probe_sys` and `base_sys`, which are red by design) and `ci/negative` (a planted defect that a wildcard build skips; the completeness check analyses it on the platform it breaks on and fails unless it is red for the reason it plants, `ci/negative.bzl`). Before it builds, the workflow runs
 `buck2 bxl //ci:completeness.bxl:check`, which fails and names every target of `//...` and `crates//...` that is in the closure of neither `//ci:all` nor `//ci:mojo` and is not excluded, so a new target cannot go unbuilt.
 `//ci:all` also builds `//ci:floors`: the Zig tests of each package run again under kcov and with LLVM's block counters, and the Node tests under `jest --coverage`, and each package's lines and branches
-are held to its `coverage_floor.txt` both ways (a fall fails, and so does a rise the floor has not been raised to); `rules/coverage/README.md` says what is measured and what is not.
+are held to their `coverage_floor.txt` as a minimum (a fall below it fails; above it passes with a hint that the floor may be raised); `rules/coverage/README.md` says what is measured and what is not.
 `//ci:mojo` is not built there: its packages need a package channel for `cnative` (the pinned mopm tarball is the published release, section 12.5); it is fetched
 through `buildrules.url_map` from a mirror a public runner does not have. `//ci:mojo` is built on a farm that has the mirror.
 

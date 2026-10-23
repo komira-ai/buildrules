@@ -13,6 +13,9 @@ pub const Route = struct {
     location: ?[]const u8 = null,
     /// Promise this many bytes and send only `body`, then close.
     claim_length: ?usize = null,
+    /// Send these bytes as the whole response (status line, headers and body as
+    /// written), then close: for a response a well-behaved server never sends.
+    raw: ?[]const u8 = null,
     hits: usize = 0,
 };
 
@@ -75,6 +78,11 @@ pub const Registry = struct {
             var head_buf: [512]u8 = undefined;
             if (found) |r| {
                 r.hits += 1;
+                if (r.raw) |raw| {
+                    w.writeAll(raw) catch continue;
+                    w.flush() catch continue;
+                    continue;
+                }
                 const len = r.claim_length orelse r.body.len;
                 const loc = if (r.location) |l| std.fmt.bufPrint(head_buf[256..], "Location: {s}\r\n", .{l}) catch "" else "";
                 const head = std.fmt.bufPrint(head_buf[0..256], "HTTP/1.1 {d} X\r\nContent-Length: {d}\r\nConnection: close\r\n", .{ r.status, len }) catch continue;

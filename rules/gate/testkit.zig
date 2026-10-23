@@ -125,6 +125,46 @@ pub fn runGate(alloc: std.mem.Allocator, cwd: []const u8, argv: []const []const 
     };
 }
 
+/// A `setup` for `runGate`: removes the directory the gate runs in, so that the
+/// kernel no longer has a path for it (getcwd then fails).
+pub fn unlinkCwd() void {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd = posix.getcwd(&buf) catch posix.exit(249);
+    posix.rmdir(cwd) catch posix.exit(249);
+}
+
+/// The gate over `argv` in THIS process, from `cwd`, with stdout and stderr read back: for a command line the gate refuses before it starts anything (a
+/// usage error, a missing file), so that nothing is forked and nothing outlives the call. The branch counters belong to the process that runs the code, so
+/// only the code run here is counted as run (rules/coverage/README.md, "Code that runs in another process").
+pub fn runInline(alloc: std.mem.Allocator, cwd: []const u8, argv: []const []const u8) !Result {
+    return runInlineWith(alloc, alloc, cwd, argv);
+}
+
+/// `runInline` where the gate allocates from `gate_alloc` (a failing allocator, say) and the harness from `alloc`.
+pub fn runInlineWith(alloc: std.mem.Allocator, gate_alloc: std.mem.Allocator, cwd: []const u8, argv: []const []const u8) !Result {
+    const io = try tempDir(alloc);
+    const out_path = try std.fmt.allocPrint(alloc, "{s}/out", .{io});
+    const err_path = try std.fmt.allocPrint(alloc, "{s}/err", .{io});
+    const was_here = try posix.open(".", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+    defer posix.close(was_here);
+    const saved_out = try posix.dup(1);
+    defer posix.close(saved_out);
+    const saved_err = try posix.dup(2);
+    defer posix.close(saved_err);
+    const o = try posix.open(out_path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644);
+    defer posix.close(o);
+    const e = try posix.open(err_path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644);
+    defer posix.close(e);
+    try posix.chdir(cwd);
+    try posix.dup2(o, 1);
+    try posix.dup2(e, 2);
+    const status = gate.entry(gate_alloc, argv);
+    try posix.dup2(saved_out, 1);
+    try posix.dup2(saved_err, 2);
+    try posix.fchdir(was_here);
+    return .{ .status = status, .out = try readFile(alloc, out_path), .err = try readFile(alloc, err_path), .ms = 0 };
+}
+
 /// Whether `pid` is alive and not a zombie (a zombie has exited).
 pub fn alive(pid: i32) bool {
     if (sys.is_darwin) return proctab_darwin.alive(pid);

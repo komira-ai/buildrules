@@ -63,9 +63,10 @@ jobs:
           ./buck2 build --console simple -c buildrules_re.mode=local \
             //ci:all
 
-      # The .deb of the command line (tools/channels, packaging/deb) as the release makes it, from the unstamped linux-x86_64 binary: dpkg reads it and lintian
-      # finds no error. A pull request proves this here; the release builds the same package from the stamped binaries (release.yml, build-cli). Lintian is the
-      # runner's own, installed from its distribution (the one tool of the build that is not pinned).
+      # The .deb of the command line (tools/channels, packaging/deb) as the release makes it, from the unstamped linux-x86_64 binary: dpkg reads it. A pull
+      # request proves this here; the release builds the same package from the stamped binaries (release.yml, build-cli). Lintian is not run here: it is a Perl
+      # program with dozens of distribution packages under it, which this workflow does not fetch by digest, so a gate on it would move with the runner's archive.
+      # lintian.yml runs it daily and on demand as an advisory (a red run there is a finding, never a red pull request or release).
       - name: Build the channels program
         run: ./buck2 build --console simple -c buildrules_re.mode=local --out ci-channels //tools/channels:channels
 
@@ -82,15 +83,6 @@ jobs:
 
       - name: dpkg-deb reads the contents
         run: dpkg-deb --contents ci-debs/buildrules_0.0.0_amd64.deb
-
-      - name: Refresh the package lists
-        run: sudo apt-get update -qq
-
-      - name: Install lintian
-        run: sudo apt-get install -y -qq lintian
-
-      - name: lintian finds no error, every tag printed
-        run: lintian --fail-on error --tag-display-limit 0 ci-debs/buildrules_0.0.0_amd64.deb
 
       - name: Stop buck2
         if: always()

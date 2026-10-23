@@ -107,3 +107,134 @@ test "not an ELF, and a truncated one, are errors" {
     const b = try image(a, &.{".debug_info"}, "x");
     try std.testing.expectError(error.Truncated, H.debugSections(a, b[0 .. b.len - 100]));
 }
+
+fn put(comptime T: type, b: []u8, off: usize, v: T) void {
+    std.mem.writeInt(T, b[off..][0..@sizeOf(T)], v, .little);
+}
+
+fn shoff(b: []const u8) usize {
+    return std.mem.readInt(u64, b[0x28..][0..8], .little);
+}
+
+test "an ELF header that is not 64-bit little-endian is refused, not read" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const b32 = try image(a, &.{".text"}, "x");
+    b32[4] = 1; // ELFCLASS32
+    try std.testing.expectError(error.NotElf64, H.debugSections(a, b32));
+    const be = try image(a, &.{".text"}, "x");
+    be[5] = 2; // ELFDATA2MSB
+    try std.testing.expectError(error.NotElf64, H.debugSections(a, be));
+    const magic = try image(a, &.{".text"}, "x");
+    magic[3] = 'G';
+    try std.testing.expectError(error.NotElf64, H.debugSections(a, magic));
+}
+
+test "an ELF with no sections has no debug section" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const b = try image(a, &.{".debug_info"}, "x");
+    put(u16, b, 0x3C, 0);
+    try std.testing.expectEqual(@as(usize, 0), (try H.debugSections(a, b)).len);
+}
+
+test "an offset or count that lies outside the file is Truncated: no read goes past the bytes" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const Case = struct { name: []const u8, poke: *const fn ([]u8) void };
+    const cases = [_]Case{
+        .{ .name = "section headers start past the end", .poke = struct {
+            fn f(b: []u8) void {
+                put(u64, b, 0x28, b.len);
+            }
+        }.f },
+        .{ .name = "the section name table is a section that does not exist", .poke = struct {
+            fn f(b: []u8) void {
+                put(u16, b, 0x3E, 5000);
+            }
+        }.f },
+        .{ .name = "the name table starts past the end", .poke = struct {
+            fn f(b: []u8) void {
+                const last = shoff(b) + 3 * 64;
+                put(u64, b, last + 0x18, b.len + 1);
+            }
+        }.f },
+        .{ .name = "the name table is longer than the file", .poke = struct {
+            fn f(b: []u8) void {
+                const last = shoff(b) + 3 * 64;
+                put(u64, b, last + 0x20, b.len);
+            }
+        }.f },
+        .{ .name = "more sections than the file holds", .poke = struct {
+            fn f(b: []u8) void {
+                put(u16, b, 0x3C, 4000);
+            }
+        }.f },
+    };
+    for (cases) |c| {
+        const b = try image(a, &.{ ".text", ".data" }, "x");
+        c.poke(b);
+        std.testing.expectError(error.Truncated, H.debugSections(a, b)) catch |e| {
+            std.debug.print("case: {s}\n", .{c.name});
+            return e;
+        };
+    }
+}
+
+test "a name table whose header ends before its size field is Truncated" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const b = try image(a, &.{ ".text", ".data" }, "x");
+    try std.testing.expectError(error.Truncated, H.debugSections(a, b[0 .. b.len - 0x20]));
+}
+
+test "a section whose name lies outside the name table is not a debug section, and does not stop the others being read" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const b = try image(a, &.{ ".text", ".debug_info" }, "x");
+    put(u32, b, shoff(b) + 64, 1 << 20); // .text's name offset
+    const got = try H.debugSections(a, b);
+    try std.testing.expectEqual(@as(usize, 1), got.len);
+    try std.testing.expectEqualStrings(".debug_info", got[0]);
+}
+
+test "findings refuses a file it cannot read, rather than calling it clean" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try std.testing.expectError(error.NotElf64, H.findings(a, "hello", "/work/root"));
+    const b = try image(a, &.{".debug_info"}, "x");
+    try std.testing.expectError(error.Truncated, H.findings(a, b[0 .. b.len - 100], "/work/root"));
+}
+
+test "running out of memory is an error of debugSections and findings, whichever allocation it is, and never a wrong answer" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const b = try image(a, &.{ ".text", ".debug_info", ".debug_line" }, "/work/root");
+    var failed: usize = 0;
+    var n: usize = 0;
+    while (n < 64) : (n += 1) {
+        var scratch = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer scratch.deinit();
+        var fa = std.testing.FailingAllocator.init(scratch.allocator(), .{ .fail_index = n });
+        if (H.findings(fa.allocator(), b, "/work/root")) |got| {
+            // enough allocations were allowed: the answer is the whole one
+            try std.testing.expectEqual(@as(usize, 2), got.len);
+        } else |e| {
+            try std.testing.expectEqual(error.OutOfMemory, e);
+            failed += 1;
+        }
+        var fa2 = std.testing.FailingAllocator.init(scratch.allocator(), .{ .fail_index = n });
+        if (H.debugSections(fa2.allocator(), b)) |got| {
+            try std.testing.expectEqual(@as(usize, 2), got.len);
+        } else |e| try std.testing.expectEqual(error.OutOfMemory, e);
+    }
+    try std.testing.expect(failed > 0);
+    try std.testing.expect(failed < 64);
+}

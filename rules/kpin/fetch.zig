@@ -165,25 +165,44 @@ pub const HttpFetcher = struct {
             const content_length = response.head.content_length;
             var transfer: [64]u8 = undefined;
             const body = response.reader(&transfer);
-            var buf: [64 * 1024]u8 = undefined;
-            var total: u64 = 0;
-            while (true) {
-                // Less than a full buffer only at the end of the body.
-                const n = body.readSliceShort(&buf) catch {
-                    // A body that ended early must not be pinned as if it were whole.
-                    if (content_length != null) return error.TruncatedBody;
-                    return response.bodyErr() orelse error.ReadFailed;
-                };
-                if (n > 0) {
-                    total += n;
-                    try sink.write(buf[0..n]);
-                }
-                if (n < buf.len) break;
-            }
-            if (content_length) |cl| {
-                if (total != cl) return error.TruncatedBody;
-            }
+            pump(body, content_length, sink) catch |e| {
+                if (e == error.ReadFailed) return response.bodyErr() orelse error.ReadFailed;
+                return e;
+            };
             return;
         }
     }
 };
+
+/// Move a response body from `body` to `sink`, in order. With a declared
+/// length, ask for exactly what is left (at most one buffer): the reader is
+/// never asked for a byte past the end of the body, which the standard
+/// library's body reader cannot answer once the body is done (it panics on a
+/// union field). A body that ends before its declared length is
+/// `error.TruncatedBody`, never a short pin. A failed read with no declared
+/// length is `error.ReadFailed`.
+pub fn pump(body: *std.Io.Reader, content_length: ?u64, sink: Sink) anyerror!void {
+    var buf: [64 * 1024]u8 = undefined;
+    var total: u64 = 0;
+    while (true) {
+        var want: usize = buf.len;
+        if (content_length) |cl| {
+            if (total >= cl) break;
+            want = @intCast(@min(@as(u64, buf.len), cl - total));
+        }
+        // Less than the asked size only at the end of the body.
+        const n = body.readSliceShort(buf[0..want]) catch {
+            // A body that ended early must not be pinned as if it were whole.
+            if (content_length != null) return error.TruncatedBody;
+            return error.ReadFailed;
+        };
+        if (n > 0) {
+            total += n;
+            try sink.write(buf[0..n]);
+        }
+        if (n < want) break;
+    }
+    if (content_length) |cl| {
+        if (total != cl) return error.TruncatedBody;
+    }
+}

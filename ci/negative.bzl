@@ -62,7 +62,6 @@ def negative_problems(ctx):
 COVERAGE_REDS = [
     ("//examples/mojo/reexport_unused:coverage", "is in no report: no test compiled it, or kcov could not open it"),
     ("//examples/mojo/coverage_floors:floor_above_the_coverage", "line coverage is 60.00% (3/5), below its floor 70.00%: coverage fell"),
-    ("//examples/mojo/coverage_floors:floor_below_the_coverage", "line coverage is 60.00% (3/5), above its floor 50.00%: raise the floor to 60.00"),
 ]
 
 def coverage_red_problems(ctx):
