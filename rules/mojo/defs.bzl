@@ -10,8 +10,11 @@ One line per package. The targets come from the package's unit graph, which `bui
     :lib_ungated  the same `.mojoc` as compiled, which the package's own tests import (what `:lib` waits for)
     :test       every test file, built once and run: `:<stem>` (the run) behind `:<stem>__bin` (the compile)
     :build      the library and the binaries of `[targets] bins`
-    :coverage   every test again as a debug build run under kcov, one Cobertura report per test file
-    :ci         `:build` and `:test`
+    :coverage   every test again as a debug build run under kcov, one Cobertura report per test file; `coverage.txt` is the per-file count, and
+                `:coverage[reports]` is the per-line records of every test (kcov's Cobertura XML in repository paths)
+    :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green only while `:coverage` is exactly that floor (below it:
+                "coverage fell"; above it: "raise the floor to X"), the check of every other package's floor (rules/coverage/README.md, "The floor")
+    :ci        `:build` and `:test`
     :table      the committed graph is, byte for byte, what the pinned mopm prints now (a check of its own; `:workspace` holds the files it reads)
 
 A workspace member (a path dependency) is a package of its own with its own BUCK file; this package's graph names it, and
@@ -34,6 +37,7 @@ load("//rules:isa.bzl", "ISA_LEVELS", "isa_select", "required_isa", "test_exec_c
 load("//rules/core:pinned_file.bzl", "pinned_file")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/core:url_map.bzl", "mapped_url")
+load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
 load(":check.bzl", "mojo_check_rule", "mojo_table_rule", "mojo_workspace_rule")
 load(":unit.bzl", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_gated_lib_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
@@ -136,6 +140,20 @@ def native_wiring(unit, prebuilt_packages, user_natives, here, refuse = fail):
             refuse("{}: {} links the native library {}; add it to mojo_package(natives = {{...}})".format(here, unit["id"], soname))
     return sonames, labels
 
+COVERAGE_FLOOR_FILE = "coverage_floor.txt"
+
+def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
+    """Green only while the `coverage.txt` of `coverage` (a mojo_package's `:coverage`) is exactly the figures of the file `floor` (`lines NN.NN`):
+    lower fails with "coverage fell", higher fails with "raise the floor to NN.NN" (rules/coverage/tools/cov_floor.zig). `mojo_package` makes
+    `:coverage_floor` itself when `coverage_floor.txt` is beside the BUCK file; this is for a check of the same coverage against another file."""
+    zig_coverage_floor_rule(
+        name = name,
+        coverage = coverage,
+        floor = floor,
+        exec_compatible_with = LINUX_X86_64,
+        visibility = visibility,
+    )
+
 def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]):
     if table == None:
         fail("mojo_package needs its table: load mojo_package from the buildrules.mojo.bzl next to mopm.toml (`buildrules mojo sync` writes it)")
@@ -206,7 +224,7 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
     outermost = {m: "//" + _join(here, project, m) + ":workspace" for m in sorted(member_dirs.keys()) if not [o for o in member_dirs.keys() if m.startswith(o + "/")]}
     mojo_workspace_rule(
         name = name_once("workspace"),
-        files = glob(["**/*"], exclude = ["BUCK", "buildrules.mojo.bzl", "buildrules.mojo.lock.bzl"]),
+        files = glob(["**/*"], exclude = ["BUCK", "buildrules.mojo.bzl", "buildrules.mojo.lock.bzl", COVERAGE_FLOOR_FILE]),
         members = outermost,
         project = project,
         visibility = ["PUBLIC"],
@@ -393,6 +411,11 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
         srcs = {_join(here_repo, own_lib["root"], s["path"][len(own_lib["root"]) + 1:]): _join(project, s["path"]) for s in own_lib["srcs"]} if own_lib and covs else {},
         visibility = visibility,
     )
+    # The floor, if the package has one: `coverage_floor.txt` beside the BUCK file (the file every other package's floor is, rules/coverage/README.md).
+    # No file, no target: a package without one is as it was.
+    floor = _join(project, COVERAGE_FLOOR_FILE)
+    if glob([floor]):
+        mojo_coverage_floor(name = name_once("coverage_floor"), coverage = ":coverage", floor = floor, visibility = visibility)
     mojo_group(name = name_once("build"), deps = builds, check = ":check", visibility = visibility)
     mojo_group(name = name_once("test"), deps = tests, check = ":check", visibility = visibility)
     mojo_group(name = name_once("ci"), deps = [":build", ":test"], check = ":check", visibility = visibility)

@@ -337,7 +337,13 @@ def _cov_summary_impl(ctx):
     for r in ctx.attrs.reports:
         cmd.add(_file(r))
     ctx.actions.run(cmd, category = "mojo_cov_summary", identifier = ctx.label.name)
-    return _validated(ctx, [DefaultInfo(default_output = out)])
+
+    # `:coverage[reports]`: the per-line records the summary was made from, one kcov Cobertura file per test (docs/contract.md, section 12.4).
+    # They are the very files the summary action read, so a consumer that takes them gets what `coverage.txt` counted.
+    return _validated(ctx, [DefaultInfo(
+        default_output = out,
+        sub_targets = {"reports": [DefaultInfo(default_outputs = [_file(r) for r in ctx.attrs.reports])]},
+    )])
 
 # The package's line coverage from its tests' reports; fails when one of its own sources is in none.
 mojo_cov_summary_rule = rule(
