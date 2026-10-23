@@ -32,9 +32,11 @@ c_exe(
 _SRCS = glob(["prefix/src/*.zig"])
 
 # The unit tests of prefix_tool: `zig test` of main.zig, whose test block imports prefix_test.zig and
-# cli_test.zig, run as a build action.
+# cli_test.zig, run as a build action. cli_test.zig runs the commands in-process over archives it writes, with the
+# real elfsyms (ELFSYMS), so the command code is measured by the coverage run, which counts only the test's own process.
 zig_test(
     name = "prefix_tool_unit",
+    env_tools = {"ELFSYMS": ":elfsyms"},
     exec_compatible_with = LINUX_X86_64,
     imports = _SRCS,
     src = "prefix/src/main.zig",

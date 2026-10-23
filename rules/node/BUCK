@@ -44,12 +44,28 @@ _SUPPORT = ["tartest.zig"]
         "check",
         "layout",
         "platform",
-        "runner",
         "shell",
         "sri",
         "unpack",
     ]
 ]
+
+# runner.zig is tested with a stand-in for node: node_stub, which the test runs by its absolute path (NODE_STUB).
+zig_test(
+    name = "runner_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "runner_test.zig",
+    imports = _SRCS + _SUPPORT,
+    exec_tools = {"NODE_STUB": ":node_stub"},
+    zig = _ZIG,
+)
+
+zig_exe(
+    name = "node_stub",
+    exec_compatible_with = LINUX_X86_64,
+    src = "node_stub.zig",
+    zig = _ZIG,
+)
 
 zig_exe(
     name = "node_tools",

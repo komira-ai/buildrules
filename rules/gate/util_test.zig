@@ -137,3 +137,198 @@ test "the real process table shows this process" {
     try std.testing.expectEqual(@as(i64, sys.getpid()), seen[0]);
     try std.testing.expectEqual(@as(i64, sys.getpid()), seen[1]);
 }
+
+/// An allocator that refuses exactly one allocation, the `fail_at`-th (from 0), and serves every other (std's FailingAllocator keeps refusing after its first).
+const OneFailure = struct {
+    backing: std.mem.Allocator,
+    fail_at: usize,
+    n: usize = 0,
+
+    fn allocator(self: *OneFailure) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &.{ .alloc = alloc, .resize = resize, .remap = remap, .free = free } };
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self: *OneFailure = @ptrCast(@alignCast(ctx));
+        defer self.n += 1;
+        if (self.n == self.fail_at) return null;
+        return self.backing.rawAlloc(len, alignment, ra);
+    }
+
+    fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) bool {
+        const self: *OneFailure = @ptrCast(@alignCast(ctx));
+        return self.backing.rawResize(memory, alignment, new_len, ra);
+    }
+
+    fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
+        const self: *OneFailure = @ptrCast(@alignCast(ctx));
+        return self.backing.rawRemap(memory, alignment, new_len, ra);
+    }
+
+    fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ra: usize) void {
+        const self: *OneFailure = @ptrCast(@alignCast(ctx));
+        self.backing.rawFree(memory, alignment, ra);
+    }
+};
+
+test "the members of a process group: a live member is listed with its name, a zombie is not, an empty group is empty, and a list that cannot be built is null" {
+    if (!sys.is_linux) return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const pid = try posix.fork();
+    if (pid == 0) {
+        sys.setsid();
+        sys.sleepMs(30_000);
+        posix.exit(0);
+    }
+    // The child leads a group of its own once it has called setsid.
+    var members = proctab.groupMembers(a, pid).?;
+    var k: u32 = 0;
+    while (k < 500 and members.len == 0) : (k += 1) {
+        sys.sleepMs(10);
+        members = proctab.groupMembers(a, pid).?;
+    }
+    try std.testing.expectEqual(@as(usize, 1), members.len);
+    try std.testing.expectEqual(pid, members[0].pid);
+    try std.testing.expect(members[0].state != 'Z' and members[0].state != 'X');
+    try std.testing.expect(members[0].comm.len > 0);
+
+    // The same group, with an allocator that fails once: at the name, then at the list. Either way the answer is "cannot list", not a member without its name.
+    for ([_]usize{ 0, 1 }) |fail_at| {
+        var once = OneFailure{ .backing = a, .fail_at = fail_at };
+        try std.testing.expectEqual(@as(?[]proctab.Member, null), proctab.groupMembers(once.allocator(), pid));
+        try std.testing.expect(once.n > fail_at);
+    }
+
+    // Dead but not reaped is a zombie, which is not a member.
+    sys.kill(pid, posix.SIG.KILL);
+    k = 0;
+    while (k < 500 and members.len != 0) : (k += 1) {
+        sys.sleepMs(10);
+        members = proctab.groupMembers(a, pid).?;
+    }
+    try std.testing.expectEqual(@as(usize, 0), members.len);
+    try std.testing.expectEqual(@as(?u8, 137), sys.waitpid(pid, false));
+    // No process leads a group with this id.
+    try std.testing.expectEqual(@as(usize, 0), proctab.groupMembers(a, 0x3fffffff).?.len);
+}
+
+test "waiting for a process that is not a child of this one reports nothing, with or without reaping" {
+    try std.testing.expectEqual(@as(?u8, null), sys.waitpid(sys.getpid(), false));
+    try std.testing.expectEqual(@as(?u8, null), sys.waitpid(sys.getpid(), true));
+    if (sys.is_linux) try std.testing.expectEqual(@as(?u8, null), sys.exitedNoReap(sys.getpid()));
+}
+
+test "a directory that cannot be made is an error, not a retry: a missing parent is FileNotFound for one directory and for a list" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const dir = try kit.tempDir(a);
+    const missing = try std.fmt.allocPrint(a, "{s}/not/there", .{dir});
+    try std.testing.expectError(error.FileNotFound, util.makeTempDir(a, missing, ".t."));
+    try std.testing.expectError(error.FileNotFound, util.mkdirs(a, missing, &.{ "bin", "tmp" }));
+    // A directory that exists is left alone, a new one is made, and two temporary directories are two directories.
+    try util.mkdirs(a, dir, &.{ "one", "one", "two" });
+    try std.testing.expect(kit.exists(try std.fmt.allocPrint(a, "{s}/two", .{dir})));
+    const t1 = try util.makeTempDir(a, dir, ".t.");
+    const t2 = try util.makeTempDir(a, dir, ".t.");
+    try std.testing.expect(!std.mem.eql(u8, t1, t2));
+    try std.testing.expect(kit.exists(t1) and kit.exists(t2));
+}
+
+/// Runs `actionDir` with $PWD set to `pwd` (or unset), then restores the environment.
+fn actionDirWith(a: std.mem.Allocator, pwd: ?[]const u8) ![]const u8 {
+    const saved = std.os.environ;
+    defer std.os.environ = saved;
+    const z = try a.alloc([*:0]u8, if (pwd == null) 0 else 1);
+    if (pwd) |p| z[0] = (try std.fmt.allocPrintSentinel(a, "PWD={s}", .{p}, 0)).ptr;
+    std.os.environ = z;
+    return util.actionDir(a);
+}
+
+test "the action's directory is $PWD where that names the working directory, else what the kernel says" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const real = try a.dupe(u8, try posix.getcwd(&buf));
+    const dir = try kit.tempDir(a);
+    // A second name for the working directory: the shell would have kept it.
+    const link = try std.fmt.allocPrint(a, "{s}/alias", .{dir});
+    try posix.symlink(real, link);
+    try std.testing.expectEqualStrings(link, try actionDirWith(a, link));
+    // $PWD that is another directory, a relative path, empty, or nothing there is not believed.
+    try std.testing.expectEqualStrings(real, try actionDirWith(a, dir));
+    // Another directory on the very device of the working directory (its parent, by a link): same device, other inode.
+    if (real.len > 1) {
+        const up = try std.fmt.allocPrint(a, "{s}/up", .{dir});
+        try posix.symlink(std.fs.path.dirname(real) orelse "/", up);
+        try std.testing.expectEqualStrings(real, try actionDirWith(a, up));
+    }
+    try std.testing.expectEqualStrings(real, try actionDirWith(a, "relative/path"));
+    try std.testing.expectEqualStrings(real, try actionDirWith(a, ""));
+    try std.testing.expectEqualStrings(real, try actionDirWith(a, "/nonexistent/pwd"));
+    try std.testing.expectEqualStrings(real, try actionDirWith(a, null));
+}
+
+fn Payload(comptime f: anytype) type {
+    return @typeInfo(@typeInfo(@TypeOf(f)).@"fn".return_type.?).error_union.payload;
+}
+
+/// Calls `f(alloc, extra...)` with an allocator that fails at its first allocation, then its second, and so on: every failure must come back as
+/// OutOfMemory (nothing else, no crash), and the first call that gets all its memory is returned with the number of calls that did not.
+fn afterFailures(comptime f: anytype, backing: std.mem.Allocator, extra: anytype) !struct { failures: usize, value: Payload(f) } {
+    var index: usize = 0;
+    while (index < 200) : (index += 1) {
+        var failing = std.testing.FailingAllocator.init(backing, .{ .fail_index = index });
+        if (@call(.auto, f, .{failing.allocator()} ++ extra)) |value| {
+            return .{ .failures = index, .value = value };
+        } else |e| try std.testing.expectEqual(error.OutOfMemory, e);
+    }
+    return error.TestUnexpectedResult;
+}
+
+test "an allocation that fails is an OutOfMemory for the caller, at each of the allocations of a helper, and the helper's answer is the same once it succeeds" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const dir = try kit.tempDir(a);
+    const file = try std.fmt.allocPrint(a, "{s}/f", .{dir});
+    try kit.writeFile(file, "contents");
+
+    const abs = try afterFailures(util.abs, a, .{ "/base", "rel" });
+    try std.testing.expectEqualStrings("/base/rel", abs.value);
+    try std.testing.expect(abs.failures >= 1);
+    const abs2 = try afterFailures(util.abs, a, .{ "/base", "/already" });
+    try std.testing.expectEqualStrings("/already", abs2.value);
+
+    const rep = try afterFailures(util.replaceAll, a, .{ "a@T@b@T@c", "@T@", "--" });
+    try std.testing.expectEqualStrings("a--b--c", rep.value);
+    try std.testing.expect(rep.failures >= 1);
+
+    const z = try afterFailures(util.zList, a, .{&[_][]const u8{ "one", "two" }});
+    try std.testing.expectEqual(@as(usize, 2), z.value.len);
+    try std.testing.expectEqualStrings("two", std.mem.span(z.value[1].?));
+    try std.testing.expect(z.failures >= 2);
+
+    const read = try afterFailures(util.readFileAlloc, a, .{file});
+    try std.testing.expectEqualStrings("contents", read.value);
+    try std.testing.expect(read.failures >= 1);
+
+    const made = try afterFailures(util.makeTempDir, a, .{ dir, ".t." });
+    try std.testing.expect(kit.exists(made.value));
+    try std.testing.expect(made.failures >= 2);
+
+    const listed = try afterFailures(struct {
+        fn f(alloc: std.mem.Allocator, base: []const u8) !void {
+            try util.mkdirs(alloc, base, &.{ "m1", "m2" });
+        }
+    }.f, a, .{dir});
+    _ = listed;
+    try std.testing.expect(kit.exists(try std.fmt.allocPrint(a, "{s}/m2", .{dir})));
+
+    const here = try afterFailures(util.actionDir, a, .{});
+    try std.testing.expect(here.value.len > 0 and here.value[0] == '/');
+    try std.testing.expect(here.failures >= 1);
+}

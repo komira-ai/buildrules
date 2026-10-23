@@ -1,4 +1,4 @@
-//! cov_floor: holds a package's measured coverage to its floor file, both ways.
+//! cov_floor: holds a package's measured coverage to its floor file: it may not fall below it.
 //!
 //!   cov_floor (--coverage <coverage.txt> | --jest-summary <coverage-summary.json>) --floor <coverage_floor.txt> --label <package> --out <file>
 //!
@@ -10,16 +10,16 @@
 //!
 //!   lines 87.31
 //!   branches 61.20
-//!   lines 95.51 slack 1.00     (a figure that depends on timing: anywhere from the floor to the floor plus the slack is the floor)
+//!   lines 95.51 slack 1.00     (the hint to raise the floor is given only above the floor plus the slack)
 //!
-//! (`#` starts a comment.) The check is a ratchet. A measured percentage below its floor fails: coverage fell. A measured percentage above it
-//! fails too, naming the number to write: a floor that lags behind the tests would let the coverage fall back to it unseen later. The
-//! percentage is hit/total rounded down to a hundredth, so the number is the same on every run of the same tests. A figure the tests do not
-//! reproduce (the gate's tests race a clock and a signal, and the lines they reach differ by a few between machines) says so with `slack`: it
-//! holds anywhere from the floor to the floor plus the slack, and falling below the floor still fails. A figure the file has and
-//! the coverage lacks (or the other way round) fails: a package does not lose its branch figure by dropping the instrumentation.
+//! (`#` starts a comment.) The floor is a minimum. A measured percentage below its floor fails: coverage fell. A measured percentage at or
+//! above it passes; above it, the check also says that the floor may be raised, and to what (raising it is optional). The percentage is
+//! hit/total rounded down to a hundredth, so the number is the same on every run of the same tests. `slack` is accepted in the file and
+//! only moves the point above which the hint is given (floor plus slack). A figure the file has and the coverage lacks (or the other way
+//! round) fails: a package does not lose its branch figure by dropping the instrumentation.
 //!
-//! On success `--out` holds one line per figure: the percentage, the counts and how many more hits the 99% target needs.
+//! On success `--out` holds one line per figure: the percentage, the counts and how many more hits the 99% target needs, then a line
+//! for each figure above its floor saying it may be raised (the same line goes to stderr).
 //!
 //! Exit status: 0 held; 1 not held, or an unreadable file; 2 for a usage error.
 
@@ -149,23 +149,35 @@ fn fmtHundredths(a: std.mem.Allocator, v: u64) ![]u8 {
     return std.fmt.allocPrint(a, "{d}.{d:0>2}", .{ v / 100, v % 100 });
 }
 
-/// What is wrong with one figure, or null when it is its floor.
-fn judge(a: std.mem.Allocator, label: []const u8, what: []const u8, m: Measure, floor: u64, slack: u64) !?[]u8 {
+/// What is wrong with one figure, or null when it is at or above its floor.
+fn judge(a: std.mem.Allocator, label: []const u8, what: []const u8, m: Measure, floor: u64) !?[]u8 {
     const now = try bp(m);
-    if (now >= floor and now <= floor + slack) return null;
-    if (now < floor) {
-        return try std.fmt.allocPrint(a, "{s}: {s} coverage is {s}% ({d}/{d}), below its floor {s}%: coverage fell", .{ label, what, try fmtHundredths(a, now), m.hit, m.total, try fmtHundredths(a, floor) });
-    }
-    return try std.fmt.allocPrint(a, "{s}: {s} coverage is {s}% ({d}/{d}), above its floor {s}%{s}: raise the floor to {s} (floors only rise, and a floor behind the tests lets the coverage fall back to it unseen)", .{ label, what, try fmtHundredths(a, now), m.hit, m.total, try fmtHundredths(a, floor), if (slack == 0) "" else " and its slack", try fmtHundredths(a, now) });
+    if (now >= floor) return null;
+    return try std.fmt.allocPrint(a, "{s}: {s} coverage is {d}.{d:0>2}% ({d}/{d}), below its floor {d}.{d:0>2}%: coverage fell", .{ label, what, now / 100, now % 100, m.hit, m.total, floor / 100, floor % 100 });
 }
 
-/// Every way `cov` is not `floor`; empty when it is held.
+/// Adds the line for one figure above its floor (and its slack), if it is.
+fn addHint(a: std.mem.Allocator, o: *std.ArrayList(u8), label: []const u8, what: []const u8, m: Measure, floor: u64, slack: u64) !void {
+    const now = try bp(m);
+    if (now <= floor + slack) return;
+    try o.print(a, "{s}: {s} coverage is {d}.{d:0>2}% ({d}/{d}), above its floor {d}.{d:0>2}%: you may raise the floor to {d}.{d:0>2}\n", .{ label, what, now / 100, now % 100, m.hit, m.total, floor / 100, floor % 100, now / 100, now % 100 });
+}
+
+/// The informational lines (one per figure above its floor) for coverage that `check` passed; empty when there are none.
+pub fn hints(a: std.mem.Allocator, label: []const u8, cov: Coverage, floor: Floor) ![]u8 {
+    var o = std.ArrayList(u8).empty;
+    try addHint(a, &o, label, "line", cov.lines, floor.lines, floor.lines_slack);
+    if (cov.branches) |b| if (floor.branches) |f| try addHint(a, &o, label, "branch", b, f, floor.branches_slack);
+    return o.toOwnedSlice(a);
+}
+
+/// Every way `cov` is below `floor` or does not match its shape; empty when it is held.
 pub fn check(a: std.mem.Allocator, label: []const u8, cov: Coverage, floor: Floor) ![]const []const u8 {
     var bad = std.ArrayList([]const u8).empty;
-    if (try judge(a, label, "line", cov.lines, floor.lines, floor.lines_slack)) |m| try bad.append(a, m);
+    if (try judge(a, label, "line", cov.lines, floor.lines)) |m| try bad.append(a, m);
     if (cov.branches) |b| {
         if (floor.branches) |f| {
-            if (try judge(a, label, "branch", b, f, floor.branches_slack)) |m| try bad.append(a, m);
+            if (try judge(a, label, "branch", b, f)) |m| try bad.append(a, m);
         } else try bad.append(a, try std.fmt.allocPrint(a, "{s}: the tests record branches ({d}/{d}) and the floor file has no `branches` figure: add `branches {s}`", .{ label, b.hit, b.total, try fmtHundredths(a, try bp(b)) }));
     } else if (floor.branches != null) {
         try bad.append(a, try std.fmt.allocPrint(a, "{s}: the floor file has a `branches` figure and the tests record no branches: the instrumentation was dropped", .{label}));
@@ -226,6 +238,9 @@ pub fn main() !void {
         for (bad) |m| std.debug.print("cov_floor: {s}\n", .{m});
         std.process.exit(1);
     }
-    const text = try report(a, label.?, cov);
+    var text = try report(a, label.?, cov);
+    const hint_text = try hints(a, label.?, cov, fl);
+    std.debug.print("{s}", .{hint_text});
+    text = try std.mem.concat(a, u8, &.{ text, hint_text });
     std.fs.cwd().writeFile(.{ .sub_path = out.?, .data = text }) catch |e| die(1, "cannot write {s}: {s}", .{ out.?, @errorName(e) });
 }

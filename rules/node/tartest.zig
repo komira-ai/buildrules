@@ -82,3 +82,65 @@ pub fn tgz(a: std.mem.Allocator, name: []const u8, version: []const u8, more: []
     try all.appendSlice(a, more);
     return gzip(a, try tar(a, all.items));
 }
+
+/// The one writer the tests give the `w: anytype` parameters (so each of those functions is built once): it keeps what is
+/// printed, in `text`, and its `print` number `fail_at` (counting from 0) fails, as a full disk does.
+pub const Sink = struct {
+    a: std.mem.Allocator,
+    text: std.ArrayList(u8) = .empty,
+    fail_at: usize = std.math.maxInt(usize),
+    calls: usize = 0,
+    failed: bool = false,
+
+    pub fn print(self: *Sink, comptime fmt: []const u8, args: anytype) !void {
+        defer self.calls += 1;
+        if (self.calls == self.fail_at) {
+            self.failed = true;
+            return error.NoSpaceLeft;
+        }
+        try self.text.writer(self.a).print(fmt, args);
+    }
+};
+
+/// Calls `run(a, args)` once for each allocation it makes, that allocation (and every later one) failing. A call that had an
+/// allocation fail must return an error: an allocation that failed is never a result. The calls end when one makes fewer
+/// allocations than the failing index. The memory of a call is an arena's, freed after it; a leak outside it fails the test.
+pub fn allocSweep(comptime run: anytype, args: anytype) !void {
+    var n: usize = 0;
+    while (n < 200000) : (n += 1) {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var fa = std.testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = n });
+        var failed_closed = false;
+        run(fa.allocator(), args) catch {
+            failed_closed = true;
+        };
+        if (!fa.has_induced_failure) return;
+        if (!failed_closed) {
+            std.debug.print("allocation {d} failed and the call returned a result\n", .{n});
+            return error.OutOfMemorySwallowed;
+        }
+    }
+    return error.TooManyAllocations;
+}
+
+/// Calls `run(&writer, args)` once for each `print` it makes, that print failing. A call that had a write fail must return an
+/// error: a report that could not be written is never a success.
+pub fn writerSweep(comptime run: anytype, args: anytype) !void {
+    var n: usize = 0;
+    while (n < 10000) : (n += 1) {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        var w = Sink{ .a = arena.allocator(), .fail_at = n };
+        var failed_closed = false;
+        run(&w, args) catch {
+            failed_closed = true;
+        };
+        if (!w.failed) return;
+        if (!failed_closed) {
+            std.debug.print("write {d} failed and the call returned a result\n", .{n});
+            return error.WriteFailureSwallowed;
+        }
+    }
+    return error.TooManyWrites;
+}

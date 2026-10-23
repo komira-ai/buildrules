@@ -1,0 +1,62 @@
+# A daily lintian run over the .deb of the command line. It reports and never gates: it runs on a schedule and by hand only (never on a pull request or a push, and
+# release.yml does not call it), so a red run here is a finding about the package (or a moved lintian), not a red pull request or a red release. Lintian is the runner's
+# own, installed from its distribution without a version: it is a Perl program with dozens of distribution packages under it, which this workflow does not fetch by digest,
+# and that is why it is here and not in ci.yml (whose check refuses an install without an exact version). The package is built as ci.yml builds it, from the unstamped
+# linux-x86_64 binary with the pinned buck2. ci/lintian_check.zig (`//ci:workflow`) holds this file to all of it.
+name: lintian
+
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lintian
+  cancel-in-progress: false
+
+jobs:
+  lintian:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/lintian_check.zig compares both.
+      - name: Install buck2
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
+          echo "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst" | sha256sum --check --strict -
+          zstd --decompress --quiet buck2.zst -o buck2
+          chmod +x buck2
+          ./buck2 --version
+
+      - name: Build the channels program
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out ci-channels //tools/channels:channels
+
+      - name: Build the linux-x86_64 command line
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out ci-buildrules //cli:buildrules_linux_x86_64
+
+      - run: chmod +x ci-channels
+
+      - name: Package it as a .deb
+        run: ./ci-channels deb-package --binary ci-buildrules --name buildrules --version 0.0.0 --arch amd64 --packaging packaging/deb --out ci-debs/buildrules_0.0.0_amd64.deb
+
+      - name: Refresh the package lists
+        run: sudo apt-get update -qq
+
+      - name: Install lintian
+        run: sudo apt-get install -y -qq lintian
+
+      - name: lintian finds no error, every tag printed
+        run: lintian --fail-on error --tag-display-limit 0 ci-debs/buildrules_0.0.0_amd64.deb
+
+      - name: Stop buck2
+        if: always()
+        run: ./buck2 kill
