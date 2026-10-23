@@ -690,8 +690,8 @@ describe('the stages of the release: the page, RELEASING.md, beta.yml and releas
     expect(repoFile('tools/stage/gamma.zig')).toContain('the farm is not configured, so our own repositories were not built with this candidate. A release is not made without it.');
     const gammaJob = release.slice(release.indexOf('\n  gamma:\n'), release.indexOf('\n  archive:\n'));
     expect(gammaJob).toContain('tool/stage gamma ');
-    // it runs for every commit the plan released and for no narrower condition (a farm variable in it would let an unconfigured farm pass)
-    expect(gammaJob).toMatch(/\n {4}if: \$\{\{ needs\.plan\.outputs\.released == 'true' \}\}\n/);
+    // it runs for every commit the plan released whose release is not already complete, and for no narrower condition (a farm variable in it would let an unconfigured farm pass)
+    expect(gammaJob).toMatch(/\n {4}if: \$\{\{ needs\.plan\.outputs\.released == 'true' && needs\.plan\.outputs\.complete != 'true' \}\}\n/);
     expect(gammaJob.match(/\n {4}if:/g)!.length).toBe(1);
   });
 

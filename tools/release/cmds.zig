@@ -16,6 +16,7 @@ const tar = @import("tar.zig");
 const assets = @import("assets.zig");
 const binhdr = @import("binhdr");
 const debfile = @import("debs.zig");
+const page = @import("page.zig");
 const scrub = @import("scrub_lib");
 
 pub const Out = struct { code: u8, stdout: []const u8, stderr: []const u8 };
@@ -95,10 +96,16 @@ pub const PlanOpts = struct {
     freeze: []const u8 = "",
     /// The dry run (the release workflow no longer asks for it: no pull request runs the pipeline): the version the commit would be released as, whatever the commit changed, with nothing created.
     dry: bool = false,
+    /// `OWNER/NAME`. When given, and the commit already has its release tag, the plan asks GitHub whether that release is complete (`releaseComplete`).
+    /// Empty: it does not ask, and `complete` is false.
+    repo: []const u8 = "",
 };
 
 pub const Plan = struct {
     released: bool,
+    /// The commit's release already holds every file of a release, with the digests this commit's build must reproduce, so the build and the jobs that only
+    /// produce the same files again are skipped. False for a new release, for one that lacks a file or holds another digest, and whenever it could not be told.
+    complete: bool = false,
     /// The commit has no tag yet, so the tag job creates it (false when the commit already has one: a re-run).
     new: bool = false,
     tag: []const u8 = "",
@@ -109,9 +116,10 @@ pub const Plan = struct {
 
 /// The `key=value` lines the job appends to $GITHUB_OUTPUT.
 pub fn planOutputs(a: std.mem.Allocator, r: Plan) ![]u8 {
-    return std.fmt.allocPrint(a, "released={s}\nnew={s}\ntag={s}\nnumber={s}\nprevious={s}\nreason={s}\n", .{
+    return std.fmt.allocPrint(a, "released={s}\nnew={s}\ncomplete={s}\ntag={s}\nnumber={s}\nprevious={s}\nreason={s}\n", .{
         if (r.released) "true" else "false",
         if (r.new) "true" else "false",
+        if (r.complete) "true" else "false",
         r.tag,
         r.number,
         r.previous,
@@ -166,12 +174,22 @@ pub fn plan(a: std.mem.Allocator, io: Io, o: PlanOpts) !Plan {
         if (std.mem.eql(u8, tg.commit, o.sha) and (have == null or version.Version.order(tg.v, have.?) == .gt)) have = tg.v;
     }
     if (have) |h| {
+        const tag = tagOf(tags, h);
+        var complete = false;
+        if (o.repo.len != 0) {
+            complete = releaseComplete(a, io, .{ .root = o.root, .repo = o.repo, .tag = tag, .sha = o.sha }) catch |e| blk: {
+                // Not being able to tell is not a reason to skip the build: it only costs time.
+                std.debug.print("release: could not tell whether {s} is complete ({s}); the build runs\n", .{ tag, @errorName(e) });
+                break :blk false;
+            };
+        }
         return .{
             .released = true,
-            .tag = tagOf(tags, h),
+            .complete = complete,
+            .tag = tag,
             .number = try version.numberText(a, h),
             .previous = if (version.previousOf(all.items, h)) |p| tagOf(tags, p) else "",
-            .reason = "this commit already has its release tag",
+            .reason = if (complete) "this commit's release is complete: it holds every file, with the digests of its SHA256SUMS" else "this commit already has its release tag",
         };
     }
 
@@ -201,6 +219,57 @@ pub fn plan(a: std.mem.Allocator, io: Io, o: PlanOpts) !Plan {
     }
 
     return .{ .released = true, .new = true, .tag = try version.tagName(a, next), .number = try version.numberText(a, next), .previous = previous, .reason = "a release commit" };
+}
+
+pub const CompleteOpts = struct {
+    root: []const u8,
+    repo: []const u8,
+    /// The tag the commit already has.
+    tag: []const u8,
+    sha: []const u8,
+};
+
+/// True when the GitHub release of `o.tag` holds all fourteen files of a release (the archive, the three tarballs, the two .debs, SHA256SUMS and a bundle for each
+/// of those seven) with the digests this commit's build must produce, so a run for the commit has nothing left to build or publish. The expected digests are:
+/// the archive's, rebuilt here from the commit (`archive` is deterministic); SHA256SUMS's, the sha256 of the SHA256SUMS the release holds; the tarballs' and the
+/// .debs', the lines of that SHA256SUMS (the build is deterministic, which publish relies on when it refuses a different file). The comparison is
+/// `assets.publishPlan`, the one publish uses, and only `.nothing` counts: a release with one file missing, one digest different or one digest unreported is
+/// not complete, so the build runs and publish adds the file or refuses the difference. A bundle only has to be there (every signing makes a new one).
+pub fn releaseComplete(a: std.mem.Allocator, io: Io, o: CompleteOpts) !bool {
+    const v = version.parseTag(o.tag) orelse return error.BadTag;
+    const number = try version.numberText(a, v);
+    const built = try archive(a, io, o.root, o.tag, o.sha);
+    const archive_hex = assets.sha256Hex(built.archive);
+
+    const existing = try io.run(a, &.{ "gh", "api", try std.fmt.allocPrint(a, "repos/{s}/releases/tags/{s}", .{ o.repo, o.tag }) });
+    if (existing.code != 0) return false;
+    const held = try assets.parseAssets(a, existing.stdout);
+
+    const downloaded = try io.run(a, &.{ "gh", "release", "download", o.tag, "--repo", o.repo, "--pattern", sums_name, "--output", "-" });
+    if (downloaded.code != 0 or downloaded.stdout.len == 0) return false;
+    const sums = downloaded.stdout;
+
+    // The seven files that SHA256SUMS or the digest of its own bytes vouches for, then the bundle of each.
+    const n_cli = binhdr.targets.len;
+    var names: [n_cli + debfile.debs.len + 2][]const u8 = undefined;
+    var ours: [2 * names.len]assets.File = undefined;
+    names[0] = built.name;
+    for (binhdr.targets, 0..) |tg, i| names[1 + i] = try cliName(a, number, tg);
+    for (debfile.debs, 0..) |d, i| names[1 + n_cli + i] = try debfile.name(a, number, d.arch);
+    names[names.len - 1] = sums_name;
+    const sums_hex = assets.sha256Hex(sums);
+    for (names[0 .. names.len - 1], 0..) |n, i| {
+        const listed = page.digestOf(sums, n) catch return false;
+        // The archive is checked against the commit, not only against the release's own list of it.
+        if (i == 0 and !std.mem.eql(u8, listed, &archive_hex)) return false;
+        ours[i] = .{ .name = n, .sha256 = listed };
+    }
+    ours[names.len - 1] = .{ .name = sums_name, .sha256 = &sums_hex };
+    for (names, names.len..) |n, i| {
+        const bundle = try std.fmt.allocPrint(a, "{s}" ++ bundle_suffix, .{n});
+        ours[i] = .{ .name = bundle, .sha256 = assets.heldDigest(held, bundle) orelse "" };
+    }
+    return assets.releaseHolds(a, held, &ours);
 }
 
 // ---- tag ----------------------------------------------------------------------------------------------------------------------------------
@@ -888,7 +957,7 @@ test "the first release: no tag yet, so the plan is v0.0.1 and it writes nothing
     try t.expectEqual(@as(usize, 0), fake.count("gh "));
     try t.expectEqual(@as(usize, 1), fake.calls.items.len);
     const out = try planOutputs(a, r);
-    try t.expectEqualStrings("released=true\nnew=true\ntag=v0.0.1\nnumber=0.0.1\nprevious=\nreason=a release commit\n", out);
+    try t.expectEqualStrings("released=true\nnew=true\ncomplete=false\ntag=v0.0.1\nnumber=0.0.1\nprevious=\nreason=a release commit\n", out);
 }
 
 test "the tag step: an annotated tag at the verified commit, through two API calls" {
@@ -1177,6 +1246,105 @@ test "a lightweight tag counts as a release of its commit" {
     try t.expectEqualStrings("v0.0.7", r.tag);
 }
 
+/// The plan of the commit that has the tag v0.0.2, asked whether its release is complete: GitHub answers `release` for the release and `sums` for the SHA256SUMS download.
+fn planWithRelease(a: std.mem.Allocator, release: Out, sums: Out) !struct { fake: *Fake, plan: Plan } {
+    const rules = try a.dupe(Fake.Rule, &.{
+        .{ .needle = "for-each-ref", .out = ok("v0.0.2\ttag\t" ++ "2" ** 40 ++ "\t" ++ sha_a ++ "\n") },
+        .{ .needle = " archive ", .out = ok(try tar.build(a, &sample_tar_entries)) },
+        .{ .needle = "releases/tags/v0.0.2", .out = release },
+        .{ .needle = "release download v0.0.2", .out = sums },
+    });
+    const fake = try a.create(Fake);
+    fake.* = .{ .a = a, .rules = rules };
+    return .{ .fake = fake, .plan = try plan(a, fake.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0\n", .repo = "o/n" }) };
+}
+
+/// Whether the plan calls the release complete, when it holds `listed` and serves `sums`. A setup that fails (out of memory, an unscripted command) stops the test.
+fn completeWith(a: std.mem.Allocator, listed: []const Listed, sums: []const u8) bool {
+    const json = releaseJson(a, listed) catch @panic("out of memory");
+    return (planWithRelease(a, ok(json), ok(sums)) catch @panic("the plan failed")).plan.complete;
+}
+
+/// `listed` with its `i`th entry left out, and with its `i`th digest replaced.
+fn without(a: std.mem.Allocator, listed: []const Listed, i: usize) []const Listed {
+    return std.mem.concat(a, Listed, &.{ listed[0..i], listed[i + 1 ..] }) catch @panic("out of memory");
+}
+
+fn withDigest(a: std.mem.Allocator, listed: []const Listed, i: usize, digest: ?[]const u8) []const Listed {
+    const copy = a.dupe(Listed, listed) catch @panic("out of memory");
+    copy[i].digest = digest;
+    return copy;
+}
+
+test "plan: a release that holds all fourteen files with the digests of its SHA256SUMS is complete, and nothing is changed" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const c = try publishCase(a);
+    const r = try planWithRelease(a, ok(try releaseJson(a, try allListed(a, c))), ok(c.r.sums));
+    const out = try planOutputs(a, r.plan);
+    // released, not new, complete; it only read the file list and the sums, and made no upload, release or file
+    try t.expect(r.plan.released and !r.plan.new and r.plan.complete and std.mem.startsWith(u8, out, "released=true\nnew=false\ncomplete=true\ntag=v0.0.2\n") and
+        r.fake.count("gh release download v0.0.2 --repo o/n --pattern SHA256SUMS --output -") == 1 and
+        r.fake.count("release create") + r.fake.count("release upload") + r.fake.files.items.len == 0);
+}
+
+test "plan: a release that lacks a file, holds another digest or reports none is not complete (a partial upload still builds)" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const c = try publishCase(a);
+    const all = try allListed(a, c);
+    var wrongly: usize = 0;
+    // any one of the fourteen files missing, and a run that died after the first four uploads
+    for (0..all.len) |i| wrongly += @intFromBool(completeWith(a, without(a, all, i), c.r.sums));
+    wrongly += @intFromBool(completeWith(a, all[0..4], c.r.sums));
+    wrongly += @intFromBool(completeWith(a, &.{}, c.r.sums));
+    // each of the seven files held with other bytes than the commit builds (the archive) or the release's SHA256SUMS lists (the others, SHA256SUMS itself against its own bytes)
+    for (all, 0..) |l, i| {
+        if (!std.mem.endsWith(u8, l.name, assets.bundle_suffix)) wrongly += @intFromBool(completeWith(a, withDigest(a, all, i, "0" ** 64), c.r.sums));
+    }
+    // a digest GitHub does not report is not taken to match; nor is a SHA256SUMS that lists another digest for the archive than the commit builds, or is cut short
+    const forged = std.fmt.allocPrint(a, "{s}  {s}\n", .{ "f" ** 64, c.r.b.name }) catch @panic("out of memory");
+    wrongly += @intFromBool(completeWith(a, withDigest(a, all, 1, null), c.r.sums));
+    wrongly += @intFromBool(completeWith(a, all, forged));
+    wrongly += @intFromBool(completeWith(a, all, c.r.sums[0 .. c.r.sums.len / 2]));
+    // a bundle held with other bytes is the same file signed again: the release stays complete
+    try t.expect(wrongly == 0 and completeWith(a, withDigest(a, all, 7, "1" ** 64), c.r.sums));
+}
+
+test "plan: no release, no answer from GitHub or a git that fails is not complete, and the plan still goes on" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const c = try publishCase(a);
+    const held = ok(try releaseJson(a, try allListed(a, c)));
+    const none = try planWithRelease(a, fail(1, "gh: Not Found (HTTP 404)"), ok(c.r.sums));
+    const down = try planWithRelease(a, fail(1, "HTTP 502"), ok(c.r.sums));
+    const no_sums = try planWithRelease(a, held, fail(1, "no assets match"));
+    const empty_sums = try planWithRelease(a, held, ok(""));
+    var broken = Fake{ .a = a, .rules = &.{
+        .{ .needle = "for-each-ref", .out = ok("v0.0.2\ttag\t" ++ "2" ** 40 ++ "\t" ++ sha_a ++ "\n") },
+        .{ .needle = " archive ", .out = fail(128, "fatal: bad object") },
+    } };
+    const unanswered = try plan(a, broken.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0\n", .repo = "o/n" });
+    // every one still releases the commit under its tag (the build runs); with no release GitHub is not asked for the sums
+    try t.expect(!(none.plan.complete or down.plan.complete or no_sums.plan.complete or empty_sums.plan.complete or unanswered.complete) and
+        (none.plan.released and down.plan.released and no_sums.plan.released and empty_sums.plan.released and unanswered.released) and
+        (!none.plan.new and !unanswered.new) and none.fake.count("release download") == 0 and broken.count("gh ") == 0);
+}
+
+test "plan: a new release is never complete and GitHub is not asked; nor without --repo" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var fake = Fake{ .a = a, .rules = &.{ .{ .needle = "for-each-ref", .out = ok(tags_v1) }, .{ .needle = "merge-base" }, .{ .needle = "diff --name-only", .out = ok("rules/zig/zig.bzl\x00") } } };
+    const r = try plan(a, fake.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0\n", .repo = "o/n" });
+    var tagged = Fake{ .a = a, .rules = &.{.{ .needle = "for-each-ref", .out = ok("v0.0.2\ttag\t" ++ "2" ** 40 ++ "\t" ++ sha_a ++ "\n") }} };
+    const again = try plan(a, tagged.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0\n" });
+    try t.expect(r.released and r.new and !r.complete and fake.count("gh ") == 0 and again.released and !again.new and !again.complete and tagged.calls.items.len == 1);
+}
+
 test "bumping VERSION starts a new line at patch 1; a VERSION behind the tags is an error" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -1214,7 +1382,7 @@ test "plan: RELEASE_FREEZE=true releases nothing, even a code change and even a 
     // nothing but the tag listing was run: no diff, no ancestry, no gh
     try t.expectEqual(@as(usize, 1), fake.calls.items.len);
     // the outputs a frozen plan writes say "not released", which every later job waits for
-    try t.expect(std.mem.startsWith(u8, try planOutputs(a, r), "released=false\nnew=false\ntag=\n"));
+    try t.expect(std.mem.startsWith(u8, try planOutputs(a, r), "released=false\nnew=false\ncomplete=false\ntag=\n"));
     // a commit that already has its tag is frozen too
     var tagged = Fake{ .a = a, .rules = &.{.{ .needle = "for-each-ref", .out = ok("v0.0.1\ttag\t" ++ "1" ** 40 ++ "\t" ++ sha_a ++ "\n") }} };
     const again = try plan(a, tagged.io(), .{ .root = "/w", .sha = sha_a, .version_file = "0.0\n", .freeze = "true" });
