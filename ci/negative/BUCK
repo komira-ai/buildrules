@@ -7,6 +7,7 @@ load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test")
 load("@buildrules//rules/cxx:defs.bzl", "checked_cxx_library")
 load("@buildrules//rules/node:defs.bzl", "npm_tarball")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage_rule")
+load("@buildrules//rules/mojo:unit.bzl", "mojo_cov_pgo_rule")
 
 # The control of the bxl check (ci/negative.bzl) on the fixture below: the same run of the same test, with the one line the fixture leaves out. It must analyse, on the platform the
 # fixture does not, or the fixture could be red for another reason.
@@ -107,6 +108,37 @@ zig_coverage_rule(
     test_targets = [],
     expect = [],
     blocks = False,
+    exec_compatible_with = LINUX_X86_64,
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+# The instrumented link of a test's branch coverage must carry every native library the test's ordinary link does, in the graph's order. These are the
+# instrumented link of `sys_app`'s test (a unit that links two static archives, the first needing the second) with one library left out, and with the
+# archives in the other order. Each must be refused in analysis, naming what is wrong (rules/mojo/unit.bzl, `cov_link_natives`), or the instrumented
+# test would fail to link, or link in another way than the test it measures.
+mojo_cov_pgo_rule(
+    name = "mojo_instrumented_link_without_a_native_the_unit_links",
+    bc = "//examples/mojo/sys_app:test_sys_app__bc",
+    branch = "toolchains//:mojo_1_0_0_cov_branch",
+    native_needs = {"libprobe_sys.a": ["libbase_sys.a"]},
+    native_sonames = ["libprobe_sys.a", "libbase_sys.a"],
+    natives = {"libprobe_sys.a": "//examples/mojo/sys_app:prebuilt_probe_sys[libprobe_sys.a]"},
+    toolchain = "toolchains//:mojo_1_0_0",
+    exec_compatible_with = LINUX_X86_64,
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+mojo_cov_pgo_rule(
+    name = "mojo_instrumented_link_with_a_needed_archive_before_its_user",
+    bc = "//examples/mojo/sys_app:test_sys_app__bc",
+    branch = "toolchains//:mojo_1_0_0_cov_branch",
+    native_needs = {"libprobe_sys.a": ["libbase_sys.a"]},
+    native_sonames = ["libbase_sys.a", "libprobe_sys.a"],
+    natives = {
+        "libbase_sys.a": "//examples/mojo/sys_app:prebuilt_base_sys[libbase_sys.a]",
+        "libprobe_sys.a": "//examples/mojo/sys_app:prebuilt_probe_sys[libprobe_sys.a]",
+    },
+    toolchain = "toolchains//:mojo_1_0_0",
     exec_compatible_with = LINUX_X86_64,
     target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
 )

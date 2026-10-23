@@ -41,10 +41,12 @@ const Box = struct {
         const al = b.arena.allocator();
         b.root = try b.tmp.dir.realpathAlloc(al, ".");
         const stub = try tool(al, "COV_BRANCH_LINK_STUB");
-        for ([_][]const u8{ "lld/bin/lld", "zig/zig" }) |s| {
+        for ([_][]const u8{ "lld/bin/lld", "zig/zig", "nm/bin/llvm-nm" }) |s| {
             try b.tmp.dir.makePath(std.fs.path.dirname(s).?);
             try b.tmp.dir.symLink(stub, s, .{});
         }
+        try b.put("nat/libprobe_sys.a", "!<arch>\nprobe");
+        try b.put("nat/libcnative.so.1", "\x7fELF\x02\x01\x01\x00shared");
         try b.put("rt/libclang_rt.profile-x86_64.a", "!<arch>\n");
         try b.put("tc/lib/libKGENCompilerRTShared.so", "\x7fELF");
         try b.put("test_one.bc", "BC\xc0\xde\x35\x14");
@@ -81,9 +83,14 @@ const Box = struct {
 
     /// `cov_branch link` with the box's inputs, relative to the box, as the rule gives them, then `extra`.
     fn linkArgs(self: *Box, extra: []const []const u8) ![]const []const u8 {
+        return self.linkArgsWith("nm/bin/llvm-nm", extra);
+    }
+
+    /// The same with the llvm-nm at `nm`.
+    fn linkArgsWith(self: *Box, nm: []const u8, extra: []const []const u8) ![]const []const u8 {
         const al = self.arena.allocator();
         var v = std.ArrayList([]const u8).empty;
-        try v.appendSlice(al, &.{ "link", "--compiler", "tc", "--zig", "zig", "--target", "x86_64-linux-gnu.2.28", "--lld", "lld/bin/lld", "--runtime", "rt/libclang_rt.profile-x86_64.a", "--bitcode", "test_one.bc", "--out", "out/test_one" });
+        try v.appendSlice(al, &.{ "link", "--compiler", "tc", "--zig", "zig", "--target", "x86_64-linux-gnu.2.28", "--lld", "lld/bin/lld", "--runtime", "rt/libclang_rt.profile-x86_64.a", "--bitcode", "test_one.bc", "--out", "out/test_one", "--nm", nm });
         try v.appendSlice(al, extra);
         return v.toOwnedSlice(al);
     }
@@ -303,7 +310,7 @@ test "stderr that cannot be written: the exit status is the link's all the same"
     const a = b.a();
     var argv = std.ArrayList([]const u8).empty;
     try argv.append(a, try tool(a, "COV_BRANCH"));
-    try argv.appendSlice(a, &.{ "link", "--compiler", b.p("tc"), "--zig", b.p("zig"), "--target", "t", "--lld", b.p("lld/bin/lld"), "--runtime", b.p("rt/libclang_rt.profile-x86_64.a"), "--bitcode", b.p("test_one.bc"), "--out", b.p("test_one") });
+    try argv.appendSlice(a, &.{ "link", "--compiler", b.p("tc"), "--zig", b.p("zig"), "--target", "t", "--lld", b.p("lld/bin/lld"), "--runtime", b.p("rt/libclang_rt.profile-x86_64.a"), "--bitcode", b.p("test_one.bc"), "--out", b.p("test_one"), "--nm", b.p("nm/bin/llvm-nm") });
     const env = [_][]const u8{try std.fmt.allocPrint(a, "BUCK_SCRATCH_PATH={s}", .{b.p("scr")})};
     const out = b.p("stdout");
     const red = try proc.run(a, .{ .argv = argv.items, .env = &env, .stdout_path = out, .stderr_path = "/dev/full" });
@@ -313,4 +320,110 @@ test "stderr that cannot be written: the exit status is the link's all the same"
     const green = try proc.run(a, .{ .argv = argv.items, .env = &env, .stdout_path = "/dev/full", .stderr_path = "/dev/full" });
     try testing.expectEqual(@as(u8, 0), green.shellStatus());
     try testing.expectEqualStrings("", b.read("stdout").?);
+}
+
+const NATIVES = [_][]const u8{ "--native", "nat/libprobe_sys.a", "--native", "nat/libcnative.so.1" };
+
+test "native libraries as a process: llvm-nm lists them with the scratch's environment, and zig links them after the object in the order given" {
+    // Defect caught: a native library the instrumented link is given and the link line leaves out (the test cannot link), or puts before the
+    // object or in another order.
+    var b = try Box.init();
+    defer b.deinit();
+    const r = try b.run(try b.linkArgs(&NATIVES), &ENV);
+    try expect("natives", r, 0, "");
+    try testing.expectEqualStrings("", r.stderr);
+    const k = b.p("scr/cov_branch_link");
+    try testing.expectEqualStrings(try std.fmt.allocPrint(b.a(),
+        \\cc
+        \\-target
+        \\x86_64-linux-gnu.2.28
+        \\-Wl,--strip-debug
+        \\-Wl,--enable-new-dtags
+        \\-Wl,-rpath,$ORIGIN/lib
+        \\{s}/pg.o
+        \\{s}
+        \\{s}
+        \\{s}
+        \\-o
+        \\{s}
+        \\-Wl,--gc-sections
+        \\-lm
+        \\-Wl,--whole-archive
+        \\{s}
+        \\-Wl,--no-whole-archive
+        \\
+    , .{ k, b.p("nat/libprobe_sys.a"), b.p("nat/libcnative.so.1"), b.p("tc/lib/libKGENCompilerRTShared.so"), b.p("out/test_one"), b.p("rt/libclang_rt.profile-x86_64.a") }), b.read("zig/argv").?);
+    // llvm-nm ran last on the shared object, by its dynamic table, with the same environment as the other steps.
+    try testing.expectEqualStrings(try std.fmt.allocPrint(b.a(), "--format=posix\n--defined-only\n--extern-only\n--no-weak\n-D\n{s}\n", .{b.p("nat/libcnative.so.1")}), b.read("nm/bin/argv").?);
+    const env = b.read("nm/bin/env");
+    try hasLine(env, try std.fmt.allocPrint(b.a(), "PATH={s}/bin", .{k}));
+    try hasLine(env, try std.fmt.allocPrint(b.a(), "HOME={s}/home", .{k}));
+    try hasLine(env, "LC_ALL=C");
+    try lacksLine(env, "PATH=/usr/bin");
+}
+
+test "a native library defining a symbol the instrumented object defines: exit 1 naming the library and the symbol, zig not run" {
+    var b = try Box.init();
+    defer b.deinit();
+    // The stand-in prints this for the object and for each library, so the first library shares `main` and `shared_symbol` with the object.
+    try b.put("nm/bin/stub_stdout", "main T 0000 0004\nshared_symbol D 0010 0008\n");
+    const r = try b.run(try b.linkArgs(&NATIVES), &ENV);
+    try expect("clash", r, 1, "BRANCH COVERAGE LINK FAILED: the native library libprobe_sys.a defines main, shared_symbol, which the instrumented test object defines too: the linker keeps one of the two definitions and says nothing, so the binary would not be the program the test links\n");
+    try testing.expect(!b.exists("zig/argv"));
+    try testing.expect(b.exists("scr/cov_branch_link"));
+}
+
+test "llvm-nm failing, or a native library that is missing: exit 1 with nm's errors, exit 2 naming the file" {
+    {
+        var b = try Box.init();
+        defer b.deinit();
+        try b.put("nm/bin/stub_rc", "1");
+        try b.put("nm/bin/say", "nm broke");
+        const r = try b.run(try b.linkArgs(&NATIVES), &ENV);
+        try expect("nm fails", r, 1, "BRANCH COVERAGE LINK FAILED: llvm-nm could not list the symbols of pg.o\n--- log:\nstderr: nm broke\n");
+        try testing.expect(!b.exists("zig/argv"));
+    }
+    {
+        var b = try Box.init();
+        defer b.deinit();
+        try b.tmp.dir.deleteFile("nat/libprobe_sys.a");
+        const r = try b.run(try b.linkArgs(&NATIVES), &ENV);
+        try expect("missing native", r, 2, try std.fmt.allocPrint(b.a(), "cov_branch link: {s} is missing or empty\n", .{b.p("nat/libprobe_sys.a")}));
+        try testing.expect(!b.exists("lld/bin/argv"));
+    }
+}
+
+/// A file of the pinned LLVM 23 tools (`LLVM23`, the directory `:llvm23` unpacks): its path and its bytes.
+fn llvmFile(a: std.mem.Allocator, rel: []const u8) !struct { path: []const u8, bytes: []const u8 } {
+    const path = try std.fmt.allocPrint(a, "{s}/{s}", .{ try tool(a, "LLVM23"), rel });
+    return .{ .path = path, .bytes = try std.fs.cwd().readFileAlloc(a, path, 1 << 28) };
+}
+
+test "with the real llvm-nm: a library defining symbols of the object is refused by their real names, a shared object is listed by its dynamic table" {
+    // The stand-ins above print what the parser expects; this reads what llvm-nm 23 prints: the profile runtime archive stands in for the instrumented
+    // object (it defines the runtime's global symbols), and the same archive is the first native library, so every one of them is defined twice.
+    // The second library, libz, is a real shared object that defines none of them, listed with -D.
+    var b = try Box.init();
+    defer b.deinit();
+    const al = b.a();
+    const nm = try llvmFile(al, "bin/llvm-nm");
+    const rt = try llvmFile(al, "runtime/libclang_rt.profile-x86_64.a");
+    const libz = try llvmFile(al, "lib/libz.so.1");
+    try b.put("lld/bin/stub_out", rt.bytes);
+    try b.put("nat/libruntime.a", rt.bytes);
+    try b.put("nat/libz.so.1", libz.bytes);
+
+    const bad = try b.run(try b.linkArgsWith(nm.path, &.{ "--native", "nat/libruntime.a", "--native", "nat/libz.so.1" }), &ENV);
+    try expect("shared names", bad, 1, "BRANCH COVERAGE LINK FAILED: the native library libruntime.a defines ");
+    // Names, not lines of the listing: no type letter, no address, and more than the five shown.
+    try testing.expect(std.mem.indexOf(u8, bad.stderr, "__llvm_profile") != null);
+    try testing.expect(std.mem.indexOf(u8, bad.stderr, " T ") == null);
+    try testing.expect(std.mem.indexOf(u8, bad.stderr, " more, which the instrumented test object defines too") != null);
+    try testing.expect(!b.exists("zig/argv"));
+
+    // The shared object alone shares nothing with the runtime: the link goes on, to zig, with both in the order given.
+    try b.tmp.dir.deleteTree("scr");
+    const good = try b.run(try b.linkArgsWith(nm.path, &.{ "--native", "nat/libz.so.1" }), &ENV);
+    try expect("shared only", good, 0, "");
+    try hasLine(b.read("zig/argv"), b.p("nat/libz.so.1"));
 }

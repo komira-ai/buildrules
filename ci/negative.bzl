@@ -7,6 +7,9 @@ Make the fixture valid (give it `exec_compatible_with = test_exec_compatible_wit
 control's own error. ci/negative_check.zig holds the wiring of this file to the fixtures, in //ci:all.
 """
 
+load("//examples/mojo/sys_app:buildrules.mojo.lock.bzl", SYS_APP_GRAPH = "GRAPH")
+load("//examples/mojo/ws:buildrules.mojo.lock.bzl", WS_GRAPH = "GRAPH")
+
 PLATFORM = "buildrules//platforms:linux_x86_64_v3"
 FIXTURE = "//ci/negative:v3_test_without_isa_property"
 CONTROL = "//ci/negative:v3_test_with_isa_property"
@@ -24,6 +27,8 @@ CASES = [
     ("//ci/negative:npm_tarball_with_a_dep_of_the_wrong_kind", PLATFORM, "Attribute requires a dep that provides `NpmPackageInfo`"),
     ("//ci/negative:zig_coverage_of_no_test", PLATFORM, "test_targets is empty: a package with no test has no coverage to measure"),
     ("//ci/negative:cross_exe_with_other_tests", PLATFORM, "waits for the unit tests"),
+    ("//ci/negative:mojo_instrumented_link_without_a_native_the_unit_links", PLATFORM, "the unit links the native library libbase_sys.a and the instrumented link of its branch coverage is not given it"),
+    ("//ci/negative:mojo_instrumented_link_with_a_needed_archive_before_its_user", PLATFORM, "libbase_sys.a is linked before libprobe_sys.a, which needs it"),
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys/base_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
@@ -57,7 +62,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx)
+    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
@@ -88,7 +93,7 @@ COVERAGE_FLOOR_PACKAGES = [
     ("//examples/mojo/testdata", True),
     ("//examples/mojo/reexport_unused", False),
     ("//examples/mojo/copy_of_base", False),
-    ("//examples/mojo/sys_app", False),
+    ("//examples/mojo/sys_app", True),
     ("//examples/mojo/ws", False),
     ("//examples/mojo/ws/util", False),
     ("//examples/mojo/ws/util/base", False),
@@ -108,9 +113,10 @@ def coverage_floor_wiring_problems(ctx):
             problems.append("{} has a :coverage_floor and no coverage_floor.txt: a package without a floor must be as it was".format(package))
     return problems
 
-# A package whose tests link no native library and run in the default layout has the five branch coverage actions of each test, and its `:coverage` waits for the last; one whose tests do has
-# none of them (rules/mojo/defs.bzl: the instrumented link line carries no native library, and the branch run has no installed layout), so its `coverage.txt` has no `branches` rows and a floor may not
-# hold a `branches` figure. (package, the stem of its test, whether it is instrumented)
+# A package whose tests run in the default layout has the five branch coverage actions of each test, and its `:coverage` waits for the last: also a package whose tests link native
+# libraries (`ws`: a shared object; `sys_app`: two static archives), because the instrumented link is given them as the ordinary link is (rules/mojo/defs.bzl,
+# rules/coverage/branch/README.md). One whose tests run in the installed layout has none of them (the branch run has no installed layout), so its `coverage.txt` has no `branches` rows
+# and a floor may not hold a `branches` figure. (package, the stem of its test, whether it is instrumented)
 BRANCH_PACKAGES = [
     ("//examples/mojo/partial", "test_partial", True),
     ("//examples/mojo/reexport", "test_ops", True),
@@ -120,13 +126,19 @@ BRANCH_PACKAGES = [
     ("//examples/mojo/testdata", "test_data_files", True),
     ("//examples/mojo/sibfake/app", "test_util", True),
     ("//examples/mojo/sibfake/base", "test_base", True),
-    ("//examples/mojo/ws", "test_app", False),
-    ("//examples/mojo/sys_app", "test_sys_app", False),
+    ("//examples/mojo/ws", "test_app", True),
+    ("//examples/mojo/sys_app", "test_sys_app", True),
     ("//examples/mojo/installed", "test_installed_layout", False),
 ]
 
+# The packages whose tests link native libraries, with their committed graphs: what `__pgo` is held to (`native_link_problems`).
+NATIVE_PACKAGES = [
+    ("//examples/mojo/sys_app", "test_sys_app", SYS_APP_GRAPH),
+    ("//examples/mojo/ws", "test_app", WS_GRAPH),
+]
+
 def coverage_branch_wiring_problems(ctx):
-    """Every example package against whether its tests are instrumented for branches: a list of strings, empty when all agree."""
+    """Every example package against the branch coverage targets of its test: a list of strings, empty when all are there and `:coverage` waits for them."""
     problems = []
     q = ctx.uquery()
     for package, stem, instrumented in BRANCH_PACKAGES:
@@ -137,7 +149,43 @@ def coverage_branch_wiring_problems(ctx):
         if instrumented and (len(have) != len(mine) or not waits):
             problems.append("{} has {} of the {} branch coverage targets of {} and its :coverage {} wait for {}__info: its branch figure is not made".format(package, len(have), len(mine), stem, "does" if waits else "does not", stem))
         elif not instrumented and (have or waits):
-            problems.append("{} links a native library or runs its tests in the installed layout, and has branch coverage targets ({}): its tests are not instrumented, so it must have none".format(package, ", ".join(have) if have else stem + "__info is a dependency of :coverage"))
+            problems.append("{} runs its tests in the installed layout and has branch coverage targets ({}): its tests are not instrumented, so it must have none".format(package, ", ".join(have) if have else stem + "__info is a dependency of :coverage"))
+    return problems
+
+def _test_natives(graph):
+    """(soname list in the graph's order, soname -> what it needs) of the test unit of a package's committed graph."""
+    for u in graph["units"]:
+        if u["kind"] == "test":
+            return [n["soname"] for n in u["natives"]], {n["soname"]: n["needs"] for n in u["natives"] if n.get("needs")}
+    return [], {}
+
+def native_link_problems(ctx):
+    """Every way the instrumented link of a package whose tests link native libraries is not given the graph's natives: a list of strings, empty when it is.
+    `mojo_package` must hand `__pgo` the graph's list and each library's `needs` (the order check reads them), and the action must pass the libraries to
+    `cov_branch link` as `--native` flags in the graph's order, which is the order of the ordinary link."""
+    problems = []
+    for package, stem, graph in NATIVE_PACKAGES:
+        label = "{}:{}__pgo".format(package, stem)
+        want, want_needs = _test_natives(graph)
+        node = ctx.configured_targets(label, target_platform = GATE_PLATFORM)
+        attrs = node.attrs_eager()
+        got = list(attrs.native_sonames.value())
+        if got != want:
+            problems.append("{}: native_sonames is {}, the graph's natives of the test are {}".format(label, got, want))
+        got_needs = {k: list(v) for k, v in attrs.native_needs.value().items()}
+        if got_needs != want_needs:
+            problems.append("{}: native_needs is {}, the graph's `needs` are {}: the order check has nothing to hold".format(label, got_needs, want_needs))
+        emitted = []
+        for action in ctx.aquery().all_actions(node):
+            # The command prints as `[arg, arg, ...]`; an action that runs no command has none.
+            if not hasattr(action.attrs, "cmd"):
+                continue
+            cmd = str(action.attrs.cmd).lstrip("[").rstrip("]").split(", ")
+            emitted += [cmd[i + 1].split("/")[-1] for i in range(len(cmd) - 1) if cmd[i] == "--native"]
+        if emitted != want:
+            problems.append("{}: the link action passes --native {} in this order, the graph's order is {}".format(label, emitted, want))
+        if not want:
+            problems.append("{}: the graph's test links no native library, so there is nothing to hold here".format(label))
     return problems
 
 def _built_with_why(ctx, label):

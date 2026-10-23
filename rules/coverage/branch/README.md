@@ -44,21 +44,25 @@ last is `:coverage[branches]`'s file:
 | `:test_x__info` | `mojo_cov_branch_classify` | `test_x__info.info` | [cov_branch_classify](#cov_branch_classify) |
 
 `:coverage` waits for every `__info`, so a test that fails instrumented, a profile that does not fit its bitcode, or a branch the classifier refuses fails `:coverage`
-(and `:coverage_floor`), and nothing else: `:lib`, `:build` and `:test` do not wait for these actions. A package whose test links a native library has none of
-them: the link line of the instrumented binary does not carry the libraries, so its `coverage.txt` has no `branches` rows and its floor may not have a `branches` figure.
+(and `:coverage_floor`), and nothing else: `:lib`, `:build` and `:test` do not wait for these actions. A package whose test links native libraries has the same
+actions: the instrumented link is given those libraries ([native libraries](#native-libraries)).
 
 ## cov_branch link
 
 `cov_branch link` ([`cov_branch_link.zig`](cov_branch_link.zig)), with `--compiler`, `--zig` (the Mojo toolchain's zig directory), `--target`, `--lld`, `--runtime`,
-`--bitcode` and `--out`.
+`--bitcode`, `--out`, `--nm` (`llvm-nm` of the LLVM 23 tools) and one `--native <library>` for each native library of the test's unit.
 
-0. The scratch directory's `bin`, `home` and `tmp` are made (exit 2 if not). Then lld, the runtime, the compiler's `lib/libKGENCompilerRTShared.so`, zig and the bitcode, in
-   this order, must be files that are not empty (a usage error, exit 2), and the bitcode must start with the bitcode magic `BC 0xC0DE`.
+0. The scratch directory's `bin`, `home` and `tmp` are made (exit 2 if not). Then lld, the runtime, the compiler's `lib/libKGENCompilerRTShared.so`, zig, the bitcode, `llvm-nm` and
+   each native library, in this order, must be files that are not empty (a usage error, exit 2), and the bitcode must start with the bitcode magic `BC 0xC0DE`.
 1. `lld` reads the bitcode as an LTO link with `-r`, `--lto-O0`, the pass pipeline `pgo-instr-gen,instrprof,default<O0>` and `-mllvm -instrprof-atomic-counter-update-all`: a
    relocatable object whose code counts its edges, each counter updated atomically ([below](#atomic-counters)). Only this LLVM 24 reads the bitcode ([why LLVM 23 tools are safe
    next to it](#why-llvm-23-tools-are-safe-next-to-llvm-24)).
+1b. With native libraries, `llvm-nm` lists the global symbols the object defines and, for each library in turn, those it defines (weak ones left out; a shared object by its dynamic
+   table). A library that defines a symbol the object defines too fails the link, naming the library and the first five symbols: the linker takes one definition and says nothing
+   (an archive member is pulled in only for a symbol still undefined), so the binary would not be the program the test links ([native libraries](#native-libraries)).
 2. The Mojo toolchain's zig links it as `mojo_compile`'s `cc` shim links a release test ([`cc_shim.zig`](../../mojo/tools/cc_shim.zig): the compiler's `libKGENCompilerRTShared.so`,
-   `--gc-sections`, `-lm`, `--strip-debug`, the one run path `$ORIGIN/lib`), with the profile runtime as a whole archive.
+   `--gc-sections`, `-lm`, `--strip-debug`, the one run path `$ORIGIN/lib`), with the profile runtime as a whole archive. The native libraries stand right after the object, each by
+   its path, in the order of the `--native` flags.
 3. The binary must be an ELF file holding no path of the action (its working directory, then its scratch directory).
 
 lld and zig run with the tool's environment but for `PATH` (an empty directory of the scratch), `HOME`, `TMPDIR` and zig's cache directories (in the scratch directory) and `LC_ALL=C`; their
@@ -79,12 +83,39 @@ counts from them by sums and differences, saturating at 0: a counted edge that l
 covered). Any test that runs the measured code on several threads at once could flip an arm of the records from one run to the next. `cov_branch_link_test.zig` holds the option in the
 command line (`-mllvm` and `-instrprof-atomic-counter-update-all`, adjacent, once).
 
+### Native libraries
+
+A test whose unit links native libraries (a registry package's static archives, a `natives = {...}` shared object) is linked instrumented with the same libraries as its ordinary
+link, and `mojo_package` gives `__pgo` nothing else to decide from:
+
+- **The same libraries, the same order.** `__pgo` takes `native_sonames`, the unit's list from the graph, and `natives`, the target of each: the very wiring of `__bin` (`native_wiring`,
+  [`defs.bzl`](../../mojo/defs.bzl)). Mopm gives the ordinary link one `-Xlinker <path>` per library in that order, which the compiler's `cc` shim passes to zig as a bare path; the
+  instrumented link passes the same paths in the same order, after the object. A library the unit links that `natives` does not provide, a library `natives` has that the unit does not
+  link, and an order in which a library stands before one that needs it are each refused when the target is analysed, naming the library
+  (`cov_link_natives`, [`unit.bzl`](../../mojo/unit.bzl); `ci/negative` holds the missing library and the wrong order as must-fail fixtures).
+- **`needs` and the order.** The graph lists a static archive before every archive it needs (`needs` in the graph's entry for it): a static archive resolves only what is still
+  undefined when the linker reaches it, so the archive that needs `libbase_sys.a` stands before it. `__pgo` checks the order the graph gave against `needs` and refuses a graph in
+  which an archive stands after one that needs it, or needs a library the unit does not link.
+- **Static and shared.** A static archive (`lib<stem>.a`) is linked into the binary. A shared object is linked by path too, and the binary then loads it by its soname at run time: an
+  ordinary test finds it in the `lib/` beside it (the run path `$ORIGIN/lib`, which `mopm unit build` fills), so `__pgo` has a sub-target `[libs]`, a directory of the unit's shared
+  objects by soname, which `__profdata` passes as `cov_branch run --lib-dir`. A unit with only static archives has no `[libs]`.
+- **A symbol both define.** An archive member is taken only for a symbol that is still undefined, so a library that defines a symbol the instrumented object defines too is passed over
+  without a message, and the run measures a program that is not the test (the object's copy of the symbol runs, or the library's, whichever the linker found first). `cov_branch link`
+  lists both with `llvm-nm` and fails, naming the library and the first five symbols. Weak definitions are left out: a weak symbol is meant to be replaced.
+  Limits of the check, each a difference from the ordinary link or a case it does not cover:
+  - a strong definition in a native against a weak definition in the object is not flagged (the ordinary link does not flag it either);
+  - a shared native that defines a symbol the object defines too is refused, which is stricter than the ordinary link (the executable's definition simply wins there);
+  - a thin archive is not supported: its members live in other files, which `llvm-nm` on the archive may not list as the linker would read them.
+  The wiring itself is held by `ci/negative.bzl` (`native_link_problems`): for `ws` and `sys_app`, `__pgo`'s `native_sonames` and `native_needs` are the committed graph's, and the
+  link action's `--native` flags are in the graph's order.
+
 ## cov_branch run
 
-`cov_branch run` ([`cov_branch_run.zig`](cov_branch_run.zig)), with `--compiler`, `--share`, `--label`, `--profdata`, `--raw-version`, `--binary`, `--out`, the test's `--env NAME=VALUE`s and, when the test has staged data, `--data-env NAME` (the variable that names `--share`, made absolute: `mojo_package`'s `test_data` is copied into that tree, which is the test's working directory here as under kcov).
+`cov_branch run` ([`cov_branch_run.zig`](cov_branch_run.zig)), with `--compiler`, `--share`, `--label`, `--profdata`, `--raw-version`, `--binary`, `--out`, a `--lib-dir <directory>` for each
+directory of shared native libraries ([above](#native-libraries)), the test's `--env NAME=VALUE`s and, when the test has staged data, `--data-env NAME` (the variable that names `--share`, made absolute: `mojo_package`'s `test_data` is copied into that tree, which is the test's working directory here as under kcov).
 
 1. The test runs in `--share`, the tree of copies of the test source and the library's sources at the relative names the line tables use (the tree `cov_run` gives kcov), with exactly this
-   environment: `PATH=/usr/bin:/bin`, `LD_LIBRARY_PATH=<compiler>/lib`, the `--env` entries, `--data-env`'s variable, and `LLVM_PROFILE_FILE=<scratch>/prof/%p.profraw` (`%p`, the pid: a child the test starts writes
+   environment: `PATH=/usr/bin:/bin`, `LD_LIBRARY_PATH=<compiler>/lib` followed by each `--lib-dir` (made absolute), the `--env` entries, `--data-env`'s variable, and `LLVM_PROFILE_FILE=<scratch>/prof/%p.profraw` (`%p`, the pid: a child the test starts writes
    a profile of its own; setting it by `--env` is a usage error). Nothing of the tool's own environment reaches the test. The test must pass; when it fails, so does the action, with the
    test's output and `BRANCH COVERAGE RUN FAILED`.
 2. At least one `.profraw` was written there; otherwise `The test passed but wrote no .profraw` (the runtime was not linked, the variable did not reach the test, or the test left without
@@ -359,7 +390,9 @@ By behaviour, each run as a build action on the farm, and a defect each catches:
   callees, kinds, invokes, decision-free and twice-spelled files. `rules`, 11 to 11f on `fixtures/rules.ll`: the shape rules. `try`, 12 to 12c on `fixtures/try.ll`. `main`: bad usage (exit 2, the
   message and the usage line) and an output whose write fails (a file size limit in the child: exit 1, nothing written, no temporary file left).
 - **The tool.** `cov_branch_unit`: link (the exact lld and zig command lines and environments, each input missing or empty, a bitcode without the magic, an lld or zig that fails with the last
-  lines of its log, an output that is no ELF file or that holds a directory of the action), run (the test's working directory and exact environment, no profile, a profile of another magic,
+  lines of its log, an output that is no ELF file or that holds a directory of the action; with native libraries: the libraries after the object in the order given, `llvm-nm` run on the
+  object and on each library with the flags for an archive and for a shared object, a library that defines a symbol of the object refused by name, five symbols named and the rest counted, an
+  `llvm-nm` that fails or cannot start, each library missing or empty, and every allocation of the link failing in turn), run (the test's working directory and exact environment, each `--lib-dir` after the compiler's lib in order and made absolute, no profile, a profile of another magic,
   version or without the IR flag, a merge that fails, a show that is not an IR profile of a function), annotate (every refusal with its message and the order they are checked in: the bitcode,
   the binary's records against the profile's, lld's diagnostics, the dump) and the flags of each. The process tests run the shipped executable over stand-in programs.
 - **The records and the summary** (`rules/coverage/tools/branch_lcov_test.zig`): the format and each refusal, the sum by id across tests (an arm is hit when any test took it, `-` adds nothing, an
@@ -368,4 +401,8 @@ By behaviour, each run as a build action on the farm, and a defect each catches:
 - **On real Mojo** (`examples/mojo`): `partial`'s one `if` with one arm run gives `BRDA:5,5:br:0/1,0,0` and `BRDA:5,5:br:0/1,1,1` and the rows `branches ... 1/2 50%` (`:coverage_records`), `reexport`'s `if` and `for` give
   `select` and `br` records with their exact counts, `testdata`'s code with no decision gives `SF:` and `end_of_record` and `0/0`, the rows and the records agree file by file, and the floor of
   `partial` is held as a minimum for lines and for branches (`coverage_floors`: a figure above the coverage is red, for its reason, in `ci/negative.bzl`; one below it is green; a floor with no
-  `branches` figure is red; a `branches` figure for code with no decision is red; a `branches` figure the tests do not record is refused by `coverage_tools_refuse`). Which examples are instrumented, and that a package with a native library (`ws`, `sys_app`) has no branch target, is held by `ci/negative.bzl` (`BRANCH_PACKAGES`).
+  `branches` figure is red; a `branches` figure for code with no decision is red; a `branches` figure the tests do not record is refused by `coverage_tools_refuse`). `sys_app`, whose test links two static archives, gives `BRDA:18,5:select:0/1,0,1` and `BRDA:18,5:select:0/1,1,1` for the `if` of `clamped_answer`, whose test takes
+  both arms (rows `branches ... 2/2 100%`, a floor of `lines 100.00` and `branches 100.00` that holds); `ws`, whose test loads a shared object, gives `SF:` and `end_of_record` and `0/0` (its
+  library has no decision): the records and the rows agree for both. That every example, those two included, has the five branch targets of its test and that its `:coverage` waits for them
+  is held by `ci/negative.bzl` (`BRANCH_PACKAGES`); a unit's library missing from the instrumented link, and two archives in an order the linker would leave symbols undefined in, are must-fail
+  fixtures there (`CASES`), and `rules/mojo/tests` holds `cov_link_natives` by its messages.

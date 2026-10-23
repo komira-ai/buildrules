@@ -25,7 +25,7 @@ branches of the library's sources in the annotated IR are classified (`branch/RE
 
 | output | what |
 |---|---|
-| `:coverage` | `coverage.txt`: `<path> <hit>/<total> <n>%` per file, then `total`; a source with no executable line is `0/0`; red if a source of the library is in no report. Then, in the same form with `branches ` in front of each row, the arms of the decisions of each source that some test took, and `branches total` (a package whose tests link a native library has no such rows) |
+| `:coverage` | `coverage.txt`: `<path> <hit>/<total> <n>%` per file, then `total`; a source with no executable line is `0/0`; red if a source of the library is in no report. Then, in the same form with `branches ` in front of each row, the arms of the decisions of each source that some test took, and `branches total` (also for a package whose tests link native libraries: the instrumented link is given them) |
 | `:coverage[reports]` | the per-line records the file was counted from: one Cobertura XML per test, `<line number hits>` per recorded line under a `<class filename>` in repository paths, branch attributes as kcov wrote them (none for Mojo) |
 | `:coverage[branches]` | the branch records the `branches` rows were counted from: one lcov file per test, `SF:` repository path, `BRDA:<line>,<col>:<kind>:<n>/<N>,<arm>,<count or ->` per arm of each decision (format and rules: `branch/README.md`) |
 | `:coverage_floor` | present only with a `coverage_floor.txt` beside the BUCK file; the check below |
@@ -35,7 +35,7 @@ branches of the library's sources in the annotated IR are classified (`branch/RE
 The floor is the file every package here uses (`coverage_floor.txt` next to the BUCK file, checked by `cov_floor`; a package with Zig tests names it in `zig_coverage`, a Node package in `jest_coverage_floor`),
 so a Mojo package follows the Zig and Node ones and not an attribute: the figure sits in a file a reviewer sees change, the check is the one `cov_floor` already has, and no file means no check. A Mojo
 floor file holds `lines NN.NN` and, when the package's tests are instrumented for branches, `branches NN.NN`: a package whose `coverage.txt` has branch rows needs the figure ("the floor file has no `branches` figure"), and a package
-without branch rows (its tests link a native library) is refused one ("the coverage has no branches to hold"), as is a package whose branch total is 0/0 (its code has no decision: a re-export; its floor is `lines NN.NN` alone). Each figure is a minimum (`coverage fell` below it; at or above it passes, and above it the check says the floor may be raised). kcov is GPL-2.0 and build-only: it runs in actions and is never packaged.
+without branch rows is refused one ("the coverage has no branches to hold"), as is a package whose branch total is 0/0 (its code has no decision: a table; its floor is `lines NN.NN` alone). Each figure is a minimum (`coverage fell` below it; at or above it passes, and above it the check says the floor may be raised). kcov is GPL-2.0 and build-only: it runs in actions and is never packaged.
 
 **No ASLR patch.** kcov disables address randomization with `personality(ADDR_NO_RANDOMIZE)` and stops when it fails. buildrules once let the run go on after a refusal (a farm sandbox answered ENOSYS); every farm node now allows the call, so kcov's own handling is kept. `kcov_build_test` fails if any patch touches that code.
 

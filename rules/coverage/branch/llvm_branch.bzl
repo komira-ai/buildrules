@@ -15,6 +15,7 @@ CovBranchInfo = provider(
     fields = {
         "lld": provider_field(typing.Any, default = None),  # artifact: `bin/lld` of `lld_dir`, Mojo's own LLD 24
         "lld_dir": provider_field(typing.Any, default = None),  # artifact: the directory holding it and the C++ runtime it loads
+        "nm": provider_field(typing.Any, default = None),  # artifact: `bin/llvm-nm` of `tools_dir`, which lists the symbols a native library defines
         "profdata": provider_field(typing.Any, default = None),  # artifact: `bin/llvm-profdata` of `tools_dir`
         "runtime": provider_field(typing.Any, default = None),  # artifact: the profile runtime, `runtime/libclang_rt.profile-x86_64.a` of `tools_dir`
         "tools_dir": provider_field(typing.Any, default = None),  # artifact: llvm-profdata, llvm-nm, their libraries and runtime/
@@ -107,6 +108,7 @@ def _toolchain_impl(ctx):
         CovBranchInfo(
             lld = lld_dir.project("bin/lld"),
             lld_dir = lld_dir,
+            nm = tools_dir.project("bin/llvm-nm"),
             profdata = tools_dir.project("bin/llvm-profdata"),
             runtime = tools_dir.project("runtime/libclang_rt.profile-x86_64.a"),
             tools_dir = tools_dir,

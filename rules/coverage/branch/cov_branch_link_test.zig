@@ -20,6 +20,11 @@ const Fake = struct {
     zig_out: ?[]const u8 = ELF,
     /// The step whose start fails (error.ForkFailed), or none.
     fail_start: ?[]const u8 = null,
+    /// What llvm-nm prints for a file: the first row whose suffix ends the file's path (the object is `pg.o`); nothing for any other.
+    nm_lists: []const [2][]const u8 = &.{},
+    /// The file llvm-nm fails on (a suffix of its path), with what it says on stderr; none: it never fails.
+    nm_fails_on: ?[]const u8 = null,
+    nm_stderr: []const u8 = "",
     calls: std.ArrayList(proc.Spec),
 
     fn init() Fake {
@@ -51,10 +56,26 @@ const Fake = struct {
             "lld"
         else if (std.mem.eql(u8, spec.argv[1], "cc"))
             "zig"
+        else if (std.mem.eql(u8, spec.argv[1], "--format=posix"))
+            "nm"
         else
             return error.UnknownStep;
         if (self.fail_start) |f| if (std.mem.eql(u8, f, step)) return error.ForkFailed;
         var status: proc.Status = .{ .exited = 0 };
+        if (std.mem.eql(u8, step, "nm")) {
+            const file = spec.argv[spec.argv.len - 1];
+            var text: []const u8 = "";
+            for (self.nm_lists) |row| {
+                if (std.mem.endsWith(u8, file, row[0])) {
+                    text = row[1];
+                    break;
+                }
+            }
+            try write(spec.stdout_path.?, text);
+            const failing = if (self.nm_fails_on) |f| std.mem.endsWith(u8, file, f) else false;
+            try write(spec.stderr_path.?, if (failing) self.nm_stderr else "");
+            return .{ .status = .{ .exited = if (failing) 1 else 0 } };
+        }
         if (std.mem.eql(u8, step, "lld")) {
             try write(spec.stdout_path.?, self.lld_log);
             try write(outOf(spec.argv), "relocatable");
@@ -85,6 +106,11 @@ const Case = struct {
             .{ "tc/compiler/lib/libKGENCompilerRTShared.so", "\x7fELF" },
             .{ "tc/zig/zig", "zig" },
             .{ "cov/test_one.bc", "BC\xc0\xde\x35\x14" },
+            .{ "nm/bin/llvm-nm", "nm" },
+            // The native libraries of a unit: two static archives (the first needs the second) and a shared object.
+            .{ "nat/libprobe_sys.a", "!<arch>\nprobe" },
+            .{ "nat/libbase_sys.a", "!<arch>\nbase" },
+            .{ "nat/libcnative.so.1", "\x7fELF\x02\x01\x01\x00shared" },
         }) |f| try c.put(f[0], f[1]);
         return c;
     }
@@ -124,11 +150,23 @@ const Case = struct {
             .runtime = "rt/libclang_rt.profile-x86_64.a",
             .bitcode = "cov/test_one.bc",
             .out = "cov/test_one",
+            .nm = "nm/bin/llvm-nm",
         };
+    }
+
+    /// The arguments with the unit's three native libraries, in the order of its graph.
+    fn argsWithNatives(self: *Case) l.Args {
+        var with = self.args();
+        with.natives = &.{ "nat/libprobe_sys.a", "nat/libbase_sys.a", "nat/libcnative.so.1" };
+        return with;
     }
 
     fn link(self: *Case, fake: *Fake) !u8 {
         return l.linkAll(self.a(), self.args(), self.where(), fake.runner(), &self.err);
+    }
+
+    fn linkWithNatives(self: *Case, fake: *Fake) !u8 {
+        return l.linkAll(self.a(), self.argsWithNatives(), self.where(), fake.runner(), &self.err);
     }
 
     fn has(self: *Case, s: []const u8) !void {
@@ -233,6 +271,7 @@ test "each input missing or empty is a usage error naming it, before lld runs" {
         "tc/compiler/lib/libKGENCompilerRTShared.so",
         "tc/zig/zig",
         "cov/test_one.bc",
+        "nm/bin/llvm-nm",
     };
     for (inputs) |f| {
         for ([_]bool{ false, true }) |empty| {
@@ -370,6 +409,7 @@ test "the scratch directory is checked on its own: a binary holding it and not t
     a.lld = c.p("lld/bin/lld");
     a.runtime = c.p("rt/libclang_rt.profile-x86_64.a");
     a.bitcode = c.p("cov/test_one.bc");
+    a.nm = c.p("nm/bin/llvm-nm");
     a.out = c.p("out");
     try testing.expectEqual(@as(u8, 1), try l.linkAll(c.a(), a, w, fake.runner(), &c.err));
     try c.has(try std.fmt.allocPrint(c.a(), "the binary holds this action's directory {s}: {s}/pg.o \n", .{ w.k, w.k }));
@@ -415,7 +455,7 @@ test "a scratch directory that cannot be made is exit 2, the first one named, no
 }
 
 test "usage errors: a missing, repeated, empty, unknown or valueless flag" {
-    const full = [_][]const u8{ "--compiler", "c", "--zig", "z", "--target", "t", "--lld", "l", "--runtime", "r", "--bitcode", "bc", "--out", "o" };
+    const full = [_][]const u8{ "--compiler", "c", "--zig", "z", "--target", "t", "--lld", "l", "--runtime", "r", "--bitcode", "bc", "--out", "o", "--nm", "n" };
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -451,6 +491,197 @@ test "usage errors: a missing, repeated, empty, unknown or valueless flag" {
     try testing.expectEqual(@as(u8, 2), try l.cli(c.a(), &.{ "--zig", "z" }, c.where(), fake.runner(), &c.err));
     try c.has("cov_branch link: usage error: --compiler is missing\n" ++ l.USAGE ++ "\n");
     try testing.expectEqual(@as(usize, 0), fake.calls.items.len);
+}
+
+// ---- native libraries -------------------------------------------------------------------------------------------------------------------------
+
+const CLASH_MSG_TAIL = ", which the instrumented test object defines too: the linker keeps one of the two definitions and says nothing, so the binary would not be the program the test links\n";
+
+test "natives: llvm-nm lists the object and each library, then zig links the libraries after the object, by path, in the order given" {
+    // Defect caught: an instrumented link without the unit's libraries (it cannot link), or with them in another order (a static archive
+    // resolves only what the libraries before it left undefined), or before the object (nothing is undefined yet, so nothing is taken).
+    var c = try Case.init();
+    defer c.deinit();
+    var fake = Fake.init();
+    fake.nm_lists = &.{
+        .{ "pg.o", "main T 0 0\nmojo_entry T 0 0\n" },
+        .{ "libprobe_sys.a", "libprobe_sys.a[probe.o]:\nprobe_sys_answer T 0 4\n\nlibprobe_sys.a[more.o]:\nprobe_more T 0 4\n" },
+        .{ "libcnative.so.1", "cnative_answer T 0 4\n" },
+    };
+    try testing.expectEqual(@as(u8, 0), try c.linkWithNatives(&fake));
+    try testing.expectEqualStrings("", c.err.items);
+    try testing.expectEqual(@as(usize, 6), fake.calls.items.len);
+    const nm = c.p("nm/bin/llvm-nm");
+    const pg = c.p("scratch/cov_branch_link/pg.o");
+
+    // The archives are listed as archives, the shared object by its dynamic table (-D), and the object first.
+    try expectArgv(&.{ nm, "--format=posix", "--defined-only", "--extern-only", "--no-weak", pg }, fake.calls.items[1].argv);
+    try expectArgv(&.{ nm, "--format=posix", "--defined-only", "--extern-only", "--no-weak", c.p("nat/libprobe_sys.a") }, fake.calls.items[2].argv);
+    try expectArgv(&.{ nm, "--format=posix", "--defined-only", "--extern-only", "--no-weak", c.p("nat/libbase_sys.a") }, fake.calls.items[3].argv);
+    try expectArgv(&.{ nm, "--format=posix", "--defined-only", "--extern-only", "--no-weak", "-D", c.p("nat/libcnative.so.1") }, fake.calls.items[4].argv);
+    for (fake.calls.items[1..5]) |call| {
+        try testing.expectEqualStrings(c.p("scratch/cov_branch_link/nm.out"), call.stdout_path.?);
+        try testing.expectEqualStrings(c.p("scratch/cov_branch_link/log"), call.stderr_path.?);
+        try expectArgv(fake.calls.items[0].env, call.env);
+    }
+
+    try expectArgv(&.{
+        c.p("tc/zig/zig"),                   "cc",                                  "-target",               "x86_64-linux-gnu.2.28", "-Wl,--strip-debug", "-Wl,--enable-new-dtags", "-Wl,-rpath,$ORIGIN/lib",
+        pg,                                  c.p("nat/libprobe_sys.a"),             c.p("nat/libbase_sys.a"), c.p("nat/libcnative.so.1"),
+        c.p("tc/compiler/lib/libKGENCompilerRTShared.so"), "-o", c.p("cov/test_one"), "-Wl,--gc-sections", "-lm", "-Wl,--whole-archive", c.p("rt/libclang_rt.profile-x86_64.a"), "-Wl,--no-whole-archive",
+    }, fake.calls.items[5].argv);
+    try testing.expect(!c.exists("scratch/cov_branch_link"));
+}
+
+test "natives: a library that defines a symbol the instrumented object defines fails the link, naming the library and the symbols; zig does not run" {
+    // Defect caught: a library whose definition the linker would silently pass over (an archive member is taken only for a symbol still
+    // undefined), so the binary is not the program the test links.
+    var c = try Case.init();
+    defer c.deinit();
+    var fake = Fake.init();
+    fake.nm_lists = &.{
+        .{ "pg.o", "main T 0 0\nshared_one T 0 0\nshared_two D 0 8\nonly_mine T 0 0\n" },
+        .{ "libprobe_sys.a", "libprobe_sys.a[probe.o]:\nprobe_sys_answer T 0 4\n" },
+        .{ "libbase_sys.a", "libbase_sys.a[b.o]:\nbase_sys_value T 0 4\nshared_one T 0 0\n\nlibbase_sys.a[c.o]:\nshared_two D 0 4\n" },
+    };
+    try testing.expectEqual(@as(u8, 1), try c.linkWithNatives(&fake));
+    try testing.expectEqualStrings("BRANCH COVERAGE LINK FAILED: the native library libbase_sys.a defines shared_one, shared_two" ++ CLASH_MSG_TAIL, c.err.items);
+    // lld, the object, the first library (clean), the second (clashing): the libraries after it are not listed, zig does not run, the scratch is kept.
+    try testing.expectEqual(@as(usize, 4), fake.calls.items.len);
+    try testing.expect(c.exists("scratch/cov_branch_link"));
+}
+
+test "natives: a shared object that defines a symbol of the object fails the link too" {
+    var c = try Case.init();
+    defer c.deinit();
+    var fake = Fake.init();
+    fake.nm_lists = &.{ .{ "pg.o", "main T 0 0\ncnative_answer T 0 4\n" }, .{ "libcnative.so.1", "cnative_answer T 0 4\n" } };
+    try testing.expectEqual(@as(u8, 1), try c.linkWithNatives(&fake));
+    try testing.expectEqualStrings("BRANCH COVERAGE LINK FAILED: the native library libcnative.so.1 defines cnative_answer" ++ CLASH_MSG_TAIL, c.err.items);
+    try testing.expectEqual(@as(usize, 5), fake.calls.items.len);
+}
+
+test "natives: the message names five symbols and counts the rest" {
+    var c = try Case.init();
+    defer c.deinit();
+    var fake = Fake.init();
+    fake.nm_lists = &.{
+        .{ "pg.o", "s1 T 0 0\ns2 T 0 0\ns3 T 0 0\ns4 T 0 0\ns5 T 0 0\ns6 T 0 0\ns7 T 0 0\n" },
+        .{ "libprobe_sys.a", "s7 T 0 0\ns6 T 0 0\ns5 T 0 0\ns4 T 0 0\ns3 T 0 0\ns2 T 0 0\ns1 T 0 0\n" },
+    };
+    try testing.expectEqual(@as(u8, 1), try c.linkWithNatives(&fake));
+    // In the order the library lists them: the first five, and 2 more.
+    try testing.expectEqualStrings("BRANCH COVERAGE LINK FAILED: the native library libprobe_sys.a defines s7, s6, s5, s4, s3 and 2 more" ++ CLASH_MSG_TAIL, c.err.items);
+}
+
+test "natives: llvm-nm failing on the object or on a library fails the link with its errors in the log; zig does not run" {
+    for ([_]struct { on: []const u8, named: []const u8, calls: usize }{
+        .{ .on = "pg.o", .named = "pg.o", .calls = 2 },
+        .{ .on = "libbase_sys.a", .named = "libbase_sys.a", .calls = 4 },
+    }) |cs| {
+        var c = try Case.init();
+        defer c.deinit();
+        var fake = Fake.init();
+        fake.nm_fails_on = cs.on;
+        fake.nm_stderr = "llvm-nm: error: file format not recognized\n";
+        try testing.expectEqual(@as(u8, 1), try c.linkWithNatives(&fake));
+        try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "BRANCH COVERAGE LINK FAILED: llvm-nm could not list the symbols of {s}\n--- log:\nllvm-nm: error: file format not recognized\n", .{cs.named}), c.err.items);
+        try testing.expectEqual(cs.calls, fake.calls.items.len);
+    }
+}
+
+test "natives: an llvm-nm that cannot start is exit 2, naming it" {
+    var c = try Case.init();
+    defer c.deinit();
+    var fake = Fake.init();
+    fake.fail_start = "nm";
+    try testing.expectEqual(@as(u8, 2), try c.linkWithNatives(&fake));
+    try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "cov_branch link: cannot run {s}: ForkFailed\n", .{c.p("nm/bin/llvm-nm")}), c.err.items);
+    // Without a library llvm-nm is never started.
+    var d = try Case.init();
+    defer d.deinit();
+    var fake2 = Fake.init();
+    fake2.fail_start = "nm";
+    try testing.expectEqual(@as(u8, 0), try d.link(&fake2));
+}
+
+test "natives: each library missing or empty is a usage error naming it, before lld runs" {
+    for ([_][]const u8{ "nat/libprobe_sys.a", "nat/libbase_sys.a", "nat/libcnative.so.1" }) |f| {
+        for ([_]bool{ false, true }) |empty| {
+            var c = try Case.init();
+            defer c.deinit();
+            if (empty) try c.put(f, "") else try c.tmp.dir.deleteFile(f);
+            var fake = Fake.init();
+            try testing.expectEqual(@as(u8, 2), try c.linkWithNatives(&fake));
+            try c.has(try std.fmt.allocPrint(c.a(), "cov_branch link: {s} is missing or empty\n", .{c.p(f)}));
+            try testing.expectEqual(@as(usize, 0), fake.calls.items.len);
+        }
+    }
+}
+
+test "natives: --native repeats and keeps the order of the flags, wherever they stand; a valueless or empty one is a usage error" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const full = [_][]const u8{ "--compiler", "c", "--zig", "z", "--target", "t", "--lld", "l", "--runtime", "r", "--bitcode", "bc", "--out", "o", "--nm", "n" };
+    var why: []const u8 = "";
+    const none = (try l.parseArgs(a, &full, &why)).?;
+    try testing.expectEqual(@as(usize, 0), none.natives.len);
+    const got = (try l.parseArgs(a, &([_][]const u8{ "--native", "b.a" } ++ full ++ [_][]const u8{ "--native", "a.so.1", "--native", "c.a" }), &why)).?;
+    try expectArgv(&.{ "b.a", "a.so.1", "c.a" }, got.natives);
+    try testing.expectEqualStrings("n", got.nm);
+    try testing.expectEqualStrings("c", got.compiler);
+    try testing.expect((try l.parseArgs(a, &(full ++ [_][]const u8{"--native"}), &why)) == null);
+    try testing.expectEqualStrings("--native needs a value", why);
+    try testing.expect((try l.parseArgs(a, &(full ++ [_][]const u8{ "--native", "" }), &why)) == null);
+    try testing.expectEqualStrings("--native is empty", why);
+}
+
+test "the symbols llvm-nm lists: the first field of each line, archive member headers and blank lines left out" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try expectArgv(&.{}, try l.definedSymbols(a, ""));
+    try expectArgv(&.{ "a", "b", "c" }, try l.definedSymbols(a, "libx.a[one.o]:\na T 0 4\nb D 10 8\n\nlibx.a[two.o]:\nc T 0\n"));
+    // A line with one field is a name; a header of the other spelling, `(member):`, is a header too.
+    try expectArgv(&.{"d"}, try l.definedSymbols(a, "libx.a(three.o):\nd\n"));
+    // Without the final newline the last symbol is read.
+    try expectArgv(&.{ "e", "f" }, try l.definedSymbols(a, "e T 0 0\nf T 0 0"));
+}
+
+test "the names two lists share are the second list's, in its order, and nothing when they share none" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try expectArgv(&.{ "z", "a" }, try l.namesInBoth(a, &.{ "a", "m", "z" }, &.{ "z", "q", "a" }));
+    try expectArgv(&.{}, try l.namesInBoth(a, &.{ "a", "b" }, &.{ "c", "d" }));
+    try expectArgv(&.{}, try l.namesInBoth(a, &.{}, &.{"a"}));
+    // A name is whole: one that is a prefix of another is not shared.
+    try expectArgv(&.{}, try l.namesInBoth(a, &.{"abc"}, &.{ "ab", "abcd" }));
+}
+
+test "every allocation of a link with native libraries may fail, and fails cleanly" {
+    var i: usize = 0;
+    var finished = false;
+    while (i < 3000 and !finished) : (i += 1) {
+        var c = try Case.init();
+        defer c.deinit();
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var fa = testing.FailingAllocator.init(arena.allocator(), .{ .fail_index = i });
+        var fake = Fake.init();
+        fake.nm_lists = &.{ .{ "pg.o", "main T 0 0\n" }, .{ "libprobe_sys.a", "libprobe_sys.a[p.o]:\nprobe_sys_answer T 0 4\n" } };
+        if (l.linkAll(fa.allocator(), c.argsWithNatives(), c.where(), fake.runner(), &c.err)) |code| {
+            if (code == 0) {
+                finished = true;
+            } else {
+                // A step that could not be started, or a file that could not be read, because the allocation for it failed: said so.
+                try testing.expect(code == 1 or code == 2);
+                try c.has("OutOfMemory");
+            }
+        } else |e| try testing.expectEqual(error.OutOfMemory, e);
+    }
+    try testing.expect(finished);
 }
 
 test "childEnv replaces a variable by its exact name: one whose value names it is kept" {
