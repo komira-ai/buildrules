@@ -78,6 +78,59 @@ pub fn hasLine(text: []const u8, exact: []const u8) bool {
     return false;
 }
 
+/// `s` without a trailing YAML comment and without surrounding blanks.
+fn stripComment(s: []const u8) []const u8 {
+    var end = s.len;
+    for (s, 0..) |c, i| {
+        if (c == '#' and (i == 0 or s[i - 1] == ' ' or s[i - 1] == '\t')) {
+            end = i;
+            break;
+        }
+    }
+    return std.mem.trim(u8, s[0..end], " \t\r");
+}
+
+/// Why the `on:` block of `text` cannot be checked line by line, or null when it is plain block style with its triggers indented two spaces.
+/// The trigger checks above compare whole lines (`  push:`), so `on: push`, `on: [push, pull_request]` and `  push: {branches: [main]}` would
+/// slip past them; those spellings are refused rather than parsed.
+pub fn triggerStyleProblem(text: []const u8) ?[]const u8 {
+    var in_on = false;
+    var base: ?usize = null;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimRight(u8, raw, " \t\r");
+        const body = std.mem.trimLeft(u8, line, " ");
+        if (body.len == 0 or body[0] == '#') continue;
+        const indent = line.len - body.len;
+        if (indent == 0) {
+            in_on = false;
+            for ([_][]const u8{ "on:", "\"on\":", "'on':" }) |key| {
+                if (!std.mem.startsWith(u8, line, key)) continue;
+                in_on = true;
+                if (stripComment(line[key.len..]).len != 0) return "`on:` is written in flow or scalar form (`on: push`, `on: [push]`, `on: {push: {}}`): write one trigger per line, as a block";
+            }
+            if (!in_on and (std.mem.startsWith(u8, line, "on ") or std.mem.startsWith(u8, line, "on\t") or std.mem.startsWith(u8, line, "\"on\" ") or std.mem.startsWith(u8, line, "'on' "))) {
+                return "`on` has blanks before its colon: write the key as `on:`, which is the spelling the trigger checks read";
+            }
+            continue;
+        }
+        if (!in_on) continue;
+        if (base == null) {
+            base = indent;
+            if (indent != 2) return "the triggers under `on:` are not indented two spaces, which is the spelling the trigger checks read";
+        }
+        if (indent == base.?) {
+            if (body[0] == '"' or body[0] == '\'') return "a trigger under `on:` is quoted: write the key bare, which is the spelling the trigger checks read";
+            const colon = std.mem.indexOfScalar(u8, body, ':') orelse return "a line under `on:` is not a `trigger:` key (a list or flow form is refused): write one trigger per line, as a block";
+            if (colon > 0 and (body[colon - 1] == ' ' or body[colon - 1] == '\t')) return "a trigger under `on:` has blanks before its colon: write `trigger:`, which is the spelling the trigger checks read";
+            if (stripComment(body[colon + 1 ..]).len != 0) return "a trigger under `on:` has its value on the same line (`push: {branches: [main]}`, `push: null`): write the trigger alone and its settings as a block below it";
+        } else if (indent > base.? and (body[0] == '{' or body[0] == '[')) {
+            return "a trigger under `on:` is given a flow-style value: write its settings as a block";
+        }
+    }
+    return null;
+}
+
 /// Whether a line of the workflow (not a comment) is the target `tg`, as a line of the build command: `//pkg:name \\` or `//pkg:name`.
 fn hasTargetLine(text: []const u8, tg: []const u8) bool {
     var it = std.mem.splitScalar(u8, text, '\n');
@@ -481,6 +534,7 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
     }
 
     // Triggers and runner.
+    if (triggerStyleProblem(workflow)) |why| try add(a, &f, "{s}", .{why});
     if (!hasLine(workflow, "  pull_request:")) try add(a, &f, "`on: pull_request` is missing", .{});
     // A push to main is tested by release.yml (its gate stage calls this workflow), not twice.
     if (!hasLine(workflow, "  workflow_call:")) try add(a, &f, "`on: workflow_call` is missing (release.yml calls this workflow as its gate stage)", .{});
@@ -746,6 +800,43 @@ test "a missing trigger or runner is found" {
     try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", ""), "workflow_call");
     try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  push:\n    branches: [main]\n"), "`on: push` is present");
     try expectFinding(a, r, try mutate(a, r.wf, "runs-on: ubuntu-latest", "runs-on: self-hosted"), "ubuntu-latest");
+}
+
+test "a trigger spelled in flow or scalar style is refused, whichever trigger it names" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const on_block = "on:\n  pull_request:\n  workflow_call:\n";
+    // the whole `on:` in one line
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on: push\n"), "flow or scalar");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on: [push, pull_request, workflow_call]\n"), "flow or scalar");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on: {pull_request: {}, workflow_call: {}, push: {branches: [main]}}\n"), "flow or scalar");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "\"on\": [push, pull_request]\n"), "flow or scalar");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on: [pull_request, workflow_call] # not a block\n"), "flow or scalar");
+    // one trigger with its value on its own line
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push: {branches: [main]}\n"), "same line");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  workflow_dispatch: {}\n"), "same line");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  schedule: [{cron: '0 3 * * *'}]\n"), "same line");
+    try expectFinding(a, r, try mutate(a, r.wf, "  pull_request:\n", "  pull_request: {branches: [main]}\n"), "same line");
+    // a flow value on the line below its trigger, a list under `on:`, and a trigger indented four spaces
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push:\n    {branches: [main]}\n"), "flow-style value");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on:\n  - push\n  - pull_request\n"), "not a `trigger:` key");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on:\n    pull_request:\n    workflow_call:\n    push:\n"), "indented two spaces");
+    // a flow sequence on the line below its trigger
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push:\n    [main]\n"), "flow-style value");
+    // a `#` with no blank before it is part of the value, not a comment
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push: main#branch\n"), "same line");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on: push#not-a-comment\n"), "flow or scalar");
+    // a quoted trigger key, and blanks before a colon
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  \"push\":\n"), "quoted");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push :\n"), "blanks before its colon");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on :\n  pull_request:\n  workflow_call:\n  push:\n"), "blanks before its colon");
+    // block style with settings below a trigger, and a comment after a key, stay accepted
+    const ok = try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call: # the release's gate\n    inputs:\n      x:\n        type: string\n");
+    const f = try check(a, ok, r.ds, r.cb);
+    for (f.items) |m| try t.expect(std.mem.indexOf(u8, m, "`on:`") == null and std.mem.indexOf(u8, m, "same line") == null);
+    try t.expect(triggerStyleProblem(r.wf) == null);
 }
 
 test "a pull-request check that runs more than build and unit tests is found" {
