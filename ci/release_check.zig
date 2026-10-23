@@ -168,6 +168,10 @@ const write_job_actions = [_][]const u8{ "actions/checkout", "actions/download-a
 /// What `attest`, which signs and attests, may use besides the download: the upload of what it signed, the installer of cosign and the attestation. It runs no buck2.
 const attest_actions = [_][]const u8{ "actions/download-artifact", "actions/upload-artifact", "sigstore/cosign-installer", "actions/attest-build-provenance" };
 const cosign_action = "sigstore/cosign-installer";
+/// The cosign that the release installs: the retry of `release verify` reads its stderr, so the installer names the version and does not take the action's default.
+const cosign_release = "v3.0.6";
+/// The install of cosign as the workflow spells it: the pinned action and the version it is told.
+const cosign_step = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n        with:\n          cosign-release: '" ++ cosign_release ++ "'\n";
 const app_token_action = "actions/create-github-app-token";
 /// The environment that holds the release bot's key (the owner restricts it to main as a setup step; nothing here checks that); declared by the jobs that read `RELEASE_BOT_*` and by no other.
 const release_environment = "release";
@@ -913,6 +917,19 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     if (std.mem.count(u8, text, "actions/attest-build-provenance@") != 1) try add(a, &f, "`actions/attest-build-provenance` is used other than once, in `attest`", .{});
     // cosign is installed twice: to sign in `attest`, to check the signatures in `verify`.
     if (std.mem.count(u8, text, cosign_action ++ "@") != 2) try add(a, &f, "`sigstore/cosign-installer` is used other than twice, in `attest` and in `verify`", .{});
+    // every install of cosign names its release: `with:` and `cosign-release: 'v3.0.6'` are the two lines after the `uses:` line
+    {
+        var lines = std.ArrayList([]const u8).init(a);
+        var it = std.mem.splitScalar(u8, text, '\n');
+        while (it.next()) |l| try lines.append(l);
+        for (lines.items, 0..) |l, i| {
+            const repo = usesRepo(l) orelse continue;
+            if (!std.mem.eql(u8, repo, cosign_action)) continue;
+            const named = i + 2 < lines.items.len and std.mem.eql(u8, std.mem.trim(u8, lines.items[i + 1], " "), "with:") and
+                std.mem.eql(u8, std.mem.trim(u8, lines.items[i + 2], " "), "cosign-release: '" ++ cosign_release ++ "'");
+            if (!named) try add(a, &f, "`sigstore/cosign-installer` does not name `cosign-release: '" ++ cosign_release ++ "'` (the retry of `release verify` depends on the stderr of that release)", .{});
+        }
+    }
     if (jobNamed(jobs, "verify")) |j| {
         if (std.mem.count(u8, try j.text(a), cosign_action ++ "@") != 1) try add(a, &f, "the job `verify` does not install cosign, which checks the signatures", .{});
     }
@@ -1483,6 +1500,8 @@ const fixture_wf =
     \\          path: dist
     \\      - run: chmod +x tool/release
     \\      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+    \\        with:
+    \\          cosign-release: 'v3.0.6'
     \\      - name: Sign the seven files, keyless
     \\        run: tool/release sign --dist dist --dry false
     \\      - name: Attest the archive, the three tarballs, the two .debs and SHA256SUMS
@@ -1535,6 +1554,8 @@ const fixture_wf =
     \\          path: tool
     \\      - run: chmod +x buck2 tool/release tool/channels
     \\      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+    \\        with:
+    \\          cosign-release: 'v3.0.6'
     \\      - name: Build the command line again for the three targets
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
     \\      - name: Package the three tarballs again
@@ -2704,8 +2725,8 @@ test "rule: no job that writes or signs runs for anything but a push to main, an
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "tool/release sign --dist dist --dry false", "tool/release sign --dist dist"), "`attest` does not sign");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "--dry false", "--dry true"), "the `--dry` flags are not exactly");
     // verify installs cosign to check the signatures; the dry twin has none to check
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "does not install cosign");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "used other than twice");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", cosign_step, ""), "does not install cosign");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", cosign_step, ""), "used other than twice");
 }
 
 test "rule: RELEASE_FREEZE is read in the plan and nowhere else, and the plan is never a dry run" {
@@ -2830,7 +2851,12 @@ test "rule: the signature and the attestation are made in attest, once, in that 
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "            dist/buildrules_*.deb\n", "            dist/buildrules_0.0.1_amd64.deb\n"), "`dist/buildrules_*.deb` (the two .debs)");
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "            dist/SHA256SUMS\n", ""), "does not attest `dist/buildrules-*.tar.gz`");
     // cosign is installed in attest, and sign comes before the attestation, and both before the upload
-    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "does not install cosign");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", cosign_step, ""), "does not install cosign");
+    // each install names the cosign release, and a different release, a dropped input or a leftover default each turn it red
+    const unnamed = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", cosign_step, unnamed), "does not name `cosign-release: 'v3.0.6'`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", cosign_step, unnamed), "does not name `cosign-release: 'v3.0.6'`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "cosign-release: 'v3.0.6'", "cosign-release: 'v3.0.5'"), "does not name `cosign-release: 'v3.0.6'`");
     {
         const sign_step = "      - name: Sign the seven files, keyless\n        run: tool/release sign --dist dist --dry false\n";
         const moved = try mutateIn(a, r.wf, "attest", sign_step, "");
@@ -3082,7 +3108,7 @@ test "rule: a cosign bundle is named <file>.sigstore.json, for the files release
     // The same in a job that does not write.
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release tool/channels\n", try std.fmt.allocPrint(a, step, .{"dist/SHA256SUMS.sig.sigstore.jsn"})), "names a cosign bundle other than");
     // The install of cosign names the word `sigstore` without naming a file: that action, pinned, is exempt, and no other sigstore action is.
-    const installer = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n";
+    const installer = cosign_step;
     try t.expect(std.mem.indexOf(u8, r.wf, installer) != null);
     {
         const f = try checkRelease(a, r.wf, r.ds, r.ci);
@@ -3091,7 +3117,7 @@ test "rule: a cosign bundle is named <file>.sigstore.json, for the files release
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", installer, "      - uses: sigstore/gh-action-sigstore-python@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n"), "names a cosign bundle other than");
     // the exemption is for the `uses:` line alone: the same word in a run line or an input is checked
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release tool/channels\n", "      - run: echo sigstore/cosign-installer\n"), "names a cosign bundle other than");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", installer, installer ++ "        with:\n          cosign-release: sigstore\n"), "names a cosign bundle other than");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", installer, "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n        with:\n          cosign-release: sigstore\n"), "names a cosign bundle other than");
 }
 
 
