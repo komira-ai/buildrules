@@ -1,8 +1,8 @@
 """The floor a Node package's jest coverage is held to (README.md, "Jest coverage").
 
 `jest_coverage_floor(name, coverage = ":test")` takes the target of a `jest_test(coverage = True)` (the `coverage` directory of the run) and holds the
-lines and branches in its `coverage-summary.json` to the package's `coverage_floor.txt` (tools/cov_floor.zig), both ways: a fall fails, and so does a
-rise that the floor has not been raised to.
+lines and branches in its `coverage-summary.json` to the package's `coverage_floor.txt` (tools/cov_floor.zig): a fall below the floor fails; at or above it passes, and above it
+the check says the floor may be raised.
 """
 
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")

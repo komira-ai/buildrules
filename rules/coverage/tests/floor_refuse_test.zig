@@ -35,6 +35,36 @@ test "a floor the coverage meets is accepted, and the report says what the 99% t
     try std.testing.expect(std.mem.indexOf(u8, report, "rules/pkg lines 95.00% (95/100); 4 more to 99%") != null);
 }
 
+test "a floor below the coverage is accepted with a hint, in the report and on stderr; at the coverage, with none" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        const run = try floorRun(a, &tmp, COV_BRANCHES, "lines 90.00\nbranches 60.00\n", &.{});
+        try proc.expectOk("floor lags the tests", run);
+        try std.testing.expect(std.mem.indexOf(u8, run.stderr, "rules/pkg: line coverage is 95.00% (95/100), above its floor 90.00%: you may raise the floor to 95.00") != null);
+        const report = try tmp.dir.readFileAlloc(a, "report.txt", 1 << 16);
+        try std.testing.expect(std.mem.indexOf(u8, report, "rules/pkg: line coverage is 95.00% (95/100), above its floor 90.00%: you may raise the floor to 95.00") != null);
+        try std.testing.expect(std.mem.indexOf(u8, report, "branch coverage is 60.00%") == null);
+    }
+    {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try proc.expectOk("floor equals the tests", try floorRun(a, &tmp, COV_BRANCHES, "lines 95.00\nbranches 60.00\n", &.{}));
+        const report = try tmp.dir.readFileAlloc(a, "report.txt", 1 << 16);
+        try std.testing.expect(std.mem.indexOf(u8, report, "you may raise") == null);
+    }
+    {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try proc.expectOk("branches floor lags", try floorRun(a, &tmp, COV_BRANCHES, "lines 95.00\nbranches 50.00\n", &.{}));
+        const report = try tmp.dir.readFileAlloc(a, "report.txt", 1 << 16);
+        try std.testing.expect(std.mem.indexOf(u8, report, "branch coverage is 60.00% (60/100), above its floor 50.00%: you may raise the floor to 60.00") != null);
+    }
+}
+
 test "a floor file that is malformed is refused with the shape it must have" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -67,14 +97,13 @@ test "a floor file that is malformed is refused with the shape it must have" {
     }
 }
 
-test "a floor the coverage does not meet is refused, with the number to write" {
+test "a floor above the coverage is refused, with the figures" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const Bad = struct { name: []const u8, coverage: []const u8, floor: []const u8, msgs: []const []const u8 };
     const bad = [_]Bad{
         .{ .name = "coverage fell", .coverage = COV, .floor = "lines 96.00\n", .msgs = &.{ "rules/pkg: line coverage is 95.00% (95/100), below its floor 96.00%: coverage fell" } },
-        .{ .name = "the floor lags behind the tests", .coverage = COV, .floor = "lines 90.00\n", .msgs = &.{ "above its floor 90.00%", "raise the floor to 95.00" } },
         .{ .name = "a branch figure the tests lost", .coverage = COV, .floor = "lines 95.00\nbranches 60.00\n", .msgs = &.{ "the floor file has a `branches` figure and the tests record no branches: the instrumentation was dropped" } },
         .{ .name = "a branch figure the floor lacks", .coverage = COV_BRANCHES, .floor = "lines 95.00\n", .msgs = &.{ "the floor file has no `branches` figure: add `branches 60.00`" } },
         .{ .name = "branches fell", .coverage = COV_BRANCHES, .floor = "lines 95.00\nbranches 61.00\n", .msgs = &.{ "branch coverage is 60.00% (60/100), below its floor 61.00%: coverage fell" } },

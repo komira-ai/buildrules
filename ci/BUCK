@@ -98,6 +98,7 @@ group(name = "mojo", deps = [
     "//examples/mojo/partial:ci",
     "//examples/mojo/partial:coverage",
     "//examples/mojo/partial:coverage_floor",
+    "//examples/mojo/coverage_floors:floor_below_the_coverage",
     "//examples/mojo/reexport:ci",
     "//examples/mojo/reexport:coverage",
     "//examples/mojo/reexport_unused:ci",

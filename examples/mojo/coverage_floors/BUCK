@@ -1,9 +1,9 @@
 load("@buildrules//rules/mojo:defs.bzl", "mojo_coverage_floor")
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 
-# The coverage of ../partial (60.00% of its lines) held to a floor that is not its own: one above it, one below it. Each target must fail, and say
-# which way (ci/negative.bzl, COVERAGE_REDS). The floor that is exactly its coverage is ../partial/coverage_floor.txt, whose `:coverage_floor`
-# is green and is built by //ci:mojo.
+# The coverage of ../partial (60.00% of its lines) held to a floor that is not its own: one above it, one below it. The one above must fail, and say
+# so (ci/negative.bzl, COVERAGE_REDS); the one below passes (a floor is a minimum) and is built by //ci:mojo. The floor that is exactly its coverage is
+# ../partial/coverage_floor.txt, whose `:coverage_floor` is green and is built by //ci:mojo.
 mojo_coverage_floor(
     name = "floor_above_the_coverage",
     coverage = "//examples/mojo/partial:coverage",
