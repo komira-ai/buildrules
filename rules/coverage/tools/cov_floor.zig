@@ -71,6 +71,10 @@ pub fn parseCoverage(text: []const u8) ParseError!Coverage {
             branches = try measureOf(row["branches total ".len..]);
         }
     }
+    // A package with code and no decision (a re-export, a table) has `branches total 0/0`: that is no branches figure, as for jest.
+    if (branches) |b| {
+        if (b.total == 0) branches = null;
+    }
     return .{ .lines = lines orelse return error.BadCoverage, .branches = branches };
 }
 
@@ -180,7 +184,7 @@ pub fn check(a: std.mem.Allocator, label: []const u8, cov: Coverage, floor: Floo
             if (try judge(a, label, "branch", b, f)) |m| try bad.append(a, m);
         } else try bad.append(a, try std.fmt.allocPrint(a, "{s}: the tests record branches ({d}/{d}) and the floor file has no `branches` figure: add `branches {s}`", .{ label, b.hit, b.total, try fmtHundredths(a, try bp(b)) }));
     } else if (floor.branches != null) {
-        try bad.append(a, try std.fmt.allocPrint(a, "{s}: the floor file has a `branches` figure and the tests record no branches: the instrumentation was dropped", .{label}));
+        try bad.append(a, try std.fmt.allocPrint(a, "{s}: the floor file has a `branches` figure and the coverage has no branches to hold (the code has no decision, or the branch instrumentation was dropped): remove the `branches` line only if the code has none", .{label}));
     }
     return bad.toOwnedSlice(a);
 }

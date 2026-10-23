@@ -167,6 +167,7 @@ zig_exe(
     src = "tools/conda_payload.zig",
     busybox = _BB,
     zig = _ZIG,
+    visibility = ["PUBLIC"],
 )
 
 zig_test(
@@ -246,17 +247,27 @@ zig_exe(
 zig_test(
     name = "cov_summary_unit",
     exec_compatible_with = LINUX_X86_64,
-    imports = ["tools/cov_summary.zig"],
+    imports = ["tools/cov_summary.zig", "tools/branch_lcov.zig"],
     src = "tools/cov_summary_test.zig",
     busybox = _BB,
+    zig = _ZIG,
+)
+
+# The branch records of a Mojo package's tests, read and summed by id (cov_summary --branch-lcov), and the listing cov_summary builds from them.
+zig_test(
+    name = "branch_lcov_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/branch_lcov.zig", "tools/cov_summary.zig"],
+    src = "tools/branch_lcov_test.zig",
     zig = _ZIG,
 )
 
 zig_exe(
     name = "cov_summary",
     exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/branch_lcov.zig"],
     src = "tools/cov_summary.zig",
-    unit_tests = [":cov_summary_unit", _ZIG_VERSION],
+    unit_tests = [":cov_summary_unit", ":branch_lcov_unit", _ZIG_VERSION],
     busybox = _BB,
     zig = _ZIG,
     visibility = ["PUBLIC"],
@@ -361,6 +372,7 @@ zig_coverage(
         ":cov_zig_unit",
         ":cov_run_unit",
         ":cov_summary_unit",
+        ":branch_lcov_unit",
         ":kcov_build_unit",
         ":zig_cover_unit",
         ":cov_floor_unit",
@@ -372,6 +384,7 @@ zig_coverage(
         "cov_zig_elf.zig",
         "cov_run.zig",
         "cov_summary.zig",
+        "branch_lcov.zig",
         "kcov_build.zig",
         "zig_cover.zig",
         "cov_floor.zig",

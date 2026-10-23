@@ -17,6 +17,8 @@ load("//rules/core:pinned_file.bzl", "pinned_file")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/coverage:defs.bzl", "cov_link")
+load("//rules/coverage/branch:llvm_branch.bzl", "RAW_PROFILE_VERSION", "cov_branch_toolchain", "llvm_branch_check", "llvm_branch_unpack")
+load("//rules/pins:pins.bzl", "PINS")
 load("//rules/zig:zig.bzl", "zig_dist")
 load(":mojo.bzl", "mojo_closure_rule")
 load(":providers.bzl", "MojoToolchainInfo")
@@ -95,6 +97,56 @@ def mojo_toolchains(table = {}):
             name = "mojo_{}_cov_link".format(v),
             zig = ":mojo_{}_zig".format(v),
             exec_compatible_with = LINUX_X86_64,
+            visibility = ["PUBLIC"],
+        )
+        # The LLVM pieces of this version's branch coverage (rules/coverage/branch/README.md): its own lld (LLD 24, the LLVM the compiler is
+        # built on: only it reads and writes the compiler's bitcode), unpacked from the pinned compiler package, next to the LLVM 23
+        # llvm-profdata and profile runtime every version shares, and the checks that the pair agrees on the raw profile format.
+        llvm_branch_unpack(
+            name = "mojo_{}_lld24".format(v),
+            exec_compatible_with = LINUX_X86_64,
+            members = {
+                "bin/lld": "mojo/bin/lld",
+                "lib/libgcc_s.so.1": "libgcc/lib/libgcc_s.so.1",
+                "lib/libstdc++.so.6": "libstdcxx/lib/libstdc++.so.6",
+            },
+            packages = {
+                "libgcc": "buildrules//rules/pins:" + PINS["libgcc"]["name"],
+                "libstdcxx": "buildrules//rules/pins:" + PINS["libstdcxx"]["name"],
+                "mojo": compiler,
+            },
+        )
+        llvm_branch_check(
+            name = "mojo_{}_lld24_check".format(v),
+            exec_compatible_with = LINUX_X86_64,
+            lld = ":mojo_{}_lld24".format(v),
+            mode = "lld",
+            want = {"lld": "24"},
+        )
+        llvm_branch_check(
+            name = "mojo_{}_raw_version_check".format(v),
+            exec_compatible_with = LINUX_X86_64,
+            fixtures = ["buildrules//rules/coverage/branch:profile_fixture.c"],
+            lld = ":mojo_{}_lld24".format(v),
+            mode = "raw_version",
+            tools = "buildrules//rules/coverage/branch:llvm23",
+            want = {
+                "counts": "classify:2,3",
+                "functions": "3",
+                "raw": str(RAW_PROFILE_VERSION),
+                "triple": row["cc_target"],
+            },
+        )
+        cov_branch_toolchain(
+            name = "mojo_{}_cov_branch".format(v),
+            exec_compatible_with = LINUX_X86_64,
+            checks = [
+                ":mojo_{}_lld24_check".format(v),
+                ":mojo_{}_raw_version_check".format(v),
+                "buildrules//rules/coverage/branch:llvm23_check",
+            ],
+            lld = ":mojo_{}_lld24".format(v),
+            tools = "buildrules//rules/coverage/branch:llvm23",
             visibility = ["PUBLIC"],
         )
         mojo_toolchain(

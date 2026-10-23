@@ -417,7 +417,8 @@ Each package is a mopm project: its own `mopm.toml`, `mopm.lock` and graph (`mop
 | `:test` | every test run |
 | `:bin_<name>`, `:build` | the `[targets] bins` of `mopm.toml`; `:build` is the library and the binaries |
 | `:<stem>__cov_bin`, `:<stem>__cov` | the same test as a debug build, and its run under kcov: a Cobertura report in repository paths |
-| `:coverage` | the package's line coverage from those reports (`coverage.txt`); red if a source of the library is in no report. `:coverage[reports]` is the reports themselves, the per-line records (12.4) |
+| `:<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info` | the same test as LLVM bitcode, instrumented and linked, run for its profile (in the working directory and with the `test_data` and `test_env` its other runs have, 12.9), the profile applied to the bitcode, and the library's branches in that IR classified: the branch records (12.4). Not for a package whose tests link a native library |
+| `:coverage` | the package's line and branch coverage from those reports and records (`coverage.txt`); red if a source of the library is in no report. `:coverage[reports]` is the reports themselves, the per-line records, and `:coverage[branches]` the branch records (12.4) |
 | `:coverage_floor` | only if `coverage_floor.txt` is beside the BUCK file: green while `coverage.txt` is at least that floor (12.4) |
 | `:ci` | `:build` and `:test` |
 | `:table` | the committed graph is what the pinned mopm's `plan --unit-graph --locked` prints for the package and its path dependencies now, byte for byte, the dependencies held by identity only (an action; not part of `:ci`, but of `//ci:all` for every example). `:workspace` is the files it reads: the package's and its dependencies', flat, each at its path from the repository root |
@@ -538,32 +539,48 @@ It is also a `buck2 test` target (`ExternalRunnerTestInfo`).
 **Coverage** on mopm's units: the test unit's profile in the slice is replaced by `{opt: 0, assert: all, debug: true}` (mopm passes `-g`), the link goes
 through `cov_zig` (it keeps the debug information and rewrites the action's directories out of it), kcov v42 built from source with the pinned zig (`rules/coverage`
 `kcov_build`, `cov_zig`, `debug_relocate`, `cov_normalize`) runs the binary in a tree of copies of the test source and the library's sources at the relative names the line
-tables use, and `cov_normalize` maps the report to repository paths. `cov_run` refuses a binary that names the library's sources by the directory they were staged in. Branch coverage,
-`covcheck`'s policy and the census are not ported.
+tables use, and `cov_normalize` maps the report to repository paths. `cov_run` refuses a binary that names the library's sources by the directory they were staged in. `covcheck`'s policy and the census are not ported.
 
-**What `:coverage` gives a consumer.** Two outputs of one target, built from the same reports:
+**Branch coverage** of the same tests (`rules/coverage/branch/README.md`): kcov writes no branch data for a Mojo executable, so each test is also built as LLVM bitcode (the unit's profile `{opt: 0, assert: all, debug: false}` and the
+build arguments `--emit llvm-bitcode --debug-level line-tables`, so `<stem>__bc` is the very `mopm unit build` of the test with those flags), instrumented with IR profile counters by Mojo's own lld (LLVM 24: the only
+LLVM that reads and writes the compiler's bitcode, unpacked from the pinned compiler package) and linked as a release test is, with the LLVM 23 profile runtime (`<stem>__pgo`); run in the tree of its sources, the raw
+profiles merged by the pinned `llvm-profdata` (`<stem>__profdata`; the raw profile version is `RAW_PROFILE_VERSION`, checked against both LLVMs by a check of each Mojo toolchain); read back by lld with the profile
+applied, as IR text whose branches carry their counts (`<stem>__ir`); and the branches of the library's sources in that IR classified, each a source decision or a branch the compiler made, as lcov `BRDA` records in
+repository paths (`<stem>__info`). The tools are static Zig executables (`cov_branch link|run|annotate`, `cov_branch_classify`), each behind its tests. A package whose tests link a native library is not instrumented yet
+(the instrumented link line has none of its libraries) and has the line figure alone.
+
+**What `:coverage` gives a consumer.** Three outputs of one target, built from the same reports and records:
 
 - `:coverage` (its default output, `coverage.txt`): one row per file, `<path> <hit>/<total> <n>%`, the rows of a test's own sources marked `(not counted)`, then `total <hit>/<total> <n>%`
-  over the library's sources. A library source with no executable line (a re-export `__init__.mojo`) is listed `0/0`.
+  over the library's sources. A library source with no executable line (a re-export `__init__.mojo`) is listed `0/0`. Then the branch rows, the same listing with `branches ` in front of each row, over
+  the arms of the library's source decisions (`if`, `elif`, `while`, `and`/`or`, a `for` head, a raising call in a `try:` body): an arm counts as hit when any test took it. A source with code and no
+  decision, or with no code, is `0/0`; the tests of a package with a native library have no branch rows.
 - `:coverage[reports]`: the records the rows were counted from, one file per test (`<stem>__cov.cobertura.xml`), kcov's Cobertura XML after `cov_normalize`: `<?xml?>`, `<coverage timestamp="0">`,
   one `<package name="">`, one `<class name="P" filename="P">` per file that has a record, bytewise sorted, and in it one `<line number="N" hits="H"/>` per line the compiler emitted code for, sorted by
   number, `H` being 1 when the test ran the line and 0 when not. `P` is the repository path (relative to the root of the cell that holds the package; never absolute, never under `buck-out`). A line
   kcov gave branch data keeps it, `branch="true" condition-coverage="NN% (k/n)"`. A file with no executable line has no class, so it is the `0/0` row of `coverage.txt` and absent from the
   records, the same fact twice. This is the shape `covcheck` reads with `--cobertura` (one file per test binary; a path in several files is merged by summing).
+- `:coverage[branches]`: the branch records the `branches` rows were counted from, one lcov file per test (`<stem>__info.info`): per library source the IR holds code of, `SF:<repository path>`, then
+  `BRDA:<line>,<col>:<kind>:<n>/<N>,<arm>,<count>` per arm of each decision, then `end_of_record`. `<kind>` is `br`, `select`, `switch`, `try` or `rhs`; `<n>/<N>` is which decision of that kind, of how many, at that line
+  and column in one copy of the code (Mojo gives an `if` and its `elif`s one location); the arms are numbered from 0 in LLVM's weight order (true first; a `try` decision's are returned and raised); `-` is a decision
+  that never ran, an arm counted and not taken, never written as 0. A source with code and no decision is `SF:` and `end_of_record` alone; a test that ran none of the library writes an empty file. This is the
+  shape `covcheck` reads with `--branch-lcov` (the block field is not a number, so upstream lcov tools cannot read it). Present only when the tests are instrumented.
 
 A consumer selects them by sub-target, and the build report (or `--show-full-output`) names one path per test:
 
 ```
 buck2 build //pkg:coverage                       # coverage.txt
 buck2 build //pkg:coverage[reports] --show-full-output
+buck2 build //pkg:coverage[branches] --show-full-output
 ```
 
-*Branch records.* kcov writes no `branch` attribute for a Mojo executable, so `:coverage[reports]` holds no branch data today and `coverage.txt` has no `branches` rows (`examples/mojo/coverage_records_test.zig`
-holds both to that). The branch records `covcheck` reads with `--branch-lcov` are written by a classifier of the compiled code's LLVM IR, which is not ported; they are not in this output.
+*Branch records.* kcov writes no `branch` attribute for a Mojo executable, so `:coverage[reports]` holds no branch data (`examples/mojo/coverage_records_test.zig` holds that, and holds the `branches` rows of `coverage.txt`
+to the records of `:coverage[branches]` file by file). The classifier refuses what it has no evidence for, naming `file:line:col`; the shapes that stay refused are in `rules/coverage/branch/README.md`.
 
 *The floor.* A package with a `coverage_floor.txt` beside its BUCK file (the file every other package's floor is, `rules/coverage/README.md`) gets `:coverage_floor`: `lines NN.NN`, the line total of
-`coverage.txt` rounded down to a hundredth. The floor is a minimum: lower than it fails with `coverage fell`, equal passes, and higher passes and prints `you may raise the floor to NN.NN` (optional). A `branches` figure is
-refused while the tests record no branches. With no file there is no target, and the package is as it was. `mojo_coverage_floor(name, coverage, floor)` (`rules/mojo/defs.bzl`) checks a `:coverage` against any other file.
+`coverage.txt` rounded down to a hundredth, and `branches NN.NN`, the `branches total` likewise. Each figure is a minimum: lower than the floor fails with `coverage fell`, equal passes, and higher passes and prints
+`you may raise the floor to NN.NN` (optional). A package whose `coverage.txt` has branch rows needs a `branches` figure ("the tests record branches ... add `branches NN.NN`"), and one without them is refused a `branches` figure
+("the coverage has no branches to hold"); a package whose code has no decision (a table) has `branches total 0/0`, which is no branches figure, so its floor is `lines NN.NN` alone. With no file there is no target, and the package is as it was. `mojo_coverage_floor(name, coverage, floor)` (`rules/mojo/defs.bzl`) checks a `:coverage` against any other file.
 
 ### 12.5 Versions: pinned mopm, the Mojo version
 
@@ -589,6 +606,13 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 | a native library other than the pinned one | `mopm unit build` | `native library X has sha256 B, but the graph declares A` |
 | a library source no test compiled, that has any statement beyond comments, docstrings, imports and alias declarations (a re-export-only `__init__.mojo`, or a file of `comptime NAME = ...` aliases, has none, is omitted by the report, and is listed `0/0`) | `:coverage` | `<file> is in no report: no test compiled it, or kcov could not open it` |
 | a package's line coverage below its `coverage_floor.txt` | `:coverage_floor` | `<package>: line coverage is 60.00% (3/5), below its floor 70.00%: coverage fell` |
+| a package's branch coverage below its `branches` figure | `:coverage_floor` | `<package>: branch coverage is 50.00% (1/2), below its floor 60.00%: coverage fell` |
+| a floor file with no `branches` figure for a package whose tests record branches, or one with it for a package that has none to hold | `:coverage_floor` | `the tests record branches (1/2) and the floor file has no `branches` figure: add `branches 50.00``; `the floor file has a `branches` figure and the coverage has no branches to hold (the code has no decision, or the branch instrumentation was dropped)` |
+| a branch in a library source that is neither a source decision nor a branch the classifier has evidence for | `<stem>__info` (so `:coverage`) | `cov_branch_classify: <file>:<line>:<col>: a br at '<token>' is neither a source decision nor a known compiler-made branch: <source line>` |
+| an expected source with code and no branch record | `:coverage` | `<path> is in no branch record: its tests ran no code of it, or the classifier found none` |
+| an instrumented test that fails, writes no profile or one of another raw profile version | `<stem>__profdata` | `BRANCH COVERAGE RUN FAILED: ...` (`... has raw profile version 12, not 11, the version the pinned llvm-profdata reads`) |
+| a profile that is not that of the binary, or does not fit the bitcode | `<stem>__ir` | `BRANCH COVERAGE ANNOTATE FAILED: the profile ... holds no record of N of the M functions ... links` / `lld reported N diagnostic(s) applying the profile` |
+| the Mojo package's lld not LLVM 24, or its raw profile version not the one `llvm-profdata` reads | `toolchains//:mojo_<v>_cov_branch` | `llvm_branch lld RED: ... does not print 'LLD 24.'` / `llvm_branch raw_version RED: raw profile version 12 not accepted by llvm-profdata 23.1.3, which expects 11` |
 | `toolchains/mojo_pins.bzl` edited without a sync (a `cc_target`, a hash, a component) | `:check` at analysis; `mojo check` | `toolchains/mojo_pins.bzl and the table's unit graph disagree about the Mojo 1.0.0 toolchain (cc_target)` |
 | `mopm-toolchain.toml` says another Mojo than the table was made for | `:check` (the file's hash); `mojo check` | `examples/mojo/mopm-toolchain.toml is not what the Mojo table was made from (sha256 A, the table says B): run `buildrules mojo sync``  |
 | a test at an ISA level on a platform without it | analysis | as section 11 |
