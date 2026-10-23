@@ -15,9 +15,34 @@ Both are pure functions of the arguments, so every refusal is an analysis test (
 
 load("//rules/core:test_runtime.bzl", "RUNNER_ENV", "check_data_destinations")
 
-# The variable that names the directory a test is given its data in. A test runs with that directory as its working directory, so a relative path and
-# this variable reach the same files. It is set only for a test that has data.
+# The variable that names the directory a test is given its data in. In the default layout a test runs with that directory as its working directory, so a
+# relative path and this variable reach the same files; in the installed layout it is `<root>/share`, and the working directory is `<root>`. It is set only
+# for a test that has data.
 DATA_ENV = "BUILDRULES_TEST_DATA"
+
+# The layouts a test is run in (`mojo_package(test_layout = ...)`, docs/contract.md section 12.9): `default` is the data directory as the working directory;
+# `installed` is a fresh root per test with the binary at `<root>/bin/<exe>`, the data under `<root>/share`, and `<root>` as the working directory.
+LAYOUT_DEFAULT = "default"
+LAYOUT_INSTALLED = "installed"
+LAYOUTS = [LAYOUT_DEFAULT, LAYOUT_INSTALLED]
+
+# In the installed layout the root holds `bin/` and `share/` of its own; the coverage run's root also holds the sources the line tables name.
+INSTALLED_NAMES = ["bin", "share"]
+
+def check_test_layout(where, layout, refuse = fail):
+    """`test_layout` is one of LAYOUTS. Returns whether it is."""
+    if type(layout) != "string" or layout not in LAYOUTS:
+        refuse("{}: test_layout {} is not one of {}".format(where, repr(layout), ", ".join(LAYOUTS)))
+        return False
+    return True
+
+def check_installed_tree(where, names, refuse = fail):
+    """The installed coverage root holds the sources of the test and of the library at the names the line tables use (`names`, paths relative to the root), next
+    to its own `bin/` and `share/`: a source whose first directory is one of those would be merged into them. Refused, naming it."""
+    for name in sorted(names):
+        top = name.split("/")[0]
+        if top in INSTALLED_NAMES:
+            refuse("{}: the source {} is in {}/, which the installed layout keeps for the binary and the data (bin/, share/): the coverage run's root would merge them".format(where, name, top))
 
 # The names `test_env` may not set: the runner's own (rules/core/test_runtime.bzl) and the ones these rules set (the data directory, the nonce of a
 # unit action, the scratch path Buck2 gives an action).

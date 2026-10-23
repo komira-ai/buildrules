@@ -25,6 +25,14 @@ directory it names is made). `--scratch NAME` makes a private directory (`$BUCK_
 before the run and removed after. The program runs in `--cwd`, or the directory `--cwd-env NAME` names, or the working directory. It is never
 looked for in a `PATH`: its name must contain a `/`, and a relative one is made absolute first.
 
+`--private-scratch` makes a directory of the run's own, `buildrules_test.<random>` in `$BUCK_SCRATCH_PATH` (made absolute), else `$TMPDIR`, else `/tmp`
+(install_root.zig), and removes it after the run. TMPDIR and TEST_TMPDIR are an empty directory in it, HOME another; they are set after `--tmpdir` and replace
+what `--env` gave. It is how a Mojo test run is given its scratch (docs/contract.md, section 12.9), so two tests never share one. `--installed` (it needs
+`--private-scratch`) runs the program from a fresh root in that directory: the directory that holds the program is copied to `<root>/bin` (the program is
+`<root>/bin/<name>`, and its `lib/` is beside it), `--install-share DIR` copies a tree to `<root>/share` (which exists, empty, without it), `--share-env NAME` is
+the absolute path of `<root>/share`, and the working directory is `<root>` unless `--cwd` or `--cwd-env` says another. `cov_run` (rules/coverage) makes the same
+directories from the same file for the coverage run.
+
 ## What differs from the shell script it replaced
 
 The rules that moved from `sh -c` to `check` (`run_check`, `c_check`, `mojo_same`, the Mojo and Rust test runs, the welds, the version and table checks) see these differences:

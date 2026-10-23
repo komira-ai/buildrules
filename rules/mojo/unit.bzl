@@ -18,7 +18,7 @@ load("//rules:isa.bzl", "isa_satisfies")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
 load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoTestRunInfo", "MojoToolchainInfo")
 load("//rules/core:test_runtime.bzl", "check_data_destinations")
-load(":test_data.bzl", "DATA_ENV", "check_test_env")
+load(":test_data.bzl", "DATA_ENV", "LAYOUT_DEFAULT", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_env", "check_test_layout")
 
 # `-c buildrules.unit_nonce=N` changes every unit action's key without changing any input the compiler sees: the compile
 # really re-executes, so two builds can be compared byte for byte.
@@ -222,17 +222,24 @@ def _data_dir(ctx):
     bit) at its staged path, so the directory is an input of the action by the digests of the files in it."""
     where = str(ctx.label.raw_target())
     check_test_env(where, ctx.attrs.test_env)
+    check_test_layout(where, ctx.attrs.test_layout)
     if not ctx.attrs.data:
         return None
     check_data_destinations(where + ": data", ctx.attrs.data.keys())
     return ctx.actions.copied_dir("data", dict(ctx.attrs.data))
 
 def _start_options(ctx, data_dir):
-    """`check run|marker` options that give a test its data and variables: the data directory as the working directory and under `BUILDRULES_TEST_DATA`
-    (made absolute, because the action runs in the execution root), then each `test_env` entry. They are arguments of the action, so a change to either
-    is a new action key."""
-    opts = []
-    if data_dir:
+    """`check run|marker` options that give a test its scratch, data and variables. Always `--private-scratch`: a fresh, empty TMPDIR and TEST_TMPDIR and
+    HOME of the run's own (docs/contract.md, section 12.9). Then the data: in the default layout the data directory is the working directory and is named by
+    `BUILDRULES_TEST_DATA` (made absolute, because the action runs in the execution root); in the installed layout (`--installed`) a fresh root is made in the
+    scratch, the binary is copied to `<root>/bin/`, the data directory is copied to `<root>/share` (named by `BUILDRULES_TEST_DATA`) and `<root>` is the
+    working directory. Then each `test_env` entry. They are arguments of the action, so a change to any is a new action key."""
+    opts = ["--private-scratch"]
+    if ctx.attrs.test_layout == LAYOUT_INSTALLED:
+        opts += ["--installed"]
+        if data_dir:
+            opts += ["--install-share", data_dir, "--share-env", DATA_ENV]
+    elif data_dir:
         opts += ["--env", cmd_args(DATA_ENV + "=", data_dir, delimiter = ""), "--abs", DATA_ENV, "--cwd-env", DATA_ENV]
     for name in sorted(ctx.attrs.test_env.keys()):
         opts += ["--env", "{}={}".format(name, ctx.attrs.test_env[name])]
@@ -259,11 +266,8 @@ def _test_run_impl(ctx):
         env = {"BUILDRULES_UNIT_NONCE": _NONCE},
     )
 
-    # The command of `buck2 test`: the same start, without a marker. A test without data or variables has the plain command.
-    if start:
-        run = cmd_args(check, "run", "--ld-library-path", libs, start, "--", info.exe, hidden = [info.dir])
-    else:
-        run = cmd_args(check, "run", "--ld-library-path", libs, "--", info.exe, hidden = [info.dir])
+    # The command of `buck2 test`: the same start, without a marker.
+    run = cmd_args(check, "run", "--ld-library-path", libs, start, "--", info.exe, hidden = [info.dir])
     return _validated(ctx, [
         DefaultInfo(default_output = marker),
         MojoTestRunInfo(marker = marker),
@@ -286,6 +290,9 @@ mojo_test_run_rule = rule(
         "required_isa": attrs.string(default = ""),
         # The variables the test is given besides its own: `{NAME: value}`.
         "test_env": attrs.dict(attrs.string(), attrs.string(), default = {}),
+        # `default` or `installed` (test_data.bzl): where the test runs. The installed layout is a fresh root per test, the binary at `<root>/bin/<exe>`,
+        # the data under `<root>/share`, the working directory `<root>`.
+        "test_layout": attrs.string(default = LAYOUT_DEFAULT),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
         "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
@@ -337,13 +344,22 @@ def _cov_run_impl(ctx):
     # directory BUILDRULES_TEST_DATA names, which is this tree.
     where = str(ctx.label.raw_target())
     check_test_env(where, ctx.attrs.test_env)
+    check_test_layout(where, ctx.attrs.test_layout)
     check_data_destinations(where + ": data", ctx.attrs.data.keys())
+    installed = ctx.attrs.test_layout == LAYOUT_INSTALLED
+    data_dir = None
     tree = {dest: src for dest, src in ctx.attrs.share.items()}
-    for dest, src in ctx.attrs.data.items():
-        for held in tree.keys():
-            if dest == held or held.startswith(dest + "/") or dest.startswith(held + "/"):
-                fail("{}: the staged data {} collides with {}, which the coverage tree holds (the test's source or the library's)".format(where, dest, held))
-        tree[dest] = src
+    if installed:
+        # The data is its own tree (it becomes `<root>/share`); the root holds the sources beside `bin/` and `share/`.
+        check_installed_tree(where, tree.keys())
+        if ctx.attrs.data:
+            data_dir = ctx.actions.copied_dir("data", dict(ctx.attrs.data))
+    else:
+        for dest, src in ctx.attrs.data.items():
+            for held in tree.keys():
+                if dest == held or held.startswith(dest + "/") or dest.startswith(held + "/"):
+                    fail("{}: the staged data {} collides with {}, which the coverage tree holds (the test's source or the library's)".format(where, dest, held))
+            tree[dest] = src
     share = ctx.actions.copied_dir("share", tree)
     report = ctx.actions.declare_output(ctx.label.name + ".cobertura.xml")
     cmd = cmd_args(
@@ -367,6 +383,13 @@ def _cov_run_impl(ctx):
         ".stage/src/",
         hidden = [info.dir],
     )
+    # A fresh, empty TMPDIR, TEST_TMPDIR and HOME of the run's own, as the test run has (`--private-scratch`); the installed layout copies the binary to
+    # `<root>/bin/`, the sources into `<root>` and the data to `<root>/share`, which `--data-env` then names (cov_run.zig).
+    cmd.add("--private-scratch")
+    if installed:
+        cmd.add("--installed")
+        if data_dir:
+            cmd.add("--data", data_dir)
     if ctx.attrs.data:
         cmd.add("--data-env", DATA_ENV)
     for name in sorted(ctx.attrs.test_env.keys()):
@@ -387,6 +410,7 @@ mojo_cov_run_rule = rule(
         # The test's staged data and variables: the very ones of its test run (`mojo_test_run_rule`).
         "data": attrs.dict(attrs.string(), attrs.source(), default = {}),
         "test_env": attrs.dict(attrs.string(), attrs.string(), default = {}),
+        "test_layout": attrs.string(default = LAYOUT_DEFAULT),
         "includes": attrs.list(attrs.string()),
         "kcov": attrs.exec_dep(default = "buildrules//rules/coverage:kcov"),
         "maps": attrs.list(attrs.string()),

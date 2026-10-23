@@ -631,18 +631,42 @@ mojo_package(
   treat it as read-only and write under `TMPDIR`.
 - **Files and programs.** A value is a file of the package or a target (`//pkg:name`, `:name`, resolved from the BUCK file's directory); a target is staged as its default output, with the executable bit it has,
   so a program built by another target starts from the staged path. A target with more than one default output is refused by Buck2.
-- **The test run and the coverage run.** `:<stem>` (and `buck2 test`, whose command is the same start without a marker) runs `check marker|run --env BUILDRULES_TEST_DATA=<dir> --abs BUILDRULES_TEST_DATA
-  --cwd-env BUILDRULES_TEST_DATA`, then one `--env NAME=VALUE` per `test_env` entry. `:<stem>__cov` stages the same files into the tree that is kcov's working directory (`cov_run --data-env BUILDRULES_TEST_DATA
+- **The test run and the coverage run.** `:<stem>` (and `buck2 test`, whose command is the same start without a marker) runs `check marker|run --private-scratch --env BUILDRULES_TEST_DATA=<dir> --abs BUILDRULES_TEST_DATA
+  --cwd-env BUILDRULES_TEST_DATA`, then one `--env NAME=VALUE` per `test_env` entry. `:<stem>__cov` stages the same files into the tree that is kcov's working directory (`cov_run --private-scratch --data-env BUILDRULES_TEST_DATA
   --env NAME=VALUE`): that tree also holds the test's source and the library's sources under the names the line tables use, so the test sees the same files plus those.
+- **Scratch the runner owns.** Every test run and every coverage run, in either layout, gets `TMPDIR`, `TEST_TMPDIR` and `HOME` of its own: absolute paths of directories that exist, are empty when the test starts, and are
+  writable. `TMPDIR` and `TEST_TMPDIR` are the same directory, `HOME` another. They are made fresh for each run (the directory is `buildrules_test.<random>`, in `BUCK_SCRATCH_PATH`, else `TMPDIR`, else `/tmp`, with no
+  link in its path), so two tests never share them, and the whole directory is removed when the run ends. The three names are the runner's: `test_env` refuses them, and nothing a build or an earlier run left in the process's
+  own environment reaches the test under them. `BUCK_SCRATCH_PATH`, which Buck2 sets for a build action (not for `buck2 test`), is left as it is and is **relative** to the action's directory, not to the test's working
+  directory: a test must not use it, `TMPDIR` is the absolute path to write under.
+- **The installed layout.** `test_layout = "installed"` (the default is `"default"`, the layout above, unchanged) runs each test the way a program installed on a machine runs: from a fresh root made for that run, in the
+  private scratch directory (`<scratch>/root`, an absolute path with no link in it):
+
+  ```
+  <root>/bin/<exe>      the test binary, a copy of it (so /proc/self/exe, and argv[0], is this path); the directory that held the binary is copied to <root>/bin, so its lib/ is there for its runpath
+  <root>/share/...      the test_data, each key relative to share/ ({"golden/out.txt": ...} is <root>/share/golden/out.txt); the directory exists, empty, for a test without data
+  working directory     <root>; BUILDRULES_TEST_DATA, when the test has data, is <root>/share
+  ```
+
+  `check marker|run --private-scratch --installed --install-share <data dir> --share-env BUILDRULES_TEST_DATA` does it for the test run. The coverage run uses the same layout (`cov_run --private-scratch --installed --data <data dir>
+  --data-env BUILDRULES_TEST_DATA`): kcov wraps the copy at `<root>/bin/<exe>` with `<root>` as its working directory, and the root also holds the test's source and the library's sources under the names the line tables
+  use, beside `bin/` and `share/`; a source whose first directory is `bin` or `share` is refused. In this layout a staged path may be any path (the data is under `share/`, apart from the sources). A value other than
+  `"default"` and `"installed"` is refused when the package loads.
 - **The action key.** The staged files are inputs of both actions by their digests, and the variables are arguments, so a change to a staged file, to which file a path names, or to a variable runs the test again, and a
   test that depends on the new content can turn red; a change that touches none of them is a cache hit. On the farm a file that is not an input is not there at all, so a test cannot read what it did not declare.
 - **Refused at load** (rules/mojo/test_data.bzl, each an analysis test in rules/mojo/tests): a key that is no test of the package (a mistyped path stages nothing); a staged path that is empty, absolute, ends in `/`, or holds `.`, `..` or an empty
   segment (it would leave the directory); a staged path that is also the directory of another, or that is staged twice for one test (by `*` and by the test); a staged path that is, or is inside, a path the coverage tree holds (the test's
   source, a library source) or holds one; a staged value that is not a string; a variable name that is not a shell name or that the runner sets (`PATH`, `LD_LIBRARY_PATH`, `LD_PRELOAD`, `DYLD_*`, `TMPDIR`, `TEST_TMPDIR`, `HOME`, `PWD`,
-  `BUILDRULES_TEST_DATA`, `BUILDRULES_UNIT_NONCE`, `BUCK_SCRATCH_PATH`); a `test_env` value that is not a string. `mojo_test_run_rule` and `mojo_cov_run_rule` (`data`, `test_env`) repeat the checks on their own arguments.
+  `BUILDRULES_TEST_DATA`, `BUILDRULES_UNIT_NONCE`, `BUCK_SCRATCH_PATH`); a `test_env` value that is not a string; a `test_layout` that is neither `default` nor `installed`; with the installed layout, a source of the test or of the
+  library in `bin/` or `share/`. `mojo_test_run_rule` and `mojo_cov_run_rule` (`data`, `test_env`, `test_layout`) repeat the checks on their own arguments.
 - **Proof.** `ci/mojo_data` runs a stand-in test (a program that reads the staged file by a relative path, checks the working directory against `BUILDRULES_TEST_DATA`, checks a variable, and starts a staged program) with the
   Mojo test run rule, without a compiler: green when everything is staged, and red, for its reason, with other content, another variable value, no program, and a program without the executable bit (`ci/negative.bzl`, `PLANTED`).
   `examples/mojo/testdata` is the real thing: a package whose tests read a golden file, a third-party file, a library source and a variable, and start a program, in `:ci` and in `:coverage`.
+  The same probe, told to expect the installed layout, is green in `ci/mojo_data:run_green_installed` (it finds itself at `<root>/bin/<name>`, the data at `<root>/share`, the root as its working directory) and red, for its reason, when the run
+  is the default layout, when a default-layout probe is run installed, and when `share/greeting.txt` is missing or has other content; it also checks the private `TMPDIR`, `TEST_TMPDIR` and `HOME` in every run. `examples/mojo/installed` is the real
+  thing for the layout: a library that finds its own files from `/proc/self/exe` (`executable_path`, `install_root`, `share_dir`) with tests that run in `test_layout = "installed"`, in `:ci` and in `:coverage`; two of its tests
+  (`test_scratch_a`, `test_scratch_b`) check that their `TMPDIR`, `TEST_TMPDIR` and `HOME` are set, absolute, empty and writable. That two runs get different directories is held by the cases of `check` (rules/check/runspec_test.zig, and
+  check_exe_test.zig on the built executable), which start the program twice and compare.
 
 Not in `mopm.toml`: the unit graph is mopm's, and a test's data is how a build system gives a test its files, not what a package is. When mopm's graph carries a package's test files (a `[tests]` table of globs), `buildrules mojo sync` could
 generate `test_data` from it; until then the declaration is the BUCK file's, and nothing in mopm changes.

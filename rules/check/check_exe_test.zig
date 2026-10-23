@@ -81,6 +81,32 @@ test "the scratch directory is under BUCK_SCRATCH_PATH of the process's environm
     try t.expect(!c.exists("scratch-root/s"));
 }
 
+test "two processes with --private-scratch have a TMPDIR, a TEST_TMPDIR and a HOME each of their own, in the process's BUCK_SCRATCH_PATH, and the installed layout runs" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    const env: []const [2][]const u8 = &.{.{ "BUCK_SCRATCH_PATH", try c.at("scratch-root") }};
+    const tb = c.toolbox;
+    const first = try run(&c, &.{ "run", "--private-scratch", "--", tb, "printenv", "TMPDIR", "TEST_TMPDIR", "HOME" }, env);
+    const second = try run(&c, &.{ "run", "--private-scratch", "--", tb, "printenv", "TMPDIR", "TEST_TMPDIR", "HOME" }, env);
+    try t.expectEqual(@as(u8, 0), first.code);
+    try t.expectEqual(@as(u8, 0), second.code);
+    try t.expect(!std.mem.eql(u8, first.stdout, second.stdout));
+    var lines = std.mem.splitScalar(u8, first.stdout, '\n');
+    const tmp = lines.next().?;
+    try t.expectEqualStrings(tmp, lines.next().?);
+    try t.expect(std.mem.startsWith(u8, tmp, try c.at("scratch-root/buildrules_test.")));
+    try t.expect(std.mem.startsWith(u8, lines.next().?, try c.at("scratch-root/buildrules_test.")));
+    // nothing is left in the scratch path
+    var d = try c.tmp.dir.openDir("scratch-root", .{ .iterate = true });
+    defer d.close();
+    var it = d.iterate();
+    try t.expect((try it.next()) == null);
+    // the installed layout: the program is a copy at root/bin, the data is in root/share, the working directory is the root
+    try c.put("data/f.txt", "staged\n");
+    const r = try run(&c, &.{ "run", "--private-scratch", "--installed", "--install-share", "data", "--", tb, "cat", "share/f.txt" }, env);
+    try expectRun(r, 0, "staged\n");
+}
+
 test "expect and marker write their file only on success, and say so by their status" {
     var c = try kit.Case.init();
     defer c.deinit();

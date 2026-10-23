@@ -210,6 +210,11 @@ PLANTED = [
     ("//ci/mojo_data:run_red_env", "//ci/mojo_data:run_green", "data_probe: PROBE_MODE is lax, not strict"),
     ("//ci/mojo_data:run_red_no_program", "//ci/mojo_data:run_green", "data_probe: cannot start bin/hello: FileNotFound"),
     ("//ci/mojo_data:run_red_not_executable", "//ci/mojo_data:run_green", "data_probe: cannot start bin/hello: AccessDenied"),
+    # The installed layout (`test_layout = "installed"`): the control is the run in which the probe finds everything where the layout puts it.
+    ("//ci/mojo_data:run_red_installed_probe_in_default_layout", "//ci/mojo_data:run_green_installed", "is not in a bin/ directory"),
+    ("//ci/mojo_data:run_red_default_probe_in_installed_layout", "//ci/mojo_data:run_green", "is not BUILDRULES_TEST_DATA"),
+    ("//ci/mojo_data:run_red_installed_no_greeting", "//ci/mojo_data:run_green_installed", "data_probe: cannot read share/greeting.txt: FileNotFound"),
+    ("//ci/mojo_data:run_red_installed_content", "//ci/mojo_data:run_green_installed", "data_probe: share/greeting.txt holds other data"),
 ]
 
 def _failures(ctx, label):
@@ -257,14 +262,22 @@ TEST_COMMANDS = [
     ], _CARGO_ENV, ["CARGO_TARGET_TMPDIR"], ["test"], ["hidden=[", "src/lib.rs"]),
     ("//ci/planted:mojo_test_that_fails", [
         "\"run\", \"--ld-library-path\", cmd_args(<build artifact check",
-        "\"/lib\", delimiter=\"\"), \"--\", <build artifact check",
+        "\"/lib\", delimiter=\"\"), \"--private-scratch\", \"--\", <build artifact check",
     ], [], [], ["test", "mojo"], ["hidden=[<build artifact check"]),
-    # A Mojo test with data and variables: the data directory is the working directory and named by BUILDRULES_TEST_DATA, made absolute (the command starts in
-    # the execution root), and the variable is given; the directory is an input of the command.
+    # A Mojo test with data and variables: the private scratch (always), the data directory as the working directory and named by BUILDRULES_TEST_DATA, made
+    # absolute (the command starts in the execution root), and the variable is given; the directory is an input of the command.
     ("//ci/mojo_data:run_green", [
+        "\"--private-scratch\", \"--env\"",
         "\"--abs\", \"BUILDRULES_TEST_DATA\", \"--cwd-env\", \"BUILDRULES_TEST_DATA\"",
         "\"PROBE_MODE=strict\"",
         "cmd_args(\"BUILDRULES_TEST_DATA=\"",
+    ], [], [], ["test", "mojo"], ["hidden=["]),
+    # The installed layout: the private scratch, `--installed` (the fresh root, the binary at `<root>/bin/`), the data directory copied to `<root>/share` and named by
+    # BUILDRULES_TEST_DATA; the default layout's working-directory options are not in it.
+    ("//ci/mojo_data:run_green_installed", [
+        "\"--private-scratch\", \"--installed\", \"--install-share\", <build artifact",
+        "\"--share-env\", \"BUILDRULES_TEST_DATA\"",
+        "\"PROBE_LAYOUT=installed\"",
     ], [], [], ["test", "mojo"], ["hidden=["]),
 ]
 

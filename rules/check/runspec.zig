@@ -11,6 +11,12 @@
 //!   6. each --abs NAME and --abs-prefix PREFIX: a variable that is set to a relative path is made absolute against the working directory
 //!      (every variable whose name starts with PREFIX, for --abs-prefix);
 //!   7. each --mkdir-env NAME: the directory NAME names is made, with its parents.
+//! --private-scratch makes a directory of the run's own (install_root.zig), fresh and named at random, in BUCK_SCRATCH_PATH (made absolute), else
+//! TMPDIR, else /tmp, and removes it after the run. It holds `tmp` (TMPDIR and TEST_TMPDIR are its absolute path, empty at the start), `home` (HOME,
+//! the same) and `root`. They are set after --tmpdir and before --ld-library-path, so they replace whatever --env or --tmpdir gave.
+//! --installed (needs --private-scratch) runs the program from `root`: the directory that holds the program is copied to `root/bin` (so `root/bin/<name>` is a copy of
+//! it, and what sits beside it, such as its `lib/`, is there too), `root/share` holds a copy of the tree --install-share names, --share-env NAME is the absolute
+//! path of `root/share`, and the working directory is `root` unless --cwd or --cwd-env says another.
 //! The program runs in the directory --cwd names (made absolute), or --cwd-env's variable names, or the working directory. It is never looked
 //! for in a PATH: its name must contain a `/`, and a relative one is made absolute first, so it is found whatever the directory it runs in.
 //! --scratch NAME makes the private scratch directory the --dir variables are in: `$BUCK_SCRATCH_PATH/NAME` (made absolute) or, when the
@@ -21,6 +27,7 @@ const common = @import("common.zig");
 const Io = common.Io;
 const Alloc = common.Alloc;
 const Oom = common.Oom;
+const ir = @import("install_root");
 
 pub const Kind = enum { run, marker, expect };
 
@@ -38,6 +45,10 @@ pub const Spec = struct {
     abs: []const []const u8 = &.{},
     abs_prefix: []const []const u8 = &.{},
     mkdir_env: []const []const u8 = &.{},
+    private_scratch: bool = false,
+    installed: bool = false,
+    install_share: ?[]const u8 = null,
+    share_env: ?[]const u8 = null,
     // What `marker` and `expect` do with the result.
     out: ?[]const u8 = null,
     capture: bool = false,
@@ -68,6 +79,10 @@ const Options = enum {
     @"--abs",
     @"--abs-prefix",
     @"--mkdir-env",
+    @"--private-scratch",
+    @"--installed",
+    @"--install-share",
+    @"--share-env",
     @"--out",
     @"--capture",
     @"--stamp",
@@ -82,7 +97,7 @@ const Options = enum {
 fn belongs(opt: Options) u8 {
     return switch (opt) {
         .@"--refuse" => R,
-        .@"--clear-env", .@"--tmpdir", .@"--scratch", .@"--ld-library-path", .@"--cwd", .@"--cwd-env", .@"--env", .@"--dir", .@"--abs", .@"--abs-prefix", .@"--mkdir-env" => R | M | E,
+        .@"--clear-env", .@"--tmpdir", .@"--scratch", .@"--ld-library-path", .@"--cwd", .@"--cwd-env", .@"--env", .@"--dir", .@"--abs", .@"--abs-prefix", .@"--mkdir-env", .@"--private-scratch", .@"--installed", .@"--install-share", .@"--share-env" => R | M | E,
         .@"--out" => M | E,
         .@"--capture", .@"--stamp", .@"--stamp-log" => M,
         .@"--want", .@"--prefix", .@"--name" => E,
@@ -91,7 +106,7 @@ fn belongs(opt: Options) u8 {
 
 fn takesValue(opt: Options) bool {
     return switch (opt) {
-        .@"--clear-env", .@"--tmpdir", .@"--capture", .@"--stamp-log", .@"--prefix" => false,
+        .@"--clear-env", .@"--tmpdir", .@"--private-scratch", .@"--installed", .@"--capture", .@"--stamp-log", .@"--prefix" => false,
         else => true,
     };
 }
@@ -140,6 +155,10 @@ pub fn parse(io: Io, sub: []const u8, kind: Kind, args: []const []const u8) Oom!
             .@"--abs" => try abs.add(value),
             .@"--abs-prefix" => try abs_prefix.add(value),
             .@"--mkdir-env" => try mkdir_env.add(value),
+            .@"--private-scratch" => spec.private_scratch = true,
+            .@"--installed" => spec.installed = true,
+            .@"--install-share" => spec.install_share = value,
+            .@"--share-env" => spec.share_env = value,
             .@"--out" => spec.out = value,
             .@"--capture" => spec.capture = true,
             .@"--stamp" => spec.stamp = value,
@@ -164,6 +183,8 @@ pub const Prepared = struct {
     cwd: []const u8,
     /// The scratch directory to remove after the run, if one was made.
     scratch: ?[]const u8,
+    /// The private directories of the run (--private-scratch), removed after it.
+    private: ?ir.Scratch = null,
 };
 
 /// The result of `prepare`: the program ready, or the exit status to end with (the reason is already said).
@@ -188,6 +209,14 @@ pub fn prepare(io: Io, sub: []const u8, spec: Spec) Oom!Preparation {
     }
     if (std.mem.indexOfScalar(u8, spec.argv[0], '/') == null) {
         io.say(sub, &.{ spec.argv[0], " is not a path: a program is never looked for in a PATH, give its path" });
+        return .{ .fail = 2 };
+    }
+    if (spec.installed and !spec.private_scratch) {
+        io.say(sub, &.{"--installed needs --private-scratch: the installed layout is made in it"});
+        return .{ .fail = 2 };
+    }
+    if ((spec.install_share != null or spec.share_env != null) and !spec.installed) {
+        io.say(sub, &.{"--install-share and --share-env need --installed"});
         return .{ .fail = 2 };
     }
     const here = io.cwd.realpathAlloc(a, ".") catch |err| {
@@ -223,6 +252,18 @@ pub fn prepare(io: Io, sub: []const u8, spec: Spec) Oom!Preparation {
         scratch = dir;
     }
     var prepared = Prepared{ .argv = &.{}, .env = env, .cwd = here, .scratch = scratch };
+    if (spec.private_scratch) {
+        const where = ir.parent(a, here, io.getenv("BUCK_SCRATCH_PATH"), io.getenv("TMPDIR")) catch |err| {
+            cleanup(io, prepared);
+            return err;
+        };
+        prepared.private = ir.make(a, where) catch |err| {
+            cleanup(io, prepared);
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            io.say(sub, &.{ "cannot make a private scratch directory in ", where, ": ", @errorName(err) });
+            return .{ .fail = 1 };
+        };
+    }
     const failed = fill(io, sub, spec, here, &prepared) catch |e| {
         cleanup(io, prepared);
         return e;
@@ -263,6 +304,11 @@ fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom
             try putEnv(&p.env, "TMPDIR", "/tmp");
         }
     }
+    if (p.private) |s| {
+        try putEnv(&p.env, "TMPDIR", s.tmp);
+        try putEnv(&p.env, "TEST_TMPDIR", s.tmp);
+        try putEnv(&p.env, "HOME", s.home);
+    }
     if (spec.ld_library_path) |dir| try putEnv(&p.env, "LD_LIBRARY_PATH", try common.absolute(a, here, dir));
     for (spec.abs) |name| try makeAbsolute(a, &p.env, here, name);
     for (spec.abs_prefix) |prefix| {
@@ -281,7 +327,19 @@ fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom
             return 1;
         };
     }
+    var program = try common.absolute(a, here, spec.argv[0]);
     p.cwd = here;
+    if (spec.installed) {
+        const root = p.private.?.root;
+        const share = p.private.?.share;
+        program = ir.installBinary(a, root, program) catch |err| return notInstalled(io, sub, err, &.{ "cannot install ", program, " under ", root, ": " });
+        if (spec.install_share) |dir| {
+            const from = try common.absolute(a, here, dir);
+            ir.copyTree(a, from, share) catch |err| return notInstalled(io, sub, err, &.{ "cannot copy ", from, " to ", share, ": " });
+        }
+        if (spec.share_env) |name| try putEnv(&p.env, name, share);
+        p.cwd = root;
+    }
     if (spec.cwd) |dir| p.cwd = try common.absolute(a, here, dir);
     if (spec.cwd_env) |name| {
         const dir = p.env.get(name) orelse "";
@@ -296,10 +354,21 @@ fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom
         return 1;
     };
     var argv = common.Strings{ .a = a };
-    try argv.add(try common.absolute(a, here, spec.argv[0]));
+    try argv.add(program);
     for (spec.argv[1..]) |arg| try argv.add(arg);
     p.argv = argv.items;
     return 0;
+}
+
+/// An installed layout that could not be made: an allocation that failed is the command's failure, anything else is said with `what` and the reason,
+/// and the status is 1.
+fn notInstalled(io: Io, sub: []const u8, err: anyerror, what: []const []const u8) Oom!u8 {
+    if (err == error.OutOfMemory) return error.OutOfMemory;
+    var parts = common.Strings{ .a = io.a };
+    for (what) |w| try parts.add(w);
+    try parts.add(@errorName(err));
+    io.say(sub, parts.items);
+    return 1;
 }
 
 /// A variable that is set to a relative path becomes absolute; one that is not set or is empty is left as it is.
@@ -350,4 +419,5 @@ fn notStarted(io: Io, sub: []const u8, p: Prepared, err: anyerror) Outcome {
 /// Removes the scratch directory, if there was one.
 pub fn cleanup(io: Io, p: Prepared) void {
     if (p.scratch) |dir| io.cwd.deleteTree(dir) catch {};
+    if (p.private) |s| ir.remove(s);
 }

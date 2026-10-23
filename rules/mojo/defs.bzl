@@ -31,6 +31,12 @@ Test data and variables. A test that reads files (goldens, fixtures, a pinned th
 its run and in its coverage run and is named by `BUILDRULES_TEST_DATA`; the files and the variables are inputs of both actions, so a change to
 either runs the test again.
 
+Test scratch and layout. Every test run and every coverage run gets a fresh, empty, private `TMPDIR` and `TEST_TMPDIR` and `HOME` (absolute, one set per
+test, removed after it); the names are the runner's, and `test_env` refuses them. `test_layout = "installed"` runs each test from a fresh root of its own
+instead: the binary at `<root>/bin/<exe>` (a copy, so `/proc/self/exe` is there), the `test_data` under `<root>/share` (keys stay relative to `share/`) and
+`<root>` as the working directory; `BUILDRULES_TEST_DATA` then names `<root>/share`. The coverage run uses the same layout. `"default"` (the default) is
+unchanged. Any other value is refused.
+
 The gate. `:lib` is a copy of `:lib_ungated` made by an action that takes the marker of every test run as an input, and a test run writes
 its marker only when the test passed. A failing test therefore leaves `:lib` unbuildable, and so every target that imports it (a
 member's units, a binary, `:build`, a conda package made from it). Build `:lib_ungated` to work on a library whose tests are red.
@@ -46,7 +52,7 @@ load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
 load(":check.bzl", "mojo_check_rule", "mojo_table_rule", "mojo_workspace_rule")
-load(":test_data.bzl", "check_test_env", "stage_test_data")
+load(":test_data.bzl", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_env", "check_test_layout", "stage_test_data")
 load(":unit.bzl", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_gated_lib_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
 
 SCHEMA = 1
@@ -206,7 +212,7 @@ def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
         visibility = visibility,
     )
 
-def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, visibility = ["PUBLIC"]):
+def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, test_layout = "default", visibility = ["PUBLIC"]):
     if table == None:
         fail("mojo_package needs its table: load mojo_package from the buildrules.mojo.bzl next to mopm.toml (`buildrules mojo sync` writes it)")
     _check_table(table)
@@ -382,7 +388,14 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     # working directory holds the test's source and the library's sources, so a staged path may not be one of those.
     test_sources = [units[u]["srcs"][0]["path"] for u in sorted(units.keys()) if units[u]["kind"] == "test"]
     check_test_env(here, test_env)
-    staged = stage_test_data(here, test_sources, test_data, {t: [t] + sorted(lib_share.keys()) for t in test_sources})
+    check_test_layout(here, test_layout)
+    installed = test_layout == LAYOUT_INSTALLED
+
+    # In the installed layout the data is staged under `<root>/share`, apart from the sources the coverage run's root holds beside it, so no staged path can
+    # collide with one of them; but those sources may not be in `bin/` or `share/`.
+    if installed:
+        check_installed_tree(here, test_sources + sorted(lib_share.keys()))
+    staged = stage_test_data(here, test_sources, test_data, {t: ([] if installed else [t] + sorted(lib_share.keys())) for t in test_sources})
     for uid in sorted(units.keys()):
         u = units[uid]
         kind = u["kind"]
@@ -419,6 +432,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 check = ":check",
                 data = staged[units[uid]["srcs"][0]["path"]],
                 test_env = test_env,
+                test_layout = test_layout,
                 required_isa = required_isa(),
                 toolchain = toolchain,
                 exec_compatible_with = test_exec_compatible_with(),
@@ -454,6 +468,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 check = ":check",
                 data = staged[test_graph],
                 test_env = test_env,
+                test_layout = test_layout,
                 includes = includes,
                 maps = maps,
                 must_contain = _join(here_repo, test_src),
