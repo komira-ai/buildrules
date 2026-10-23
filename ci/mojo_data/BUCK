@@ -46,7 +46,7 @@ mojo_test_run_rule(
     visibility = ["//ci:"],
 )
 
-# PLANTED DEFECT: a staged file with other content.
+# Red by design: a staged file with other content.
 mojo_test_run_rule(
     name = "run_red_content",
     bin = ":probe_test",
@@ -56,7 +56,7 @@ mojo_test_run_rule(
     exec_compatible_with = test_exec_compatible_with(),
 )
 
-# PLANTED DEFECT: another value of the variable.
+# Red by design: another value of the variable.
 mojo_test_run_rule(
     name = "run_red_env",
     bin = ":probe_test",
@@ -66,7 +66,7 @@ mojo_test_run_rule(
     exec_compatible_with = test_exec_compatible_with(),
 )
 
-# PLANTED DEFECT: the program is not staged.
+# Red by design: the program is not staged.
 mojo_test_run_rule(
     name = "run_red_no_program",
     bin = ":probe_test",
@@ -76,7 +76,7 @@ mojo_test_run_rule(
     exec_compatible_with = test_exec_compatible_with(),
 )
 
-# PLANTED DEFECT: the "program" is a source file, which has no executable bit.
+# Red by design: the "program" is a source file, which has no executable bit.
 mojo_test_run_rule(
     name = "run_red_not_executable",
     bin = ":probe_test",
