@@ -232,7 +232,7 @@ zig_test(
 
 # The lintian workflow (.github/workflows/lintian.yml): actionlint accepts it (above), and ci/lintian_check.zig holds it to a schedule and a manual trigger and nothing else, a token
 # that reads the contents, the pinned buck2 in local mode, one lintian run that fails on an error, and keeps lintian out of ci.yml and release.yml (the tool is the runner's own and
-# unpinned, so it reports and never gates). It reuses the rules of workflow_check.zig and the job parser of release_check.zig, and plants a defect for each of its own.
+# unpinned, so it reports and never gates). It reuses the rules of workflow_check.zig and the job parser of release_check.zig, and each of its rules is tested against an edited copy of the file that breaks it.
 zig_test(
     name = "lintian_check",
     exec_compatible_with = LINUX_X86_64,

@@ -1,6 +1,6 @@
 //! The lintian workflow (.github/workflows/lintian.yml) is what its header says it is: a daily run of lintian over the .deb of the command line that REPORTS and
 //! never gates. lintian is a Perl program with dozens of distribution packages under it, none fetched by digest, so it cannot be a gate (ci.yml refuses an install
-//! without an exact version, workflow_check.zig `aptInstalls`). A pure function of the text, so each rule is tested against planted text as well as against the
+//! without an exact version, workflow_check.zig `aptInstalls`). A pure function of the text, so each rule is tested against an edited copy of the text as well as against the
 //! real files (the zig_test's `data`, under BUILDRULES_TEST_WORK). The rules shared with the other workflows are workflow_check.zig's.
 //!
 //! What the rules catch:

@@ -449,18 +449,29 @@ fn inlineExprs(a: std.mem.Allocator, f: *Findings, text: []const u8) !void {
 pub fn aptInstalls(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !void {
     for (try commands(a, workflow)) |cmd| {
         var words = std.mem.tokenizeAny(u8, cmd, " \t");
-        var prev: []const u8 = "";
+        // `after_apt`: an apt command word was seen and its subcommand has not yet; `installing`: the subcommand was `install`.
+        var after_apt = false;
         var installing = false;
+        var skip_value = false;
         while (words.next()) |w| {
             if (std.mem.eql(u8, w, "&&") or std.mem.eql(u8, w, "||") or std.mem.eql(u8, w, ";") or std.mem.eql(u8, w, "|")) {
+                after_apt = false;
                 installing = false;
+                skip_value = false;
+            } else if (skip_value) {
+                skip_value = false;
+            } else if (w[0] == '-') {
+                // an option of the apt command; these take their value as the next word
+                if (after_apt or installing) skip_value = std.mem.eql(u8, w, "-o") or std.mem.eql(u8, w, "-t") or std.mem.eql(u8, w, "-c") or std.mem.eql(u8, w, "-a");
             } else if (installing) {
-                if (w[0] != '-' and std.mem.indexOfScalar(u8, w, '=') == null)
+                if (std.mem.indexOfScalar(u8, w, '=') == null)
                     try add(a, f, "`{s}` is installed from the archive without an exact version (`name=version`): {s}", .{ w, cmd });
-            } else if (std.mem.eql(u8, w, "install") and (std.mem.eql(u8, prev, "apt-get") or std.mem.eql(u8, prev, "apt") or std.mem.eql(u8, prev, "aptitude"))) {
-                installing = true;
+            } else if (after_apt) {
+                after_apt = false;
+                installing = std.mem.eql(u8, w, "install");
+            } else if (std.mem.eql(u8, w, "apt-get") or std.mem.eql(u8, w, "apt") or std.mem.eql(u8, w, "aptitude")) {
+                after_apt = true;
             }
-            prev = w;
         }
     }
 }
@@ -1053,6 +1064,15 @@ test "ci.yml: a package installed from the archive without an exact version is f
     try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt install lintian=2.1 file\n" ++ stop), "`file` is installed");
     try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt-get update -qq && sudo apt-get install -y lintian\n" ++ stop), "`lintian` is installed");
     try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: |\n          sudo apt-get install -y \\\n            lintian\n" ++ stop), "`lintian` is installed");
+    // options before the subcommand do not hide the install
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt-get -y install lintian\n" ++ stop), "`lintian` is installed");
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt --yes install lintian\n" ++ stop), "`lintian` is installed");
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt-get -o Dpkg::Options=x install lintian\n" ++ stop), "`lintian` is installed");
+    // an option value is not a package
+    {
+        const f = try check(a, try mutate(a, r.wf, stop, "      - run: sudo apt-get -o Dpkg::Options=x install -t jammy lintian=2.1\n" ++ stop), r.ds, r.cb);
+        for (f.items) |m| try t.expect(std.mem.indexOf(u8, m, "installed from the archive") == null);
+    }
     // an exact version, an update, and a comment that names the command are not installs of an unpinned package
     for ([_][]const u8{
         "      - run: sudo apt-get install -y -qq lintian=2.122.0ubuntu2.1\n",
