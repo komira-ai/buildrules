@@ -59,6 +59,7 @@ scrub_test(
     "//examples/isa:scrub_files",
     "//examples/mojo/copy_of_base:scrub_files",
     "//examples/mojo/coverage_floors:scrub_files",
+    "//examples/mojo/branch_shapes:scrub_files",
     "//examples/mojo/partial:scrub_files",
     "//examples/mojo/reexport:scrub_files",
     "//examples/mojo/reexport_unused:scrub_files",
