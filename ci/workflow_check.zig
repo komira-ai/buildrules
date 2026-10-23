@@ -109,6 +109,9 @@ pub fn triggerStyleProblem(text: []const u8) ?[]const u8 {
                 in_on = true;
                 if (stripComment(line[key.len..]).len != 0) return "`on:` is written in flow or scalar form (`on: push`, `on: [push]`, `on: {push: {}}`): write one trigger per line, as a block";
             }
+            if (!in_on and (std.mem.startsWith(u8, line, "on ") or std.mem.startsWith(u8, line, "on\t") or std.mem.startsWith(u8, line, "\"on\" ") or std.mem.startsWith(u8, line, "'on' "))) {
+                return "`on` has blanks before its colon: write the key as `on:`, which is the spelling the trigger checks read";
+            }
             continue;
         }
         if (!in_on) continue;
@@ -117,7 +120,9 @@ pub fn triggerStyleProblem(text: []const u8) ?[]const u8 {
             if (indent != 2) return "the triggers under `on:` are not indented two spaces, which is the spelling the trigger checks read";
         }
         if (indent == base.?) {
+            if (body[0] == '"' or body[0] == '\'') return "a trigger under `on:` is quoted: write the key bare, which is the spelling the trigger checks read";
             const colon = std.mem.indexOfScalar(u8, body, ':') orelse return "a line under `on:` is not a `trigger:` key (a list or flow form is refused): write one trigger per line, as a block";
+            if (colon > 0 and (body[colon - 1] == ' ' or body[colon - 1] == '\t')) return "a trigger under `on:` has blanks before its colon: write `trigger:`, which is the spelling the trigger checks read";
             if (stripComment(body[colon + 1 ..]).len != 0) return "a trigger under `on:` has its value on the same line (`push: {branches: [main]}`, `push: null`): write the trigger alone and its settings as a block below it";
         } else if (indent > base.? and (body[0] == '{' or body[0] == '[')) {
             return "a trigger under `on:` is given a flow-style value: write its settings as a block";
@@ -818,6 +823,15 @@ test "a trigger spelled in flow or scalar style is refused, whichever trigger it
     try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push:\n    {branches: [main]}\n"), "flow-style value");
     try expectFinding(a, r, try mutate(a, r.wf, on_block, "on:\n  - push\n  - pull_request\n"), "not a `trigger:` key");
     try expectFinding(a, r, try mutate(a, r.wf, on_block, "on:\n    pull_request:\n    workflow_call:\n    push:\n"), "indented two spaces");
+    // a flow sequence on the line below its trigger
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push:\n    [main]\n"), "flow-style value");
+    // a `#` with no blank before it is part of the value, not a comment
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push: main#branch\n"), "same line");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on: push#not-a-comment\n"), "flow or scalar");
+    // a quoted trigger key, and blanks before a colon
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  \"push\":\n"), "quoted");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push :\n"), "blanks before its colon");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on :\n  pull_request:\n  workflow_call:\n  push:\n"), "blanks before its colon");
     // block style with settings below a trigger, and a comment after a key, stay accepted
     const ok = try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call: # the release's gate\n    inputs:\n      x:\n        type: string\n");
     const f = try check(a, ok, r.ds, r.cb);
