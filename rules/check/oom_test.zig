@@ -25,6 +25,13 @@ test "run: every allocation of the option handling and the preparation, failed i
     try sweepTool(&c, &.{ "run", "--env", "BAD" }, &.{"true"}, outs);
     try sweepTool(&c, &.{ "run", "--dir", "BAD" }, &.{"true"}, outs);
     try sweepTool(&c, &.{ "run", "--bogus" }, &.{"true"}, outs);
+    // the private scratch directory and the installed layout: a run that lost an allocation leaves no directory behind
+    try c.put("data/f", "x");
+    try sweepTool(&c, &.{ "run", "--private-scratch" }, &.{"true"}, outs);
+    try sweepTool(&c, &.{ "run", "--scratch", "s", "--private-scratch" }, &.{"true"}, outs);
+    try sweepTool(&c, &.{ "run", "--private-scratch", "--installed", "--install-share", "data", "--share-env", "SHARE" }, &.{"true"}, outs);
+    try sweepTool(&c, &.{ "run", "--private-scratch", "--installed", "--install-share", "no-such-data" }, &.{"true"}, outs);
+    try kit.sweep(&c, &.{ "run", "--private-scratch", "--installed", "--", "/no/such/program" }, outs);
     try kit.sweep(&c, &.{ "run", "--refuse", "message" }, outs);
     try kit.sweep(&c, &.{ "run", "--", "true" }, outs);
     try kit.sweep(&c, &.{"run"}, outs);

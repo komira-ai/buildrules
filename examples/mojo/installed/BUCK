@@ -1,0 +1,21 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A package whose tests run in the installed layout (`test_layout = "installed"`; docs/contract.md, section 12.9): each test is run from a fresh root of its own,
+# the way a program installed on a machine finds its files.
+#
+#   <root>/bin/<exe>               the test binary, a copy: /proc/self/exe is here, so a program that finds its files from its own path finds <root>
+#   <root>/share/golden/greeting.txt   the `test_data` key `golden/greeting.txt` (keys stay relative to share/)
+#   working directory              <root>; BUILDRULES_TEST_DATA names <root>/share
+#
+# Every test run and coverage run also has a TMPDIR, TEST_TMPDIR and HOME of its own (absolute, empty at the start), which tests/test_scratch_a.mojo and
+# tests/test_scratch_b.mojo check. The coverage run is in the same layout: kcov wraps the binary at <root>/bin, and the sources the line tables name are beside bin/
+# and share/ in the root. The floor is exactly the coverage.
+mojo_package(
+    path = ".",
+    test_data = {"*": {"golden/greeting.txt": "golden/greeting.txt"}},
+    test_env = {"LAYOUT_MODE": "installed"},
+    test_layout = "installed",
+)
+
+scrub_files()

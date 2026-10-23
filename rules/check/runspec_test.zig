@@ -361,6 +361,190 @@ test "a program that cannot be started is 127 when it is not there and 126 when 
     try kit.expectFailure(try c.runTool(&.{ "run", "--cwd", "nodir" }, &.{"true"}), 1, "cannot use the working directory ");
 }
 
+// ---- --private-scratch, --installed ---------------------------------------------------------------------------------
+
+test "parse: the private scratch and installed layout options land in their fields, for each of the three commands" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    const s = try parseOk(&c, .run, &.{ "--private-scratch", "--installed", "--install-share", "data", "--share-env", "SHARE", "--", "/p" });
+    try t.expect(s.private_scratch and s.installed);
+    try t.expectEqualStrings("data", s.install_share.?);
+    try t.expectEqualStrings("SHARE", s.share_env.?);
+    try t.expectEqualStrings("/p", s.argv[0]);
+    const m = try parseOk(&c, .marker, &.{ "--out", "o", "--private-scratch", "--", "/p" });
+    try t.expect(m.private_scratch and !m.installed and m.install_share == null and m.share_env == null);
+    const e = try parseOk(&c, .expect, &.{ "--want", "w", "--out", "o", "--installed", "--", "/p" });
+    try t.expect(e.installed and !e.private_scratch);
+    const none = try parseOk(&c, .run, &.{ "--", "/p" });
+    try t.expect(!none.private_scratch and !none.installed);
+    try parseRefused(&c, .run, &.{"--install-share"}, "check x: --install-share needs a value\n");
+}
+
+fn private(c: *kit.Case, extra: kit.Args, name: []const u8) !?[]const u8 {
+    var all = std.ArrayList([]const u8).empty;
+    try all.append(c.alloc(), "--private-scratch");
+    try all.appendSlice(c.alloc(), extra);
+    return kit.valueOf(c, all.items, name);
+}
+
+test "--private-scratch: TMPDIR, TEST_TMPDIR and HOME are absolute directories of the run, TMPDIR and TEST_TMPDIR the same one, in BUCK_SCRATCH_PATH" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    const here = try c.path(".");
+    c.environ = &.{ "BUCK_SCRATCH_PATH=rel/scratch", "TMPDIR=/old/tmp", "HOME=/old/home" };
+    const tmp = (try private(&c, &.{}, "TMPDIR")).?;
+    const home = (try private(&c, &.{}, "HOME")).?;
+    const parent = try std.fmt.allocPrint(c.alloc(), "{s}/rel/scratch/buildrules_test.", .{here});
+    try t.expect(std.mem.startsWith(u8, tmp, parent));
+    try t.expect(std.mem.startsWith(u8, home, parent));
+    try t.expect(std.mem.endsWith(u8, tmp, "/tmp"));
+    try t.expect(std.mem.endsWith(u8, home, "/home"));
+    // the same directory for the two names (each run has its own, so compare within one)
+    var both = std.ArrayList([]const u8).empty;
+    try both.appendSlice(c.alloc(), &.{ "marker", "--capture", "--stamp-log", "--out", "o", "--private-scratch", "--", c.toolbox, "printenv", "TMPDIR", "TEST_TMPDIR" });
+    try kit.expectResult(try c.run(both.items), 0, "", "");
+    const lines = try c.read("o");
+    var it = std.mem.splitScalar(u8, std.mem.trimRight(u8, lines, "\n"), '\n');
+    const a = it.next().?;
+    try t.expectEqualStrings(a, it.next().?);
+    try t.expect(std.fs.path.isAbsolute(a));
+    try t.expect(std.mem.startsWith(u8, a, parent));
+}
+
+test "--private-scratch: the parent is BUCK_SCRATCH_PATH, else TMPDIR, else /tmp" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    const here = try c.path(".");
+    try c.tmp.dir.makePath("elsewhere");
+    c.environ = &.{try std.fmt.allocPrint(c.alloc(), "TMPDIR={s}/elsewhere", .{here})};
+    const under_tmpdir = (try private(&c, &.{}, "HOME")).?;
+    try t.expect(std.mem.startsWith(u8, under_tmpdir, try std.fmt.allocPrint(c.alloc(), "{s}/elsewhere/buildrules_test.", .{here})));
+    c.environ = &.{};
+    // /tmp, or what it links to
+    const home = (try private(&c, &.{}, "HOME")).?;
+    try t.expect(std.fs.path.isAbsolute(home));
+    try t.expect(std.mem.indexOf(u8, home, "/buildrules_test.") != null);
+}
+
+test "--private-scratch: each run has a directory of its own, empty at the start, removed after the run whether the program passed or not" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    c.environ = &.{"BUCK_SCRATCH_PATH=scratch"};
+    const first = (try private(&c, &.{}, "HOME")).?;
+    const second = (try private(&c, &.{}, "HOME")).?;
+    try t.expect(!std.mem.eql(u8, first, second));
+    // the program works in it (--cwd-env), and what it makes there is gone for the next run: `mkdir` of a name that is there is an error
+    for (0..2) |_| {
+        try kit.expectResult(try c.runTool(&.{ "run", "--private-scratch", "--cwd-env", "TMPDIR" }, &.{ "mkdir", "made-by-the-run" }), 0, "", "");
+    }
+    // failed or passed, nothing is left behind
+    try kit.expectResult(try c.runTool(&.{ "run", "--private-scratch" }, &.{"false"}), 1, "", null);
+    var d = try c.tmp.dir.openDir("scratch", .{ .iterate = true });
+    defer d.close();
+    var it = d.iterate();
+    try t.expect((try it.next()) == null);
+}
+
+test "--private-scratch: it replaces what --env and --tmpdir gave, and --dir and --cwd still work beside it" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    c.environ = &.{"BUCK_SCRATCH_PATH=scratch"};
+    const before: kit.Args = &.{ "--env", "TMPDIR=/mine", "--env", "HOME=/mine", "--env", "TEST_TMPDIR=/mine", "--tmpdir" };
+    for ([_][]const u8{ "TMPDIR", "TEST_TMPDIR", "HOME" }) |name| {
+        const v = (try private(&c, before, name)).?;
+        try t.expect(std.mem.indexOf(u8, v, "/buildrules_test.") != null);
+    }
+    try t.expectEqualStrings("kept", (try private(&c, &.{ "--env", "OTHER=kept" }, "OTHER")).?);
+}
+
+test "--private-scratch that cannot be made is refused with the reason, and the --scratch directory made before it is removed" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    try c.put("blocked", "a file where the parent goes");
+    c.environ = &.{"TMPDIR=blocked/inside"};
+    try kit.expectFailure(try c.runTool(&.{ "run", "--private-scratch", "--scratch", "s" }, &.{"true"}), 1, "cannot make a private scratch directory in ");
+    try t.expect(!c.exists(".buildrules_s"));
+}
+
+test "--installed: needs --private-scratch, and --install-share and --share-env need --installed, all before anything is made" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    try kit.expectFailure(try c.runTool(&.{ "run", "--installed" }, &.{"true"}), 2, "--installed needs --private-scratch");
+    try kit.expectFailure(try c.runTool(&.{ "run", "--private-scratch", "--share-env", "S" }, &.{"true"}), 2, "--install-share and --share-env need --installed");
+    try kit.expectFailure(try c.runTool(&.{ "run", "--private-scratch", "--install-share", "d" }, &.{"true"}), 2, "--install-share and --share-env need --installed");
+}
+
+const installed: kit.Args = &.{ "--private-scratch", "--installed", "--install-share", "data", "--share-env", "SHARE" };
+
+fn stage(c: *kit.Case) !void {
+    try c.put("data/hello.txt", "hello from share\n");
+    try c.put("data/deeper/more.txt", "more\n");
+}
+
+/// What `toolbox cat FILES` wrote when run by `marker` with `before` (stdout then stderr), the run passing.
+fn catted(c: *kit.Case, before: kit.Args, files: kit.Args) ![]const u8 {
+    var all = std.ArrayList([]const u8).empty;
+    try all.appendSlice(c.alloc(), &.{ "marker", "--capture", "--stamp-log", "--out", "o" });
+    try all.appendSlice(c.alloc(), before);
+    var program = std.ArrayList([]const u8).empty;
+    try program.append(c.alloc(), "cat");
+    try program.appendSlice(c.alloc(), files);
+    try kit.expectResult(try c.runTool(all.items, program.items), 0, "", "");
+    return c.read("o");
+}
+
+test "--installed: the program is root/bin/<name>, a copy of it, and root is its working directory" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    try stage(&c);
+    c.environ = &.{"BUCK_SCRATCH_PATH=scratch"};
+    // `marker` names the program it ran when the test failed: the installed copy, not the file it was given
+    const failed = try c.runTool(&.{ "marker", "--out", "o", "--private-scratch", "--installed" }, &.{"false"});
+    try kit.expectFailure(failed, 1, "TEST FAILED: ");
+    try t.expect(std.mem.indexOf(u8, failed.err, "/scratch/buildrules_test.") != null);
+    try t.expect(std.mem.indexOf(u8, failed.err, "/root/bin/") != null);
+    try t.expect(std.mem.indexOf(u8, failed.err, c.toolbox) == null);
+    // the working directory is root: bin/ and share/ are there (share/ empty without --install-share)
+    try kit.expectResult(try c.runTool(&.{ "run", "--private-scratch", "--installed" }, &.{ "mkdir", "share/made-in-share", "bin/made-in-bin" }), 0, "", "");
+    try kit.expectResult(try c.runTool(&.{ "run", "--private-scratch", "--installed" }, &.{ "cat", "bin/does-not-exist" }), 1, "", null);
+}
+
+test "--installed: share/ holds a copy of the --install-share tree, named by --share-env" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    try stage(&c);
+    try t.expectEqualStrings("hello from share\nmore\n", try catted(&c, installed, &.{ "share/hello.txt", "share/deeper/more.txt" }));
+    const share = (try kit.valueOf(&c, installed, "SHARE")).?;
+    try t.expect(std.fs.path.isAbsolute(share));
+    try t.expect(std.mem.endsWith(u8, share, "/root/share"));
+    // the tree the program sees is a copy of the staged one, in the run's own directory, which is gone after the run
+    try t.expect(std.mem.indexOf(u8, share, "/data/") == null);
+    try t.expectError(error.FileNotFound, std.fs.cwd().access(share, .{}));
+}
+
+test "--installed: --cwd and --cwd-env still say where the program runs, and without --share-env no variable is set" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    try stage(&c);
+    const by_env: kit.Args = &.{ "--private-scratch", "--installed", "--install-share", "data", "--share-env", "SHARE", "--cwd-env", "SHARE" };
+    try t.expectEqualStrings("hello from share\n", try catted(&c, by_env, &.{"hello.txt"}));
+    try t.expectEqualStrings("hello from share\n", try catted(&c, &.{ "--private-scratch", "--installed", "--cwd", "data" }, &.{"hello.txt"}));
+    try t.expect((try kit.valueOf(&c, &.{ "--private-scratch", "--installed", "--install-share", "data" }, "SHARE")) == null);
+}
+
+test "--installed: a binary that is not there, a data tree that is not there and a binary under a file are refused with the reason" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    try stage(&c);
+    try kit.expectFailure(try c.run(&.{ "run", "--private-scratch", "--installed", "--", "/no/such/program" }), 1, "cannot install /no/such/program under ");
+    try kit.expectFailure(try c.runTool(&.{ "run", "--private-scratch", "--installed", "--install-share", "no-such-data" }, &.{"true"}), 1, "cannot copy ");
+    try c.put("plain", "x");
+    try kit.expectFailure(try c.run(&.{ "run", "--private-scratch", "--installed", "--", try c.at("plain/under-a-file") }), 1, "cannot install ");
+    const r = try c.run(&.{ "marker", "--out", "o", "--private-scratch", "--installed", "--", "/no/such/program" });
+    try kit.expectFailure(r, 1, "cannot install ");
+    try t.expect(!c.exists("o"));
+}
+
 test "statusOf: the exit status, 128 and the signal for a signal, 255 otherwise" {
     try t.expectEqual(@as(u8, 0), common.statusOf(.{ .Exited = 0 }));
     try t.expectEqual(@as(u8, 3), common.statusOf(.{ .Exited = 3 }));

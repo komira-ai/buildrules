@@ -13,7 +13,7 @@ One line per package. The targets come from the package's unit graph, which `bui
     :coverage   every test again as a debug build run under kcov, one Cobertura report per test file, and as LLVM bitcode instrumented for branch counts
                 (`<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info`: rules/coverage/branch/README.md); `coverage.txt` is the per-file count of lines, then of
                 branch arms; `:coverage[reports]` is the per-line records of every test (kcov's Cobertura XML in repository paths) and `:coverage[branches]` the
-                branch records (lcov `BRDA` lines in repository paths). A package whose tests link a native library has no branch rows and no `[branches]`.
+                branch records (lcov `BRDA` lines in repository paths). A package whose tests link a native library, or run in the installed layout, has no branch rows and no `[branches]`.
     :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green while `:coverage` is at least that floor (`lines NN.NN`, and
                 `branches NN.NN` when `coverage.txt` has branch rows; below it: "coverage fell"; at or above it passes, and above it prints "you may raise the
                 floor to X"), the check of every other package's floor (rules/coverage/README.md, "The floor")
@@ -34,6 +34,12 @@ Test data and variables. A test that reads files (goldens, fixtures, a pinned th
 its run and in its coverage run and is named by `BUILDRULES_TEST_DATA`; the files and the variables are inputs of both actions, so a change to
 either runs the test again.
 
+Test scratch and layout. Every test run and every coverage run gets a fresh, empty, private `TMPDIR` and `TEST_TMPDIR` and `HOME` (absolute, one set per
+test, removed after it); the names are the runner's, and `test_env` refuses them. `test_layout = "installed"` runs each test from a fresh root of its own
+instead: the binary at `<root>/bin/<exe>` (a copy, so `/proc/self/exe` is there), the `test_data` under `<root>/share` (keys stay relative to `share/`) and
+`<root>` as the working directory; `BUILDRULES_TEST_DATA` then names `<root>/share`. The coverage run uses the same layout. `"default"` (the default) is
+unchanged. Any other value is refused.
+
 The gate. `:lib` is a copy of `:lib_ungated` made by an action that takes the marker of every test run as an input, and a test run writes
 its marker only when the test passed. A failing test therefore leaves `:lib` unbuildable, and so every target that imports it (a
 member's units, a binary, `:build`, a conda package made from it). Build `:lib_ungated` to work on a library whose tests are red.
@@ -49,7 +55,7 @@ load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
 load(":check.bzl", "mojo_check_rule", "mojo_table_rule", "mojo_workspace_rule")
-load(":test_data.bzl", "check_test_env", "stage_test_data")
+load(":test_data.bzl", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_env", "check_test_layout", "stage_test_data")
 load(":unit.bzl", "mojo_cov_branch_annotate_rule", "mojo_cov_branch_classify_rule", "mojo_cov_branch_run_rule", "mojo_cov_pgo_rule", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_gated_lib_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
 
 SCHEMA = 1
@@ -214,7 +220,7 @@ def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
         visibility = visibility,
     )
 
-def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, visibility = ["PUBLIC"]):
+def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, test_layout = "default", visibility = ["PUBLIC"]):
     if table == None:
         fail("mojo_package needs its table: load mojo_package from the buildrules.mojo.bzl next to mopm.toml (`buildrules mojo sync` writes it)")
     _check_table(table)
@@ -382,8 +388,8 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     branch_tc = "toolchains//:mojo_{}_cov_branch".format(vname(mojo))
     # Branch coverage of the package's tests (rules/coverage/branch/README.md): bitcode, an instrumented binary, its run, the annotated IR and
     # the classified records, five actions after the compile. A test that links a native library is not yet instrumented (the link line of the
-    # instrumented binary has no native libraries), so a package with one has the line figure alone.
-    branches_on = own_lib != None and bool([x for x in units.values() if x["kind"] == "test"]) and not [x for x in units.values() if x["kind"] == "test" and x["natives"]]
+    # instrumented binary has no native libraries), so a package with one has the line figure alone. A package with `test_layout = "installed"` has the line figure alone too: the branch run has no installed layout yet.
+    branches_on = test_layout != LAYOUT_INSTALLED and own_lib != None and bool([x for x in units.values() if x["kind"] == "test"]) and not [x for x in units.values() if x["kind"] == "test" and x["natives"]]
 
     # The library's sources: in the coverage tree at the names its `.mojoc` gives them (`<import>/<file>`), and for the classifier by the name relative
     # to the library root.
@@ -401,7 +407,14 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     # working directory holds the test's source and the library's sources, so a staged path may not be one of those.
     test_sources = [units[u]["srcs"][0]["path"] for u in sorted(units.keys()) if units[u]["kind"] == "test"]
     check_test_env(here, test_env)
-    staged = stage_test_data(here, test_sources, test_data, {t: [t] + sorted(lib_share.keys()) for t in test_sources})
+    check_test_layout(here, test_layout)
+    installed = test_layout == LAYOUT_INSTALLED
+
+    # In the installed layout the data is staged under `<root>/share`, apart from the sources the coverage run's root holds beside it, so no staged path can
+    # collide with one of them; but those sources may not be in `bin/` or `share/`.
+    if installed:
+        check_installed_tree(here, test_sources + sorted(lib_share.keys()))
+    staged = stage_test_data(here, test_sources, test_data, {t: ([] if installed else [t] + sorted(lib_share.keys())) for t in test_sources})
     for uid in sorted(units.keys()):
         u = units[uid]
         kind = u["kind"]
@@ -438,6 +451,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 check = ":check",
                 data = staged[units[uid]["srcs"][0]["path"]],
                 test_env = test_env,
+                test_layout = test_layout,
                 required_isa = required_isa(),
                 toolchain = toolchain,
                 exec_compatible_with = test_exec_compatible_with(),
@@ -473,6 +487,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 check = ":check",
                 data = staged[test_graph],
                 test_env = test_env,
+                test_layout = test_layout,
                 includes = includes,
                 maps = maps,
                 must_contain = _join(here_repo, test_src),

@@ -86,4 +86,64 @@ mojo_test_run_rule(
     exec_compatible_with = test_exec_compatible_with(),
 )
 
+# The installed layout (`mojo_package(test_layout = "installed")`, docs/contract.md section 12.9), with the same probe told to expect it (PROBE_LAYOUT). Every run of
+# this file also holds the private scratch the probe checks first (TMPDIR, TEST_TMPDIR and HOME: absolute, empty, writable).
+#
+# green  `run_green_installed` runs the probe from `<root>/bin/<name>` with `<root>` as the working directory, the data under `<root>/share`, BUILDRULES_TEST_DATA
+#        naming `<root>/share`, and `bin/hello` (staged as `share/bin/hello`) starting. //ci:all builds it.
+# red    each of the others changes one thing and must FAIL for the reason the probe gives (ci/negative.bzl):
+#          run_red_installed_probe_in_default_layout  the probe expects the installed layout and the run is the default one: the binary is not in a bin/ directory
+#          run_red_default_probe_in_installed_layout  the probe expects the default layout and the run is the installed one: the working directory is not the data
+#          run_red_installed_no_greeting              `share/greeting.txt` is not staged
+#          run_red_installed_content                  `share/greeting.txt` is another file
+mojo_test_run_rule(
+    name = "run_green_installed",
+    bin = ":probe_test",
+    data = {"greeting.txt": ":greeting.txt", "bin/hello": _HELLO},
+    test_env = {"PROBE_MODE": "strict", "PROBE_LAYOUT": "installed"},
+    test_layout = "installed",
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+    visibility = ["//ci:"],
+)
+
+mojo_test_run_rule(
+    name = "run_red_installed_probe_in_default_layout",
+    bin = ":probe_test",
+    data = {"greeting.txt": ":greeting.txt", "bin/hello": _HELLO},
+    test_env = {"PROBE_MODE": "strict", "PROBE_LAYOUT": "installed"},
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
+mojo_test_run_rule(
+    name = "run_red_default_probe_in_installed_layout",
+    bin = ":probe_test",
+    data = {"greeting.txt": ":greeting.txt", "bin/hello": _HELLO},
+    test_env = {"PROBE_MODE": "strict"},
+    test_layout = "installed",
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
+mojo_test_run_rule(
+    name = "run_red_installed_no_greeting",
+    bin = ":probe_test",
+    data = {"bin/hello": _HELLO},
+    test_env = {"PROBE_MODE": "strict", "PROBE_LAYOUT": "installed"},
+    test_layout = "installed",
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
+mojo_test_run_rule(
+    name = "run_red_installed_content",
+    bin = ":probe_test",
+    data = {"greeting.txt": ":greeting_other.txt", "bin/hello": _HELLO},
+    test_env = {"PROBE_MODE": "strict", "PROBE_LAYOUT": "installed"},
+    test_layout = "installed",
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
 scrub_files()

@@ -1,0 +1,4 @@
+# The two branches the cases do not run are the error arms that no case can make the file system raise: the read of a directory that was opened (`it.next()` in
+# copyTree) and the removal of a directory that was made (`remove`). The farm measures 44/46 branches and 48/48 lines.
+lines 100.00
+branches 95.65
