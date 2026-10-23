@@ -1,0 +1,117 @@
+# The keyring-rotation proof of the apt repository, on GitHub's hosted runners. The apt tests of this repository run against a fake `gpg`; a rotation signs the Release with two
+# keys at once (the old subkey, which the keyrings already installed trust, and the new one), and whether that works is a fact about the real gpg, gpgv and apt, so it is shown here
+# with them, with keys that are made in the job and thrown away with it (no secret of the repository is used or needed):
+#
+#   job `repo`   builds tools/deploy:apt_rotation, tools/deploy:apt_publish and tools/channels:channels (the repository's own apt tooling, local mode) and runs `apt_rotation make`:
+#                (1) it signs a Release with two `--local-user <fingerprint>!` (`apt_publish sign`) and shows with `gpg --list-packets` that InRelease and Release.gpg carry exactly
+#                    two signatures, one by each key;
+#                (2) it shows with gpgv that either key alone in the keyring verifies both files, that an unrelated key verifies neither, and that a changed Release verifies under no key;
+#                it also builds the repository (`channels apt-index`, with a package of Architecture all, so the repository has a binary-all index) and uploads it, the three public keyrings
+#                and the static program.
+#   job `apt`    for each distribution (the images are pinned by digest) and for each of the two keys: in a container of that distribution, `apt-get update` against the
+#                repository as a file:// source with `Signed-By` that one key's keyring, and `apt-get install` of the package; and the control that must fail: the same with
+#                the keyring of a key that signed nothing, which apt must refuse with a word about the signature.
+#
+# It runs on a pull request that touches the apt tooling or this file, every week (a new apt or gpg in a distribution's updates is a change this repository does not make), and on
+# demand. It gates nothing else: ci.yml and release.yml do not call it. ci/apt_rotation_check.zig (`//ci:apt_rotation_check`) holds this file to all of the above.
+name: apt-rotation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/apt-rotation.yml"
+      - "tools/channels/**"
+      - "tools/deploy/**"
+      - "packaging/deb/**"
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apt-rotation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  repo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/workflow_check.zig compares both.
+      - name: Install buck2
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
+          echo "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst" | sha256sum --check --strict -
+          zstd --decompress --quiet buck2.zst -o buck2
+          chmod +x buck2
+          ./buck2 --version
+
+      - name: Build the apt rotation program
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out rot-bin/apt_rotation //tools/deploy:apt_rotation
+
+      - name: Build the apt publish program
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out rot-bin/apt_publish //tools/deploy:apt_publish
+
+      - name: Build the channels program
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out rot-bin/channels //tools/channels:channels
+
+      - name: The gpg and gpgv of the runner
+        run: |
+          gpg --version | head -n 1
+          gpgv --version | head -n 1
+
+      # Keys made here, signatures by both, the two checks of gpg and gpgv (apt_rotation.zig says what each expectation is).
+      - name: Sign a Release with two keys and verify it with either
+        run: |
+          chmod +x rot-bin/apt_rotation rot-bin/apt_publish rot-bin/channels
+          rot-bin/apt_rotation make --work "$RUNNER_TEMP/rotation-work" --out rot --channels "$PWD/rot-bin/channels" --apt-publish "$PWD/rot-bin/apt_publish" --packaging packaging/deb
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rotation
+          path: rot
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Stop buck2
+        if: always()
+        run: ./buck2 kill
+
+  apt:
+    needs: repo
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - debian:12@sha256:854dd8ab51d62866dbd8f5431d15ce77b12983a2a4a1e1fe43a2395dc7ef9f61
+          - ubuntu:22.04@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956
+          - ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
+        signed_by: [a, b]
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rotation
+          path: rot
+
+      - run: chmod +x rot/apt_rotation
+
+      - name: apt update and install with Signed-By the key of one signer
+        env:
+          IMAGE: ${{ matrix.image }}
+          SIGNED_BY: ${{ matrix.signed_by }}
+        run: docker run --rm --volume "$PWD/rot:/rot:ro" "$IMAGE" /rot/apt_rotation apt-check --repo /rot/repo --keyring "/rot/keys/$SIGNED_BY.gpg" --package rotation-test --installed-file /usr/share/rotation-test/hello --work /var/tmp/aptrot --expect ok
+
+      - name: apt refuses the repository when Signed-By is a key that signed nothing
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: docker run --rm --volume "$PWD/rot:/rot:ro" "$IMAGE" /rot/apt_rotation apt-check --repo /rot/repo --keyring /rot/keys/other.gpg --package rotation-test --installed-file /usr/share/rotation-test/hello --work /var/tmp/aptrot --expect refused

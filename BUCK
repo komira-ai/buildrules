@@ -40,6 +40,13 @@ export_file(
     visibility = ["//ci:"],
 )
 
+# Read by the keyring-rotation workflow check (ci/BUCK).
+export_file(
+    name = "apt-rotation.yml",
+    src = ".github/workflows/apt-rotation.yml",
+    visibility = ["//ci:"],
+)
+
 # Read by the publish-unpack workflow check (ci/BUCK).
 export_file(
     name = "publish-unpack.yml",
