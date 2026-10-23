@@ -24,6 +24,7 @@ load("@buildrules//rules/core:test_runtime.bzl", "RUNNER_ENV", "data_map")
 load(":checks.bzl", "check_exe_target", "check_exec_tool_name", "check_module_name", "check_optimize", "check_same_tests", "check_target_triple", "check_unique_dep_names", "check_unique_imports", "zig_closure")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/core:rerun.bzl", "RERUN_ATTRS", "rerun_env", "rerun_info")
+load("@buildrules//rules/core:unpack.bzl", "UNPACK", "unpack_cmd")
 
 # What a `zig_test` runs, for the rule that runs the same test under coverage (rules/coverage/zig_cover.bzl): the same root, zig, target, data and tools.
 ZigTestInfo = provider(fields = {
@@ -68,27 +69,35 @@ PATH="$T/bin"; export PATH
 """
 
 def _zig_dist_impl(ctx):
-    bb = ctx.attrs.busybox[DefaultInfo].default_outputs[0]
     out = ctx.actions.declare_output("zig", dir = True)
-    script = _PRELUDE + """
-mkdir -p "$2.x"
-tar -xJf "$1" -C "$2.x"
-mv "$2.x/$3" "$2"
-rm -rf "$2.x" "$T"
-test -x "$2/zig"
-"""
+    # The archive holds one directory, `strip_prefix`, with the distribution in it: that directory is what is kept (`--strip-components` is its number of components).
     ctx.actions.run(
-        busybox_sh(bb, script, ctx.attrs.archive[DefaultInfo].default_outputs[0], out.as_output(), ctx.attrs.strip_prefix),
+        unpack_cmd(
+            ctx.label,
+            ctx.attrs.unpack,
+            ctx.attrs.archive[DefaultInfo].default_outputs[0],
+            out,
+            ctx.attrs.sha256,
+            ctx.attrs.size_bytes,
+            ctx.attrs.max_output,
+            len(ctx.attrs.strip_prefix.split("/")),
+            "tar.xz",
+        ),
         category = "zig_unpack",
     )
     return [DefaultInfo(default_output = out)]
 
+# A Zig distribution (`.tar.xz`) unpacked by the pinned `unpack` (rules/core/unpack.bzl), with the archive's `sha256` and `size_bytes` (the pin's) and the `max_output` it
+# may decompress to. `strip_prefix` is the one directory the archive holds, as `a` or `a/b`; the distribution is that directory's content.
 zig_dist_rule = rule(
     impl = _zig_dist_impl,
     attrs = {
         "archive": attrs.dep(),
-        "busybox": attrs.dep(default = "buildrules//rules/pins:busybox"),
+        "max_output": attrs.int(),
+        "sha256": attrs.string(),
+        "size_bytes": attrs.int(),
         "strip_prefix": attrs.string(),
+        "unpack": attrs.exec_dep(default = UNPACK, providers = [RunInfo]),
     },
 )
 

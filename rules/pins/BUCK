@@ -22,11 +22,15 @@ load(":pins.bzl", "PINS", "strip_prefix")
     for p in PINS.values()
 ]
 
+# The limits on the decompressed bytes of each distribution, measured on the farm with `unpack --check --max-output` (the tar stream, headers and padding included):
+# zig 0.12.0 holds 319,150,293 bytes and zig 0.15.2 holds 359,075,951. Each limit is that, rounded up, with about 30% to spare: 400 MiB and 448 MiB.
 zig_dist(
     name = "zig",
     exec_compatible_with = LINUX_X86_64,
     archive = ":" + PINS["zig"]["name"],
-    busybox = ":busybox",
+    max_output = 400 * 1024 * 1024,
+    sha256 = PINS["zig"]["sha256"],
+    size_bytes = PINS["zig"]["size"],
     strip_prefix = strip_prefix("zig"),
     visibility = ["PUBLIC"],
 )
@@ -35,7 +39,9 @@ zig_dist(
     name = "zig_next",
     exec_compatible_with = LINUX_X86_64,
     archive = ":" + PINS["zig_next"]["name"],
-    busybox = ":busybox",
+    max_output = 448 * 1024 * 1024,
+    sha256 = PINS["zig_next"]["sha256"],
+    size_bytes = PINS["zig_next"]["size"],
     strip_prefix = strip_prefix("zig_next"),
     visibility = ["PUBLIC"],
 )
@@ -99,8 +105,8 @@ group(
 )
 
 # ---- unpack, the program that unpacks the rest (bootstrap.bzl) --------------------------------------------------------------------------------------------------
-# One pinned release asset per host. They are defined here and used by no default target: the asset is uploaded by the repository owner (tools/held/publish_unpack.zig),
-# and a machine without it cached cannot fetch it before then. //ci:unpack_pin_check holds the rows to the programs the tree builds.
+# One pinned release asset per host, the program every unpacking action runs (`:unpack`, below, picks the one of the execution platform). The assets are published by
+# .github/workflows/publish-unpack.yml, and //ci:unpack_pin_check holds the rows to the programs the tree builds.
 [
     pinned_file(
         name = "bootstrap_unpack_" + host.replace("-", "_"),
@@ -112,6 +118,33 @@ group(
     )
     for host, row in UNPACK_PINS.items()
 ]
+
+# The `unpack` an action runs is the one pinned for its execution platform: every rule that unpacks an archive takes `//rules/pins:unpack` as an `exec_dep`
+# (rules/core/unpack.bzl). A platform with no pin matches no branch and the target is refused with the platform named, so no rule falls back to building it.
+config_setting(
+    name = "exec_linux_x86_64",
+    constraint_values = ["//platforms:linux", "//platforms:x86_64"],
+)
+
+config_setting(
+    name = "exec_linux_aarch64",
+    constraint_values = ["//platforms:linux", "//platforms:aarch64"],
+)
+
+config_setting(
+    name = "exec_macos_aarch64",
+    constraint_values = ["//platforms:macos", "//platforms:aarch64"],
+)
+
+alias(
+    name = "unpack",
+    actual = select({
+        ":exec_linux_aarch64": ":bootstrap_unpack_linux_aarch64",
+        ":exec_linux_x86_64": ":bootstrap_unpack_linux_x86_64",
+        ":exec_macos_aarch64": ":bootstrap_unpack_macos_aarch64",
+    }),
+    visibility = ["PUBLIC"],
+)
 
 # Read by tools/bootstrap:pin_check_unit, and by the buildrules.dev site tests.
 export_file(

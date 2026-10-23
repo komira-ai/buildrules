@@ -448,6 +448,10 @@ group(name = "all", deps = [
     "//tools/bootstrap:linux_x86_64_is_x86_64_linux_musl",
     "//tools/bootstrap:linux_aarch64_is_aarch64_linux_musl",
     "//tools/bootstrap:macos_aarch64_is_aarch64_macos",
+    # The pinned release assets of `unpack` for each host, fetched and checked against their sha256 and size (the one of the farm's platform is what every unpacking action runs).
+    "//rules/pins:bootstrap_unpack_linux_x86_64",
+    "//rules/pins:bootstrap_unpack_linux_aarch64",
+    "//rules/pins:bootstrap_unpack_macos_aarch64",
     "//tools/bootstrap:real_unit",
     "//tools/bootstrap:xz_speed_unit",
     "//tools/bootstrap:mem_zig_xz_unit",

@@ -86,24 +86,41 @@ _REAL_DATA = {
     "libgcc.conda": "buildrules//rules/pins:libgcc_15.3.0_linux-64.conda",
 }
 
-[
-    zig_test(
-        name = name + "_unit",
-        src = "src/" + name + "_test.zig",
-        imports = _SRCS,
-        zig = _ZIG,
-        # ReleaseSafe: the tests hash a quarter of a gigabyte of extracted files, which a Debug build of sha256 takes minutes over.
-        optimize = "ReleaseSafe",
-        data = _REAL_DATA,
-        exec_tools = {
-            "UNPACK": ":unpack",
-            "BUSYBOX": "buildrules//rules/pins:busybox",
+# The distributions the build makes with `unpack` (the zig tarballs and the mopm toolchain) are tools of `real`, which holds them to the trees busybox's tar made of the same archives.
+_REAL_TOOLS = {
+    "UNPACK": ":unpack",
+    "BUSYBOX": "buildrules//rules/pins:busybox",
+}
+
+zig_test(
+    name = "real_unit",
+    src = "src/real_test.zig",
+    imports = _SRCS,
+    zig = _ZIG,
+    # ReleaseSafe: the tests hash a quarter of a gigabyte of extracted files, which a Debug build of sha256 takes minutes over.
+    optimize = "ReleaseSafe",
+    data = dict(_REAL_DATA, **{"mopm.tar.gz": "toolchains//:mopm-0.0.25.tar.gz"}),
+    exec_tools = dict(
+        _REAL_TOOLS,
+        **{
             "ZIG_DIST": "buildrules//rules/pins:zig",
-        },
-        visibility = ["//ci:"],
-    )
-    for name in ["real", "xz_speed"]
-]
+            "ZIG_NEXT_DIST": "buildrules//rules/pins:zig_next",
+            "MOPM": "toolchains//:mopm_0_0_25",
+        }
+    ),
+    visibility = ["//ci:"],
+)
+
+zig_test(
+    name = "xz_speed_unit",
+    src = "src/xz_speed_test.zig",
+    imports = _SRCS,
+    zig = _ZIG,
+    optimize = "ReleaseSafe",
+    data = _REAL_DATA,
+    exec_tools = _REAL_TOOLS,
+    visibility = ["//ci:"],
+)
 
 # The pins of the program are the programs this tree builds, for each host (src/pins.zig, rules/pins/bootstrap.bzl): //ci builds this. A change to the source that does
 # not come with new rows and a new release tag is red here, and the red text names the values to write.

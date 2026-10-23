@@ -1,17 +1,55 @@
-//! The built `unpack` on the real pinned archives, against what the rest of the build makes of the same bytes: the zig tarball (xz) against the zig distribution the build
-//! unpacks today (`//rules/pins:zig`, made by busybox), the actionlint tarball (gzip, dynamic Huffman blocks as a real compressor writes them) against busybox's own
-//! `tar -xzf`, and a conda package (a zip) against what its members must be. Trees are compared entry by entry: kind, executable bit, size, content digest, link target.
+//! The built `unpack` on the real pinned archives, against what busybox's `tar` makes of the same bytes: the zig tarballs (xz), the mopm tarball and the actionlint tarball
+//! (gzip, dynamic Huffman blocks as a real compressor writes them), and a conda package (a zip) against what its members must be. Trees are compared entry by entry: kind,
+//! executable bit, size, content digest, link target.
+//!
+//! The distributions the build makes with `unpack` (`//rules/pins:zig`, `:zig_next`, the mopm toolchain) are held to the digest of the tree busybox's `tar` made of the same
+//! archive when they were made with it: a digest below is that tree's, so the rules' outputs are the bytes they were, and no key that reads them has moved.
 const std = @import("std");
 const real = @import("real.zig");
 
-test "the pinned zig tarball (tar.xz) extracts to the zig distribution the build has today" {
+/// The trees busybox's `tar --strip-components=1` made of the pinned zig 0.12.0 and zig 0.15.2 tarballs and of the mopm 0.0.25 tarball (15,189, 18,105 and 2 files).
+const zig_0_12_tree = "a286115817de29ac2e0f22badf1c83991a95eb3df96dbc674b2718b64090e57c";
+const zig_0_15_tree = "0224303b20cdaad846f421f648e688fb2cbc88b02d1194338317e64b05f3b551";
+const mopm_0_0_25_tree = "3ee86ef3c2d6a8f06eabe9465d45d41daccfd5cf2a76f6eef644f687be21a974";
+
+test "the zig 0.12.0 distribution the build makes is the tree the reference tar made of the same tarball" {
     const dist = try real.envPath("ZIG_DIST");
     defer real.a.free(dist);
-    try real.sameAsDirectory("zig", "zig.tar.xz", 1, dist);
+    const digest = try real.treeDigest(dist);
+    try std.testing.expectEqualStrings(zig_0_12_tree, &digest);
+}
+
+test "the zig 0.15.2 distribution the build makes is the tree the reference tar made of the same tarball" {
+    const dist = try real.envPath("ZIG_NEXT_DIST");
+    defer real.a.free(dist);
+    const digest = try real.treeDigest(dist);
+    try std.testing.expectEqualStrings(zig_0_15_tree, &digest);
+}
+
+test "the pinned zig tarball (tar.xz) extracts to what the reference tar extracts" {
+    try real.sameAsBusyboxTar("zig", "zig.tar.xz", "-xJf", 1);
+}
+
+test "the pinned mopm tarball (tar.gz) extracts to what the reference tar extracts, and to the tree the toolchain was" {
+    try real.sameAsBusyboxTar("mopm", "mopm.tar.gz", "-xzf", 1);
+    const w = try real.work();
+    defer real.a.free(w);
+    const mine = try std.fmt.allocPrint(real.a, "{s}/mopm_unpack", .{w});
+    defer real.a.free(mine);
+    const digest = try real.treeDigest(mine);
+    try std.testing.expectEqualStrings(mopm_0_0_25_tree, &digest);
+    // The toolchain's executable is the tarball's.
+    const exe = try real.envPath("MOPM");
+    defer real.a.free(exe);
+    const inner = try real.join(&.{ mine, "mopm" });
+    defer real.a.free(inner);
+    const want = try real.sha256(inner);
+    const got = try real.sha256(exe);
+    try std.testing.expectEqualStrings(&want, &got);
 }
 
 test "the pinned actionlint tarball (tar.gz) extracts to what busybox extracts" {
-    try real.sameAsBusyboxTar("actionlint", "actionlint.tar.gz", "-xzf");
+    try real.sameAsBusyboxTar("actionlint", "actionlint.tar.gz", "-xzf", 0);
 }
 
 test "a pinned conda package (a zip) extracts to its members, whole" {

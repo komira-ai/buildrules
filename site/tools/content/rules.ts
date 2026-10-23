@@ -240,7 +240,7 @@ export const zig: Page = {
       ['`zig_exe`', '`src`, `imports`, `deps`, `target`, `optimize`, `strip`, `unit_tests`', 'builds an executable; the default is a static musl executable in `ReleaseSafe`, stripped'],
       ['`zig_test`', '`src`, `imports`, `deps`, `target`, `optimize`, `data`, `env_tools`', 'runs `zig test` as a build action; the result exists only if the tests passed'],
       ['`zig_module`', '`src`, `imports`, `deps`, `unit_tests`', 'a module other targets import by its target name'],
-      ['`zig_dist`', '`archive`, `strip_prefix`', 'unpacks a pinned Zig release'],
+      ['`zig_dist`', '`archive`, `strip_prefix`, `sha256`, `size_bytes`, `max_output`', 'unpacks a pinned Zig release with the pinned `unpack`, which checks the archive\'s sha256 and size first and refuses one that decompresses to more than `max_output` bytes'],
     ),
     h2('Tests are welded'),
     p('Pass `zig_test` targets to `unit_tests`. Their results are inputs of the executable or module, so the executable is not built unless its tests passed.'),
