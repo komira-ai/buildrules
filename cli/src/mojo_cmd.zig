@@ -3,9 +3,9 @@
 //! mopm owns what "build Mojo" means. `sync` asks the pinned mopm for each package's unit graph (`mopm plan --unit-graph
 //! --locked`, offline: it never resolves) and commits mopm's answer as buildrules.mojo.lock.bzl next to the package's
 //! mopm.toml, plus the toolchain facts the graphs carry as toolchains/mojo_pins.bzl. A path dependency is committed by identity only (its
-//! sources and key are its own table's business). From mopm 0.0.33 the plan is asked for with `--workspace-root <the repository root>`, so the
-//! graph's paths start at the root and the package and its path dependencies may be siblings; before that they start at the package and the
-//! dependencies are below it. `check` is the offline gate: it reads the files and fails when the committed table no longer describes them.
+//! sources and key are its own table's business). When the pinned mopm lists `--workspace-root` in its `--help` (asked once per binary, no version is compared) the
+//! plan is asked for with `--workspace-root <the repository root>`, so the graph's paths start at the root and the package and its path
+//! dependencies may be siblings; otherwise they start at the package and the dependencies are below it. `check` is the offline gate: it reads the files and fails when the committed table no longer describes them.
 //!
 //! The version choices are made in mopm-toolchain.toml, found by walking up from the package like rustup finds
 //! rust-toolchain.toml, and required like it, with no default:
@@ -552,6 +552,33 @@ fn mopmFor(ctx: *Ctx, buck2: []const u8, version: []const u8, given: ?[]const u8
     return null;
 }
 
+const Probe = enum { supported, unsupported, failed };
+
+/// Whether the mopm at `mopm` takes `plan --unit-graph --workspace-root DIR`, asked of the binary itself: `mopm --help` (standard output, exit 0)
+/// lists the flag in its `plan` line when it has it. (`mopm plan --help` is no probe: `plan` takes no help option and prints its usage to
+/// standard error with exit 2 whatever it supports.) No release number is compared. The answer is kept for the run per binary path and sha256, so
+/// a binary is asked once. A mopm that cannot be asked is reported once and counts as unsupported: the caller does not plan with it.
+fn probeWorkspaceRoot(ctx: *Ctx, mopm: []const u8, cache: *std.StringHashMap(Probe)) !Probe {
+    const a = ctx.a;
+    const digest = (try sha256Of(ctx, mopm)) orelse "unreadable";
+    const key = try std.fmt.allocPrint(a, "{s}\x00{s}", .{ mopm, digest });
+    if (cache.get(key)) |known| return known;
+    var answer: Probe = .unsupported;
+    const r = ctx.execer(ctx, .{ .argv = &.{ mopm, "--help" }, .capture = true }) catch |e| {
+        _ = ctx.fail("cannot ask {s} whether it supports --workspace-root: `{s} --help` cannot run: {s}; this mopm is treated as not supporting it, and sync does not use it", .{ mopm, mopm, @errorName(e) });
+        try cache.put(key, .failed);
+        return .failed;
+    };
+    if (r.code != 0) {
+        _ = ctx.fail("cannot ask {s} whether it supports --workspace-root: `{s} --help` exited {d}; this mopm is treated as not supporting it, and sync does not use it", .{ mopm, mopm, r.code });
+        try cache.put(key, .failed);
+        return .failed;
+    }
+    if (std.mem.indexOf(u8, r.stdout, "--workspace-root") != null) answer = .supported;
+    try cache.put(key, answer);
+    return answer;
+}
+
 fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]const u8, buck2: []const u8, tc_flag: ?[]const u8) !u8 {
     const a = ctx.a;
     if (!ctx.exists(".buckconfig")) return ctx.fail("no .buckconfig here: run `buildrules mojo sync` from the repository root (or give --dir)", .{});
@@ -579,6 +606,7 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
     // refuses halfway leaves the files as they were. (The two pins tables above are written first on purpose: the build of the pinned mopm loads them.)
     var pend = std.ArrayList(Pending).empty;
     var mopm_cache = std.StringHashMap(?[]const u8).init(a);
+    var probe_cache = std.StringHashMap(Probe).init(a);
     var tcs = std.ArrayList(lockm.Tc).empty;
     for (pkgs) |pkg| {
         if (!ctx.exists(try inDir(a, pkg, "mopm.toml"))) {
@@ -598,7 +626,12 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
         defer sub.dir.close();
         // From the first mopm that has `--workspace-root`, the graph's paths are relative to the repository root, so that a package and the path
         // dependencies it imports may be siblings; an older mopm prints paths relative to the package and takes path dependencies below it only.
-        const rooted = toolchain.supportsWorkspaceRoot(tc.mopm);
+        const probe = try probeWorkspaceRoot(ctx, mopm, &probe_cache);
+        if (probe == .failed) {
+            code |= ctxm.exit_fail;
+            continue;
+        }
+        const rooted = probe == .supported;
         var argv = std.ArrayList([]const u8).empty;
         try argv.appendSlice(a, &.{ mopm, "plan", "--unit-graph", "--locked", "--mojo", tc.mojo });
         if (rooted) try argv.appendSlice(a, &.{ "--workspace-root", try ctx.dir.realpathAlloc(a, ".") });
@@ -612,8 +645,8 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
                 if (rooted) " --workspace-root <the repository root>" else "", r.code,
                 if (r.code == 3) " (no usable mopm.lock, or it is out of date with mopm.toml: run `mopm lock`)" else if (r.code == 4) " (mopm cannot make a graph from this project and lock; its message is above)" else "",
             });
-            if (!rooted) _ = ctx.fail("{s}: mopm {s} does not take --workspace-root (mopm {d}.{d}.{d} and later do), which a path dependency next to the package needs: pin a release that does in mopm-toolchain.toml", .{
-                if (pkg.len == 0) "." else pkg, tc.mopm, toolchain.workspace_root_since[0], toolchain.workspace_root_since[1], toolchain.workspace_root_since[2],
+            if (!rooted) _ = ctx.fail("{s}: this mopm does not support --workspace-root (needs a release containing it); pin one in mopm-toolchain.toml", .{
+                if (pkg.len == 0) "." else pkg,
             });
             continue;
         }
@@ -858,13 +891,8 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
         _ = ctx.fail("{s}", .{why});
         bad.* += 1;
     }
-    // Whether the graph's paths start at the repository root is a fact of the mopm that made it: a table that says otherwise was edited by hand.
+    // Whether the graph's paths start at the repository root is what `sync` recorded (`workspace_root`): `check` is offline and never runs mopm.
     const rooted = l.workspace_root;
-    if (rooted != toolchain.supportsWorkspaceRoot(l.mopm_version)) {
-        stale(ctx, bad, "{s}: the table records mopm {s} {s} --workspace-root, but that release {s} it: the file was edited by hand; {s}", .{
-            lock_path, l.mopm_version, if (rooted) "with" else "without", if (rooted) "does not take" else "takes", fix,
-        });
-    }
 
     // The graph is for the Mojo the table says, and its toolchain hash is the one recorded beside it.
     if (!std.mem.eql(u8, g.mojo, l.mojo)) stale(ctx, bad, "{s}: MOJO is {s} but its unit graph is for Mojo {s}", .{ lock_path, l.mojo, g.mojo });
