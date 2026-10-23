@@ -578,6 +578,29 @@ test "a CA file that cannot be read is an error before any connection, not a fal
     try t.expectEqual(@as(usize, 0), e.reg.hitsOf("/a.tgz"));
 }
 
+test "a body larger than the read buffer is hashed whole, at the buffer's size and either side of it" {
+    const small = "x" ** 65535;
+    const exact = "x" ** 65536;
+    const more = "x" ** 70001;
+    const twice = "x" ** 131072;
+    var routes = [_]registry.Route{
+        .{ .path = "/small", .body = small },
+        .{ .path = "/exact", .body = exact },
+        .{ .path = "/more", .body = more },
+        .{ .path = "/twice", .body = twice },
+    };
+    const e = try Env.init(&routes);
+    defer e.deinit();
+    inline for (.{ .{ "/small", small }, .{ "/exact", exact }, .{ "/more", more }, .{ "/twice", twice } }) |c| {
+        var d = fetch.Digest{ .max = 1 << 20 };
+        try e.http.fetcher().get(e.url(c[0]), d.sink());
+        const r = try d.finish(e.a());
+        try t.expectEqual(@as(u64, c[1].len), r.size);
+        try t.expectEqualStrings(try fx.sha256Hex(e.a(), c[1]), r.sha256);
+        try t.expectEqualStrings(try fx.sri512(e.a(), c[1]), r.sri512);
+    }
+}
+
 test "urlAllowed: a URL without a path, and the only two hosts plain http may reach" {
     try t.expect(fetch.urlAllowed("https://registry.example", false));
     try t.expect(fetch.urlAllowed("https://registry.example?x=1", false));
