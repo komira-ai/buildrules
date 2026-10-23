@@ -1,6 +1,6 @@
 # A daily scan of the repository's lockfiles for known vulnerabilities (OSV database). It reports and never gates: it runs on a schedule and by hand only (never on a
 # pull request or a push, so it cannot block a change or turn main or a release red), writes what it finds to the job summary, and keeps ONE issue titled
-# `Advisories` up to date (opened or updated when there are findings, closed when there are none). The job fails only when the scan cannot run: the tool does not
+# `Advisories` and labelled `advisory` up to date (opened or updated when there are findings, closed when there are none). The job fails only when the scan cannot run: the tool does not
 # download to its pinned sha256, the scanner itself errors, or a `gh` call of the Report step fails (an API hiccup): the Report step stops at the first failed call, so it can never
 # create a second issue, and the next day's run reports again. That red is on the scheduled run alone. ci/advisories_check.zig (`//ci:workflow`) holds this file to all
 # of it. Licence and ban checks are not this: they may gate, and this does not.
@@ -69,10 +69,11 @@ jobs:
           if [ "$FOUND" = 1 ]; then
             { echo "## Advisories"; echo; head -c 60000 advisories.md; } > body.md
             cat body.md >> "$GITHUB_STEP_SUMMARY"
+            gh label create advisory --force --color fbca04 --description "Findings of the daily lockfile scan"
             if [ -z "$number" ]; then
-              gh issue create --title "$title" --body-file body.md
+              gh issue create --title "$title" --label advisory --body-file body.md
             else
-              gh issue edit "$number" --body-file body.md
+              gh issue edit "$number" --add-label advisory --body-file body.md
               if [ "$state" = CLOSED ]; then gh issue reopen "$number"; fi
             fi
           else
