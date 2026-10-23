@@ -78,16 +78,18 @@ test "parseFloor: a figure may name the slack above its floor that is not a rise
     }
 }
 
-test "check: within the slack above the floor is held; above it is a rise, below the floor is a fall whatever the slack" {
+test "check: with a slack, at or above the floor passes (the hint waits for the slack to be passed); below the floor fails whatever the slack" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const cov = try F.parseCoverage(SUMMARY); // lines 80.00, branches 60.00
-    try t.expectEqual(@as(usize, 0), (try arenaCheck(a, cov, try F.parseFloor("lines 79.50 slack 0.50\nbranches 60.00\n"))).len);
-    try t.expectEqual(@as(usize, 0), (try arenaCheck(a, cov, try F.parseFloor("lines 80.00 slack 0.50\nbranches 60.00\n"))).len);
-    const rise = try arenaCheck(a, cov, try F.parseFloor("lines 79.00 slack 0.50\nbranches 60.00\n"));
-    try t.expectEqual(@as(usize, 1), rise.len);
-    try t.expect(std.mem.indexOf(u8, rise[0], "above its floor 79.00% and its slack: raise the floor to 80.00") != null);
+    const within = try F.parseFloor("lines 79.50 slack 0.50\nbranches 60.00\n");
+    try t.expectEqual(@as(usize, 0), (try arenaCheck(a, cov, within)).len);
+    try t.expectEqualStrings("", try F.hints(a, "pkg", cov, within));
+    const past = try F.parseFloor("lines 79.00 slack 0.50\nbranches 60.00\n");
+    try t.expectEqual(@as(usize, 0), (try arenaCheck(a, cov, past)).len);
+    const h = try F.hints(a, "pkg", cov, past);
+    try t.expectEqualStrings("pkg: line coverage is 80.00% (80/100), above its floor 79.00%: you may raise the floor to 80.00\n", h);
     const fall = try arenaCheck(a, cov, try F.parseFloor("lines 80.50 slack 1.00\nbranches 60.00\n"));
     try t.expectEqual(@as(usize, 1), fall.len);
     try t.expect(std.mem.indexOf(u8, fall[0], "below its floor 80.50%: coverage fell") != null);
@@ -121,13 +123,42 @@ test "check: coverage below the floor is named, per figure" {
     try t.expect(std.mem.indexOf(u8, one[0], "branch coverage") != null);
 }
 
-test "check: coverage above the floor fails and says what to write" {
+test "check: coverage above the floor passes, and hints at the figure the floor may be raised to" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const bad = try arenaCheck(a, try F.parseCoverage(SUMMARY), try F.parseFloor("lines 79.99\nbranches 60.00\n"));
-    try t.expectEqual(@as(usize, 1), bad.len);
-    try t.expect(std.mem.indexOf(u8, bad[0], "line coverage is 80.00% (80/100), above its floor 79.99%: raise the floor to 80.00") != null);
+    const cov = try F.parseCoverage(SUMMARY);
+    const floor = try F.parseFloor("lines 79.99\nbranches 60.00\n");
+    try t.expectEqual(@as(usize, 0), (try arenaCheck(a, cov, floor)).len);
+    const h = try F.hints(a, "pkg", cov, floor);
+    try t.expectEqualStrings("pkg: line coverage is 80.00% (80/100), above its floor 79.99%: you may raise the floor to 80.00\n", h);
+}
+
+test "check: coverage equal to the floor passes with no hint" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cov = try F.parseCoverage(SUMMARY);
+    const floor = try F.parseFloor("lines 80.00\nbranches 60.00\n");
+    try t.expectEqual(@as(usize, 0), (try arenaCheck(a, cov, floor)).len);
+    try t.expectEqualStrings("", try F.hints(a, "pkg", cov, floor));
+}
+
+test "check: branches follow the same rule: below fails, equal passes, above passes with a hint" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cov = try F.parseCoverage(SUMMARY); // branches 60.00
+    const below = try arenaCheck(a, cov, try F.parseFloor("lines 80.00\nbranches 60.01\n"));
+    try t.expectEqual(@as(usize, 1), below.len);
+    try t.expect(std.mem.indexOf(u8, below[0], "branch coverage is 60.00% (30/50), below its floor 60.01%: coverage fell") != null);
+    const equal = try F.parseFloor("lines 80.00\nbranches 60.00\n");
+    try t.expectEqual(@as(usize, 0), (try arenaCheck(a, cov, equal)).len);
+    try t.expectEqualStrings("", try F.hints(a, "pkg", cov, equal));
+    const above = try F.parseFloor("lines 80.00\nbranches 55.00\n");
+    try t.expectEqual(@as(usize, 0), (try arenaCheck(a, cov, above)).len);
+    const h = try F.hints(a, "pkg", cov, above);
+    try t.expectEqualStrings("pkg: branch coverage is 60.00% (30/50), above its floor 55.00%: you may raise the floor to 60.00\n", h);
 }
 
 test "check: a branch figure on one side only fails" {
