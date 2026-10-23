@@ -5,7 +5,7 @@ existing (analysis fails: "expected a refusal"). `:test_data` is the group of th
 ci/mojo_data (a stand-in for the compiler) and examples/mojo/testdata (the real thing).
 """
 
-load("//rules/mojo:test_data.bzl", "check_test_env", "stage_test_data")
+load("//rules/mojo:test_data.bzl", "check_installed_tree", "check_test_env", "check_test_layout", "stage_test_data")
 load("//rules/mojo:unit.bzl", "mojo_group")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
 load(":test_data.bzl", "HELD", "TESTS", "a_path_next_to_the_coverage_tree_is_not_in_it", "no_data_is_no_staging", "staging_is_per_test_and_star_is_all")
@@ -50,6 +50,21 @@ _ENV = [
     ("test_env_that_is_not_a_dict_is_refused", ["A=1"], ["test_env must be a dict"]),
 ]
 
+# (name, test_layout, what the refusal says): the layouts a test is run in are `default` and `installed`, and nothing else.
+_LAYOUT = [
+    ("test_layout_unknown_value_is_refused", "installd", ["examples/x: test_layout \"installd\" is not one of default, installed"]),
+    ("test_layout_empty_is_refused", "", ["test_layout \"\" is not one of default, installed"]),
+    ("test_layout_uppercase_is_refused", "Installed", ["test_layout \"Installed\" is not one of default, installed"]),
+    ("test_layout_that_is_not_a_string_is_refused", True, ["test_layout True is not one of default, installed"]),
+]
+
+# (name, sources of the coverage root, what the refusal says): the installed layout keeps `bin/` and `share/` for the binary and the data.
+_INSTALLED_TREE = [
+    ("installed_source_in_bin_is_refused", ["tests/test_a.mojo", "bin/tool.mojo"], ["the source bin/tool.mojo is in bin/"]),
+    ("installed_source_in_share_is_refused", ["share/deep/x.mojo", "pkg/__init__.mojo"], ["the source share/deep/x.mojo is in share/", "would merge them"]),
+    ("installed_library_named_share_is_refused", ["share/__init__.mojo"], ["is in share/"]),
+]
+
 # (name, the check): green only if it refused nothing.
 _CHECKS = [
     ("test_data_staging_is_per_test_and_star_is_all", staging_is_per_test_and_star_is_all),
@@ -68,4 +83,10 @@ def test_data_targets():
     targets.append(accepts(name = "test_env_names_and_values_are_accepted", check = check_test_env, args = [_R, {"MODE": "strict", "_x2": "y", "EMPTY": ""}]))
     targets += [refuses(name = n, check = stage_test_data, args = [_R, TESTS, d, HELD], contains = c) for n, d, c in _STAGE]
     targets += [refuses(name = n, check = check_test_env, args = [_R, e], contains = c) for n, e, c in _ENV]
+    targets += [refuses(name = n, check = check_test_layout, args = [_R, l], contains = c) for n, l, c in _LAYOUT]
+    targets += [refuses(name = n, check = check_installed_tree, args = [_R, s], contains = c) for n, s, c in _INSTALLED_TREE]
+    targets.append(accepts(name = "test_layout_default_is_accepted", check = check_test_layout, args = [_R, "default"]))
+    targets.append(accepts(name = "test_layout_installed_is_accepted", check = check_test_layout, args = [_R, "installed"]))
+    # `bin2/` and `shared/` only start with the reserved names, and a file may be named for them below the first directory.
+    targets.append(accepts(name = "installed_sources_beside_the_reserved_names_are_accepted", check = check_installed_tree, args = [_R, ["tests/bin/x.mojo", "bin2/x.mojo", "shared/x.mojo", "pkg/share/y.mojo"]]))
     mojo_group(name = "test_data", deps = targets, visibility = ["PUBLIC"])

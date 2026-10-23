@@ -12,7 +12,7 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     rules/cxx, third_party/aws-lc   hermetic C/C++ on the pinned zig (binaries carry no debug info and no build path); AWS-LC 1.39.0 (crypto[static-pic]) with prefix, symbol and glibc-floor gates
     rules/mojo        mojo_package (docs/contract.md section 12): one `mopm unit build` action per unit of mopm's graph, tests, coverage, `:check`; mojo_launch, prebuilt_unpack
     rules/mopm        the pinned mopm (pins.bzl, toolchain.bzl)
-    rules/coverage    kcov v42 built from source and the coverage path tools, cov_run, cov_summary
+    rules/coverage    kcov v42 built from source and the coverage path tools, cov_run, cov_summary; branch/: the branch coverage of Mojo tests (cov_branch, the IR classifier, the LLVM pieces)
     cli/              the `buildrules` command line (Zig): init, cargo new/init/adopt, sync, check, npm sync/check, mojo sync/check. The unit-graph generator is part of it
     rules/platforms.bzl   the execution platforms: remote by default (properties come from .buckconfig.local), local on request (`-c buildrules_re.mode=local`, docs/contract.md section 14)
     toolchains/       the `toolchains` cell: rust_toolchains(), cxx_toolchains(), mopm_toolchains(), mojo_toolchains() (the last from mopm's graphs)

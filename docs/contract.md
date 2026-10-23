@@ -417,7 +417,8 @@ Each package is a mopm project: its own `mopm.toml`, `mopm.lock` and graph (`mop
 | `:test` | every test run |
 | `:bin_<name>`, `:build` | the `[targets] bins` of `mopm.toml`; `:build` is the library and the binaries |
 | `:<stem>__cov_bin`, `:<stem>__cov` | the same test as a debug build, and its run under kcov: a Cobertura report in repository paths |
-| `:coverage` | the package's line coverage from those reports (`coverage.txt`); red if a source of the library is in no report. `:coverage[reports]` is the reports themselves, the per-line records (12.4) |
+| `:<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info` | the same test as LLVM bitcode, instrumented and linked, run for its profile (in the working directory and with the `test_data` and `test_env` its other runs have, 12.9), the profile applied to the bitcode, and the library's branches in that IR classified: the branch records (12.4). Not for a package whose tests link a native library |
+| `:coverage` | the package's line and branch coverage from those reports and records (`coverage.txt`); red if a source of the library is in no report. `:coverage[reports]` is the reports themselves, the per-line records, and `:coverage[branches]` the branch records (12.4) |
 | `:coverage_floor` | only if `coverage_floor.txt` is beside the BUCK file: green while `coverage.txt` is at least that floor (12.4) |
 | `:ci` | `:build` and `:test` |
 | `:table` | the committed graph is what the pinned mopm's `plan --unit-graph --locked` prints for the package and its path dependencies now, byte for byte, the dependencies held by identity only (an action; not part of `:ci`, but of `//ci:all` for every example). `:workspace` is the files it reads: the package's and its dependencies', flat, each at its path from the repository root |
@@ -472,7 +473,7 @@ the Rust side is, and one rule is easier to teach; the other choice, a default i
 
 ```python
 SCHEMA = 1
-MOPM = {"version": "0.0.33", "origin": "builtin", "workspace_root": True}   # origin: "builtin" or "buildrules-pins.toml"; workspace_root only when true, spelled True (Starlark)
+MOPM = {"version": "0.0.40", "origin": "builtin", "workspace_root": True}   # origin: "builtin" or "buildrules-pins.toml"; workspace_root only when true, spelled True (Starlark)
 MOJO = "1.0.0"
 CLOSURE_SHA256 = "<mopm's hash of the toolchain closure>"  # a second copy of the graph's, see 12.6
 MANIFEST_SHA256 = {"mopm.toml": "<sha256>", "mopm.lock": "...", "../../mopm-toolchain.toml": "...", "../util/mopm.toml": "..."}
@@ -489,11 +490,11 @@ the committed text. A graph without a path dependency is mopm's text as it is. `
 from that the graph does not hash itself: the package's `mopm.toml` and `mopm.lock`, the toolchain file (path relative to the package) and the
 `mopm.toml` of every path dependency (a version or a dependency of it changes the graph). The package's own sources and their sha256 are in the graph.
 
-**Where the graph's paths start.** A mopm that has `plan --unit-graph --workspace-root DIR` (0.0.33 on; `cli/src/toolchain.zig` `workspace_root_since`) is given
+**Where the graph's paths start.** A mopm that has `plan --unit-graph --workspace-root DIR` (`sync` asks the pinned mopm binary: `mopm --help` lists `--workspace-root` when it has it, once per binary; no release number is compared, and a mopm whose help cannot be read is an error) is given
 the repository root, the directory of the root `.buckconfig`: every path of the graph (roots, sources, dependency roots) is then relative to it, and the package
 may import path dependencies that are its siblings (`../util` in `mopm.toml`), not only ones below it. `sync` records that it asked (`"workspace_root": True`, Starlark's spelling: a lowercase
-`true` is not a name Buck2 knows and the table would not load, so `check` refuses it; `check` also refuses a table whose record is not what its mopm release does), and the rules read the record, never the version. An older mopm prints paths
-relative to the package and takes path dependencies below it only (the release pinned in rules/mopm/pins.bzl is one of them until it moves to the first release with the flag, and a mopm that fails on a sibling says so); a table made by one is as it was. Either way a path dependency is the target
+`true` is not a name Buck2 knows and the table would not load, so `check` refuses it; `check` is offline and never runs mopm, so it trusts the record), and the rules read the record, never the version. An older mopm prints paths
+relative to the package and takes path dependencies below it only (the release pinned in rules/mopm/pins.bzl is one of them until it moves to a release that has the flag; a mopm without it that fails on a sibling says "this mopm does not support --workspace-root (needs a release containing it); pin one in mopm-toolchain.toml"); a table made by one is as it was. Either way a path dependency is the target
 `//<its directory>:lib`, the directory taken from the repository path of its root (`<dir>/src/<name>`), and one outside the repository root is refused
 (`sync`, `check`, and the analysis of the package), as is one whose directory is the importing package's own (its library would be the package's `:lib`, which
 waits for the tests that import it: a path dependency is a package of its own). The analysis also requires each library a unit imports to have been built as
@@ -549,32 +550,48 @@ It is also a `buck2 test` target (`ExternalRunnerTestInfo`).
 **Coverage** on mopm's units: the test unit's profile in the slice is replaced by `{opt: 0, assert: all, debug: true}` (mopm passes `-g`), the link goes
 through `cov_zig` (it keeps the debug information and rewrites the action's directories out of it), kcov v42 built from source with the pinned zig (`rules/coverage`
 `kcov_build`, `cov_zig`, `debug_relocate`, `cov_normalize`) runs the binary in a tree of copies of the test source and the library's sources at the relative names the line
-tables use, and `cov_normalize` maps the report to repository paths. `cov_run` refuses a binary that names the library's sources by the directory they were staged in. Branch coverage,
-`covcheck`'s policy and the census are not ported.
+tables use, and `cov_normalize` maps the report to repository paths. `cov_run` refuses a binary that names the library's sources by the directory they were staged in. `covcheck`'s policy and the census are not ported.
 
-**What `:coverage` gives a consumer.** Two outputs of one target, built from the same reports:
+**Branch coverage** of the same tests (`rules/coverage/branch/README.md`): kcov writes no branch data for a Mojo executable, so each test is also built as LLVM bitcode (the unit's profile `{opt: 0, assert: all, debug: false}` and the
+build arguments `--emit llvm-bitcode --debug-level line-tables`, so `<stem>__bc` is the very `mopm unit build` of the test with those flags), instrumented with IR profile counters by Mojo's own lld (LLVM 24: the only
+LLVM that reads and writes the compiler's bitcode, unpacked from the pinned compiler package) and linked as a release test is, with the LLVM 23 profile runtime (`<stem>__pgo`); run in the tree of its sources, the raw
+profiles merged by the pinned `llvm-profdata` (`<stem>__profdata`; the raw profile version is `RAW_PROFILE_VERSION`, checked against both LLVMs by a check of each Mojo toolchain); read back by lld with the profile
+applied, as IR text whose branches carry their counts (`<stem>__ir`); and the branches of the library's sources in that IR classified, each a source decision or a branch the compiler made, as lcov `BRDA` records in
+repository paths (`<stem>__info`). The tools are static Zig executables (`cov_branch link|run|annotate`, `cov_branch_classify`), each behind its tests. A package whose tests link a native library is not instrumented yet
+(the instrumented link line has none of its libraries) and has the line figure alone.
+
+**What `:coverage` gives a consumer.** Three outputs of one target, built from the same reports and records:
 
 - `:coverage` (its default output, `coverage.txt`): one row per file, `<path> <hit>/<total> <n>%`, the rows of a test's own sources marked `(not counted)`, then `total <hit>/<total> <n>%`
-  over the library's sources. A library source with no executable line (a re-export `__init__.mojo`) is listed `0/0`.
+  over the library's sources. A library source with no executable line (a re-export `__init__.mojo`) is listed `0/0`. Then the branch rows, the same listing with `branches ` in front of each row, over
+  the arms of the library's source decisions (`if`, `elif`, `while`, `and`/`or`, a `for` head, a raising call in a `try:` body): an arm counts as hit when any test took it. A source with code and no
+  decision, or with no code, is `0/0`; the tests of a package with a native library have no branch rows.
 - `:coverage[reports]`: the records the rows were counted from, one file per test (`<stem>__cov.cobertura.xml`), kcov's Cobertura XML after `cov_normalize`: `<?xml?>`, `<coverage timestamp="0">`,
   one `<package name="">`, one `<class name="P" filename="P">` per file that has a record, bytewise sorted, and in it one `<line number="N" hits="H"/>` per line the compiler emitted code for, sorted by
   number, `H` being 1 when the test ran the line and 0 when not. `P` is the repository path (relative to the root of the cell that holds the package; never absolute, never under `buck-out`). A line
   kcov gave branch data keeps it, `branch="true" condition-coverage="NN% (k/n)"`. A file with no executable line has no class, so it is the `0/0` row of `coverage.txt` and absent from the
   records, the same fact twice. This is the shape `covcheck` reads with `--cobertura` (one file per test binary; a path in several files is merged by summing).
+- `:coverage[branches]`: the branch records the `branches` rows were counted from, one lcov file per test (`<stem>__info.info`): per library source the IR holds code of, `SF:<repository path>`, then
+  `BRDA:<line>,<col>:<kind>:<n>/<N>,<arm>,<count>` per arm of each decision, then `end_of_record`. `<kind>` is `br`, `select`, `switch`, `try` or `rhs`; `<n>/<N>` is which decision of that kind, of how many, at that line
+  and column in one copy of the code (Mojo gives an `if` and its `elif`s one location); the arms are numbered from 0 in LLVM's weight order (true first; a `try` decision's are returned and raised); `-` is a decision
+  that never ran, an arm counted and not taken, never written as 0. A source with code and no decision is `SF:` and `end_of_record` alone; a test that ran none of the library writes an empty file. This is the
+  shape `covcheck` reads with `--branch-lcov` (the block field is not a number, so upstream lcov tools cannot read it). Present only when the tests are instrumented.
 
 A consumer selects them by sub-target, and the build report (or `--show-full-output`) names one path per test:
 
 ```
 buck2 build //pkg:coverage                       # coverage.txt
 buck2 build //pkg:coverage[reports] --show-full-output
+buck2 build //pkg:coverage[branches] --show-full-output
 ```
 
-*Branch records.* kcov writes no `branch` attribute for a Mojo executable, so `:coverage[reports]` holds no branch data today and `coverage.txt` has no `branches` rows (`examples/mojo/coverage_records_test.zig`
-holds both to that). The branch records `covcheck` reads with `--branch-lcov` are written by a classifier of the compiled code's LLVM IR, which is not ported; they are not in this output.
+*Branch records.* kcov writes no `branch` attribute for a Mojo executable, so `:coverage[reports]` holds no branch data (`examples/mojo/coverage_records_test.zig` holds that, and holds the `branches` rows of `coverage.txt`
+to the records of `:coverage[branches]` file by file). The classifier refuses what it has no evidence for, naming `file:line:col`; the shapes that stay refused are in `rules/coverage/branch/README.md`.
 
 *The floor.* A package with a `coverage_floor.txt` beside its BUCK file (the file every other package's floor is, `rules/coverage/README.md`) gets `:coverage_floor`: `lines NN.NN`, the line total of
-`coverage.txt` rounded down to a hundredth. The floor is a minimum: lower than it fails with `coverage fell`, equal passes, and higher passes and prints `you may raise the floor to NN.NN` (optional). A `branches` figure is
-refused while the tests record no branches. With no file there is no target, and the package is as it was. `mojo_coverage_floor(name, coverage, floor)` (`rules/mojo/defs.bzl`) checks a `:coverage` against any other file.
+`coverage.txt` rounded down to a hundredth, and `branches NN.NN`, the `branches total` likewise. Each figure is a minimum: lower than the floor fails with `coverage fell`, equal passes, and higher passes and prints
+`you may raise the floor to NN.NN` (optional). A package whose `coverage.txt` has branch rows needs a `branches` figure ("the tests record branches ... add `branches NN.NN`"), and one without them is refused a `branches` figure
+("the coverage has no branches to hold"); a package whose code has no decision (a table) has `branches total 0/0`, which is no branches figure, so its floor is `lines NN.NN` alone. With no file there is no target, and the package is as it was. `mojo_coverage_floor(name, coverage, floor)` (`rules/mojo/defs.bzl`) checks a `:coverage` against any other file.
 
 ### 12.5 Versions: pinned mopm, the Mojo version
 
@@ -600,6 +617,13 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 | a native library other than the pinned one | `mopm unit build` | `native library X has sha256 B, but the graph declares A` |
 | a library source no test compiled, that has any statement beyond comments, docstrings, imports and alias declarations (a re-export-only `__init__.mojo`, or a file of `comptime NAME = ...` aliases, has none, is omitted by the report, and is listed `0/0`) | `:coverage` | `<file> is in no report: no test compiled it, or kcov could not open it` |
 | a package's line coverage below its `coverage_floor.txt` | `:coverage_floor` | `<package>: line coverage is 60.00% (3/5), below its floor 70.00%: coverage fell` |
+| a package's branch coverage below its `branches` figure | `:coverage_floor` | `<package>: branch coverage is 50.00% (1/2), below its floor 60.00%: coverage fell` |
+| a floor file with no `branches` figure for a package whose tests record branches, or one with it for a package that has none to hold | `:coverage_floor` | `the tests record branches (1/2) and the floor file has no `branches` figure: add `branches 50.00``; `the floor file has a `branches` figure and the coverage has no branches to hold (the code has no decision, or the branch instrumentation was dropped)` |
+| a branch in a library source that is neither a source decision nor a branch the classifier has evidence for | `<stem>__info` (so `:coverage`) | `cov_branch_classify: <file>:<line>:<col>: a br at '<token>' is neither a source decision nor a known compiler-made branch: <source line>` |
+| an expected source with code and no branch record | `:coverage` | `<path> is in no branch record: its tests ran no code of it, or the classifier found none` |
+| an instrumented test that fails, writes no profile or one of another raw profile version | `<stem>__profdata` | `BRANCH COVERAGE RUN FAILED: ...` (`... has raw profile version 12, not 11, the version the pinned llvm-profdata reads`) |
+| a profile that is not that of the binary, or does not fit the bitcode | `<stem>__ir` | `BRANCH COVERAGE ANNOTATE FAILED: the profile ... holds no record of N of the M functions ... links` / `lld reported N diagnostic(s) applying the profile` |
+| the Mojo package's lld not LLVM 24, or its raw profile version not the one `llvm-profdata` reads | `toolchains//:mojo_<v>_cov_branch` | `llvm_branch lld RED: ... does not print 'LLD 24.'` / `llvm_branch raw_version RED: raw profile version 12 not accepted by llvm-profdata 23.1.3, which expects 11` |
 | `toolchains/mojo_pins.bzl` edited without a sync (a `cc_target`, a hash, a component) | `:check` at analysis; `mojo check` | `toolchains/mojo_pins.bzl and the table's unit graph disagree about the Mojo 1.0.0 toolchain (cc_target)` |
 | `mopm-toolchain.toml` says another Mojo than the table was made for | `:check` (the file's hash); `mojo check` | `examples/mojo/mopm-toolchain.toml is not what the Mojo table was made from (sha256 A, the table says B): run `buildrules mojo sync``  |
 | a test at an ISA level on a platform without it | analysis | as section 11 |
@@ -642,18 +666,42 @@ mojo_package(
   treat it as read-only and write under `TMPDIR`.
 - **Files and programs.** A value is a file of the package or a target (`//pkg:name`, `:name`, resolved from the BUCK file's directory); a target is staged as its default output, with the executable bit it has,
   so a program built by another target starts from the staged path. A target with more than one default output is refused by Buck2.
-- **The test run and the coverage run.** `:<stem>` (and `buck2 test`, whose command is the same start without a marker) runs `check marker|run --env BUILDRULES_TEST_DATA=<dir> --abs BUILDRULES_TEST_DATA
-  --cwd-env BUILDRULES_TEST_DATA`, then one `--env NAME=VALUE` per `test_env` entry. `:<stem>__cov` stages the same files into the tree that is kcov's working directory (`cov_run --data-env BUILDRULES_TEST_DATA
+- **The test run and the coverage run.** `:<stem>` (and `buck2 test`, whose command is the same start without a marker) runs `check marker|run --private-scratch --env BUILDRULES_TEST_DATA=<dir> --abs BUILDRULES_TEST_DATA
+  --cwd-env BUILDRULES_TEST_DATA`, then one `--env NAME=VALUE` per `test_env` entry. `:<stem>__cov` stages the same files into the tree that is kcov's working directory (`cov_run --private-scratch --data-env BUILDRULES_TEST_DATA
   --env NAME=VALUE`): that tree also holds the test's source and the library's sources under the names the line tables use, so the test sees the same files plus those.
+- **Scratch the runner owns.** Every test run and every coverage run, in either layout, gets `TMPDIR`, `TEST_TMPDIR` and `HOME` of its own: absolute paths of directories that exist, are empty when the test starts, and are
+  writable. `TMPDIR` and `TEST_TMPDIR` are the same directory, `HOME` another. They are made fresh for each run (the directory is `buildrules_test.<random>`, in `BUCK_SCRATCH_PATH`, else `TMPDIR`, else `/tmp`, with no
+  link in its path), so two tests never share them, and the whole directory is removed when the run ends. The three names are the runner's: `test_env` refuses them, and nothing a build or an earlier run left in the process's
+  own environment reaches the test under them. `BUCK_SCRATCH_PATH`, which Buck2 sets for a build action (not for `buck2 test`), is left as it is and is **relative** to the action's directory, not to the test's working
+  directory: a test must not use it, `TMPDIR` is the absolute path to write under.
+- **The installed layout.** `test_layout = "installed"` (the default is `"default"`, the layout above, unchanged) runs each test the way a program installed on a machine runs: from a fresh root made for that run, in the
+  private scratch directory (`<scratch>/root`, an absolute path with no link in it):
+
+  ```
+  <root>/bin/<exe>      the test binary, a copy of it (so /proc/self/exe, and argv[0], is this path); the directory that held the binary is copied to <root>/bin, so its lib/ is there for its runpath
+  <root>/share/...      the test_data, each key relative to share/ ({"golden/out.txt": ...} is <root>/share/golden/out.txt); the directory exists, empty, for a test without data
+  working directory     <root>; BUILDRULES_TEST_DATA, when the test has data, is <root>/share
+  ```
+
+  `check marker|run --private-scratch --installed --install-share <data dir> --share-env BUILDRULES_TEST_DATA` does it for the test run. The coverage run uses the same layout (`cov_run --private-scratch --installed --data <data dir>
+  --data-env BUILDRULES_TEST_DATA`): kcov wraps the copy at `<root>/bin/<exe>` with `<root>` as its working directory, and the root also holds the test's source and the library's sources under the names the line tables
+  use, beside `bin/` and `share/`; a source whose first directory is `bin` or `share` is refused. In this layout a staged path may be any path (the data is under `share/`, apart from the sources). A value other than
+  `"default"` and `"installed"` is refused when the package loads.
 - **The action key.** The staged files are inputs of both actions by their digests, and the variables are arguments, so a change to a staged file, to which file a path names, or to a variable runs the test again, and a
   test that depends on the new content can turn red; a change that touches none of them is a cache hit. On the farm a file that is not an input is not there at all, so a test cannot read what it did not declare.
 - **Refused at load** (rules/mojo/test_data.bzl, each an analysis test in rules/mojo/tests): a key that is no test of the package (a mistyped path stages nothing); a staged path that is empty, absolute, ends in `/`, or holds `.`, `..` or an empty
   segment (it would leave the directory); a staged path that is also the directory of another, or that is staged twice for one test (by `*` and by the test); a staged path that is, or is inside, a path the coverage tree holds (the test's
   source, a library source) or holds one; a staged value that is not a string; a variable name that is not a shell name or that the runner sets (`PATH`, `LD_LIBRARY_PATH`, `LD_PRELOAD`, `DYLD_*`, `TMPDIR`, `TEST_TMPDIR`, `HOME`, `PWD`,
-  `BUILDRULES_TEST_DATA`, `BUILDRULES_UNIT_NONCE`, `BUCK_SCRATCH_PATH`); a `test_env` value that is not a string. `mojo_test_run_rule` and `mojo_cov_run_rule` (`data`, `test_env`) repeat the checks on their own arguments.
+  `BUILDRULES_TEST_DATA`, `BUILDRULES_UNIT_NONCE`, `BUCK_SCRATCH_PATH`); a `test_env` value that is not a string; a `test_layout` that is neither `default` nor `installed`; with the installed layout, a source of the test or of the
+  library in `bin/` or `share/`. `mojo_test_run_rule` and `mojo_cov_run_rule` (`data`, `test_env`, `test_layout`) repeat the checks on their own arguments.
 - **Proof.** `ci/mojo_data` runs a stand-in test (a program that reads the staged file by a relative path, checks the working directory against `BUILDRULES_TEST_DATA`, checks a variable, and starts a staged program) with the
   Mojo test run rule, without a compiler: green when everything is staged, and red, for its reason, with other content, another variable value, no program, and a program without the executable bit (`ci/negative.bzl`, `PLANTED`).
   `examples/mojo/testdata` is the real thing: a package whose tests read a golden file, a third-party file, a library source and a variable, and start a program, in `:ci` and in `:coverage`.
+  The same probe, told to expect the installed layout, is green in `ci/mojo_data:run_green_installed` (it finds itself at `<root>/bin/<name>`, the data at `<root>/share`, the root as its working directory) and red, for its reason, when the run
+  is the default layout, when a default-layout probe is run installed, and when `share/greeting.txt` is missing or has other content; it also checks the private `TMPDIR`, `TEST_TMPDIR` and `HOME` in every run. `examples/mojo/installed` is the real
+  thing for the layout: a library that finds its own files from `/proc/self/exe` (`executable_path`, `install_root`, `share_dir`) with tests that run in `test_layout = "installed"`, in `:ci` and in `:coverage`; two of its tests
+  (`test_scratch_a`, `test_scratch_b`) check that their `TMPDIR`, `TEST_TMPDIR` and `HOME` are set, absolute, empty and writable. That two runs get different directories is held by the cases of `check` (rules/check/runspec_test.zig, and
+  check_exe_test.zig on the built executable), which start the program twice and compare.
 
 Not in `mopm.toml`: the unit graph is mopm's, and a test's data is how a build system gives a test its files, not what a package is. When mopm's graph carries a package's test files (a `[tests]` table of globs), `buildrules mojo sync` could
 generate `test_data` from it; until then the declaration is the BUCK file's, and nothing in mopm changes.

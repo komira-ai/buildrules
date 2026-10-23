@@ -349,6 +349,8 @@ download. Where the tools come from:
 | mopm | `rules/mopm/pins.bzl` | 0.0.25 (a stand-in only if the row is marked `release_pending`; see section 5.5) |
 | Mojo | not pinned by buildrules: named by mopm's graph | the one version mopm pins |
 | libgcc, libstdcxx (conda-forge) | `rules/pins/pins.bzl` | 15.3.0 |
+| kcov and its static libraries (conda-forge) | `rules/coverage/pins.bzl` (`KCOV_PINS`) | kcov v42 |
+| llvm-profdata, libLLVM, the profile runtime and what they load (conda-forge), for the branch coverage of Mojo | `rules/coverage/pins.bzl` (`LLVM_BRANCH_PINS`) | LLVM 23.1.3 (Mojo's own `lld`, LLVM 24, comes from the Mojo compiler package) |
 
 A repository selects a Rust version in `rust-toolchain.toml`, which must name an *exact* release.
 `stable`, `1.95`, a beta channel or a dated nightly is refused, because a floating channel is a
@@ -548,8 +550,8 @@ channels are planned (section 9).
 - **Node:** lockfile version 3 only; no workspaces; registry tarballs over https only; install
   scripts do not run; scripts must fit the shell-free subset; one `dist` directory.
 - **Mojo:** one Mojo version (the one mopm pins); a workspace member's native libraries are not in
-  mopm's graph yet; line coverage only (no branch coverage, no floors); `mopm lock` contacts the
-  registry even for path dependencies only.
+  mopm's graph yet; line and branch coverage with floors, but a package whose tests link a native
+  library has the line figure only; `mopm lock` contacts the registry even for path dependencies only.
 - **The host still supplies** a Linux kernel, glibc 2.34 or newer, and `libgcc_s.so.1` and
   `libz.so.1` (the Rust compiler needs them; they are not pinned yet), plus Buck2 itself.
 - **Only one farm** has run buildrules. It uses plain REAPI v2 through Buck2, so other farms that

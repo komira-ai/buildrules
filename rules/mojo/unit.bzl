@@ -15,10 +15,11 @@ A unit's output directory is the action's single output. A library's `.mojoc` is
 """
 
 load("//rules:isa.bzl", "isa_satisfies")
+load("//rules/coverage/branch:llvm_branch.bzl", "CovBranchInfo", "RAW_PROFILE_VERSION")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
 load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoTestRunInfo", "MojoToolchainInfo")
 load("//rules/core:test_runtime.bzl", "check_data_destinations")
-load(":test_data.bzl", "DATA_ENV", "check_test_env")
+load(":test_data.bzl", "DATA_ENV", "LAYOUT_DEFAULT", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_env", "check_test_layout")
 
 # `-c buildrules.unit_nonce=N` changes every unit action's key without changing any input the compiler sees: the compile
 # really re-executes, so two builds can be compared byte for byte.
@@ -223,17 +224,24 @@ def _data_dir(ctx):
     bit) at its staged path, so the directory is an input of the action by the digests of the files in it."""
     where = str(ctx.label.raw_target())
     check_test_env(where, ctx.attrs.test_env)
+    check_test_layout(where, ctx.attrs.test_layout)
     if not ctx.attrs.data:
         return None
     check_data_destinations(where + ": data", ctx.attrs.data.keys())
     return ctx.actions.copied_dir("data", dict(ctx.attrs.data))
 
 def _start_options(ctx, data_dir):
-    """`check run|marker` options that give a test its data and variables: the data directory as the working directory and under `BUILDRULES_TEST_DATA`
-    (made absolute, because the action runs in the execution root), then each `test_env` entry. They are arguments of the action, so a change to either
-    is a new action key."""
-    opts = []
-    if data_dir:
+    """`check run|marker` options that give a test its scratch, data and variables. Always `--private-scratch`: a fresh, empty TMPDIR and TEST_TMPDIR and
+    HOME of the run's own (docs/contract.md, section 12.9). Then the data: in the default layout the data directory is the working directory and is named by
+    `BUILDRULES_TEST_DATA` (made absolute, because the action runs in the execution root); in the installed layout (`--installed`) a fresh root is made in the
+    scratch, the binary is copied to `<root>/bin/`, the data directory is copied to `<root>/share` (named by `BUILDRULES_TEST_DATA`) and `<root>` is the
+    working directory. Then each `test_env` entry. They are arguments of the action, so a change to any is a new action key."""
+    opts = ["--private-scratch"]
+    if ctx.attrs.test_layout == LAYOUT_INSTALLED:
+        opts += ["--installed"]
+        if data_dir:
+            opts += ["--install-share", data_dir, "--share-env", DATA_ENV]
+    elif data_dir:
         opts += ["--env", cmd_args(DATA_ENV + "=", data_dir, delimiter = ""), "--abs", DATA_ENV, "--cwd-env", DATA_ENV]
     for name in sorted(ctx.attrs.test_env.keys()):
         opts += ["--env", "{}={}".format(name, ctx.attrs.test_env[name])]
@@ -260,11 +268,8 @@ def _test_run_impl(ctx):
         env = {"BUILDRULES_UNIT_NONCE": _NONCE},
     )
 
-    # The command of `buck2 test`: the same start, without a marker. A test without data or variables has the plain command.
-    if start:
-        run = cmd_args(check, "run", "--ld-library-path", libs, start, "--", info.exe, hidden = [info.dir])
-    else:
-        run = cmd_args(check, "run", "--ld-library-path", libs, "--", info.exe, hidden = [info.dir])
+    # The command of `buck2 test`: the same start, without a marker.
+    run = cmd_args(check, "run", "--ld-library-path", libs, start, "--", info.exe, hidden = [info.dir])
     return _validated(ctx, [
         DefaultInfo(default_output = marker),
         MojoTestRunInfo(marker = marker),
@@ -287,6 +292,9 @@ mojo_test_run_rule = rule(
         "required_isa": attrs.string(default = ""),
         # The variables the test is given besides its own: `{NAME: value}`.
         "test_env": attrs.dict(attrs.string(), attrs.string(), default = {}),
+        # `default` or `installed` (test_data.bzl): where the test runs. The installed layout is a fresh root per test, the binary at `<root>/bin/<exe>`,
+        # the data under `<root>/share`, the working directory `<root>`.
+        "test_layout": attrs.string(default = LAYOUT_DEFAULT),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
         "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
@@ -329,6 +337,30 @@ mojo_gated_lib_rule = rule(
     },
 )
 
+def _coverage_tree(ctx):
+    """The tree a test's coverage run has as its working directory: the test source and the library's sources at the relative names the line tables use,
+    and the test's staged data (the same files the test run is given, test_data.bzl): the test reads them from its working directory, and from the
+    directory BUILDRULES_TEST_DATA names, which is this tree. Used by the kcov run and by the branch run, so both see the files the test run does."""
+    where = str(ctx.label.raw_target())
+    check_test_env(where, ctx.attrs.test_env)
+    check_test_layout(where, ctx.attrs.test_layout)
+    check_data_destinations(where + ": data", ctx.attrs.data.keys())
+    installed = ctx.attrs.test_layout == LAYOUT_INSTALLED
+    data_dir = None
+    tree = {dest: src for dest, src in ctx.attrs.share.items()}
+    if installed:
+        # The data is its own tree (it becomes `<root>/share`); the root holds the sources beside `bin/` and `share/`.
+        check_installed_tree(where, tree.keys())
+        if ctx.attrs.data:
+            data_dir = ctx.actions.copied_dir("data", dict(ctx.attrs.data))
+    else:
+        for dest, src in ctx.attrs.data.items():
+            for held in tree.keys():
+                if dest == held or held.startswith(dest + "/") or dest.startswith(held + "/"):
+                    fail("{}: the staged data {} collides with {}, which the coverage tree holds (the test's source or the library's)".format(where, dest, held))
+            tree[dest] = src
+    return ctx.actions.copied_dir("share", tree), installed, data_dir
+
 def _cov_run_impl(ctx):
     info = ctx.attrs.bin[MojoExeInfo]
     have = ctx.attrs._exec_isa[ExecIsaInfo].level
@@ -336,19 +368,7 @@ def _cov_run_impl(ctx):
     if not isa_satisfies(have, want):
         fail(("{}: built for ISA {} but its execution platform reports ISA={}: set exec_compatible_with = test_exec_compatible_with() (rules/isa.bzl), " +
               "which the mojo_package macro does.").format(ctx.label, want, have))
-    # The tree kcov's working directory is: the test source and the library's sources at the relative names the line tables use, and the test's
-    # staged data (the same files the test run is given, test_data.bzl): the test under kcov reads them from its working directory, and from the
-    # directory BUILDRULES_TEST_DATA names, which is this tree.
-    where = str(ctx.label.raw_target())
-    check_test_env(where, ctx.attrs.test_env)
-    check_data_destinations(where + ": data", ctx.attrs.data.keys())
-    tree = {dest: src for dest, src in ctx.attrs.share.items()}
-    for dest, src in ctx.attrs.data.items():
-        for held in tree.keys():
-            if dest == held or held.startswith(dest + "/") or dest.startswith(held + "/"):
-                fail("{}: the staged data {} collides with {}, which the coverage tree holds (the test's source or the library's)".format(where, dest, held))
-        tree[dest] = src
-    share = ctx.actions.copied_dir("share", tree)
+    share, installed, data_dir = _coverage_tree(ctx)
     report = ctx.actions.declare_output(ctx.label.name + ".cobertura.xml")
     cmd = cmd_args(
         ctx.attrs.runner[RunInfo],
@@ -371,6 +391,13 @@ def _cov_run_impl(ctx):
         ".stage/src/",
         hidden = [info.dir],
     )
+    # A fresh, empty TMPDIR, TEST_TMPDIR and HOME of the run's own, as the test run has (`--private-scratch`); the installed layout copies the binary to
+    # `<root>/bin/`, the sources into `<root>` and the data to `<root>/share`, which `--data-env` then names (cov_run.zig).
+    cmd.add("--private-scratch")
+    if installed:
+        cmd.add("--installed")
+        if data_dir:
+            cmd.add("--data", data_dir)
     if ctx.attrs.data:
         cmd.add("--data-env", DATA_ENV)
     for name in sorted(ctx.attrs.test_env.keys()):
@@ -391,6 +418,7 @@ mojo_cov_run_rule = rule(
         # The test's staged data and variables: the very ones of its test run (`mojo_test_run_rule`).
         "data": attrs.dict(attrs.string(), attrs.source(), default = {}),
         "test_env": attrs.dict(attrs.string(), attrs.string(), default = {}),
+        "test_layout": attrs.string(default = LAYOUT_DEFAULT),
         "includes": attrs.list(attrs.string()),
         "kcov": attrs.exec_dep(default = "buildrules//rules/coverage:kcov"),
         "maps": attrs.list(attrs.string()),
@@ -401,6 +429,201 @@ mojo_cov_run_rule = rule(
         "share": attrs.dict(attrs.string(), attrs.source()),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
+    },
+)
+
+# ---- branch coverage (rules/coverage/branch/README.md) -------------------------------------------------------------------------------------
+# Per test, five actions after the bitcode (`<stem>__bc`, a `mopm unit build` of the test as `mojo build --emit llvm-bitcode`):
+#   mojo_cov_pgo_link        the bitcode instrumented with IR profile counters by Mojo's own lld, linked as a release test is, with the profile runtime
+#   mojo_cov_branch_run      that binary run in the tree of the test's sources, the raw profiles merged by llvm-profdata
+#   mojo_cov_branch_annotate the bitcode with that profile applied by lld, as IR text whose branches carry their counts
+#   mojo_cov_branch_classify the branches of the library's sources in that IR, as lcov BRDA records in repository paths
+
+def _pgo_impl(ctx):
+    tc = ctx.attrs.toolchain[MojoToolchainInfo]
+    llvm = ctx.attrs.branch[CovBranchInfo]
+    bc = ctx.attrs.bc[MojoExeInfo]
+    out = ctx.actions.declare_output(ctx.label.name)
+    ctx.actions.run(
+        cmd_args(
+            ctx.attrs.tool[RunInfo],
+            "link",
+            "--compiler",
+            tc.compiler,
+            "--zig",
+            tc.zig,
+            "--target",
+            tc.cc_target,
+            "--lld",
+            llvm.lld,
+            "--runtime",
+            llvm.runtime,
+            "--bitcode",
+            bc.exe,
+            "--out",
+            out.as_output(),
+            hidden = [llvm.lld_dir, llvm.tools_dir, bc.dir],
+        ),
+        category = "mojo_cov_pgo_link",
+        identifier = ctx.label.name,
+        env = {"BUILDRULES_UNIT_NONCE": _NONCE},
+    )
+    return _validated(ctx, [DefaultInfo(default_output = out)])
+
+# One test's bitcode instrumented with profile counters and linked (rules/coverage/branch/cov_branch_link.zig).
+mojo_cov_pgo_rule = rule(
+    impl = _pgo_impl,
+    attrs = {
+        "branch": attrs.exec_dep(providers = [CovBranchInfo]),
+        "bc": attrs.dep(providers = [MojoExeInfo]),
+        "check": _CHECK_ATTR,
+        "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
+        "tool": attrs.exec_dep(default = "buildrules//rules/coverage/branch:cov_branch", providers = [RunInfo]),
+    },
+)
+
+def _branch_run_impl(ctx):
+    have = ctx.attrs._exec_isa[ExecIsaInfo].level
+    want = ctx.attrs.required_isa
+    if not isa_satisfies(have, want):
+        fail(("{}: built for ISA {} but its execution platform reports ISA={}: set exec_compatible_with = test_exec_compatible_with() (rules/isa.bzl), " +
+              "which the mojo_package macro does.").format(ctx.label, want, have))
+    tc = ctx.attrs.toolchain[MojoToolchainInfo]
+    llvm = ctx.attrs.branch[CovBranchInfo]
+
+    # The tree the test runs in: the test source and the library's sources at the relative names the line tables use, and its staged data, as the kcov run's.
+    # The branch run has the default layout only (mojo_package gives a package with `test_layout = "installed"` no branch rows).
+    share, _, _ = _coverage_tree(ctx)
+    profdata = ctx.actions.declare_output(ctx.label.name + ".profdata")
+    cmd = cmd_args(
+        ctx.attrs.tool[RunInfo],
+        "run",
+        "--compiler",
+        tc.compiler,
+        "--share",
+        share,
+        "--label",
+        str(ctx.label.raw_target()),
+        "--profdata",
+        llvm.profdata,
+        "--raw-version",
+        str(RAW_PROFILE_VERSION),
+        "--binary",
+        ctx.attrs.pgo[DefaultInfo].default_outputs[0],
+        "--out",
+        profdata.as_output(),
+        hidden = [llvm.tools_dir],
+    )
+    # The variables of the test run, and the directory of its staged data (the tree, which is also the working directory).
+    if ctx.attrs.data:
+        cmd.add("--data-env", DATA_ENV)
+    for name in sorted(ctx.attrs.test_env.keys()):
+        cmd.add("--env", "{}={}".format(name, ctx.attrs.test_env[name]))
+    ctx.actions.run(cmd, category = "mojo_cov_branch_run", identifier = ctx.label.name, env = {"BUILDRULES_UNIT_NONCE": _NONCE})
+    return _validated(ctx, [DefaultInfo(default_output = profdata)])
+
+# One test's instrumented binary run, its raw profiles merged (rules/coverage/branch/cov_branch_run.zig).
+mojo_cov_branch_run_rule = rule(
+    impl = _branch_run_impl,
+    attrs = {
+        "branch": attrs.exec_dep(providers = [CovBranchInfo]),
+        "check": _CHECK_ATTR,
+        # The test's staged data and variables: the very ones of its test run and its kcov run.
+        "data": attrs.dict(attrs.string(), attrs.source(), default = {}),
+        "pgo": attrs.dep(),
+        "required_isa": attrs.string(default = ""),
+        "share": attrs.dict(attrs.string(), attrs.source()),
+        "test_env": attrs.dict(attrs.string(), attrs.string(), default = {}),
+        "test_layout": attrs.string(default = LAYOUT_DEFAULT),
+        "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
+        "tool": attrs.exec_dep(default = "buildrules//rules/coverage/branch:cov_branch", providers = [RunInfo]),
+        "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
+    },
+)
+
+def _annotate_impl(ctx):
+    llvm = ctx.attrs.branch[CovBranchInfo]
+    bc = ctx.attrs.bc[MojoExeInfo]
+    ir = ctx.actions.declare_output(ctx.label.name + ".ll")
+    ctx.actions.run(
+        cmd_args(
+            ctx.attrs.tool[RunInfo],
+            "annotate",
+            "--lld",
+            llvm.lld,
+            "--profdata",
+            llvm.profdata,
+            "--bitcode",
+            bc.exe,
+            "--profile",
+            ctx.attrs.profdata[DefaultInfo].default_outputs[0],
+            "--binary",
+            ctx.attrs.pgo[DefaultInfo].default_outputs[0],
+            "--out",
+            ir.as_output(),
+            hidden = [llvm.lld_dir, llvm.tools_dir, bc.dir],
+        ),
+        category = "mojo_cov_branch_annotate",
+        identifier = ctx.label.name,
+        env = {"BUILDRULES_UNIT_NONCE": _NONCE},
+    )
+    return _validated(ctx, [DefaultInfo(default_output = ir)])
+
+# One test's profile applied to its bitcode, the module printed after the pass (rules/coverage/branch/cov_branch_annotate.zig).
+mojo_cov_branch_annotate_rule = rule(
+    impl = _annotate_impl,
+    attrs = {
+        "bc": attrs.dep(providers = [MojoExeInfo]),
+        "branch": attrs.exec_dep(providers = [CovBranchInfo]),
+        "check": _CHECK_ATTR,
+        "pgo": attrs.dep(),
+        "profdata": attrs.dep(),
+        "tool": attrs.exec_dep(default = "buildrules//rules/coverage/branch:cov_branch", providers = [RunInfo]),
+    },
+)
+
+def _classify_impl(ctx):
+    # The library's sources at the names its `.mojoc` gives them (`<import>/<file>`), which the classifier reads for the token at each branch.
+    src = ctx.actions.copied_dir("src", {dest: s for dest, s in ctx.attrs.srcs.items()})
+    info = ctx.actions.declare_output(ctx.label.name + ".info")
+    cmd = cmd_args(
+        ctx.attrs.tool[RunInfo],
+        "--ir",
+        ctx.attrs.ir[DefaultInfo].default_outputs[0],
+        "--out",
+        info.as_output(),
+        "--map",
+        ctx.attrs.map,
+        "--src",
+        cmd_args(src, format = "{}/"),
+        # Where the standard library's sources are named: a String's last-reference test is its code inlined at the branch.
+        "--stdlib",
+        "oss/modular/",
+        # The standard library, the closure's other packages, the test itself and the compile unit with no file are not measured. Any other
+        # name fails the action, so a library compiled from a path of its own cannot read as measured with nothing in it.
+        "--exclude",
+        "oss/modular/",
+    )
+    for d in ctx.attrs.excludes:
+        cmd.add("--exclude", d)
+    for f in ctx.attrs.exclude_files:
+        cmd.add("--exclude-file", f)
+    cmd.add("--exclude-file", "<unknown>")
+    ctx.actions.run(cmd, category = "mojo_cov_branch_classify", identifier = ctx.label.name)
+    return _validated(ctx, [DefaultInfo(default_output = info)])
+
+# The branches of one test's annotated IR that fall in the library's sources, as lcov BRDA records in repository paths
+# (rules/coverage/branch/cov_branch_classify.zig).
+mojo_cov_branch_classify_rule = rule(
+    impl = _classify_impl,
+    attrs = {
+        "check": _CHECK_ATTR,
+        "exclude_files": attrs.list(attrs.string(), default = []),
+        "excludes": attrs.list(attrs.string(), default = []),
+        "ir": attrs.dep(),
+        "map": attrs.string(),
+        "srcs": attrs.dict(attrs.string(), attrs.source()),
+        "tool": attrs.exec_dep(default = "buildrules//rules/coverage/branch:cov_branch_classify", providers = [RunInfo]),
     },
 )
 
@@ -415,21 +638,26 @@ def _cov_summary_impl(ctx):
     # from one the report missed (cov_summary.zig, hasNoStatements).
     for path, src in ctx.attrs.srcs.items():
         cmd.add("--src", cmd_args(path, src, delimiter = "="))
+    for b in ctx.attrs.branches:
+        cmd.add("--branch-lcov", _file(b))
     for r in ctx.attrs.reports:
         cmd.add(_file(r))
     ctx.actions.run(cmd, category = "mojo_cov_summary", identifier = ctx.label.name)
 
     # `:coverage[reports]`: the per-line records the summary was made from, one kcov Cobertura file per test (docs/contract.md, section 12.4).
-    # They are the very files the summary action read, so a consumer that takes them gets what `coverage.txt` counted.
-    return _validated(ctx, [DefaultInfo(
-        default_output = out,
-        sub_targets = {"reports": [DefaultInfo(default_outputs = [_file(r) for r in ctx.attrs.reports])]},
-    )])
+    # They are the very files the summary action read, so a consumer that takes them gets what `coverage.txt` counted. `:coverage[branches]`
+    # likewise: the branch records, one lcov file per test, the very files the `branches` rows were counted from (`covcheck --branch-lcov`).
+    sub = {"reports": [DefaultInfo(default_outputs = [_file(r) for r in ctx.attrs.reports])]}
+    if ctx.attrs.branches:
+        sub["branches"] = [DefaultInfo(default_outputs = [_file(b) for b in ctx.attrs.branches])]
+    return _validated(ctx, [DefaultInfo(default_output = out, sub_targets = sub)])
 
-# The package's line coverage from its tests' reports; fails when one of its own sources is in none.
+# The package's line coverage from its tests' reports, and its branch coverage from their branch records; fails when one of its own sources
+# is in no report.
 mojo_cov_summary_rule = rule(
     impl = _cov_summary_impl,
     attrs = {
+        "branches": attrs.list(attrs.dep(), default = []),
         "check": _CHECK_ATTR,
         "expect": attrs.list(attrs.string(), default = []),
         "reports": attrs.list(attrs.dep()),

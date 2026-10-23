@@ -3,7 +3,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # (expect), write a marker only when a test passed (marker), hash files (digest), compare files (same), copy a file (copy), audit machine code (isa).
 # One static Zig executable, built by the pinned zig behind its unit tests. The checks and markers of the rules run it (README.md).
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
-load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_test")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_module", "zig_test")
 
 # Zig 0.15 code (std.Io, ArrayList.empty): it builds with the pinned zig_next, as kpin and the command line do.
 _ZIG = "buildrules//rules/pins:zig_next"
@@ -23,13 +23,22 @@ _SRCS = [
 # true/false are what the environment, the working directory and the exit status of a started program are read back with.
 _SUPPORT = ["checkkit.zig"]
 
-_TESTS = ["check", "cmds", "files", "isa", "oom", "runspec"]
+# The private scratch directory and the installed layout of a test run (install_root.zig): a module of its own, because `cov_run` (rules/coverage) builds the
+# coverage run of a Mojo test from the same file, and Zig refuses a relative import across directories. Its cases are install_root_test.zig.
+zig_module(
+    name = "install_root",
+    src = "install_root.zig",
+    visibility = ["PUBLIC"],
+)
+
+_TESTS = ["check","cmds", "files", "install_root", "isa", "oom", "runspec"]
 
 [
     zig_test(
         name = name + "_unit",
         src = name + "_test.zig",
         imports = _SRCS + _SUPPORT,
+        deps = [":install_root"],
         env_tools = {"TOOLBOX": _TOOLBOX},
         zig = _ZIG,
     )
@@ -41,7 +50,8 @@ _TESTS = ["check", "cmds", "files", "isa", "oom", "runspec"]
 zig_test(
     name = "all_unit",
     src = "all_test.zig",
-    imports = _SRCS + _SUPPORT + [name + "_test.zig" for name in _TESTS],
+    imports = _SRCS + _SUPPORT + [name + "_test.zig" for name in _TESTS if name != "install_root"],
+    deps = [":install_root"],
     env_tools = {"TOOLBOX": _TOOLBOX},
     zig = _ZIG,
 )
@@ -51,6 +61,7 @@ zig_exe(
     name = "check",
     src = "check.zig",
     imports = _SRCS,
+    deps = [":install_root"],
     unit_tests = [":" + name + "_unit" for name in _TESTS] + [_ZIG_VERSION],
     zig = _ZIG,
     visibility = ["PUBLIC"],
@@ -67,6 +78,7 @@ _NATIVE = {
         name = "check_" + name,
         src = "check.zig",
         imports = _SRCS,
+        deps = [":install_root"],
         target = triple,
         unit_tests = [":" + t + "_unit" for t in _TESTS] + [_ZIG_VERSION],
         zig = _ZIG,
@@ -85,6 +97,7 @@ zig_test(
     name = "check_exe_test",
     src = "check_exe_test.zig",
     imports = _SRCS + _SUPPORT,
+    deps = [":install_root"],
     env_tools = {"CHECK": ":check", "TOOLBOX": _TOOLBOX},
     visibility = ["PUBLIC"],
     zig = _ZIG,
@@ -95,6 +108,14 @@ zig_test(
 zig_coverage(
     test_targets = [":all_unit"],
     expect = ["rules/check/" + f for f in _SRCS],
+)
+
+# The same for install_root.zig, which is a module of its own (above) and is measured by its own cases.
+zig_coverage(
+    name = "install_root_coverage",
+    test_targets = [":install_root_unit"],
+    expect = ["rules/check/install_root.zig"],
+    floor = "install_root_coverage_floor.txt",
 )
 
 scrub_files()

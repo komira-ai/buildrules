@@ -11,6 +11,8 @@ const proc = @import("refusal_proc");
 /// A coverage.txt of cov_summary: the line total and, when given, the branch total.
 const COV = "total 95/100 95%\n";
 const COV_BRANCHES = "total 95/100 95%\nbranches total 60/100 60%\n";
+/// A package with code and no decision (a re-export, a table): its branch rows are all 0/0.
+const COV_NO_DECISIONS = "total 95/100 95%\nbranches rules/pkg/a.zig 0/0 0%\nbranches total 0/0 0%\n";
 
 const Case = struct { name: []const u8, coverage: ?[]const u8 = COV, floor: ?[]const u8, code: u8, msgs: []const []const u8 };
 
@@ -33,6 +35,18 @@ test "a floor the coverage meets is accepted, and the report says what the 99% t
     try proc.expectOk("held", try floorRun(a, &tmp, COV, "lines 95.00\n", &.{}));
     const report = try tmp.dir.readFileAlloc(a, "report.txt", 1 << 16);
     try std.testing.expect(std.mem.indexOf(u8, report, "rules/pkg lines 95.00% (95/100); 4 more to 99%") != null);
+}
+
+test "a lines floor holds a package whose code has no decision" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try proc.expectOk("held", try floorRun(a, &tmp, COV_NO_DECISIONS, "lines 95.00\n", &.{}));
+    const report = try tmp.dir.readFileAlloc(a, "report.txt", 1 << 16);
+    try std.testing.expect(std.mem.indexOf(u8, report, "rules/pkg lines 95.00% (95/100); 4 more to 99%") != null);
+    try std.testing.expect(std.mem.indexOf(u8, report, "branches") == null);
 }
 
 test "a floor below the coverage is accepted with a hint, in the report and on stderr; at the coverage, with none" {
@@ -104,7 +118,8 @@ test "a floor above the coverage is refused, with the figures" {
     const Bad = struct { name: []const u8, coverage: []const u8, floor: []const u8, msgs: []const []const u8 };
     const bad = [_]Bad{
         .{ .name = "coverage fell", .coverage = COV, .floor = "lines 96.00\n", .msgs = &.{ "rules/pkg: line coverage is 95.00% (95/100), below its floor 96.00%: coverage fell" } },
-        .{ .name = "a branch figure the tests lost", .coverage = COV, .floor = "lines 95.00\nbranches 60.00\n", .msgs = &.{ "the floor file has a `branches` figure and the tests record no branches: the instrumentation was dropped" } },
+        .{ .name = "a branch figure the tests lost", .coverage = COV, .floor = "lines 95.00\nbranches 60.00\n", .msgs = &.{ "the floor file has a `branches` figure and the coverage has no branches to hold (the code has no decision, or the branch instrumentation was dropped)" } },
+        .{ .name = "a branches line for code with no decision", .coverage = COV_NO_DECISIONS, .floor = "lines 95.00\nbranches 0.00\n", .msgs = &.{ "the coverage has no branches to hold" } },
         .{ .name = "a branch figure the floor lacks", .coverage = COV_BRANCHES, .floor = "lines 95.00\n", .msgs = &.{ "the floor file has no `branches` figure: add `branches 60.00`" } },
         .{ .name = "branches fell", .coverage = COV_BRANCHES, .floor = "lines 95.00\nbranches 61.00\n", .msgs = &.{ "branch coverage is 60.00% (60/100), below its floor 61.00%: coverage fell" } },
     };
@@ -255,7 +270,66 @@ test "cov_summary: a source no report names is refused, and so is a report that 
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        try proc.expectRefusal("no arguments", try summaryRun(a, &tmp, null, &.{}), 2, &.{"usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... <report.xml>..."});
+        try proc.expectRefusal("no arguments", try summaryRun(a, &tmp, null, &.{}), 2, &.{"usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... <report.xml>..."});
         try proc.expectRefusal("an unknown option", try summaryRun(a, &tmp, REPORT, &.{ "--bogus", "report.xml" }), 2, &.{"cov_summary: unknown option --bogus"});
+    }
+}
+
+// The branch records of a Mojo package's tests (--branch-lcov), as the process the public target hands out: the rows follow the line rows, an arm is hit when any test took it, a
+// source with lines and no record is refused, and so is a record file that is not one or a mix of the two kinds of branch figure.
+const RECORDS_ONE =
+    \\SF:rules/pkg/a.zig
+    \\BRDA:5,9:br:0/1,0,3
+    \\BRDA:5,9:br:0/1,1,0
+    \\end_of_record
+    \\
+;
+
+const RECORDS_TWO =
+    \\SF:rules/pkg/a.zig
+    \\BRDA:5,9:br:0/1,0,0
+    \\BRDA:5,9:br:0/1,1,1
+    \\end_of_record
+    \\
+;
+
+test "cov_summary: branch records are summed over the tests, listed after the lines, and a source with lines and none is refused" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    {
+        // Each test takes one arm of the one decision: the package has both.
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = "one.info", .data = RECORDS_ONE });
+        try tmp.dir.writeFile(.{ .sub_path = "two.info", .data = RECORDS_TWO });
+        try proc.expectOk("two tests", try summaryRun(a, &tmp, REPORT, &.{ "--expect", "rules/pkg/a.zig", "--branch-lcov", "one.info", "--branch-lcov", "two.info", "report.xml" }));
+        try std.testing.expectEqualStrings("rules/pkg/a.zig 1/2 50%\ntotal 1/2 50%\nbranches rules/pkg/a.zig 2/2 100%\nbranches total 2/2 100%\n", try tmp.dir.readFileAlloc(a, "coverage.txt", 1 << 16));
+    }
+    {
+        // One test that took one arm: half.
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = "one.info", .data = RECORDS_ONE });
+        try proc.expectOk("one test", try summaryRun(a, &tmp, REPORT, &.{ "--expect", "rules/pkg/a.zig", "--branch-lcov", "one.info", "report.xml" }));
+        try std.testing.expectEqualStrings("rules/pkg/a.zig 1/2 50%\ntotal 1/2 50%\nbranches rules/pkg/a.zig 1/2 50%\nbranches total 1/2 50%\n", try tmp.dir.readFileAlloc(a, "coverage.txt", 1 << 16));
+    }
+    {
+        // A source the line report names with lines and the records do not.
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = "empty.info", .data = "" });
+        try proc.expectRefusal("a source with lines and no record", try summaryRun(a, &tmp, REPORT, &.{ "--expect", "rules/pkg/a.zig", "--branch-lcov", "empty.info", "report.xml" }), 1, &.{"cov_summary: rules/pkg/a.zig is in no branch record: its tests ran no code of it, or the classifier found none"});
+        try std.testing.expectError(error.FileNotFound, tmp.dir.access("coverage.txt", .{}));
+    }
+    {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = "bad.info", .data = "SF:rules/pkg/a.zig\nDA:1,1\nend_of_record\n" });
+        try proc.expectRefusal("a record file that holds a line record", try summaryRun(a, &tmp, REPORT, &.{ "--branch-lcov", "bad.info", "report.xml" }), 1, &.{"cov_summary: bad.info:2: 'DA' record in a branch record file"});
+        try proc.expectRefusal("a record file that is not there", try summaryRun(a, &tmp, REPORT, &.{ "--branch-lcov", "missing.info", "report.xml" }), 1, &.{"cov_summary: cannot read missing.info: FileNotFound"});
+        try tmp.dir.writeFile(.{ .sub_path = "blocks", .data = "# blocks v2\nrules/pkg/a.zig\t1\t1\t1\t1\n" });
+        try tmp.dir.writeFile(.{ .sub_path = "one.info", .data = RECORDS_ONE });
+        try proc.expectRefusal("both kinds of branch figure", try summaryRun(a, &tmp, REPORT, &.{ "--blocks", "blocks", "--branch-lcov", "one.info", "report.xml" }), 2, &.{"cov_summary: --blocks (Zig) and --branch-lcov (Mojo) are two kinds of branch figure: a package has one"});
     }
 }
