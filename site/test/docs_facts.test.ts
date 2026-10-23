@@ -4,7 +4,9 @@
 
 import { PAGES } from '../tools/pages';
 import type { Block, Page } from '../tools/model';
-import { repoFile } from './helpers';
+import { readdirSync } from 'fs';
+import { join } from 'path';
+import { REPO_DIR, repoFile } from './helpers';
 
 const page = (path: string): Page => PAGES.find((p) => p.path === path) as Page;
 
@@ -563,5 +565,78 @@ describe('the install script (site/static/install.sh, served as /install.sh)', (
     expect(plannedText(HOW[0])).toMatch(/install\.sh answers only after/);
     expect(plannedText(WHY)).toMatch(/Publishing this site at buildrules\.dev/);
     expect(HOW_MD).toMatch(/The site is not published yet \(\*\*planned\*\*\)/);
+  });
+});
+
+// ---------------------------------------------------------------- the apt install instructions
+
+/** The one object the repository publishes the keyring as: key `apt/komira-archive-keyring.gpg` on this host. */
+const APT_HOST = 'packages.komira.ai';
+const KEYRING_OBJECT = 'apt/komira-archive-keyring.gpg';
+const KEYRING_URL = `https://${APT_HOST}/${KEYRING_OBJECT}`;
+/** The keyring download command: `curl ... -o <install path> <url>`. */
+const KEYRING_COMMAND = /curl [^\n]*-o (\S+) (https:\/\/\S+)/g;
+
+/** Every file of a directory of the repository, recursively, as repository paths. */
+function filesUnder(dir: string): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(join(REPO_DIR, dir), { withFileTypes: true })) {
+    const p = `${dir}/${e.name}`;
+    if (e.isDirectory()) out.push(...filesUnder(p));
+    else out.push(p);
+  }
+  return out;
+}
+
+describe('the apt install instructions', () => {
+  const releasing = repoFile('RELEASING.md');
+
+  test('RELEASING.md downloads the keyring from the one object the repository publishes, once', () => {
+    const cmds = [...releasing.matchAll(KEYRING_COMMAND)];
+    expect(cmds.length).toBe(1);
+    const url = new URL(cmds[0][2]);
+    expect({ host: url.host, key: url.pathname.slice(1), scheme: url.protocol }).toEqual({ host: APT_HOST, key: KEYRING_OBJECT, scheme: 'https:' });
+    expect(cmds[0][2]).toBe(KEYRING_URL);
+  });
+
+  test('RELEASING.md writes a deb822 source whose Signed-By is the path the keyring is installed to', () => {
+    const installPath = [...releasing.matchAll(KEYRING_COMMAND)][0][1];
+    expect(installPath).toMatch(/^\/etc\/apt\/keyrings\/[a-z0-9-]+\.gpg$/);
+    expect(releasing).toMatch(/tee \/etc\/apt\/sources\.list\.d\/[a-z0-9-]+\.sources\b/);
+    const stanza = /<<.EOF.\n([\s\S]*?)\nEOF\n/.exec(releasing);
+    expect(stanza).not.toBeNull();
+    const fields = new Map<string, string>();
+    for (const line of (stanza as RegExpExecArray)[1].split('\n')) {
+      const m = /^([A-Za-z-]+): (.+)$/.exec(line);
+      expect(m).not.toBeNull();
+      fields.set((m as RegExpExecArray)[1], (m as RegExpExecArray)[2]);
+    }
+    expect(Object.fromEntries(fields)).toEqual({
+      Types: 'deb',
+      URIs: `https://${APT_HOST}/apt`,
+      Suites: 'stable',
+      Components: 'main',
+      'Signed-By': installPath,
+    });
+  });
+
+  describe('no text mentions an apt path the repository does not serve', () => {
+    // RELEASING.md, the documents, the install script and the site's sources (the pages are generated from the last)
+    const scanned = ['RELEASING.md', ...filesUnder('docs').filter((p) => p.endsWith('.md')), 'site/static/install.sh', ...filesUnder('site/tools')];
+    const stale: [string, RegExp][] = [
+      ['the keyring as apt/keyring.gpg', /\/apt\/keyring\.gpg/],
+      ['the keyring installed as <owner>.gpg or packages.gpg', /keyrings\/(?:<owner>|packages)\.gpg/],
+      ['a one-line source file (.list)', /sources\.list\.d\/[A-Za-z0-9<>._-]*\.list\b/],
+      ['a one-line deb entry with signed-by', /deb \[signed-by=/],
+      ['apt-key', /apt-key/],
+      ['the keyring under a host placeholder', /<apt host>\/apt\/[a-z.-]*\.gpg/],
+      ['the keyring served under any name but the published one', /packages\.komira\.ai\/apt\/(?!komira-archive-keyring\.(?:gpg|asc)\b|dists\/)[A-Za-z0-9._-]*\.(?:gpg|asc)\b/],
+    ];
+    test('the scanned set holds the release notes, the install script and the page sources', () => {
+      for (const p of ['RELEASING.md', 'docs/how.md', 'site/static/install.sh', 'site/tools/content/how.ts']) expect(scanned).toContain(p);
+    });
+    test.each(stale)('nothing mentions %s', (_name, re) => {
+      expect(scanned.filter((p) => re.test(repoFile(p)))).toEqual([]);
+    });
   });
 });
