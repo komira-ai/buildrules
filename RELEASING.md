@@ -502,23 +502,23 @@ step that reads, signs, writes or assumes the role is skipped by `if: steps.gate
 condition and that each gate is the exact command. So a release that runs before the settings exist (or with only half of them) releases exactly as before and the apt jobs leave a notice; a half-made setting (the role
 without the key, or the key without the role) leaves the repository unchanged. Once both are made, the next release publishes without any other change. The region of the repository is `us-east-1`.
 
-Installing from the apt repository (**after setup**: the settings above made, and the public half of the signing key uploaded as `apt/komira-archive-keyring.gpg`; the host in the commands is `APT_HOSTNAME`):
+Installing from the apt repository (**after setup**: the settings above made, and the public half of the signing key uploaded as `apt/<keyring>.gpg`; `<apt host>` is `APT_HOSTNAME` and `<keyring>` is the file name the owner chose for the key):
 
 ```sh
 sudo install -d -m 0755 /etc/apt/keyrings
-sudo curl -fsSL -o /etc/apt/keyrings/komira-archive-keyring.gpg https://packages.komira.ai/apt/komira-archive-keyring.gpg
-sudo tee /etc/apt/sources.list.d/komira.sources > /dev/null <<'EOF'
+sudo curl -fsSL -o /etc/apt/keyrings/<keyring>.gpg https://<apt host>/apt/<keyring>.gpg
+sudo tee /etc/apt/sources.list.d/buildrules.sources > /dev/null <<'EOF'
 Types: deb
-URIs: https://packages.komira.ai/apt
+URIs: https://<apt host>/apt
 Suites: stable
 Components: main
-Signed-By: /etc/apt/keyrings/komira-archive-keyring.gpg
+Signed-By: /etc/apt/keyrings/<keyring>.gpg
 EOF
 sudo apt update
 sudo apt install buildrules
 ```
 
-The keyring is the binary public key the repository serves as `apt/komira-archive-keyring.gpg` (an armored copy, `komira-archive-keyring.asc`, is beside it), and `Signed-By` names the path the first command installs it to. `apt update` verifies `InRelease` against it before it trusts a `Packages` file. Until then, install the `.deb` of a release by hand
+The keyring is the binary public key the repository serves as `apt/<keyring>.gpg` (an armored copy, `apt/<keyring>.asc`, is beside it), and `Signed-By` names the path the first command installs it to. `apt update` verifies `InRelease` against it before it trusts a `Packages` file. Until then, install the `.deb` of a release by hand
 (`sudo apt install ./buildrules_<version>_amd64.deb`, after the checks of "Installing the command line").
 
 ## What the first release after this change does with no setup

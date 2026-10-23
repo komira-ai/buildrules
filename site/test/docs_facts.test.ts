@@ -570,12 +570,15 @@ describe('the install script (site/static/install.sh, served as /install.sh)', (
 
 // ---------------------------------------------------------------- the apt install instructions
 
-/** The one object the repository publishes the keyring as: key `apt/komira-archive-keyring.gpg` on this host. */
-const APT_HOST = 'packages.komira.ai';
-const KEYRING_OBJECT = 'apt/komira-archive-keyring.gpg';
+/**
+ * The documents never name the host or the key file: the host is `<apt host>` (the variable APT_HOSTNAME) and the key's file name is
+ * `<keyring>`. The one object the repository publishes the keyring as is `apt/<keyring>.gpg` on that host.
+ */
+const APT_HOST = '<apt host>';
+const KEYRING_OBJECT = 'apt/<keyring>.gpg';
 const KEYRING_URL = `https://${APT_HOST}/${KEYRING_OBJECT}`;
-/** The keyring download command: `curl ... -o <install path> <url>`. */
-const KEYRING_COMMAND = /curl [^\n]*-o (\S+) (https:\/\/\S+)/g;
+/** The keyring download command: `curl ... -o <install path> <url>`; the url is on the placeholder host. */
+const KEYRING_COMMAND = /curl [^\n]*-o (\S+) (https:\/\/<apt host>\/\S+)/g;
 
 /** Every file of a directory of the repository, recursively, as repository paths. */
 function filesUnder(dir: string): string[] {
@@ -594,14 +597,13 @@ describe('the apt install instructions', () => {
   test('RELEASING.md downloads the keyring from the one object the repository publishes, once', () => {
     const cmds = [...releasing.matchAll(KEYRING_COMMAND)];
     expect(cmds.length).toBe(1);
-    const url = new URL(cmds[0][2]);
-    expect({ host: url.host, key: url.pathname.slice(1), scheme: url.protocol }).toEqual({ host: APT_HOST, key: KEYRING_OBJECT, scheme: 'https:' });
     expect(cmds[0][2]).toBe(KEYRING_URL);
+    expect(cmds[0][2].slice('https://'.length + APT_HOST.length + 1)).toBe(KEYRING_OBJECT);
   });
 
   test('RELEASING.md writes a deb822 source whose Signed-By is the path the keyring is installed to', () => {
     const installPath = [...releasing.matchAll(KEYRING_COMMAND)][0][1];
-    expect(installPath).toMatch(/^\/etc\/apt\/keyrings\/[a-z0-9-]+\.gpg$/);
+    expect(installPath).toBe('/etc/apt/keyrings/<keyring>.gpg');
     expect(releasing).toMatch(/tee \/etc\/apt\/sources\.list\.d\/[a-z0-9-]+\.sources\b/);
     const stanza = /<<.EOF.\n([\s\S]*?)\nEOF\n/.exec(releasing);
     expect(stanza).not.toBeNull();
@@ -629,8 +631,9 @@ describe('the apt install instructions', () => {
       ['a one-line source file (.list)', /sources\.list\.d\/[A-Za-z0-9<>._-]*\.list\b/],
       ['a one-line deb entry with signed-by', /deb \[signed-by=/],
       ['apt-key', /apt-key/],
-      ['the keyring under a host placeholder', /<apt host>\/apt\/[a-z.-]*\.gpg/],
-      ['the keyring served under any name but the published one', /packages\.komira\.ai\/apt\/(?!komira-archive-keyring\.(?:gpg|asc)\b|dists\/)[A-Za-z0-9._-]*\.(?:gpg|asc)\b/],
+      ['the keyring under the placeholder host with any name but <keyring>', /<apt host>\/apt\/(?!<keyring>\.(?:gpg|asc)\b|dists\/)[^\s]*\.(?:gpg|asc)\b/],
+      ['the keyring on a concrete host instead of <apt host>', /https:\/\/(?!<apt host>)[^\s/]+\/apt\/[^\s]*\.(?:gpg|asc)\b/],
+      ['a keyring installed under a concrete name instead of <keyring>', /keyrings\/(?!<keyring>\.gpg)[A-Za-z0-9._-]+\.gpg/],
     ];
     test('the scanned set holds the release notes, the install script and the page sources', () => {
       for (const p of ['RELEASING.md', 'docs/how.md', 'site/static/install.sh', 'site/tools/content/how.ts']) expect(scanned).toContain(p);
