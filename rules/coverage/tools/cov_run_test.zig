@@ -95,3 +95,53 @@ test "heldText: the staged-path leak is found in a binary, and a clean binary pa
     try t.expect(C.heldText("base/__init__.mojo", &.{".stage/src/"}) == null);
     try t.expect(C.heldText("anything", &.{}) == null);
 }
+
+test "parse: the test's own variables and the variable that names its data tree" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var d: []const u8 = "";
+    const r = try C.parse(a, try args(a, &.{ "--env", "A=1", "--env", "B=x=y", "--env", "EMPTY=", "--data-env", "BUILDRULES_TEST_DATA" }), &d);
+    try t.expectEqual(@as(usize, 3), r.env.len);
+    try t.expectEqualStrings("B=x=y", r.env[1]);
+    try t.expectEqualStrings("BUILDRULES_TEST_DATA", r.data_env);
+    // Without either option the test gets nothing of its own.
+    const none = try C.parse(a, try args(a, &.{}), &d);
+    try t.expectEqual(@as(usize, 0), none.env.len);
+    try t.expectEqualStrings("", none.data_env);
+}
+
+test "parse: a variable cov_run sets itself, or one that is not NAME=VALUE, is refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var d: []const u8 = "";
+    try t.expectError(error.Usage, C.parse(a, try args(a, &.{ "--env", "PATH=/x" }), &d));
+    try t.expect(std.mem.indexOf(u8, d, "cov_run sets PATH itself") != null);
+    try t.expectError(error.Usage, C.parse(a, try args(a, &.{ "--env", "LD_LIBRARY_PATH=/x" }), &d));
+    try t.expectError(error.Usage, C.parse(a, try args(a, &.{ "--env", "NOEQUALS" }), &d));
+    try t.expect(std.mem.indexOf(u8, d, "is not NAME=VALUE") != null);
+    try t.expectError(error.Usage, C.parse(a, try args(a, &.{ "--env", "=v" }), &d));
+    try t.expectError(error.Usage, C.parse(a, try args(a, &.{ "--data-env", "" }), &d));
+    try t.expectError(error.Usage, C.parse(a, try args(a, &.{ "--data-env", "A=B" }), &d));
+    try t.expectError(error.Usage, C.parse(a, try args(a, &.{ "--data-env", "PATH" }), &d));
+    try t.expect(std.mem.indexOf(u8, d, "not a variable name cov_run may set") != null);
+}
+
+test "testEnv: the compiler's lib, the fixed PATH, the test's variables, and the data tree under its variable" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var d: []const u8 = "";
+    const r = try C.parse(a, try args(a, &.{ "--env", "MODE=on", "--env", "EQ=a=b", "--data-env", "BUILDRULES_TEST_DATA" }), &d);
+    const env = try C.testEnv(a, r, "/real/compiler", "/real/share");
+    try t.expectEqualStrings("/real/compiler/lib", env.get("LD_LIBRARY_PATH").?);
+    try t.expectEqualStrings("/usr/bin:/bin", env.get("PATH").?);
+    try t.expectEqualStrings("on", env.get("MODE").?);
+    try t.expectEqualStrings("a=b", env.get("EQ").?);
+    try t.expectEqualStrings("/real/share", env.get("BUILDRULES_TEST_DATA").?);
+    try t.expectEqual(@as(u32, 5), env.count());
+    // No options: only what a coverage run always had.
+    const plain = try C.testEnv(a, try C.parse(a, try args(a, &.{}), &d), "/real/compiler", "/real/share");
+    try t.expectEqual(@as(u32, 2), plain.count());
+}

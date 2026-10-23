@@ -6,6 +6,7 @@ load("//rules/mojo:unit.bzl", "check_closure_ids")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
 load(":natives.bzl", "PREBUILT", "UNIT", "USER", "own_natives", "reversed_graph_is_reversed", "wiring_is_as_the_graph_says")
 load(":siblings.bzl", "graph_paths_below_the_package", "nested_member_keeps_its_target", "sibling_is_named_by_its_directory", "sibling_with_a_path_up_is_named_by_its_directory", "workspace_is_flat_at_repository_paths")
+load(":test_data_targets.bzl", "test_data_targets")
 
 _NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.25\"", "mojo = \"1.0.0\""]
 
@@ -185,5 +186,9 @@ accepts(
     check = check_closure_ids,
     args = ["//x:t", {"util": "util@0.1.0#mojo1.0.0/lib", "base": "base@0.1.0#mojo1.0.0/lib"}, {"base": "base@0.1.0#mojo1.0.0/lib", "util": "util@0.1.0#mojo1.0.0/lib"}],
 )
+# mojo_package(test_data = ..., test_env = ...) (rules/mojo/test_data.bzl, docs/contract.md section 12.9): what is staged for each test, and each way
+# the arguments are refused. `:test_data` is the group of them all.
+test_data_targets()
 
 scrub_files()
+

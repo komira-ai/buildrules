@@ -17,6 +17,8 @@ A unit's output directory is the action's single output. A library's `.mojoc` is
 load("//rules:isa.bzl", "isa_satisfies")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
 load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoTestRunInfo", "MojoToolchainInfo")
+load("//rules/core:test_runtime.bzl", "check_data_destinations")
+load(":test_data.bzl", "DATA_ENV", "check_test_env")
 
 # `-c buildrules.unit_nonce=N` changes every unit action's key without changing any input the compiler sees: the compile
 # really re-executes, so two builds can be compared byte for byte.
@@ -215,6 +217,27 @@ mojo_prebuilt_rule = rule(
 # runpath ($ORIGIN/lib). The build action is `check marker` (rules/check): the marker is written, `passed`, only when the binary exited 0; the
 # `buck2 test` command is `check run`, the same start without a marker.
 
+def _data_dir(ctx):
+    """The directory a test finds its staged data in, or None for a test without data: a copy of each file (a label's default output keeps its executable
+    bit) at its staged path, so the directory is an input of the action by the digests of the files in it."""
+    where = str(ctx.label.raw_target())
+    check_test_env(where, ctx.attrs.test_env)
+    if not ctx.attrs.data:
+        return None
+    check_data_destinations(where + ": data", ctx.attrs.data.keys())
+    return ctx.actions.copied_dir("data", dict(ctx.attrs.data))
+
+def _start_options(ctx, data_dir):
+    """`check run|marker` options that give a test its data and variables: the data directory as the working directory and under `BUILDRULES_TEST_DATA`
+    (made absolute, because the action runs in the execution root), then each `test_env` entry. They are arguments of the action, so a change to either
+    is a new action key."""
+    opts = []
+    if data_dir:
+        opts += ["--env", cmd_args(DATA_ENV + "=", data_dir, delimiter = ""), "--abs", DATA_ENV, "--cwd-env", DATA_ENV]
+    for name in sorted(ctx.attrs.test_env.keys()):
+        opts += ["--env", "{}={}".format(name, ctx.attrs.test_env[name])]
+    return opts
+
 def _test_run_impl(ctx):
     info = ctx.attrs.bin[MojoExeInfo]
     have = ctx.attrs._exec_isa[ExecIsaInfo].level
@@ -226,19 +249,27 @@ def _test_run_impl(ctx):
     check = ctx.attrs._check_exe[RunInfo]
     compiler = ctx.attrs.toolchain[MojoToolchainInfo].compiler
     libs = cmd_args(compiler, "/lib", delimiter = "")
+    data_dir = _data_dir(ctx)
+    start = _start_options(ctx, data_dir)
     marker = ctx.actions.declare_output(ctx.label.name + ".passed")
     ctx.actions.run(
-        cmd_args(check, "marker", "--out", marker.as_output(), "--ld-library-path", libs, "--", info.exe, hidden = [info.dir]),
+        cmd_args(check, "marker", "--out", marker.as_output(), "--ld-library-path", libs, start, "--", info.exe, hidden = [info.dir]),
         category = ctx.attrs.category,
         identifier = ctx.label.name,
         env = {"BUILDRULES_UNIT_NONCE": _NONCE},
     )
+
+    # The command of `buck2 test`: the same start, without a marker. A test without data or variables has the plain command.
+    if start:
+        run = cmd_args(check, "run", "--ld-library-path", libs, start, "--", info.exe, hidden = [info.dir])
+    else:
+        run = cmd_args(check, "run", "--ld-library-path", libs, "--", info.exe, hidden = [info.dir])
     return _validated(ctx, [
         DefaultInfo(default_output = marker),
         MojoTestRunInfo(marker = marker),
         ExternalRunnerTestInfo(
             type = "custom",
-            command = [cmd_args(check, "run", "--ld-library-path", libs, "--", info.exe, hidden = [info.dir])],
+            command = [run],
             labels = ["test", "mojo"],
         ),
     ])
@@ -249,7 +280,12 @@ mojo_test_run_rule = rule(
         "check": _CHECK_ATTR,
         "bin": attrs.dep(providers = [MojoExeInfo]),
         "category": attrs.string(default = "mojo_test"),
+        # The files the test reads, `{staged path: file or target}`: copied to a directory that is the test's working directory and is named by
+        # BUILDRULES_TEST_DATA (test_data.bzl). A target's default output is staged with the executable bit it has.
+        "data": attrs.dict(attrs.string(), attrs.source(), default = {}),
         "required_isa": attrs.string(default = ""),
+        # The variables the test is given besides its own: `{NAME: value}`.
+        "test_env": attrs.dict(attrs.string(), attrs.string(), default = {}),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
         "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
@@ -296,8 +332,19 @@ def _cov_run_impl(ctx):
     if not isa_satisfies(have, want):
         fail(("{}: built for ISA {} but its execution platform reports ISA={}: set exec_compatible_with = test_exec_compatible_with() (rules/isa.bzl), " +
               "which the mojo_package macro does.").format(ctx.label, want, have))
-    # The tree kcov's working directory is: the test source and the library's sources at the relative names the line tables use.
-    share = ctx.actions.copied_dir("share", {dest: src for dest, src in ctx.attrs.share.items()})
+    # The tree kcov's working directory is: the test source and the library's sources at the relative names the line tables use, and the test's
+    # staged data (the same files the test run is given, test_data.bzl): the test under kcov reads them from its working directory, and from the
+    # directory BUILDRULES_TEST_DATA names, which is this tree.
+    where = str(ctx.label.raw_target())
+    check_test_env(where, ctx.attrs.test_env)
+    check_data_destinations(where + ": data", ctx.attrs.data.keys())
+    tree = {dest: src for dest, src in ctx.attrs.share.items()}
+    for dest, src in ctx.attrs.data.items():
+        for held in tree.keys():
+            if dest == held or held.startswith(dest + "/") or dest.startswith(held + "/"):
+                fail("{}: the staged data {} collides with {}, which the coverage tree holds (the test's source or the library's)".format(where, dest, held))
+        tree[dest] = src
+    share = ctx.actions.copied_dir("share", tree)
     report = ctx.actions.declare_output(ctx.label.name + ".cobertura.xml")
     cmd = cmd_args(
         ctx.attrs.runner[RunInfo],
@@ -320,6 +367,10 @@ def _cov_run_impl(ctx):
         ".stage/src/",
         hidden = [info.dir],
     )
+    if ctx.attrs.data:
+        cmd.add("--data-env", DATA_ENV)
+    for name in sorted(ctx.attrs.test_env.keys()):
+        cmd.add("--env", "{}={}".format(name, ctx.attrs.test_env[name]))
     for m in ctx.attrs.maps:
         cmd.add("--map", m)
     for i in ctx.attrs.includes:
@@ -333,6 +384,9 @@ mojo_cov_run_rule = rule(
     attrs = {
         "check": _CHECK_ATTR,
         "bin": attrs.dep(providers = [MojoExeInfo]),
+        # The test's staged data and variables: the very ones of its test run (`mojo_test_run_rule`).
+        "data": attrs.dict(attrs.string(), attrs.source(), default = {}),
+        "test_env": attrs.dict(attrs.string(), attrs.string(), default = {}),
         "includes": attrs.list(attrs.string()),
         "kcov": attrs.exec_dep(default = "buildrules//rules/coverage:kcov"),
         "maps": attrs.list(attrs.string()),

@@ -1,0 +1,84 @@
+"""What a Mojo test is given besides its binary: the files it reads, and the variables it sees (docs/contract.md, section 12.9).
+
+    mojo_package(
+        path = ".",
+        test_data = {
+            "*": {"fixtures/spec.thrift": "//third_party/parquet:parquet.thrift"},          # every test of the package
+            "tests/test_tool.mojo": {"bin/tool": "//tools:tool", "golden/out.txt": "golden/out.txt"},   # one test
+        },
+        test_env = {"MODE": "strict"},                                                       # every test of the package
+    )
+
+Both are pure functions of the arguments, so every refusal is an analysis test (rules/mojo/tests/BUCK) and a refusal stops the load of the package:
+`refuse` is `fail` in a build, a recorder in a test (rules/rust/refusal.bzl).
+"""
+
+load("//rules/core:test_runtime.bzl", "RUNNER_ENV", "check_data_destinations")
+
+# The variable that names the directory a test is given its data in. A test runs with that directory as its working directory, so a relative path and
+# this variable reach the same files. It is set only for a test that has data.
+DATA_ENV = "BUILDRULES_TEST_DATA"
+
+# The names `test_env` may not set: the runner's own (rules/core/test_runtime.bzl) and the ones these rules set (the data directory, the nonce of a
+# unit action, the scratch path Buck2 gives an action).
+OWN_ENV = RUNNER_ENV + [DATA_ENV, "BUILDRULES_UNIT_NONCE", "BUCK_SCRATCH_PATH"]
+
+def check_test_env(where, env, refuse = fail):
+    """`test_env` is `{NAME: value}`: every name a shell variable name the runner does not set itself, every value a string."""
+    if type(env) != "dict":
+        refuse("{}: test_env must be a dict {{NAME: value}}, not {}".format(where, type(env)))
+        return
+    for name in sorted(env.keys()):
+        if type(name) != "string" or not regex_match("^[A-Za-z_][A-Za-z0-9_]*$", name):
+            refuse("{}: test_env name {} is not a shell variable name".format(where, repr(name)))
+            continue
+        if name in OWN_ENV:
+            refuse("{}: test_env sets {}, which the test runner sets itself (runner-owned: {})".format(where, name, ", ".join(OWN_ENV)))
+            continue
+        if type(env[name]) != "string":
+            refuse("{}: test_env {} must be a string, not {}".format(where, name, type(env[name])))
+
+def _overlaps(dest, held):
+    """`dest` is `held`, inside it or holds it (a file cannot be a directory)."""
+    return dest == held or held.startswith(dest + "/") or dest.startswith(held + "/")
+
+def stage_test_data(where, tests, test_data, held = {}, refuse = fail):
+    """The data of each test: `{test source: {staged path: label or file}}`.
+
+    `tests` are the test sources as the graph names them (`tests/test_x.mojo`, relative to the package directory). `test_data` is
+    `{"<test source>" or "*": {"<staged path>": "<label or file>"}}`; `*` is every test, and a test's own entries are added to it. `held` is
+    `{test source: [paths already in the tree its coverage run is given]}`: the coverage run's working directory also holds the test's source and the
+    library's sources, so a staged path may not be one of them or inside one. Refused: a key that is no test (a mistyped path would stage nothing), a
+    staged path that is absolute, empty, ends in `/`, holds `..` or `.`, or is both a file and a directory, one path staged twice for a test (by `*` and by
+    the test), and a value that is not a string."""
+    if type(test_data) != "dict":
+        refuse("{}: test_data must be a dict {{\"<test source>\" or \"*\": {{staged path: label or file}}}}, not {}".format(where, type(test_data)))
+        return {}
+    staged = {t: {} for t in tests}
+    for key in sorted(test_data.keys()):
+        files = test_data[key]
+        here = "{}: test_data[{}]".format(where, repr(key))
+        if key != "*" and key not in staged:
+            refuse("{}: names no test of the package; its tests are {} (a test source relative to the package, or \"*\" for all of them)".format(here, ", ".join(sorted(tests)) or "(none)"))
+            continue
+        if type(files) != "dict":
+            refuse("{} must be a dict {{staged path: label or file}}, not {}".format(here, type(files)))
+            continue
+        for dest in sorted(files.keys()):
+            if type(files[dest]) != "string":
+                refuse("{}: {} must be a label or a file name (a string), not {}".format(here, repr(dest), type(files[dest])))
+        for t in (sorted(tests) if key == "*" else [key]):
+            for dest in sorted(files.keys()):
+                if dest in staged[t]:
+                    refuse("{}: {} is staged twice for {} ({} and {}): one path has one source".format(here, repr(dest), t, repr(staged[t][dest]), repr(files[dest])))
+                else:
+                    staged[t][dest] = files[dest]
+    for t in sorted(tests):
+        # The paths of each test as a whole, so `*` staging `a` and a test staging `a/b` is seen.
+        check_data_destinations("{}: the data of {}".format(where, t), staged[t].keys(), refuse)
+        for dest in sorted(staged[t].keys()):
+            for h in held.get(t, []):
+                if _overlaps(dest, h):
+                    refuse(("{}: test_data stages {} for {}, but the tree of its coverage run (:coverage) already holds {} (the test's source and the library's " +
+                            "sources, under the names the line tables use): stage it under another path").format(where, repr(dest), t, repr(h)))
+    return staged

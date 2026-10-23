@@ -40,6 +40,13 @@ export_file(
     visibility = ["//ci:"],
 )
 
+# Read by the mopm-pin workflow check (ci/BUCK).
+export_file(
+    name = "mopm-pin.yml",
+    src = ".github/workflows/mopm-pin.yml",
+    visibility = ["//ci:"],
+)
+
 # Read by the lintian workflow check (ci/BUCK).
 export_file(
     name = "lintian.yml",
@@ -80,4 +87,4 @@ export_file(
     visibility = ["//ci:"],
 )
 
-scrub_files(extra = [".buckconfig", ".buckconfig.local.example", ".gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/beta.yml", ".github/workflows/site.yml", ".github/workflows/site-publish.yml", ".github/workflows/advisories.yml", ".github/workflows/lintian.yml", ".github/workflows/publish-unpack.yml"])
+scrub_files(extra = [".buckconfig", ".buckconfig.local.example", ".gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/beta.yml", ".github/workflows/site.yml", ".github/workflows/site-publish.yml", ".github/workflows/advisories.yml", ".github/workflows/lintian.yml", ".github/workflows/publish-unpack.yml", ".github/workflows/mopm-pin.yml"])

@@ -8,7 +8,7 @@ the line tables and rewrites the action's directories out of them, run under kco
 | `:kcov` | kcov v42 built from source with the pinned zig 0.12: `bin/kcov`, `lib/libgcc_s.so.1` | `kcov_build`, `conda_payload`, `elf_rpath`, the curl shim |
 | `:debug_relocate`, `:cov_zig` | the `real/zig`-fronting link directory of a coverage build (`cov_link`, one per Mojo version, in `toolchains//:mojo_<v>_cov_link`) | `cov_link` tools |
 | `:cov_normalize` | a kcov report in repository paths, with bytes that do not depend on the run | same |
-| `:cov_run` | runs one test binary under kcov in a tree of copies of its sources, then `cov_normalize` | new: the part a mopm unit needs |
+| `:cov_run` | runs one test binary under kcov in a tree of copies of its sources, then `cov_normalize` | new: the part a mopm unit needs; `--env NAME=VALUE` and `--data-env NAME` give the test its variables and the tree it runs in as its staged-data directory (docs/contract.md section 12.9) |
 | `:cov_summary` | the package's lines hit and recorded, from the reports; fails when a source of the library is in none | new |
 
 Every tool is built behind its unit tests; the process cases of `cov_zig`, `debug_relocate` and `cov_normalize` are `zig_test`s that run the executable

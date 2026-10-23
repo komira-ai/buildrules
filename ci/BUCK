@@ -86,6 +86,7 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:member_in_the_importing_packages_directory_from_the_package_is_refused",
     "//rules/mojo/tests:member_at_the_repository_root_of_a_root_package_is_refused",
     "//rules/mojo/tests:dependencies_built_as_the_graph_says_are_accepted",
+    "//rules/mojo/tests:test_data",
     "//rules/core/tests:all",
     "//rules/zig/tests:all",
     "//cli:version_stamps",
@@ -141,6 +142,9 @@ group(name = "mojo", deps = [
     "//examples/mojo/sibfake/base:workspace",
     "//examples/mojo/sys_app:ci",
     "//examples/mojo/sys_app:coverage",
+    "//examples/mojo/testdata:ci",
+    "//examples/mojo/testdata:coverage",
+    "//examples/mojo/testdata:coverage_floor",
     "//examples/mojo/ws:ci",
     "//examples/mojo/ws:coverage",
     "//examples/mojo/ws/util:ci",
@@ -171,7 +175,7 @@ actionlint_check(
     name = "workflow_lint",
     exec_compatible_with = LINUX_X86_64,
     actionlint = "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
-    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml", "//:site.yml", "//:site-publish.yml", "//:advisories.yml", "//:lintian.yml", "//:publish-unpack.yml"],
+    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml", "//:site.yml", "//:site-publish.yml", "//:advisories.yml", "//:lintian.yml", "//:publish-unpack.yml", "//:mopm-pin.yml"],
 )
 
 zig_test(
@@ -347,6 +351,7 @@ no_shell(
         "//:scrub_files",
         "//beta:scrub_files",
         "//ci/cargo_run:scrub_files",
+        "//ci/mojo_data:scrub_files",
         "//ci/mojo_gate:scrub_files",
         "//ci/negative:scrub_files",
         "//ci/planted:scrub_files",
@@ -360,6 +365,7 @@ no_shell(
         "//examples/mojo/coverage_floors:scrub_files",
         "//examples/mojo/partial:scrub_files",
         "//examples/mojo/reexport:scrub_files",
+        "//examples/mojo/testdata:scrub_files",
         "//examples/mojo/reexport_unused:scrub_files",
         "//examples/mojo/registry/cnative:scrub_files",
         "//examples/mojo/registry/probe_sys/base_sys:scrub_files",
@@ -428,7 +434,46 @@ no_shell(
     require = ["BUCK", "ci/no_shell_check.zig", "ci/no_shell_allow.tsv", "rules/zig/zig.bzl", "site/static/install.sh", "tools/held/BUCK", "examples/crates/Cargo.toml", ".github/workflows/ci.yml"],
 )
 
-group(name = "workflow", deps = [":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":lintian_check", ":publish_unpack_check", ":pin_mirrors_check", ":unpack_macos_check", ":unpack_pin_check", "//ci/negative:negative_check"])
+# The signature of the pinned mopm (.github/workflows/mopm-pin.yml, docs/pins.md "mopm"): ci/mopm_pin.zig reads rules/mopm/pins.bzl, and verifies each pinned release's
+# size, sha256 and cosign signature (mopm's release workflow on main, the Actions issuer). Its unit tests run against fakes of curl and cosign; the program is not built unless they pass.
+zig_test(
+    name = "mopm_pin_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "mopm_pin.zig",
+    data = {
+        "rules/mopm/pins.bzl": "//rules/mopm:pins.bzl",
+    },
+)
+
+zig_exe(
+    name = "mopm_pin",
+    exec_compatible_with = LINUX_X86_64,
+    src = "mopm_pin_main.zig",
+    imports = ["mopm_pin.zig"],
+    unit_tests = [":mopm_pin_unit"],
+    visibility = ["PUBLIC"],
+)
+
+# The mopm-pin workflow: actionlint accepts it (above), and ci/mopm_pin_workflow_check.zig holds it to being a blocking check of the signature: the job, its triggers, no way
+# to skip or soften it, release.yml's cosign, no pin copied into it, and the lint kept in this file. It reuses the rules of workflow_check.zig and the job parser of
+# release_check.zig, and each of its rules is tested against an edited copy of the file that breaks it.
+zig_test(
+    name = "mopm_pin_workflow_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "mopm_pin_workflow_check.zig",
+    imports = ["workflow_check.zig", "release_check.zig"],
+    data = {
+        ".github/workflows/mopm-pin.yml": "//:mopm-pin.yml",
+        "rules/mopm/pins.bzl": "//rules/mopm:pins.bzl",
+        "tools/buck2": "//:buck2.pin",
+        "ci/BUCK": "BUCK",
+        # the tests of the two files this one imports run here too
+        ".github/workflows/release.yml": "//:release.yml",
+        ".github/workflows/ci.yml": "//:ci.yml",
+    },
+)
+
+group(name = "workflow", deps = [":mopm_pin_workflow_check", ":mopm_pin_unit", ":mopm_pin", ":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":lintian_check", ":publish_unpack_check", ":pin_mirrors_check", ":unpack_macos_check", ":unpack_pin_check", "//ci/negative:negative_check"])
 
 # The coverage of every package with Zig unit tests (rules/coverage/README.md, "Zig coverage"), each held to its floor (`coverage_floor.txt` beside its
 # BUCK file) both ways: a fall fails, and so does a rise the floor has not been raised to. Building this builds the tests again under kcov and with block
@@ -468,6 +513,7 @@ group(name = "mojo_tables", deps = [
     "//examples/mojo/registry/probe_sys:table",
     "//examples/mojo/registry/probe_sys/base_sys:table",
     "//examples/mojo/sys_app:table",
+    "//examples/mojo/testdata:table",
     "//examples/mojo/ws:table",
     "//examples/mojo/ws/util:table",
     "//examples/mojo/ws/util/base:table",
@@ -481,6 +527,7 @@ group(name = "all", deps = [
     "//ci/mojo_gate:consumer_of_green",
     "//ci/cargo_run:env_test",
     "//ci/cargo_run:bin_test",
+    "//ci/mojo_data:run_green",
     "//ci/planted:c_check_of_its_stdout",
     "//ci/planted:table_in_sync",
     ":workflow",
