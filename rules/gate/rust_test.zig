@@ -28,7 +28,14 @@ const Env = struct {
 
     fn run(e: *Env, harness: []const u8, timeout: []const u8) !kit.Result {
         const bin = try std.fmt.allocPrint(e.a, "h/{s}", .{harness});
-        return kit.runGate(e.a, e.dir, &.{ "rust", "--busybox", e.bb, "--label", "//r:t", "--test", bin, "--marker", "passed", "--timeout-s", timeout }, .{ .timeout_ms = 30_000 });
+        return kit.runGate(e.a, e.dir, try e.argv(e.bb, "passed", bin, timeout), .{ .timeout_ms = 30_000 });
+    }
+
+    /// `gate rust` over the harness `test_bin`, the applet tool `tool` and the marker `marker_path`.
+    fn argv(e: *Env, tool: []const u8, marker_path: []const u8, test_bin: []const u8, timeout: []const u8) ![]const []const u8 {
+        const out = try e.a.alloc([]const u8, 11);
+        @memcpy(out, &[11][]const u8{ "rust", "--busybox", tool, "--label", "//r:t", "--test", test_bin, "--marker", marker_path, "--timeout-s", timeout });
+        return out;
     }
 
     fn marker(e: *Env) []const u8 {
@@ -56,7 +63,7 @@ test "R1 usage: exactly five options; a timeout that is empty, not a number, or 
         try std.testing.expectEqualStrings("rust test_runner: usage error\n", r.err);
     }
     for ([_][]const u8{ "", "x", "1s", "0", "00" }) |t| {
-        const r = try kit.runInline(e.a, e.dir, &.{ "rust", "--busybox", e.bb, "--label", "//r:t", "--test", "h/rust_ok", "--marker", "passed", "--timeout-s", t });
+        const r = try kit.runInline(e.a, e.dir, try e.argv(e.bb, "passed", "h/rust_ok", t));
         try std.testing.expectEqual(@as(u8, 2), r.status);
         try std.testing.expectEqualStrings(try std.fmt.allocPrint(e.a, "rust test_runner: timeout must be a positive number of seconds, not '{s}'\n", .{t}), r.err);
     }
@@ -145,23 +152,17 @@ test "summary parsing follows the shell's sed expression" {
     try std.testing.expect(rust.summary("test result: ok. junk\ntest result: ok. 3 passed; 0 failed; 0 ignored;\n") == null);
 }
 
-fn argvWith(e: *Env, busybox: []const u8, marker: []const u8) ![]const []const u8 {
-    const argv = try e.a.alloc([]const u8, 11);
-    @memcpy(argv, &[11][]const u8{ "rust", "--busybox", busybox, "--label", "//r:t", "--test", "h/rust_ok", "--marker", marker, "--timeout-s", "30" });
-    return argv;
-}
-
-test "busybox that cannot install the applets: the program and its exit status are named, and no marker is left" {
+test "applet tool that cannot install the applets: the program and its exit status are named, and no marker is left" {
     const e = try Env.init();
     defer e.deinit();
     // Not there at all: the exec fails, which is 127.
-    const r = try kit.runGate(e.a, e.dir, try argvWith(e, "/nonexistent/busybox", "passed"), .{});
+    const r = try kit.runGate(e.a, e.dir, try e.argv("/nonexistent/applets", "passed", "h/rust_ok", "30"), .{});
     try std.testing.expectEqual(@as(u8, 127), r.status);
-    try std.testing.expect(std.mem.startsWith(u8, r.err, "gate: cannot run /nonexistent/busybox: FileNotFound\nrust test_runner: /nonexistent/busybox --install -s "));
+    try std.testing.expect(std.mem.startsWith(u8, r.err, "gate: cannot run /nonexistent/applets: FileNotFound\nrust test_runner: /nonexistent/applets --install -s "));
     try std.testing.expect(std.mem.endsWith(u8, r.err, "/bin exited 127\n"));
-    // There, but an applet that fails (`false` is busybox run under that name): its own status.
+    // There, but an applet that fails (`false` is the applet tool run under that name): its own status.
     try std.posix.symlink(e.bb, try std.fmt.allocPrint(e.a, "{s}/false", .{e.dir}));
-    const r2 = try kit.runGate(e.a, e.dir, try argvWith(e, "false", "passed"), .{});
+    const r2 = try kit.runGate(e.a, e.dir, try e.argv("false", "passed", "h/rust_ok", "30"), .{});
     try std.testing.expectEqual(@as(u8, 1), r2.status);
     try std.testing.expect(std.mem.indexOf(u8, r2.err, "/false --install -s ") != null);
     try std.testing.expect(std.mem.endsWith(u8, r2.err, "/bin exited 1\n"));
@@ -172,7 +173,7 @@ test "busybox that cannot install the applets: the program and its exit status a
 test "a marker that cannot be written fails the passing run with exit 2, naming the marker and the error" {
     const e = try Env.init();
     defer e.deinit();
-    const r = try kit.runGate(e.a, e.dir, try argvWith(e, e.bb, "nodir/passed"), .{});
+    const r = try kit.runGate(e.a, e.dir, try e.argv(e.bb, "nodir/passed", "h/rust_ok", "30"), .{});
     try std.testing.expectEqual(@as(u8, 2), r.status);
     try std.testing.expectEqualStrings("rust test_runner: cannot write the marker nodir/passed: FileNotFound\n", r.err);
     try std.testing.expectEqualStrings("", r.out);
@@ -181,7 +182,7 @@ test "a marker that cannot be written fails the passing run with exit 2, naming 
 test "a working directory that no longer exists is an error of the runner: exit 2 and the error's name, nothing run" {
     const e = try Env.init();
     defer e.deinit();
-    const r = try kit.runGate(e.a, e.dir, try argvWith(e, e.bb, "passed"), .{ .setup = kit.unlinkCwd, .env = &.{"GATE_TEST=1"} });
+    const r = try kit.runGate(e.a, e.dir, try e.argv(e.bb, "passed", "h/rust_ok", "30"), .{ .setup = kit.unlinkCwd, .env = &.{"GATE_TEST=1"} });
     try std.testing.expectEqual(@as(u8, 2), r.status);
     try std.testing.expectEqualStrings("rust test_runner: CurrentWorkingDirectoryUnlinked\n", r.err);
     try std.testing.expectEqualStrings("", r.out);

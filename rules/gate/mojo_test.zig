@@ -337,18 +337,18 @@ fn leftovers(dir: []const u8, prefix: []const u8) !usize {
     return n;
 }
 
-test "busybox that cannot install the applets: the program and its exit status are named, and the run directory is gone" {
+test "applet tool that cannot install the applets: the program and its exit status are named, and the run directory is gone" {
     const e = try Env.init();
     defer e.deinit();
     // Not there at all: the exec fails, which is 127.
     var l = std.ArrayList([]const u8).empty;
-    for (try e.args("exit", &.{ "--arg", "0" })) |x| try l.append(e.a, if (std.mem.eql(u8, x, e.bb)) "/nonexistent/busybox" else x);
+    for (try e.args("exit", &.{ "--arg", "0" })) |x| try l.append(e.a, if (std.mem.eql(u8, x, e.bb)) "/nonexistent/applets" else x);
     const r = try e.run(l.items, .{});
     try std.testing.expectEqual(@as(u8, 127), r.status);
-    try std.testing.expect(std.mem.startsWith(u8, r.err, "gate: cannot run /nonexistent/busybox: FileNotFound\ngate_runner: /nonexistent/busybox --install -s "));
+    try std.testing.expect(std.mem.startsWith(u8, r.err, "gate: cannot run /nonexistent/applets: FileNotFound\ngate_runner: /nonexistent/applets --install -s "));
     try std.testing.expect(std.mem.endsWith(u8, r.err, "/bin exited 127\n"));
     try std.testing.expectEqualStrings("", r.out);
-    // There, but an applet that fails (`false` is busybox run under that name): its own status.
+    // There, but an applet that fails (`false` is the applet tool run under that name): its own status.
     try std.posix.symlink(e.bb, try e.path("false"));
     var m = std.ArrayList([]const u8).empty;
     for (try e.args("exit", &.{ "--arg", "0" })) |x| try m.append(e.a, if (std.mem.eql(u8, x, e.bb)) "false" else x);

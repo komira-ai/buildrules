@@ -172,7 +172,7 @@ fn useRecordExec() void {
 }
 
 fn makeProgram(path: []const u8, mode: posix.mode_t) !void {
-    try kit.writeFile(path, "#!/bin/sh\n");
+    try kit.writeFile(path, "program\n");
     try posix.fchmodat(posix.AT.FDCWD, path, mode, 0);
 }
 
