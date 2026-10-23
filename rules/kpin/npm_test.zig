@@ -131,3 +131,56 @@ test "resolved URL and version charsets are refused" {
     try refuses(try fx.packageLock(a, &.{.{ .path = "node_modules/a", .version = "1.0.0$x", .resolved = "https://r.example/a.tgz", .integrity = fx.ABC_SRI512 }}), "unsupported characters");
     try refuses(try fx.packageLock(a, &.{.{ .path = "node_modules/a", .version = "-1", .resolved = "https://r.example/a.tgz", .integrity = fx.ABC_SRI512 }}), "unsupported characters");
 }
+
+const r_url = "https://registry.npmjs.org/a/-/a-1.0.0.tgz";
+
+test "an entry that is not an object, a lockfileVersion that is not the integer 3, and an integrity that is not base64 are refused" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    try refuses("{\"lockfileVersion\":3,\"packages\":{\"node_modules/a\":5}}", "packages[node_modules/a] is not an object");
+    try refuses("{\"lockfileVersion\":\"3\",\"packages\":{}}", "not 3");
+    try refuses("{\"lockfileVersion\":3.5,\"packages\":{}}", "not 3");
+    try refuses("{\"lockfileVersion\":3,\"packages\":[]}", "no `packages` object");
+    try refuses("{\"lockfileVersion\":3}", "no `packages` object");
+    // 88 characters after `sha512-`, so the length is right; one of them is not base64.
+    const not_b64 = "sha512-" ++ "A" ** 43 ++ "*" ++ "A" ** 42 ++ "==";
+    try refuses(try fx.packageLock(a, &.{.{ .path = "node_modules/a", .version = "1.0.0", .resolved = r_url, .integrity = not_b64 }}), "64 bytes");
+}
+
+test "a path outside node_modules with a tarball and no name is refused, with a name it is taken" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    try refuses(try fx.packageLock(a, &.{.{ .path = "vendor/a", .version = "1.0.0", .resolved = r_url, .integrity = fx.ABC_SRI512 }}), "has no name and the path has no node_modules/");
+    var d = Diag.init(a);
+    const pkgs = try npm.read(a, "p", try fx.packageLock(a, &.{.{ .path = "vendor/a", .name = "a", .version = "1.0.0", .resolved = r_url, .integrity = fx.ABC_SRI512 }}), &d);
+    try t.expectEqual(@as(usize, 1), pkgs.len);
+    try t.expectEqualStrings("a@1.0.0", pkgs[0].key);
+}
+
+test "link and inBundle skip an entry only when they are the boolean true" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const sri = fx.ABC_SRI512;
+    var d = Diag.init(a);
+    const pkgs = try npm.read(a, "p", "{\"lockfileVersion\":3,\"packages\":{" ++
+        "\"node_modules/x\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ r_url ++ "\",\"integrity\":\"" ++ sri ++ "\",\"link\":false}," ++
+        "\"node_modules/y\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ r_url ++ "\",\"integrity\":\"" ++ sri ++ "\",\"inBundle\":\"yes\"}," ++
+        "\"node_modules/z\":{\"version\":\"1.0.0\",\"resolved\":\"" ++ r_url ++ "\",\"integrity\":\"" ++ sri ++ "\",\"link\":true,\"inBundle\":false}}}", &d);
+    try t.expectEqual(@as(usize, 2), pkgs.len);
+    try t.expectEqualStrings("x@1.0.0", pkgs[0].key);
+    try t.expectEqualStrings("y@1.0.0", pkgs[1].key);
+}
+
+test "two places in one lockfile that disagree about the bytes of one version are refused" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const other = try fx.sri512(a, fx.ABD);
+    try refuses(try fx.packageLock(a, &.{
+        .{ .path = "node_modules/a", .version = "1.0.0", .resolved = r_url, .integrity = fx.ABC_SRI512 },
+        .{ .path = "node_modules/b/node_modules/a", .version = "1.0.0", .resolved = r_url, .integrity = other },
+    }), "a@1.0.0 appears with two different integrities");
+}

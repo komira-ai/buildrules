@@ -2,7 +2,7 @@
 //! the raw profiles it writes into an indexed profile (README.md, "cov_branch run").
 //!
 //! usage: cov_branch run --compiler <compiler_dir> --share <dir> --label <label> --profdata <llvm-profdata>
-//!            --raw-version <N> --binary <test_binary> --out <profdata_out> [--env NAME=VALUE]...
+//!            --raw-version <N> --binary <test_binary> --out <profdata_out> [--env NAME=VALUE]... [--data-env NAME]
 //!
 //!   --compiler     the Mojo compiler closure; its lib/ is on LD_LIBRARY_PATH (the binary loads libKGENCompilerRTShared.so from it)
 //!   --share        the tree the test runs in (its working directory): the test source and the library's sources at the relative
@@ -11,6 +11,8 @@
 //!   --raw-version  the raw profile version every profile must have
 //!   --binary       the instrumented test (`cov_branch link`)
 //!   --env          one more variable of the test's environment
+//!   --data-env     the variable that names --share (made absolute): the directory the test is given its staged data in, which is also its
+//!                  working directory (as `cov_run --data-env`)
 //!
 //! Steps:
 //!   1. The test runs in <share> with exactly this environment: PATH=/usr/bin:/bin, LD_LIBRARY_PATH=<compiler>/lib, the --env
@@ -50,9 +52,11 @@ pub const Args = struct {
     out: []const u8,
     /// "NAME=VALUE" of each --env, in order.
     env: []const []const u8,
+    /// The variable that names --share (made absolute), or empty.
+    data_env: []const u8 = "",
 };
 
-pub const USAGE = "usage: cov_branch run --compiler DIR --share DIR --label L --profdata P --raw-version N --binary F --out F [--env NAME=VALUE]...";
+pub const USAGE = "usage: cov_branch run --compiler DIR --share DIR --label L --profdata P --raw-version N --binary F --out F [--env NAME=VALUE]... [--data-env NAME]";
 
 const NAMES = [_][]const u8{ "--compiler", "--share", "--label", "--profdata", "--raw-version", "--binary", "--out" };
 
@@ -61,10 +65,22 @@ pub fn parseArgs(alloc: std.mem.Allocator, argv: []const []const u8, why: *[]con
     // The --env pairs first: the flag repeats, the others do not.
     var env = std.ArrayList([]const u8).empty;
     var rest = std.ArrayList([]const u8).empty;
+    var data_env: []const u8 = "";
     var i: usize = 0;
     while (i < argv.len) : (i += 2) {
         if (std.mem.eql(u8, argv[i], "--env") and i + 1 < argv.len) {
             try env.append(alloc, argv[i + 1]);
+        } else if (std.mem.eql(u8, argv[i], "--data-env") and i + 1 < argv.len) {
+            const n = argv[i + 1];
+            if (data_env.len > 0) {
+                why.* = "--data-env given twice";
+                return null;
+            }
+            if (n.len == 0 or std.mem.indexOfScalar(u8, n, '=') != null or std.mem.eql(u8, n, "PATH") or std.mem.eql(u8, n, "LD_LIBRARY_PATH") or std.mem.eql(u8, n, "LLVM_PROFILE_FILE")) {
+                why.* = try std.fmt.allocPrint(alloc, "--data-env '{s}' is not a variable name a branch coverage run may set", .{n});
+                return null;
+            }
+            data_env = n;
         } else {
             try rest.append(alloc, argv[i]);
             if (i + 1 < argv.len) try rest.append(alloc, argv[i + 1]);
@@ -95,6 +111,7 @@ pub fn parseArgs(alloc: std.mem.Allocator, argv: []const []const u8, why: *[]con
         .binary = v[5],
         .out = v[6],
         .env = try env.toOwnedSlice(alloc),
+        .data_env = data_env,
     };
 }
 
@@ -111,6 +128,7 @@ pub fn testEnv(alloc: std.mem.Allocator, a: Args, cwd: []const u8, k: []const u8
     try v.append(alloc, "PATH=/usr/bin:/bin");
     try v.append(alloc, try std.fmt.allocPrint(alloc, "LD_LIBRARY_PATH={s}/lib", .{try common.abs(alloc, cwd, a.compiler)}));
     try v.appendSlice(alloc, a.env);
+    if (a.data_env.len > 0) try v.append(alloc, try std.fmt.allocPrint(alloc, "{s}={s}", .{ a.data_env, try common.abs(alloc, cwd, a.share) }));
     try v.append(alloc, try std.fmt.allocPrint(alloc, "LLVM_PROFILE_FILE={s}/prof/%p.profraw", .{k}));
     return v.toOwnedSlice(alloc);
 }

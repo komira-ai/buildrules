@@ -27,6 +27,8 @@ CASES = [
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys/base_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
+    # A sibling whose table names another version of the library than the one next to it is (rules/mojo/unit.bzl, `check_closure_ids`).
+    ("//examples/mojo/sibfake/stale:lib_ungated", "buildrules//platforms:linux_x86_64", "the graph imports base as base@0.2.0#mojo1.0.0/lib but the dependency target provides base@0.1.0#mojo1.0.0/lib"),
 ]
 
 def _analyse(ctx, label, platform = PLATFORM):
@@ -62,9 +64,7 @@ def negative_problems(ctx):
 COVERAGE_REDS = [
     ("//examples/mojo/reexport_unused:coverage", "is in no report: no test compiled it, or kcov could not open it"),
     ("//examples/mojo/coverage_floors:floor_above_the_coverage", "line coverage is 60.00% (3/5), below its floor 70.00%: coverage fell"),
-    ("//examples/mojo/coverage_floors:floor_below_the_coverage", "line coverage is 60.00% (3/5), above its floor 50.00%: raise the floor to 60.00"),
     ("//examples/mojo/coverage_floors:branches_floor_above_the_coverage", "branch coverage is 50.00% (1/2), below its floor 60.00%: coverage fell"),
-    ("//examples/mojo/coverage_floors:branches_floor_below_the_coverage", "branch coverage is 50.00% (1/2), above its floor 40.00%: raise the floor to 50.00"),
     ("//examples/mojo/coverage_floors:floor_without_branches", "the tests record branches (1/2) and the floor file has no `branches` figure: add `branches 50.00`"),
     ("//examples/mojo/coverage_floors:branches_floor_on_no_decisions", "the floor file has a `branches` figure and the coverage has no branches to hold"),
 ]
@@ -85,6 +85,7 @@ def coverage_red_problems(ctx):
 COVERAGE_FLOOR_PACKAGES = [
     ("//examples/mojo/partial", True),
     ("//examples/mojo/reexport", True),
+    ("//examples/mojo/testdata", True),
     ("//examples/mojo/reexport_unused", False),
     ("//examples/mojo/copy_of_base", False),
     ("//examples/mojo/sys_app", False),
@@ -116,6 +117,9 @@ BRANCH_PACKAGES = [
     ("//examples/mojo/copy_of_base", "test_base", True),
     ("//examples/mojo/ws/util", "test_util", True),
     ("//examples/mojo/ws/util/base", "test_base", True),
+    ("//examples/mojo/testdata", "test_data_files", True),
+    ("//examples/mojo/sibfake/app", "test_util", True),
+    ("//examples/mojo/sibfake/base", "test_base", True),
     ("//examples/mojo/ws", "test_app", False),
     ("//examples/mojo/sys_app", "test_sys_app", False),
 ]
@@ -161,9 +165,12 @@ GATE_REDS = ["//ci/mojo_gate:consumer_of_red", "//ci/mojo_gate:consumer_of_red_f
 GATE_EDGES = [
     ("//examples/mojo/ws", "//examples/mojo/ws/util"),
     ("//examples/mojo/ws/util", "//examples/mojo/ws/util/base"),
+    ("//examples/mojo/sibfake/app", "//examples/mojo/sibfake/base"),
 ]
 GATE_PACKAGES = [
     "//examples/mojo/copy_of_base",
+    "//examples/mojo/sibfake/app",
+    "//examples/mojo/sibfake/base",
     "//examples/mojo/ws",
     "//examples/mojo/ws/util",
     "//examples/mojo/ws/util/base",
@@ -232,6 +239,12 @@ PLANTED = [
     ("//ci/planted:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
     ("//ci/planted:lib_behind_a_failing_test", "//examples/hello:hello_lib", "this test fails by design"),
     ("//ci/planted:mojo_test_that_fails", None, "check marker: TEST FAILED: "),
+    # The data and the variables of a Mojo test (ci/mojo_data/BUCK): the stand-in test reads what is staged and says which of its expectations failed.
+    # The control of each is the run that stages everything the probe expects.
+    ("//ci/mojo_data:run_red_content", "//ci/mojo_data:run_green", "data_probe: greeting.txt holds other data"),
+    ("//ci/mojo_data:run_red_env", "//ci/mojo_data:run_green", "data_probe: PROBE_MODE is lax, not strict"),
+    ("//ci/mojo_data:run_red_no_program", "//ci/mojo_data:run_green", "data_probe: cannot start bin/hello: FileNotFound"),
+    ("//ci/mojo_data:run_red_not_executable", "//ci/mojo_data:run_green", "data_probe: cannot start bin/hello: AccessDenied"),
 ]
 
 def _failures(ctx, label):
@@ -281,6 +294,13 @@ TEST_COMMANDS = [
         "\"run\", \"--ld-library-path\", cmd_args(<build artifact check",
         "\"/lib\", delimiter=\"\"), \"--\", <build artifact check",
     ], [], [], ["test", "mojo"], ["hidden=[<build artifact check"]),
+    # A Mojo test with data and variables: the data directory is the working directory and named by BUILDRULES_TEST_DATA, made absolute (the command starts in
+    # the execution root), and the variable is given; the directory is an input of the command.
+    ("//ci/mojo_data:run_green", [
+        "\"--abs\", \"BUILDRULES_TEST_DATA\", \"--cwd-env\", \"BUILDRULES_TEST_DATA\"",
+        "\"PROBE_MODE=strict\"",
+        "cmd_args(\"BUILDRULES_TEST_DATA=\"",
+    ], [], [], ["test", "mojo"], ["hidden=["]),
 ]
 
 def test_command_problems(ctx):

@@ -28,3 +28,26 @@ _mojo_same = rule(
 
 def mojo_same(**kwargs):
     _mojo_same(exec_compatible_with = LINUX_X86_64, **kwargs)
+
+def _report_impl(ctx):
+    out = ctx.actions.declare_output(ctx.label.name + ".same")
+    ctx.actions.run(
+        cmd_args(ctx.attrs._check_exe[RunInfo], "same", "--out", out.as_output(), ctx.attrs.report[DefaultInfo].default_outputs[0], ctx.attrs.want),
+        category = "mojo_report_is",
+        identifier = ctx.label.name,
+    )
+    return [DefaultInfo(default_output = out)]
+
+_mojo_report_is = rule(
+    impl = _report_impl,
+    attrs = {
+        "report": attrs.dep(),
+        "want": attrs.source(),
+        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
+    },
+)
+
+def mojo_report_is(**kwargs):
+    """A package's `:coverage` report (`coverage.txt`) is, byte for byte, the committed file: which sources it lists, at which repository paths, with which counts.
+    The build of this target is red when it is not (`check same`)."""
+    _mojo_report_is(exec_compatible_with = LINUX_X86_64, **kwargs)

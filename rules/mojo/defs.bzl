@@ -14,9 +14,9 @@ One line per package. The targets come from the package's unit graph, which `bui
                 (`<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info`: rules/coverage/branch/README.md); `coverage.txt` is the per-file count of lines, then of
                 branch arms; `:coverage[reports]` is the per-line records of every test (kcov's Cobertura XML in repository paths) and `:coverage[branches]` the
                 branch records (lcov `BRDA` lines in repository paths). A package whose tests link a native library has no branch rows and no `[branches]`.
-    :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green only while `:coverage` is exactly that floor (`lines NN.NN`, and
-                `branches NN.NN` when `coverage.txt` has branch rows; below it: "coverage fell"; above it: "raise the floor to X"), the check of every other
-                package's floor (rules/coverage/README.md, "The floor")
+    :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green while `:coverage` is at least that floor (`lines NN.NN`, and
+                `branches NN.NN` when `coverage.txt` has branch rows; below it: "coverage fell"; at or above it passes, and above it prints "you may raise the
+                floor to X"), the check of every other package's floor (rules/coverage/README.md, "The floor")
     :ci        `:build` and `:test`
     :table      the committed graph is, byte for byte, what the pinned mopm prints now (a check of its own; `:workspace` holds the files it reads)
 
@@ -27,6 +27,12 @@ anything. The static libraries (`lib<stem>.a`) of a registry package come from t
 `prebuilt_unpack` takes each out after hashing it against the lock's value, and a unit links them in the graph's order (a library before every
 library it needs) with nothing written in the BUCK file. Any other native library (a shared one, a workspace member's) is an entry of
 `natives = {"<soname>": "<target>"}`; one the lock provides may not also be named there.
+
+Test data and variables. A test that reads files (goldens, fixtures, a pinned third-party file, a program it starts) names them in
+`test_data = {"<test source or *>": {"<staged path>": "<file or target>"}}`, and one that reads variables in `test_env = {"NAME": "value"}`
+(rules/mojo/test_data.bzl, docs/contract.md section 12.9). The files are copied to a directory per test, which is the test's working directory in
+its run and in its coverage run and is named by `BUILDRULES_TEST_DATA`; the files and the variables are inputs of both actions, so a change to
+either runs the test again.
 
 The gate. `:lib` is a copy of `:lib_ungated` made by an action that takes the marker of every test run as an input, and a test run writes
 its marker only when the test passed. A failing test therefore leaves `:lib` unbuildable, and so every target that imports it (a
@@ -43,6 +49,7 @@ load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
 load(":check.bzl", "mojo_check_rule", "mojo_table_rule", "mojo_workspace_rule")
+load(":test_data.bzl", "check_test_env", "stage_test_data")
 load(":unit.bzl", "mojo_cov_branch_annotate_rule", "mojo_cov_branch_classify_rule", "mojo_cov_branch_run_rule", "mojo_cov_pgo_rule", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_gated_lib_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
 
 SCHEMA = 1
@@ -90,6 +97,51 @@ def _norm(path):
         else:
             out.append(p)
     return "/".join(out)
+
+def _within(path):
+    """`a/b/../c` -> `a/c`; None when the path leaves the repository root."""
+    out = []
+    for p in path.split("/"):
+        if p in ("", "."):
+            continue
+        if p == "..":
+            if not out:
+                return None
+            out.pop()
+        else:
+            out.append(p)
+    return "/".join(out)
+
+def member_label(here, uid, package, root, base, refuse = fail):
+    """The target of a path dependency's library, `//<its directory>:lib`, from the `root` of its unit (the graph's, relative to `base`, the directory
+    its paths start at: the package's own for a mopm without --workspace-root, the repository root with it). The directory is derived from the
+    repository path of the root, so a package next to this one (a sibling) is named like one below it. A root outside the repository root has no
+    target, a library that is not at `<dir>/src/<package>` is not a package's library, and one whose directory is `here`, the package that imports it, would
+    be that package's own `:lib` (a cycle through its tests): all refused (`refuse` is `fail` in a build; a test passes a recorder,
+    rules/rust/refusal.bzl), with None as the answer."""
+    repo_root = _within(_join(base, root)) if not root.startswith("/") else None
+    if repo_root == None:
+        refuse("{}: {} lives in {}, which is outside the repository root: a path dependency must be a directory below the root that holds .buckconfig".format(here, uid, root))
+        return None
+    suffix = "src/" + package
+    if repo_root != suffix and not repo_root.endswith("/" + suffix):
+        refuse("{}: {} lives in {}, not <dir>/{}: a workspace member's library must be its package directory's src/<name>".format(here, uid, repo_root, suffix))
+        return None
+    directory = repo_root[:-len(suffix)].rstrip("/")
+    if directory == here:
+        refuse("{}: {} lives in {}, the directory of the package that imports it: its library would be this package's own :lib, which waits for the tests that import it. A path dependency must be a package of its own (a directory with its own BUCK file and mopm.toml), not the importing package itself".format(here, uid, repo_root))
+        return None
+    return "//" + directory + ":lib"
+
+def graph_path_in_package(path, pkg_dir, rooted, refuse = fail):
+    """A path of the graph as a path below the package's directory. The graph's paths start at the package, or at the repository root when mopm was given
+    --workspace-root (`rooted`): then the package's own directory is the first part of every path of its own units."""
+    if not rooted or not pkg_dir:
+        return path
+    if not path.startswith(pkg_dir + "/"):
+        refuse("{}: the graph names {}, which is not below the package's directory".format(pkg_dir, path))
+        return path
+    return path[len(pkg_dir) + 1:]
 
 TOOLCHAIN_FILE = "mopm-toolchain.toml"
 
@@ -151,8 +203,8 @@ def native_wiring(unit, prebuilt_packages, user_natives, here, refuse = fail):
 COVERAGE_FLOOR_FILE = "coverage_floor.txt"
 
 def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
-    """Green only while the `coverage.txt` of `coverage` (a mojo_package's `:coverage`) is exactly the figures of the file `floor` (`lines NN.NN`):
-    lower fails with "coverage fell", higher fails with "raise the floor to NN.NN" (rules/coverage/tools/cov_floor.zig). `mojo_package` makes
+    """Green only while the `coverage.txt` of `coverage` (a mojo_package's `:coverage`) is at least the figures of the file `floor` (`lines NN.NN`):
+    lower fails with "coverage fell", at or above passes, and above prints "you may raise the floor to NN.NN" (rules/coverage/tools/cov_floor.zig). `mojo_package` makes
     `:coverage_floor` itself when `coverage_floor.txt` is beside the BUCK file; this is for a check of the same coverage against another file."""
     zig_coverage_floor_rule(
         name = name,
@@ -162,7 +214,7 @@ def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
         visibility = visibility,
     )
 
-def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]):
+def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, visibility = ["PUBLIC"]):
     if table == None:
         fail("mojo_package needs its table: load mojo_package from the buildrules.mojo.bzl next to mopm.toml (`buildrules mojo sync` writes it)")
     _check_table(table)
@@ -170,6 +222,12 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
     mojo = table["MOJO"]
     project = "" if path == "." else path
     here = native.package_name()
+
+    # Where the graph's paths start. A mopm that was given --workspace-root (the table says so: `MOPM.workspace_root`) printed them relative to the
+    # repository root; an older one relative to the package's directory.
+    pkg_dir = _join(here, project)
+    rooted = table["MOPM"].get("workspace_root", False)
+    graph_from = "" if rooted else pkg_dir
     units = {u["id"]: u for u in graph["units"]}
     root = graph["package"].split("@")[0]
     prebuilt_packages = {u["package"]: True for u in graph["units"] if u["kind"] == "prebuilt"}
@@ -189,7 +247,6 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
     # which `buildrules mojo sync` writes), compared with the table's hashes, and the toolchain pins with the table's graph.
     native.export_file(name = name_once("mopm.toml"), src = _join(project, "mopm.toml"), visibility = ["PUBLIC"])
     native.export_file(name = name_once("mopm.lock"), src = _join(project, "mopm.lock"), visibility = ["PUBLIC"])
-    pkg_dir = _join(here, project)
     check_files, check_hashes, check_names = [], [], []
     for key, h in sorted(table["MANIFEST_SHA256"].items()):
         full = _norm(_join(pkg_dir, key))
@@ -220,29 +277,30 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
         visibility = visibility,
     )
 
-    # :table, the check that the committed graph is what the pinned mopm prints now (rules/mojo/check.bzl). mopm reads the whole workspace, so `:workspace`
-    # lays out this package's files with its members' (each member's own `:workspace`, for the outermost members: a member holds its members).
-    member_dirs = {}
+    # The path dependencies of the graph (libraries of other packages that mopm read from a directory): the target of each one's library. A dependency
+    # may be below this package or next to it; the directory comes from its root, a path from the repository root (`graph_from` is where the graph's paths
+    # start: the root when mopm was given --workspace-root, else the package).
+    member_libs = {}
     for mu in graph["units"]:
         if mu["kind"] == "lib" and mu["package"] != root:
-            suffix = "src/" + mu["package"]
-            if mu["root"] != suffix and not mu["root"].endswith("/" + suffix):
-                fail("{}: {} lives in {}, not <dir>/{}: a workspace member's library must be its package directory's src/<name>".format(here, mu["id"], mu["root"], suffix))
-            member_dirs[mu["root"][:-len(suffix)].rstrip("/")] = True
-    outermost = {m: "//" + _join(here, project, m) + ":workspace" for m in sorted(member_dirs.keys()) if not [o for o in member_dirs.keys() if m.startswith(o + "/")]}
+            member_libs[mu["id"]] = member_label(here, mu["id"], mu["package"], mu["root"], graph_from)
+
+    # :table, the check that the committed graph is what the pinned mopm prints now (rules/mojo/check.bzl). mopm reads the whole workspace, so `:workspace`
+    # lays out this package's files with the workspace of every path dependency, flat, each file at its path from the repository root.
     mojo_workspace_rule(
         name = name_once("workspace"),
-        files = glob(["**/*"], exclude = ["BUCK", "buildrules.mojo.bzl", "buildrules.mojo.lock.bzl", COVERAGE_FLOOR_FILE]),
-        members = outermost,
-        project = project,
+        files = glob([_join(project, "**/*")], exclude = [_join(project, n) for n in ["BUCK", "buildrules.mojo.bzl", "buildrules.mojo.lock.bzl", COVERAGE_FLOOR_FILE]]),
+        members = sorted({l[:-len(":lib")] + ":workspace": True for l in member_libs.values() if l != None}.keys()),
         visibility = ["PUBLIC"],
     )
     mojo_table_rule(
         name = name_once("table"),
         mojo = mojo,
         mopm = mopm,
+        package_dir = pkg_dir,
         table = _join(project, "buildrules.mojo.lock.bzl"),
         workspace = ":workspace",
+        workspace_root = rooted,
         exec_compatible_with = LINUX_X86_64,
         visibility = visibility,
     )
@@ -255,12 +313,11 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
             return ":prebuilt_" + u["package"]
         if u["package"] == root:
             return own
-        suffix = "src/" + u["package"]
-        r = u["root"]
-        if r != suffix and not r.endswith("/" + suffix):
-            fail("{}: {} lives in {}, not <dir>/{}: a workspace member's library must be its package directory's src/<name>".format(here, uid, r, suffix))
-        member = r[:-len(suffix)].rstrip("/")
-        return "//" + _join(here, project, member) + ":lib"
+        return member_libs[uid]
+
+    def in_package(path):
+        # A path of the graph below this package's directory (what the BUCK file's labels are relative to).
+        return graph_path_in_package(path, pkg_dir, rooted)
 
     def slice_of(uid, profile = None):
         # The unit's own entry, whole but for its `key`; every unit it imports reduced to what `mopm unit build` reads of a dependency
@@ -298,13 +355,13 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
             mopm = mopm,
             native_sonames = sonames,
             natives = native_labels,
-            closure_names = [units[c]["package"] for c in cl],
+            closure_ids = {units[c]["package"]: c for c in cl},
+            graph_base = graph_from,
             package = u["package"],
             product = product,
             check = ":check",
             src_paths = [s["path"] for s in u["srcs"]],
-            src_root = project,
-            srcs = [_join(project, s["path"]) for s in u["srcs"]],
+            srcs = [_join(project, in_package(s["path"])) for s in u["srcs"]],
             toolchain = toolchain,
             unit_id = uid,
             exec_compatible_with = LINUX_X86_64,
@@ -327,6 +384,24 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
     # the classified records, five actions after the compile. A test that links a native library is not yet instrumented (the link line of the
     # instrumented binary has no native libraries), so a package with one has the line figure alone.
     branches_on = own_lib != None and bool([x for x in units.values() if x["kind"] == "test"]) and not [x for x in units.values() if x["kind"] == "test" and x["natives"]]
+
+    # The library's sources: in the coverage tree at the names its `.mojoc` gives them (`<import>/<file>`), and for the classifier by the name relative
+    # to the library root.
+    lib_share = {}
+    lib_srcs = {}
+    if own_lib:
+        prefix = own_lib["root"] + "/"
+        for s in own_lib["srcs"]:
+            if not s["path"].startswith(prefix):
+                fail("{}: source {} is not under the library root {}".format(here, s["path"], own_lib["root"]))
+            lib_share[root + "/" + s["path"][len(prefix):]] = _join(project, in_package(s["path"]))
+            lib_srcs[s["path"][len(prefix):]] = _join(project, in_package(s["path"]))
+
+    # What the tests are given besides their binaries (rules/mojo/test_data.bzl): `test_data` per test file, `test_env` for all. The coverage run's
+    # working directory holds the test's source and the library's sources, so a staged path may not be one of those.
+    test_sources = [units[u]["srcs"][0]["path"] for u in sorted(units.keys()) if units[u]["kind"] == "test"]
+    check_test_env(here, test_env)
+    staged = stage_test_data(here, test_sources, test_data, {t: [t] + sorted(lib_share.keys()) for t in test_sources})
     for uid in sorted(units.keys()):
         u = units[uid]
         kind = u["kind"]
@@ -361,6 +436,8 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
                 name = name_once(stem),
                 bin = ":" + stem + "__bin",
                 check = ":check",
+                data = staged[units[uid]["srcs"][0]["path"]],
+                test_env = test_env,
                 required_isa = required_isa(),
                 toolchain = toolchain,
                 exec_compatible_with = test_exec_compatible_with(),
@@ -376,25 +453,26 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
                 zig_override = "toolchains//:mojo_{}_cov_link".format(vname(mojo)),
                 **common(uid, "test", stem, _COVERAGE_PROFILE)
             )
-            test_src = u["srcs"][0]["path"]
+            # The test file is compiled under the path the graph names (from the package, or from the repository root when the table is rooted), and
+            # that is the name in the line tables: the tree kcov runs in, what it measures and the first half of the map use it; the repository path
+            # (below the package, then from the repository root) is the other half.
+            test_graph = u["srcs"][0]["path"]
+            graph_dir = test_graph.rpartition("/")[0]
+            test_src = in_package(test_graph)
             test_dir = test_src.rpartition("/")[0]
-            share = {test_src: _join(project, test_src)}
-            maps = [(test_dir + "/=" + _join(here_repo, test_dir) + "/") if test_dir else "=" + here_repo + "/"]
-            includes = [test_src]
-            lib_srcs = {}
+            share = {test_graph: _join(project, test_src)}
+            maps = [(graph_dir + "/=" + _join(here_repo, test_dir) + "/") if graph_dir else "=" + here_repo + "/"]
+            includes = [test_graph]
             if own_lib:
-                prefix = own_lib["root"] + "/"
-                for s in own_lib["srcs"]:
-                    if not s["path"].startswith(prefix):
-                        fail("{}: source {} is not under the library root {}".format(here, s["path"], own_lib["root"]))
-                    share[root + "/" + s["path"][len(prefix):]] = _join(project, s["path"])
-                    lib_srcs[s["path"][len(prefix):]] = _join(project, s["path"])
-                maps.append(root + "/=" + _join(here_repo, own_lib["root"]) + "/")
+                share.update(lib_share)
+                maps.append(root + "/=" + _join(here_repo, in_package(own_lib["root"])) + "/")
                 includes.append(root)
             mojo_cov_run_rule(
                 name = name_once(stem + "__cov"),
                 bin = ":" + stem + "__cov_bin",
                 check = ":check",
+                data = staged[test_graph],
+                test_env = test_env,
                 includes = includes,
                 maps = maps,
                 must_contain = _join(here_repo, test_src),
@@ -425,9 +503,12 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
                     name = name_once(stem + "__profdata"),
                     branch = branch_tc,
                     check = ":check",
+                    # The test's staged data and variables, as in its run and its kcov run: it must find the same files here.
+                    data = staged[test_graph],
                     pgo = ":" + stem + "__pgo",
                     required_isa = required_isa(),
                     share = share,
+                    test_env = test_env,
                     toolchain = toolchain,
                     exec_compatible_with = test_exec_compatible_with(),
                     visibility = visibility,
@@ -447,9 +528,9 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
                     check = ":check",
                     # The packages the test imports other than the library are named in the IR by their import names and are not measured.
                     excludes = [units[c]["package"] + "/" for c in _closure(units, uid) if units[c]["package"] != root],
-                    exclude_files = [test_src],
+                    exclude_files = [test_graph],
                     ir = ":" + stem + "__ir",
-                    map = root + "/=" + _join(here_repo, own_lib["root"]) + "/",
+                    map = root + "/=" + _join(here_repo, in_package(own_lib["root"])) + "/",
                     srcs = lib_srcs,
                     exec_compatible_with = LINUX_X86_64,
                     visibility = visibility,
@@ -473,9 +554,9 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
         name = name_once("coverage"),
         branches = branches,
         check = ":check",
-        expect = [_join(here_repo, own_lib["root"], s["path"][len(own_lib["root"]) + 1:]) for s in own_lib["srcs"]] if own_lib and covs else [],
+        expect = [_join(here_repo, in_package(own_lib["root"]), s["path"][len(own_lib["root"]) + 1:]) for s in own_lib["srcs"]] if own_lib and covs else [],
         reports = covs,
-        srcs = {_join(here_repo, own_lib["root"], s["path"][len(own_lib["root"]) + 1:]): _join(project, s["path"]) for s in own_lib["srcs"]} if own_lib and covs else {},
+        srcs = {_join(here_repo, in_package(own_lib["root"]), s["path"][len(own_lib["root"]) + 1:]): _join(project, in_package(s["path"])) for s in own_lib["srcs"]} if own_lib and covs else {},
         visibility = visibility,
     )
     # The floor, if the package has one: `coverage_floor.txt` beside the BUCK file (the file every other package's floor is, rules/coverage/README.md).

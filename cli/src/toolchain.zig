@@ -31,6 +31,27 @@ pub fn isExactRelease(s: []const u8) bool {
     return n == 3;
 }
 
+/// The first mopm release whose `plan --unit-graph` takes `--workspace-root DIR`: with it, every path of the graph is relative to DIR and the
+/// package and its path dependencies may be siblings below it. `buildrules mojo sync` asks for it from that release on, and records that it did in
+/// the table (`MOPM = {..., "workspace_root": true}`), which is what the rules read: they never compare versions themselves.
+/// This is the release that is to carry the flag, the one after the latest at the time of writing (0.0.32): the pin bump that follows that release
+/// confirms it, or sets the first release that has the flag.
+pub const workspace_root_since =[3]u32{ 0, 0, 33 };
+
+/// Whether mopm `version` (an exact release `N.N.N`) takes `--workspace-root`; a version that is not an exact release does not.
+pub fn supportsWorkspaceRoot(version: []const u8) bool {
+    if (!isExactRelease(version)) return false;
+    var it = std.mem.splitScalar(u8, version, '.');
+    var k: usize = 0;
+    while (it.next()) |part| : (k += 1) {
+        // (digits only, at most four: `isExactRelease`)
+        var n: u32 = 0;
+        for (part) |c| n = n * 10 + (c - '0');
+        if (n != workspace_root_since[k]) return n > workspace_root_since[k];
+    }
+    return true;
+}
+
 pub const Verdict = union(enum) {
     ok: []const u8,
     /// A message for the user.

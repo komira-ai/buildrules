@@ -48,8 +48,10 @@ const tag_outputs =
     "      tag: ${{ steps.settle.outputs.tag }}\n" ++
     "      number: ${{ steps.settle.outputs.number }}\n";
 const tag_env_final = "      TAG: ${{ needs.tag.outputs.tag }}\n";
-/// The `if:` of the jobs that run for every commit the plan released.
-pub const released_if = "${{ needs.plan.outputs.released == 'true' }}";
+/// The `if:` of the jobs that build and test a commit the plan released: not one whose release is already complete (the plan checked that the release holds every
+/// file with the digests of its SHA256SUMS), which has nothing left to build. Every job after them waits for them (the order below), so a skipped build skips the
+/// archive, the signing, the verification, the tag, the publish and the channels with it: none of those has a status function that would run it anyway.
+pub const released_if = "${{ needs.plan.outputs.released == 'true' && needs.plan.outputs.complete != 'true' }}";
 /// build-cli, beta, gamma, archive, attest, verify, tag, publish and site run only for a commit the plan released.
 const released_clause = "needs.plan.outputs.released == 'true'";
 const ci_call = "./.github/workflows/ci.yml";
@@ -168,6 +170,10 @@ const write_job_actions = [_][]const u8{ "actions/checkout", "actions/download-a
 /// What `attest`, which signs and attests, may use besides the download: the upload of what it signed, the installer of cosign and the attestation. It runs no buck2.
 const attest_actions = [_][]const u8{ "actions/download-artifact", "actions/upload-artifact", "sigstore/cosign-installer", "actions/attest-build-provenance" };
 const cosign_action = "sigstore/cosign-installer";
+/// The cosign that the release installs: the retry of `release verify` reads its stderr, so the installer names the version and does not take the action's default.
+const cosign_release = "v3.0.6";
+/// The install of cosign as the workflow spells it: the pinned action and the version it is told.
+const cosign_step = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n        with:\n          cosign-release: '" ++ cosign_release ++ "'\n";
 const app_token_action = "actions/create-github-app-token";
 /// The environment that holds the release bot's key (the owner restricts it to main as a setup step; nothing here checks that); declared by the jobs that read `RELEASE_BOT_*` and by no other.
 const release_environment = "release";
@@ -913,6 +919,19 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
     if (std.mem.count(u8, text, "actions/attest-build-provenance@") != 1) try add(a, &f, "`actions/attest-build-provenance` is used other than once, in `attest`", .{});
     // cosign is installed twice: to sign in `attest`, to check the signatures in `verify`.
     if (std.mem.count(u8, text, cosign_action ++ "@") != 2) try add(a, &f, "`sigstore/cosign-installer` is used other than twice, in `attest` and in `verify`", .{});
+    // every install of cosign names its release: `with:` and `cosign-release: 'v3.0.6'` are the two lines after the `uses:` line
+    {
+        var lines = std.ArrayList([]const u8).init(a);
+        var it = std.mem.splitScalar(u8, text, '\n');
+        while (it.next()) |l| try lines.append(l);
+        for (lines.items, 0..) |l, i| {
+            const repo = usesRepo(l) orelse continue;
+            if (!std.mem.eql(u8, repo, cosign_action)) continue;
+            const named = i + 2 < lines.items.len and std.mem.eql(u8, std.mem.trim(u8, lines.items[i + 1], " "), "with:") and
+                std.mem.eql(u8, std.mem.trim(u8, lines.items[i + 2], " "), "cosign-release: '" ++ cosign_release ++ "'");
+            if (!named) try add(a, &f, "`sigstore/cosign-installer` does not name `cosign-release: '" ++ cosign_release ++ "'` (the retry of `release verify` depends on the stderr of that release)", .{});
+        }
+    }
     if (jobNamed(jobs, "verify")) |j| {
         if (std.mem.count(u8, try j.text(a), cosign_action ++ "@") != 1) try add(a, &f, "the job `verify` does not install cosign, which checks the signatures", .{});
     }
@@ -955,6 +974,10 @@ pub fn checkRelease(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, 
         if (std.mem.indexOf(u8, jt, " --dry false --output") == null or std.mem.indexOf(u8, jt, "DRY") != null)
             try add(a, &f, "the job `plan` is not told it is a real run (`--dry false`, and no `DRY` variable: a pull request does not run this workflow)", .{});
         if (std.mem.indexOf(u8, jt, "number: ${{ steps.version.outputs.number }}") == null) try add(a, &f, "the job `plan` does not output the version number (`number: ${{{{ steps.version.outputs.number }}}}`), which `build-cli` stamps", .{});
+        // A commit whose release is complete builds nothing: the plan says so (`complete`), asking GitHub about the release of the repository it runs in, with its own read-only token.
+        if (std.mem.indexOf(u8, jt, "complete: ${{ steps.version.outputs.complete }}") == null) try add(a, &f, "the job `plan` does not output `complete` (`complete: ${{{{ steps.version.outputs.complete }}}}`), which build-cli, beta, gamma and archive are gated on", .{});
+        if (std.mem.indexOf(u8, jt, " --repo \"$GITHUB_REPOSITORY\" ") == null) try add(a, &f, "the job `plan` is not told the repository (`--repo \"$GITHUB_REPOSITORY\"`), so it cannot tell whether a release is complete", .{});
+        if (std.mem.indexOf(u8, jt, "GH_TOKEN: ${{ github.token }}") == null) try add(a, &f, "the job `plan` has no `GH_TOKEN: ${{{{ github.token }}}}` (its own read-only token) for the question it asks GitHub", .{});
     }
     if (std.mem.count(u8, text, "RELEASE_FREEZE") != 1) try add(a, &f, "RELEASE_FREEZE is read other than once, in `plan`: a freeze is decided in one place", .{});
     if (std.mem.indexOf(u8, text, "github.event.pull_request") != null or std.mem.indexOf(u8, text, "'pull_request'") != null)
@@ -1287,6 +1310,7 @@ const fixture_wf =
     \\      FREEZE: ${{ vars.RELEASE_FREEZE }}
     \\    outputs:
     \\      released: ${{ steps.version.outputs.released }}
+    \\      complete: ${{ steps.version.outputs.complete }}
     \\      tag: ${{ steps.version.outputs.tag }}
     \\      number: ${{ steps.version.outputs.number }}
     \\      previous: ${{ steps.version.outputs.previous }}
@@ -1303,11 +1327,13 @@ const fixture_wf =
     \\      - run: chmod +x tool/release
     \\      - name: The version of this commit, if it is released
     \\        id: version
-    \\        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$CANDIDATE" --freeze "$FREEZE" --dry false --output "$GITHUB_OUTPUT"
+    \\        env:
+    \\          GH_TOKEN: ${{ github.token }}
+    \\        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$CANDIDATE" --repo "$GITHUB_REPOSITORY" --freeze "$FREEZE" --dry false --output "$GITHUB_OUTPUT"
     \\
     \\  build-cli:
     \\    needs: [plan, tool]
-    \\    if: ${{ needs.plan.outputs.released == 'true' }}
+    \\    if: ${{ needs.plan.outputs.released == 'true' && needs.plan.outputs.complete != 'true' }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 60
     \\    permissions:
@@ -1359,7 +1385,7 @@ const fixture_wf =
     \\
     \\  beta:
     \\    needs: [plan, build-cli]
-    \\    if: ${{ needs.plan.outputs.released == 'true' }}
+    \\    if: ${{ needs.plan.outputs.released == 'true' && needs.plan.outputs.complete != 'true' }}
     \\    permissions:
     \\      contents: read
     \\      id-token: write
@@ -1370,7 +1396,7 @@ const fixture_wf =
     \\
     \\  gamma:
     \\    needs: [plan, beta, tool]
-    \\    if: ${{ needs.plan.outputs.released == 'true' }}
+    \\    if: ${{ needs.plan.outputs.released == 'true' && needs.plan.outputs.complete != 'true' }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 240
     \\    permissions:
@@ -1421,7 +1447,7 @@ const fixture_wf =
     \\
     \\  archive:
     \\    needs: [plan, build-cli, beta, gamma, tool]
-    \\    if: ${{ needs.plan.outputs.released == 'true' }}
+    \\    if: ${{ needs.plan.outputs.released == 'true' && needs.plan.outputs.complete != 'true' }}
     \\    runs-on: ubuntu-latest
     \\    timeout-minutes: 15
     \\    permissions:
@@ -1483,6 +1509,8 @@ const fixture_wf =
     \\          path: dist
     \\      - run: chmod +x tool/release
     \\      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+    \\        with:
+    \\          cosign-release: 'v3.0.6'
     \\      - name: Sign the seven files, keyless
     \\        run: tool/release sign --dist dist --dry false
     \\      - name: Attest the archive, the three tarballs, the two .debs and SHA256SUMS
@@ -1535,6 +1563,8 @@ const fixture_wf =
     \\          path: tool
     \\      - run: chmod +x buck2 tool/release tool/channels
     \\      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+    \\        with:
+    \\          cosign-release: 'v3.0.6'
     \\      - name: Build the command line again for the three targets
     \\        run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
     \\      - name: Package the three tarballs again
@@ -2674,10 +2704,10 @@ test "rule: a release is made only for a commit the plan released, and no job ru
         try expectFinding(a, r, try mutateIn(a, r.wf, name, "needs.plan.outputs.released == 'true' && ", ""), want);
     }
     // no status function lets a job run after a red one
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ always() && needs.plan.outputs.released == 'true' }}"), "`always()`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "if: ${{ needs.plan.outputs.released == 'true' && needs.plan.outputs.complete != 'true' }}", "if: ${{ always() && needs.plan.outputs.released == 'true' }}"), "`always()`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "if: ${{ needs.plan.outputs.released", "if: ${{ !failure() && needs.plan.outputs.released"), "`failure()`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "if: ${{ needs.plan.outputs.released", "if: ${{ failure() || needs.plan.outputs.released"), "`failure()`");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ cancelled() || needs.plan.outputs.released == 'true' }}"), "`cancelled()`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "build-cli", "if: ${{ needs.plan.outputs.released == 'true' && needs.plan.outputs.complete != 'true' }}", "if: ${{ cancelled() || needs.plan.outputs.released == 'true' }}"), "`cancelled()`");
 }
 
 test "rule: no job that writes or signs runs for anything but a push to main, and no dry form remains" {
@@ -2704,8 +2734,8 @@ test "rule: no job that writes or signs runs for anything but a push to main, an
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "tool/release sign --dist dist --dry false", "tool/release sign --dist dist"), "`attest` does not sign");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "--dry false", "--dry true"), "the `--dry` flags are not exactly");
     // verify installs cosign to check the signatures; the dry twin has none to check
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "does not install cosign");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "used other than twice");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", cosign_step, ""), "does not install cosign");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", cosign_step, ""), "used other than twice");
 }
 
 test "rule: RELEASE_FREEZE is read in the plan and nowhere else, and the plan is never a dry run" {
@@ -2716,7 +2746,7 @@ test "rule: RELEASE_FREEZE is read in the plan and nowhere else, and the plan is
     // read elsewhere (a freeze that some stages honour and others do not), or not read at all
     try expectFinding(a, r, try mutateIn(a, r.wf, "gamma", "    env:\n", "    env:\n      FROZEN: ${{ vars.RELEASE_FREEZE }}\n"), "RELEASE_FREEZE is read other than once");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", "    env:\n", "    env:\n      FROZEN: ${{ vars.RELEASE_FREEZE }}\n"), "RELEASE_FREEZE is read other than once");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "if: ${{ needs.plan.outputs.released == 'true' }}", "if: ${{ needs.plan.outputs.released == 'true' && vars.RELEASE_FREEZE != 'true' }}"), "RELEASE_FREEZE is read other than once");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "if: ${{ needs.plan.outputs.released == 'true' && needs.plan.outputs.complete != 'true' }}", "if: ${{ needs.plan.outputs.released == 'true' && vars.RELEASE_FREEZE != 'true' }}"), "RELEASE_FREEZE is read other than once");
     try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "      FREEZE: ${{ vars.RELEASE_FREEZE }}\n", ""), "RELEASE_FREEZE is read other than once");
     try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "      FREEZE: ${{ vars.RELEASE_FREEZE }}\n", ""), "does not pass RELEASE_FREEZE to the plan");
     // read but not passed, or passed a constant
@@ -2830,7 +2860,12 @@ test "rule: the signature and the attestation are made in attest, once, in that 
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "            dist/buildrules_*.deb\n", "            dist/buildrules_0.0.1_amd64.deb\n"), "`dist/buildrules_*.deb` (the two .debs)");
     try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "            dist/SHA256SUMS\n", ""), "does not attest `dist/buildrules-*.tar.gz`");
     // cosign is installed in attest, and sign comes before the attestation, and both before the upload
-    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n", ""), "does not install cosign");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", cosign_step, ""), "does not install cosign");
+    // each install names the cosign release, and a different release, a dropped input or a leftover default each turn it red
+    const unnamed = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", cosign_step, unnamed), "does not name `cosign-release: 'v3.0.6'`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", cosign_step, unnamed), "does not name `cosign-release: 'v3.0.6'`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "cosign-release: 'v3.0.6'", "cosign-release: 'v3.0.5'"), "does not name `cosign-release: 'v3.0.6'`");
     {
         const sign_step = "      - name: Sign the seven files, keyless\n        run: tool/release sign --dist dist --dry false\n";
         const moved = try mutateIn(a, r.wf, "attest", sign_step, "");
@@ -2901,6 +2936,26 @@ test "rule: the binaries are built stamped, packaged, run by the beta, checked a
     }
     // the number comes from the plan
     try expectFinding(a, r, try mutate(a, r.wf, "      number: ${{ steps.version.outputs.number }}\n", ""), "`plan` does not output the version number");
+}
+
+test "rule: a complete release is not built again, and the stages after the build wait for it" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    // the plan says whether the release is complete, and is able to find out
+    try expectFinding(a, r, try mutate(a, r.wf, "      complete: ${{ steps.version.outputs.complete }}\n", ""), "`plan` does not output `complete`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", " --repo \"$GITHUB_REPOSITORY\" ", " "), "`plan` is not told the repository");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "plan", "          GH_TOKEN: ${{ github.token }}\n", ""), "`plan` has no `GH_TOKEN");
+    // the four stages that build or test the commit are skipped for a complete release, under that `if:` alone
+    for ([_][]const u8{ "build-cli", "beta", "gamma", "archive" }) |name| {
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, " && needs.plan.outputs.complete != 'true'", ""), "is not under the `if:`");
+        try expectFinding(a, r, try mutateIn(a, r.wf, name, "needs.plan.outputs.complete != 'true'", "needs.plan.outputs.complete == 'true'"), "is not under the `if:`");
+    }
+    // and nothing after them can run without them: each waits for the one before, and none carries a status function that would run it anyway
+    try expectFinding(a, r, try mutateIn(a, r.wf, "archive", "needs: [plan, build-cli, beta, gamma, tool]", "needs: [plan, tool]"), "the job `archive` does not wait for");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "attest", "needs: [plan, archive, tool]", "needs: [plan, tool]"), "the job `attest` does not wait for `archive`");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "needs.plan.outputs.released == 'true' &&", "always() && needs.plan.outputs.released == 'true' &&"), "`always()`");
 }
 
 test "rule: the jobs that write run no buck2 and use no action but the checkout and download" {
@@ -3082,7 +3137,7 @@ test "rule: a cosign bundle is named <file>.sigstore.json, for the files release
     // The same in a job that does not write.
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release tool/channels\n", try std.fmt.allocPrint(a, step, .{"dist/SHA256SUMS.sig.sigstore.jsn"})), "names a cosign bundle other than");
     // The install of cosign names the word `sigstore` without naming a file: that action, pinned, is exempt, and no other sigstore action is.
-    const installer = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n";
+    const installer = cosign_step;
     try t.expect(std.mem.indexOf(u8, r.wf, installer) != null);
     {
         const f = try checkRelease(a, r.wf, r.ds, r.ci);
@@ -3091,7 +3146,7 @@ test "rule: a cosign bundle is named <file>.sigstore.json, for the files release
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", installer, "      - uses: sigstore/gh-action-sigstore-python@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n"), "names a cosign bundle other than");
     // the exemption is for the `uses:` line alone: the same word in a run line or an input is checked
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "      - run: chmod +x buck2 tool/release tool/channels\n", "      - run: echo sigstore/cosign-installer\n"), "names a cosign bundle other than");
-    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", installer, installer ++ "        with:\n          cosign-release: sigstore\n"), "names a cosign bundle other than");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "verify", installer, "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n        with:\n          cosign-release: sigstore\n"), "names a cosign bundle other than");
 }
 
 

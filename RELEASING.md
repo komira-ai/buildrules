@@ -17,7 +17,7 @@ one invocation each. `ci/release_check.zig` and `ci/stages_check.zig` (part of `
 |---|---|---|
 | `gate` | the PR gate: calls `ci.yml`, the whole tree (`//ci:all`) and the completeness check, in local mode on the runner. It is also the whole check of a pull request (`ci.yml` runs there on its own, see "The tiers") | read |
 | `tool` | builds `tools/release`, `tools/stage`, `tools/channels` (the `.deb` and the formula) and `tools/deploy` (the tap pull request and the apt publish) with buck2 and hands the binaries to the later jobs, before any job that writes holds a token | read |
-| `plan` | read-only; decides whether this commit is released and which version; creates nothing. It is the one job that reads `RELEASE_FREEZE` (see "The freeze") | read |
+| `plan` | read-only; decides whether this commit is released and which version; creates nothing. For a commit that already has its tag it also asks GitHub whether the release is complete (output `complete`, see "A release that is already complete"). It is the one job that reads `RELEASE_FREEZE` (see "The freeze") | read |
 | `build-cli` | builds `//cli:release_binaries` (the command line for the three release targets in one directory) from the tested commit with the planned version stamped in (`-c buildrules.release_version=<version>`), in local mode, and packages the three tarballs (`release package-all`) and, from the same two Linux binaries, the two `.deb`s (`release debs`, which runs `channels deb-package`). The linux-x86_64 binary is also uploaded as the file the beta will run, and the directory of all three as `release-cli-bins` (the native legs run two of them) | read |
 | `beta` | calls `beta.yml` with that linux-x86_64 binary and the directory of the three: hello-world repositories per language consume the candidate commit as a user would and are built twice, the second time in another directory (see "The beta stage") | read, `id-token` for its farm leg |
 | `gamma` | builds our own repositories with the candidate on the farm; fails the release when the farm is not configured (see "The gamma stage") | read, `id-token` write |
@@ -247,7 +247,7 @@ attribute (no default), and `ci/negative` holds a planted copy of a program with
   (header, version, reproduction) and started on their own platform, but not walked by a user beta. The workflow names the targets, so the day a leg builds the list grows with it. `tested` also requires, for the two `.deb`s of `DIR`, that each holds the program of the tarball
   of its architecture (the user beta ran `linux-x86_64`, so the `amd64` package carries the very file it ran; the `arm64` one carries the aarch64 file that is attested but not walked).
 - `release sums --dist DIR` writes `SHA256SUMS` over the source archive, the three tarballs and the two `.deb`s in name order (six lines) and reads it back; it refuses a missing, stray or other-version tarball or `.deb`.
-- `release sign --dist DIR [--cosign PATH] [--dry true|false]` runs keyless `cosign sign-blob` on those six files and `SHA256SUMS`, and refuses a bundle that is missing, empty or already there. With `--dry true` it makes every check and the list of files it would sign, and runs no `cosign`; `release.yml` always passes `--dry false`, as it passes it to `plan` and `verify`, since no pull request runs it (the dry form stays in the tool and its tests, and nothing in the workflow uses it).
+- `release sign --dist DIR [--cosign PATH] [--dry true|false]` runs keyless `cosign sign-blob` on those six files and `SHA256SUMS`, and refuses a bundle that is missing, empty or already there. Every call is `cosign sign-blob --yes --oidc-provider github-actions --fulcio-auth-flow token --timeout 90s --bundle <file>.sigstore.json <file>`. The guard against a wait for a person is `--fulcio-auth-flow token`: a missing token fails the call at once (unset, cosign falls back to the OAuth device flow and waits until the device code expires). `--oidc-provider github-actions` is defence in depth only: cosign v3.0.6's `sign-blob` ignores it (`cmd/cosign/cli/signblob.go` builds its key options without the provider; only `sign`, `attest` and `attest-blob` set it). Cosign's own deadline is 90 seconds. A call that fails the way a network failure does (the token endpoint, Fulcio, Rekor or the timestamp authority did not answer) is tried again, up to three tries per file with 5 s and then 10 s between them; any other failure is final. The tries share a time budget of 10 minutes for the whole step: once it has passed no new try starts (a try in flight ends by cosign's 90 s deadline), so the step ends well inside the `attest` job's 15 minutes; the job's timeout is unchanged. A retried call can leave one orphan Rekor entry, with a different signature, for the same file; it is harmless, because the bundle is written only by the call that succeeds. With `--dry true` it makes every check and the list of files it would sign, and runs no `cosign`; `release.yml` always passes `--dry false`, as it passes it to `plan` and `verify`, since no pull request runs it (the dry form stays in the tool and its tests, and nothing in the workflow uses it).
 
 ## What is released
 
@@ -261,6 +261,10 @@ Everything else is released: the rules, the pins and toolchains, the command lin
 also `site/` and `infra/`, which are built and tested code. The comparison is with the last release tag, not with the previous commit: a
 docs-only push after a release makes nothing, and the next code push releases the lot. A commit that is not after the last release tag (an older run
 finishing late) is skipped, never released out of order. A re-run of a released commit creates no tag and carries on with the one it has.
+
+### A release that is already complete
+
+A second push run for a commit that already has its tag (a duplicate trigger, or a re-run started from the top) would rebuild for about forty minutes only to find every file already published. The plan therefore asks GitHub, for a commit that has its tag, whether the release is complete: it holds all fourteen files (the archive, the three tarballs, the two `.deb`s, `SHA256SUMS` and a signature bundle for each), the archive has the digest a rebuild of the commit gives, `SHA256SUMS` has the digest of the `SHA256SUMS` the release serves, and each tarball and `.deb` has the digest that `SHA256SUMS` lists. The comparison is `assets.publishPlan`, the rule `publish` applies, and only its answer "nothing to do" counts; a bundle only has to be present. The plan outputs `complete=true` then, and `build-cli`, `beta`, `gamma` and `archive` are skipped (`if:` `released == 'true' && complete != 'true'`); every later job waits for them and so is skipped too, and the run ends green. A release with one file missing (an upload that died halfway), one different digest or one digest GitHub does not report is not complete: the whole pipeline runs and `publish` adds the missing files or refuses the difference as before. A tag with no release, a new release, and any answer the plan cannot get from GitHub are not complete either: not knowing costs time, never a skipped release.
 
 ## What a release holds
 
@@ -301,7 +305,7 @@ consumer relies on the published file and its sha256, not on making the file aga
 trusted root (the TUF repository), the call is tried up to 3 times, waiting 2 s and then 4 s between the tries. Only the final line of cosign's error
 output decides: it must hold `tuf refresh failed`, `Could not fetch trusted_root.json` or `error getting live trusted root`. Any other refusal, a
 signature or certificate mismatch above all, is a finding on the first try; so is a mismatch that follows the legacy-bundle
-`Could not fetch trusted_root.json ... Continuing` warning. One more shape is retried: cosign v3.0.6 (the version the release installs) ends a failed fetch with `trusted root is required when using new bundle format` (the fetch error is only the warning line before it), and that final line retries only when an earlier line holds one of the three fetch texts; alone it is a finding. An outage longer than about 6 s still fails the release, and the finding says it is "a network
+`Could not fetch trusted_root.json ... Continuing` warning. One more shape is retried: cosign v3.0.6 (the version the release installs) ends a failed fetch with `trusted root is required when using new bundle format` (the fetch error is only the warning line before it), and that final line retries only when an earlier line holds one of the three fetch texts; alone it is a finding. Both installs of cosign in the workflow name `cosign-release: 'v3.0.6'` (a check of the workflow refuses an install that does not), because the retry reads that release's error text. The waits of all the retries of one run together never pass 12 s, so a long outage does not hold the release file after file. An outage longer than about 6 s still fails the release, and the finding says it is "a network
 failure, not a verdict on the signature"; re-run the job.
 
 `publish` repeats the check of `SHA256SUMS` and requires all seven signature bundles to be there and not empty.
@@ -502,17 +506,23 @@ step that reads, signs, writes or assumes the role is skipped by `if: steps.gate
 condition and that each gate is the exact command. So a release that runs before the settings exist (or with only half of them) releases exactly as before and the apt jobs leave a notice; a half-made setting (the role
 without the key, or the key without the role) leaves the repository unchanged. Once both are made, the next release publishes without any other change. The region of the repository is `us-east-1`.
 
-Installing from the apt repository (**after setup**: the settings above made, and the public half of the signing key uploaded where the repository documents it; `<apt host>` is `APT_HOSTNAME`):
+Installing from the apt repository (**after setup**: the settings above made, and the public half of the signing key uploaded as `apt/<keyring>.gpg`; `<apt host>` is `APT_HOSTNAME` and `<keyring>` is the file name the owner chose for the key):
 
-```
+```sh
 sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://<apt host>/apt/keyring.gpg | sudo tee /etc/apt/keyrings/<owner>.gpg > /dev/null
-echo "deb [signed-by=/etc/apt/keyrings/<owner>.gpg] https://<apt host>/apt stable main" | sudo tee /etc/apt/sources.list.d/<owner>.list
+sudo curl -fsSL -o /etc/apt/keyrings/<keyring>.gpg https://<apt host>/apt/<keyring>.gpg
+sudo tee /etc/apt/sources.list.d/buildrules.sources > /dev/null <<'EOF'
+Types: deb
+URIs: https://<apt host>/apt
+Suites: stable
+Components: main
+Signed-By: /etc/apt/keyrings/<keyring>.gpg
+EOF
 sudo apt update
 sudo apt install buildrules
 ```
 
-The keyring file name is decided when the owner uploads it. `apt update` verifies `InRelease` against it before it trusts a `Packages` file. Until then, install the `.deb` of a release by hand
+The keyring is the binary public key the repository serves as `apt/<keyring>.gpg` (an armored copy, `apt/<keyring>.asc`, is beside it), and `Signed-By` names the path the first command installs it to. `apt update` verifies `InRelease` against it before it trusts a `Packages` file. Until then, install the `.deb` of a release by hand
 (`sudo apt install ./buildrules_<version>_amd64.deb`, after the checks of "Installing the command line").
 
 ## What the first release after this change does with no setup
@@ -557,7 +567,7 @@ then (`tool/release tag`, `settleTag` in `tools/release/cmds.zig`). For the comm
 
 | what `tag` finds | what happens |
 |---|---|
-| a tag already names `C`, and it is the planned one | a re-run: the tag is kept, and `site`, `publish` and `bump` go on with it (even when newer releases exist: `publish` still refuses a release below the newest) |
+| a tag already names `C`, and it is the planned one | a re-run: the tag is kept, and `site`, `publish` and `bump` go on with it, unless the release already holds every file (then every job after the plan is skipped, `site`, `bump`, the tap and the apt deploy included; re-run only the failed job to retry one) (even when newer releases exist: `publish` still refuses a release below the newest) |
 | a tag names `C` under another number | the job fails (`TagMismatch`): the build carries the planned number |
 | `C` is contained in `N`'s commit (an ancestor of it) | the run ends **green as superseded**, with a notice naming `N`: that release carries `C`'s changes, so `site`, `publish` and `bump` are skipped and nothing is created |
 | `C` is not contained in `N`'s commit, and the planned number is the next free one | the tag is made, as before |

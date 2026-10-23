@@ -1,9 +1,11 @@
 //! `buildrules mojo sync` and `buildrules mojo check` (docs/contract.md, section 12).
 //!
 //! mopm owns what "build Mojo" means. `sync` asks the pinned mopm for each package's unit graph (`mopm plan --unit-graph
-//! --locked`, offline: it never resolves) and commits mopm's answer verbatim as buildrules.mojo.lock.bzl next to the package's
-//! mopm.toml, plus the toolchain facts the graphs carry as toolchains/mojo_pins.bzl. `check` is the offline gate: it reads
-//! the files and fails when the committed table no longer describes them.
+//! --locked`, offline: it never resolves) and commits mopm's answer as buildrules.mojo.lock.bzl next to the package's
+//! mopm.toml, plus the toolchain facts the graphs carry as toolchains/mojo_pins.bzl. A path dependency is committed by identity only (its
+//! sources and key are its own table's business). From mopm 0.0.33 the plan is asked for with `--workspace-root <the repository root>`, so the
+//! graph's paths start at the root and the package and its path dependencies may be siblings; before that they start at the package and the
+//! dependencies are below it. `check` is the offline gate: it reads the files and fails when the committed table no longer describes them.
 //!
 //! The version choices are made in mopm-toolchain.toml, found by walking up from the package like rustup finds
 //! rust-toolchain.toml, and required like it, with no default:
@@ -21,6 +23,7 @@ const lockm = @import("mojo_lock.zig");
 const mopm_pins = @import("mopm_pins.zig");
 const pins_toml = @import("pins_toml.zig");
 const toolchain = @import("toolchain.zig");
+const graph_norm = @import("mojo_graph_norm");
 const Diag = @import("diag.zig").Diag;
 const Ctx = ctxm.Ctx;
 
@@ -76,7 +79,9 @@ pub fn run(root: *Ctx, args: []const []const u8) u8 {
         } else if (is_sync and std.mem.eql(u8, arg, "--buck2")) {
             buck2 = ctxm.flagValue(args, &i) orelse return root.usage("mojo sync: --buck2 needs a value", .{});
         } else if (is_sync and arg.len > 0 and arg[0] != '-') {
-            pkgs.append(root.a, trimSlashes(arg)) catch return ctxm.exit_fail;
+            // The same normalization as the toolchains path (`.//pkgs/base`, `pkgs/./base/` and `pkgs/base` are one package); an absolute path is left as given.
+            const pkg = if (arg[0] == '/') arg else normalize(root.a, arg) catch return ctxm.exit_fail;
+            pkgs.append(root.a, pkg) catch return ctxm.exit_fail;
         } else {
             return root.usage("mojo {s}: unknown argument {s}\n{s}", .{ sub, arg, usage_text });
         }
@@ -85,13 +90,6 @@ pub fn run(root: *Ctx, args: []const []const u8) u8 {
     defer ctx.dir.close();
     if (is_sync) return sync(&ctx, pkgs.items, check_only, mopm_path, buck2, tc_flag) catch |e| root.fail("mojo sync: {s}", .{@errorName(e)});
     return checkAll(&ctx, tc_flag) catch |e| root.fail("mojo check: {s}", .{@errorName(e)});
-}
-
-fn trimSlashes(s: []const u8) []const u8 {
-    var t = s;
-    while (std.mem.startsWith(u8, t, "./")) t = t[2..];
-    while (t.len > 1 and t[t.len - 1] == '/') t = t[0 .. t.len - 1];
-    return if (std.mem.eql(u8, t, ".")) "" else t;
 }
 
 // ---- paths -------------------------------------------------------------------------------------------
@@ -446,19 +444,19 @@ pub fn resolveTables(ctx: *Ctx, flag: ?[]const u8) !?Tables {
 }
 
 /// The first of `pkgs` whose source tree the tables' directory is in (`mopm` reads the package directory, so a table written there would be an input of its
-/// own table). Compared by real path when the directory exists, so a symbolic link into a package is caught; a package at the root is not considered
-/// (every directory is in it).
-fn packageHolding(ctx: *Ctx, tabs: Tables, pkgs: []const []const u8) !?[]const u8 {
+/// own table). Compared by real path when the directory exists, so a symbolic link into a package is caught. A package at the root is skipped: every
+/// directory is in it, and refusing it would refuse the default `toolchains/`. A package whose real path cannot be found is a refusal, not a skip: the
+/// answer would be unknown, and the run must stop before it writes anything. Returns the exit code of the refusal it printed, or null.
+fn guardPackages(ctx: *Ctx, tabs: Tables, pkgs: []const []const u8) !?u8 {
     for (pkgs) |pkg| {
         if (pkg.len == 0) continue;
-        const hit = if (tabs.real) |tc_real| blk: {
-            const pr = ctx.dir.realpathAlloc(ctx.a, if (pkg.len == 0) "." else pkg) catch |e| switch (e) {
+        if (tabs.real) |tc_real| {
+            const pr = ctx.dir.realpathAlloc(ctx.a, pkg) catch |e| switch (e) {
                 error.OutOfMemory => return e,
-                else => continue,
+                else => return ctx.fail("cannot resolve the Mojo package {s} ({s}), so cannot tell whether the toolchains directory {s} is inside it", .{ pkg, @errorName(e), tabs.dir }),
             };
-            break :blk isUnder(tc_real, pr);
-        } else isUnder(tabs.dir, pkg);
-        if (hit) return pkg;
+            if (isUnder(tc_real, pr)) return refuseInPackage(ctx, tabs, pkg);
+        } else if (isUnder(tabs.dir, pkg)) return refuseInPackage(ctx, tabs, pkg);
     }
     return null;
 }
@@ -478,16 +476,53 @@ fn lessManifest(_: void, x: lockm.Manifest, y: lockm.Manifest) bool {
     return std.mem.lessThan(u8, x.path, y.path);
 }
 
-/// The member directories (relative to `pkg`) the root package's graph imports: the libraries that are not the root's own.
-fn memberDirs(a: std.mem.Allocator, g: lockm.Graph) ![]const []const u8 {
+fn packageName(g: lockm.Graph) []const u8 {
+    return if (std.mem.indexOfScalar(u8, g.package, '@')) |at| g.package[0..at] else g.package;
+}
+
+/// `to` as a path from the directory `from` (both relative to the repository root, normalized): `pkgs/base`, `pkgs/util` -> `../util`; "" when they
+/// are one directory.
+fn relFrom(a: std.mem.Allocator, from: []const u8, to: []const u8) ![]u8 {
+    var f = std.ArrayList([]const u8).empty;
+    var t = std.ArrayList([]const u8).empty;
+    var it = std.mem.tokenizeScalar(u8, from, '/');
+    while (it.next()) |p| try f.append(a, p);
+    it = std.mem.tokenizeScalar(u8, to, '/');
+    while (it.next()) |p| try t.append(a, p);
+    var n: usize = 0;
+    while (n < f.items.len and n < t.items.len and std.mem.eql(u8, f.items[n], t.items[n])) n += 1;
+    var parts = std.ArrayList([]const u8).empty;
+    for (f.items[n..]) |_| try parts.append(a, "..");
+    try parts.appendSlice(a, t.items[n..]);
+    return std.mem.join(a, "/", parts.items);
+}
+
+/// Where the paths of a package's graph start: the repository root when the graph was made with `--workspace-root` (`rooted`), else the package.
+fn graphBase(pkg: []const u8, rooted: bool) []const u8 {
+    return if (rooted) "" else pkg;
+}
+
+/// The member directories (relative to `pkg`) the root package's graph imports: the libraries that are not the root's own. A member that lives
+/// outside the repository root (its root, put next to the graph's base, leaves it) is no directory a Buck2 target can name: `outside` is then the
+/// sentence that says so, and the member is not in the answer.
+fn memberDirs(a: std.mem.Allocator, g: lockm.Graph, pkg: []const u8, rooted: bool, outside: *?[]const u8) ![]const []const u8 {
     var out = std.ArrayList([]const u8).empty;
-    const root_name = if (std.mem.indexOfScalar(u8, g.package, '@')) |at| g.package[0..at] else g.package;
+    const root_name = packageName(g);
     for (g.units) |u| {
-        if (!std.mem.eql(u8, u.kind, "lib") or std.mem.eql(u8, u.package, root_name)) continue;
+        if (!std.mem.eql(u8, u.kind, "lib") or std.mem.eql(u8, u.package, root_name) or u.root.len == 0) continue;
+        const repo_root = try join(a, graphBase(pkg, rooted), u.root);
+        if (u.root[0] == '/' or std.mem.eql(u8, repo_root, "..") or std.mem.startsWith(u8, repo_root, "../")) {
+            if (outside.* == null) outside.* = try std.fmt.allocPrint(a, "{s} lives in {s}, which is outside the repository root: a path dependency must be a directory below the root that holds .buckconfig", .{ u.id, u.root });
+            continue;
+        }
         const suffix = try std.fmt.allocPrint(a, "src/{s}", .{u.package});
-        if (std.mem.eql(u8, u.root, suffix)) continue;
-        if (!std.mem.endsWith(u8, u.root, suffix) or u.root.len == suffix.len or u.root[u.root.len - suffix.len - 1] != '/') continue;
-        try out.append(a, u.root[0 .. u.root.len - suffix.len - 1]);
+        const dir: []const u8 = if (std.mem.eql(u8, repo_root, suffix)) "" else blk: {
+            if (!std.mem.endsWith(u8, repo_root, suffix) or repo_root[repo_root.len - suffix.len - 1] != '/') continue;
+            break :blk repo_root[0 .. repo_root.len - suffix.len - 1];
+        };
+        const rel = try relFrom(a, pkg, dir);
+        if (rel.len == 0) continue;
+        try out.append(a, rel);
     }
     return out.toOwnedSlice(a);
 }
@@ -523,7 +558,7 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
     const tabs = (try resolveTables(ctx, tc_flag)) orelse return ctxm.exit_fail;
     const pkgs = if (given.len > 0) given else try discover(ctx);
     if (pkgs.len == 0) return ctx.fail("no package here calls mojo_package(...) in its BUCK file", .{});
-    if (try packageHolding(ctx, tabs, pkgs)) |p| return refuseInPackage(ctx, tabs, p);
+    if (try guardPackages(ctx, tabs, pkgs)) |refused| return refused;
     var code: u8 = ctxm.exit_ok;
 
     // buildrules-pins.toml -> toolchains/mopm_pins.bzl first: the build of the pinned mopm loads it.
@@ -561,14 +596,24 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
 
         var sub = try ctx.into(if (pkg.len == 0) "." else pkg);
         defer sub.dir.close();
-        const r = ctx.execer(&sub, .{ .argv = &.{ mopm, "plan", "--unit-graph", "--locked", "--mojo", tc.mojo }, .capture = true }) catch |e| {
+        // From the first mopm that has `--workspace-root`, the graph's paths are relative to the repository root, so that a package and the path
+        // dependencies it imports may be siblings; an older mopm prints paths relative to the package and takes path dependencies below it only.
+        const rooted = toolchain.supportsWorkspaceRoot(tc.mopm);
+        var argv = std.ArrayList([]const u8).empty;
+        try argv.appendSlice(a, &.{ mopm, "plan", "--unit-graph", "--locked", "--mojo", tc.mojo });
+        if (rooted) try argv.appendSlice(a, &.{ "--workspace-root", try ctx.dir.realpathAlloc(a, ".") });
+        const r = ctx.execer(&sub, .{ .argv = argv.items, .capture = true }) catch |e| {
             code |= ctx.fail("{s}: cannot run mopm: {s}", .{ pkg, @errorName(e) });
             continue;
         };
         if (r.code != 0) {
-            code |= ctx.fail("{s}: `mopm plan --unit-graph --locked --mojo {s}` exited {d}{s}", .{
-                if (pkg.len == 0) "." else pkg, tc.mojo, r.code,
+            code |= ctx.fail("{s}: `mopm plan --unit-graph --locked --mojo {s}{s}` exited {d}{s}", .{
+                if (pkg.len == 0) "." else pkg,                           tc.mojo,
+                if (rooted) " --workspace-root <the repository root>" else "", r.code,
                 if (r.code == 3) " (no usable mopm.lock, or it is out of date with mopm.toml: run `mopm lock`)" else if (r.code == 4) " (mopm cannot make a graph from this project and lock; its message is above)" else "",
+            });
+            if (!rooted) _ = ctx.fail("{s}: mopm {s} does not take --workspace-root (mopm {d}.{d}.{d} and later do), which a path dependency next to the package needs: pin a release that does in mopm-toolchain.toml", .{
+                if (pkg.len == 0) "." else pkg, tc.mopm, toolchain.workspace_root_since[0], toolchain.workspace_root_since[1], toolchain.workspace_root_since[2],
             });
             continue;
         }
@@ -602,7 +647,13 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
         }
         const th = (try sha256Of(ctx, tc.at_root)).?;
         try ms.append(a, .{ .path = tc.rel_to_pkg, .sha256 = th });
-        for (try memberDirs(a, g)) |md| {
+        var outside: ?[]const u8 = null;
+        const dirs = try memberDirs(a, g, pkg, rooted, &outside);
+        if (outside) |why_not| {
+            code |= ctx.fail("{s}: {s}", .{ pkg, why_not });
+            continue;
+        }
+        for (dirs) |md| {
             const rel = try join(a, md, "mopm.toml");
             const p = try inDir(a, pkg, rel);
             const h = (try sha256Of(ctx, p)) orelse {
@@ -614,14 +665,23 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
         }
         if (missing) continue;
         std.mem.sort(lockm.Manifest, ms.items, {}, lessManifest);
+        // The path dependencies are kept by identity only (their own tables prove their sources), so the table does not move when one of them is edited.
+        const committed = graph_norm.identityOnly(a, r.stdout) catch |e| switch (e) {
+            error.OutOfMemory => return e,
+            error.Broken => {
+                code |= ctx.fail("{s}: mopm's unit graph is not in the layout `buildrules mojo sync` reads (a unit block it cannot edit): the pinned mopm {s} and this buildrules disagree", .{ pkg, tc.mopm });
+                continue;
+            },
+        };
         const text = try lockm.render(a, .{
             .schema = contract.mojo_schema,
             .mopm_version = tc.mopm,
             .mopm_origin = try originOf(ctx, tc.mopm),
+            .workspace_root = rooted,
             .mojo = tc.mojo,
             .closure_sha256 = g.closure_sha256,
             .manifests = ms.items,
-            .graph_json = r.stdout,
+            .graph_json = committed,
         });
         try tcs.append(a, .{ .mojo = g.mojo, .toolchain = g.toolchain });
         code |= try ensureExport(ctx, tc, check_only, &pend);
@@ -715,7 +775,7 @@ pub fn checkAll(ctx: *Ctx, tc_flag: ?[]const u8) !u8 {
         _ = ctx.fail("no package here calls mojo_package(...) in its BUCK file", .{});
         return ctxm.exit_fail;
     }
-    if (try packageHolding(ctx, tabs, pkgs)) |p| return refuseInPackage(ctx, tabs, p);
+    if (try guardPackages(ctx, tabs, pkgs)) |refused| return refused;
     var bad: usize = 0;
     var tcs = std.ArrayList(lockm.Tc).empty;
     for (pkgs) |pkg| try checkPackage(ctx, pkg, &bad, &tcs);
@@ -798,6 +858,13 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
         _ = ctx.fail("{s}", .{why});
         bad.* += 1;
     }
+    // Whether the graph's paths start at the repository root is a fact of the mopm that made it: a table that says otherwise was edited by hand.
+    const rooted = l.workspace_root;
+    if (rooted != toolchain.supportsWorkspaceRoot(l.mopm_version)) {
+        stale(ctx, bad, "{s}: the table records mopm {s} {s} --workspace-root, but that release {s} it: the file was edited by hand; {s}", .{
+            lock_path, l.mopm_version, if (rooted) "with" else "without", if (rooted) "does not take" else "takes", fix,
+        });
+    }
 
     // The graph is for the Mojo the table says, and its toolchain hash is the one recorded beside it.
     if (!std.mem.eql(u8, g.mojo, l.mojo)) stale(ctx, bad, "{s}: MOJO is {s} but its unit graph is for Mojo {s}", .{ lock_path, l.mojo, g.mojo });
@@ -816,15 +883,17 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
     inline for (.{ "mopm.toml", "mopm.lock" }) |need| {
         if (lockm.manifestHash(l, need) == null) stale(ctx, bad, "{s} does not record {s}: {s}", .{ lock_path, need, fix });
     }
-    for (try memberDirs(a, g)) |md| {
+    var outside: ?[]const u8 = null;
+    for (try memberDirs(a, g, pkg, rooted, &outside)) |md| {
         const rel = try join(a, md, "mopm.toml");
         if (lockm.manifestHash(l, rel) == null) stale(ctx, bad, "{s} is a path dependency's manifest the table does not know: {s}", .{ rel, fix });
     }
+    if (outside) |why_not| stale(ctx, bad, "{s}: {s}: {s}", .{ lock_path, why_not, fix });
 
-    // The sources the graph names, by sha256.
+    // The sources the graph names, by sha256. (A path dependency's sources are not in the graph: its own table holds them.)
     for (g.units) |u| {
         for (u.srcs) |s| {
-            const p = try inDir(a, pkg, s.path);
+            const p = try join(a, graphBase(pkg, rooted), s.path);
             const got = (try sha256Of(ctx, p)) orelse {
                 stale(ctx, bad, "{s} (a source of {s}) is gone: {s}", .{ p, u.id, fix });
                 continue;
@@ -834,7 +903,7 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
     }
 
     // Files the graph does not know: a new source in a library, a new test file.
-    try checkListings(ctx, pkg, g, bad);
+    try checkListings(ctx, pkg, g, bad, rooted);
 
     // The glue and the BUCK file.
     const bzl_path = try inDir(a, pkg, contract.mojo_bzl_file);
@@ -864,23 +933,26 @@ fn graphHas(g: lockm.Graph, path_from_pkg: []const u8) bool {
     return false;
 }
 
-fn checkListings(ctx: *Ctx, pkg: []const u8, g: lockm.Graph, bad: *usize) !void {
+fn checkListings(ctx: *Ctx, pkg: []const u8, g: lockm.Graph, bad: *usize, rooted: bool) !void {
     const a = ctx.a;
-    // Libraries: every non-test .mojo under a library's root is a source of its unit.
+    const base = graphBase(pkg, rooted);
+    // Libraries: every non-test .mojo under the library of this package is a source of its unit. (The library of a path dependency is listed by the
+    // dependency's own table.)
     for (g.units) |u| {
-        if (!std.mem.eql(u8, u.kind, "lib") or u.root.len == 0) continue;
+        if (!std.mem.eql(u8, u.kind, "lib") or u.root.len == 0 or !std.mem.eql(u8, u.package, packageName(g))) continue;
         const suffix = try std.fmt.allocPrint(a, "src/{s}", .{u.package});
         const member = if (std.mem.eql(u8, u.root, suffix)) "" else if (std.mem.endsWith(u8, u.root, suffix)) u.root[0 .. u.root.len - suffix.len - 1] else "";
         var files = std.ArrayList([]const u8).empty;
-        try listMojo(ctx, try inDir(a, pkg, u.root), &files);
+        try listMojo(ctx, try join(a, base, u.root), &files);
         for (files.items) |f| {
             const rel = try join(a, u.root, f);
             const in_member = if (member.len == 0) rel else if (rel.len > member.len) rel[member.len + 1 ..] else rel;
             if (lockm.isTestPath(in_member)) continue;
-            if (!graphHas(g, rel)) stale(ctx, bad, "{s} is a source of {s} that the table does not know: {s}", .{ try inDir(a, pkg, rel), u.id, fix });
+            if (!graphHas(g, rel)) stale(ctx, bad, "{s} is a source of {s} that the table does not know: {s}", .{ try join(a, base, rel), u.id, fix });
         }
     }
-    // Tests of the root package.
+    // Tests of the root package (the graph names them from its own base: the package, or the repository root).
+    const from_graph = if (rooted) pkg else "";
     var files = std.ArrayList([]const u8).empty;
     for ([_][]const u8{ "tests", "src" }) |top| {
         var found = std.ArrayList([]const u8).empty;
@@ -889,6 +961,6 @@ fn checkListings(ctx: *Ctx, pkg: []const u8, g: lockm.Graph, bad: *usize) !void 
     }
     for (files.items) |f| {
         if (!lockm.isTestPath(f)) continue;
-        if (!graphHas(g, f)) stale(ctx, bad, "{s} is a test file that the table does not know: {s}", .{ try inDir(a, pkg, f), fix });
+        if (!graphHas(g, try join(a, from_graph, f))) stale(ctx, bad, "{s} is a test file that the table does not know: {s}", .{ try inDir(a, pkg, f), fix });
     }
 }

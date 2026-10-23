@@ -1,0 +1,9 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# The planted defect of examples/mojo/sibfake, red by design (ci/all.bzl lists it, ci/negative.bzl holds it to its reason): this package was synced when
+# ../base was version 0.2.0, so its table names base@0.2.0#mojo1.0.0/lib, but ../base is 0.1.0 now and its `:lib` is built as that. The library a unit
+# imports must be the one its graph names, so analysis of `:lib_ungated` stops and says so.
+mojo_package(path = ".")
+
+scrub_files()

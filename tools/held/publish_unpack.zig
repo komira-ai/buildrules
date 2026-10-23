@@ -3,7 +3,8 @@
 //! machine whose cache lacks them.
 //!
 //!     publish_unpack             dry run: builds the programs, checks them against rules/pins/bootstrap.bzl, reads the release, says what --apply would do.
-//!                                Changes nothing on GitHub (it reads the release's asset names with a GET).
+//!                                Changes nothing on GitHub (it reads the release's asset names with a GET). It refuses, as --apply does, a tree whose
+//!                                `git status --porcelain` prints anything (an untracked file counts), and prints that output: a green dry run predicts the apply.
 //!     publish_unpack --apply --work DIR
 //!                                the same, then creates the release (if absent), uploads the assets it does not hold, downloads each asset again and checks it
 //!                                against the pin.
@@ -164,6 +165,16 @@ fn contains(out: []const u8, name: []const u8) bool {
     return false;
 }
 
+/// Whether `git status --porcelain` of the root is empty; if not (or if it cannot be read) says so, naming `when` and the commit `sha`, and returns false.
+fn treeIsClean(a: std.mem.Allocator, o: Options, r: Runner, say: Say, sha: []const u8, when: []const u8) !bool {
+    const dirty = try r.run(a, &.{ o.git, "-C", o.root, "status", "--porcelain" }, o.root);
+    defer a.free(dirty.out);
+    if (dirty.code == 0 and std.mem.trim(u8, dirty.out, " \r\n").len == 0) return true;
+    say.say(a, "the tree has changes that are not committed {s} (git status --porcelain, exit {d}):\n{s}", .{ when, dirty.code, std.mem.trim(u8, dirty.out, "\r\n") });
+    say.say(a, "the programs built from it are not those of the commit {s}. Nothing was changed.", .{sha});
+    return false;
+}
+
 /// Runs the steps and returns the exit status: 0 done (or, in a dry run, ready), 1 the programs are not the pinned ones or an asset does not verify, 2 the
 /// repository or the tools are not as expected.
 pub fn publish(a: std.mem.Allocator, o: Options, r: Runner, say: Say) !u8 {
@@ -187,14 +198,8 @@ pub fn publish(a: std.mem.Allocator, o: Options, r: Runner, say: Say) !u8 {
         say.say(a, "cannot read the commit of {s} (git rev-parse HEAD)", .{o.root});
         return 2;
     }
-    const dirty = try r.run(a, &.{ o.git, "-C", o.root, "status", "--porcelain" }, o.root);
-    defer a.free(dirty.out);
-    const is_dirty = dirty.code != 0 or std.mem.trim(u8, dirty.out, " \r\n").len > 0;
-    if (is_dirty and o.apply) {
-        say.say(a, "the tree has changes that are not committed: the programs built from it are not those of the commit {s}. Nothing was changed.", .{sha});
-        return 2;
-    }
-    if (is_dirty) say.say(a, "WARNING: the tree has changes that are not committed; --apply would refuse", .{});
+    // The dry run refuses what --apply would refuse, so a green dry run predicts the apply.
+    if (!try treeIsClean(a, o, r, say, sha, "before the build")) return 2;
     say.say(a, "0. the commit: {s}", .{sha});
 
     // 1. build
@@ -222,6 +227,8 @@ pub fn publish(a: std.mem.Allocator, o: Options, r: Runner, say: Say) !u8 {
         say.say(a, "the build failed (exit {d}); nothing was changed", .{built_run.code});
         return 2;
     }
+    // a build that wrote into the tree means the programs are not those of the commit, in a dry run as in --apply
+    if (!try treeIsClean(a, o, r, say, sha, "after the build")) return 2;
 
     // 2. verify against the pins
     say.say(a, "2. hash them and compare with rules/pins/bootstrap.bzl", .{});

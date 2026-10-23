@@ -619,7 +619,13 @@ test "arguments: -h, a flag without its value, package directories in their seve
     // A package that has no mopm.toml, and the root, which has none either.
     var r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2", "pkgs/none" });
     try t.expectEqual(@as(u8, 1), r.code);
-    try t.expect(kit.contains(r.err, "pkgs/none: no mopm.toml here"));
+    // (A package that does not exist at all is refused by the toolchains-directory guard before the package is looked at; one that exists without a
+    // mopm.toml gets the message below.)
+    try t.expect(kit.contains(r.err, "cannot resolve the Mojo package pkgs/none"));
+    try h.put("pkgs/empty/BUCK", "# no mopm.toml here\n");
+    r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2", "pkgs/empty" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "pkgs/empty: no mopm.toml here"));
     r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2", "." });
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, ".: no mopm.toml here"));
@@ -739,23 +745,64 @@ test "sync and check: buildrules-pins.toml with a bad [mopm] table is a failure 
     try t.expect(kit.contains(c.err, "mopm \"1.0\" is not an exact release"));
 }
 
+/// The unit block mopm prints for the library of `util`, a path dependency of `base`: its sources and its key are what the table must not hold.
+/// `@ROOT@` is the root as mopm prints it (relative to the package, or to the repository root), `@PATH@` the path of its one source.
 const util_graph_unit =
-    "{\"id\": \"util@0.1.0#mojo1.0.0/lib\", \"package\": \"util\", \"version\": \"0.1.0\", \"kind\": \"lib\", \"root\": \"../util/src/util\", " ++
-    "\"srcs\": [{\"path\": \"../util/src/util/__init__.mojo\", \"sha256\": \"@SHA@\"}]}, ";
+    "    {\n" ++
+    "      \"id\": \"util@0.1.0#mojo1.0.0/lib\",\n" ++
+    "      \"package\": \"util\",\n" ++
+    "      \"version\": \"0.1.0\",\n" ++
+    "      \"kind\": \"lib\",\n" ++
+    "      \"root\": \"@ROOT@\",\n" ++
+    "      \"srcs\": [\n" ++
+    "        {\"path\": \"@PATH@\", \"sha256\": \"@SHA@\"}\n" ++
+    "      ],\n" ++
+    "      \"deps\": [],\n" ++
+    "      \"natives\": [],\n" ++
+    "      \"profile\": {\"opt\": 1, \"assert\": \"all\", \"debug\": false},\n" ++
+    "      \"outputs\": [\"util.mojoc\"],\n" ++
+    "      \"key\": \"@KEY@\"\n" ++
+    "    },\n";
+/// Units of other shapes, on one line each (not in mopm's layout, which the committed form leaves alone): only a library of another package whose
+/// root ends in `src/<its name>` after a directory is a path dependency.
 const odd_units =
-    "{\"package\": \"base\", \"kind\": \"lib\", \"root\": \"../base2/src/base\"}, " ++
+    "    {\"package\": \"base\", \"kind\": \"lib\", \"root\": \"../base2/src/base\"}, " ++
     "{\"package\": \"vendored\", \"kind\": \"test\", \"root\": \"../v/src/vendored\"}, " ++
     "{\"package\": \"flat\", \"kind\": \"lib\", \"root\": \"src/flat\"}, " ++
     "{\"package\": \"elsewhere\", \"kind\": \"lib\", \"root\": \"somewhere/else\"}, " ++
-    "{\"package\": \"zeta\", \"kind\": \"lib\", \"root\": \"xsrc/zeta\"}, ";
+    "{\"package\": \"zeta\", \"kind\": \"lib\", \"root\": \"xsrc/zeta\"}, " ++
+    "{\"id\": \"reg@1.0.0#mojo1.0.0/lib\", \"package\": \"reg\", \"kind\": \"prebuilt\"}, " ++
+    "{\"id\": \"bare@1.0.0#mojo1.0.0/lib\", \"package\": \"bare\", \"kind\": \"lib\"},\n";
 
-/// The repository of `fresh` with a second package `util` that `base` imports: the graph names its sources and its manifest is a manifest of the table.
+const util_src = "def util() -> Int:\n    return 1\n";
+const base_key = "c35bac7771b58268a8da642c068d5a26fba08d652a1bea867fe87d7e8ecedc2d";
+
+/// mopm's graph for `base` when it imports `util` (whose source is `src`, its key `key`): `base`'s library imports it, so its key (mopm hashes the keys
+/// below a unit) is `base_key` with `key` appended. `root` and `path` are as mopm prints them; `prefix` goes before the paths of `base` itself.
+fn memberGraph(h: *kit.Harness, src: []const u8, key: []const u8, root: []const u8, path: []const u8, prefix: []const u8) ![]const u8 {
+    const a = h.a();
+    var unit = try std.mem.replaceOwned(u8, a, util_graph_unit, "@ROOT@", root);
+    unit = try std.mem.replaceOwned(u8, a, unit, "@PATH@", path);
+    unit = try std.mem.replaceOwned(u8, a, unit, "@SHA@", try sha256Hex(h, src));
+    unit = try std.mem.replaceOwned(u8, a, unit, "@KEY@", key);
+    // (the odd units are paths relative to the package; with the root as the base the same words would name other directories)
+    var g = try std.mem.replaceOwned(u8, a, fx.graph, "\"units\": [\n", try std.mem.concat(a, u8, &.{ "\"units\": [\n", unit, if (prefix.len == 0) odd_units else "" }));
+    // base's library imports util, and its key moved with util's
+    g = try std.mem.replaceOwned(u8, a, g, "      \"deps\": [],\n      \"natives\": [],\n      \"profile\": {\"opt\": 1, \"assert\": \"all\", \"debug\": false},\n      \"outputs\": [\"base.mojoc\"],", "      \"deps\": [\"util@0.1.0#mojo1.0.0/lib\"],\n      \"natives\": [],\n      \"profile\": {\"opt\": 1, \"assert\": \"all\", \"debug\": false},\n      \"outputs\": [\"base.mojoc\"],");
+    g = try std.mem.replaceOwned(u8, a, g, base_key, try std.mem.concat(a, u8, &.{ base_key, key }));
+    if (prefix.len > 0) {
+        g = try std.mem.replaceOwned(u8, a, g, "\"root\": \"src/base\"", try std.fmt.allocPrint(a, "\"root\": \"{s}src/base\"", .{prefix}));
+        g = try std.mem.replaceOwned(u8, a, g, "\"path\": \"src/base/", try std.fmt.allocPrint(a, "\"path\": \"{s}src/base/", .{prefix}));
+        g = try std.mem.replaceOwned(u8, a, g, "\"path\": \"tests/", try std.fmt.allocPrint(a, "\"path\": \"{s}tests/", .{prefix}));
+    }
+    return g;
+}
+
+/// The repository of `fresh` with a second package `util` that `base` imports: the graph names it, and its manifest is a manifest of the table.
 fn withMember(h: *kit.Harness) !void {
     try h.put("pkgs/util/mopm.toml", "[package]\nname = \"util\"\nversion = \"0.1.0\"\n");
-    try h.put("pkgs/util/src/util/__init__.mojo", "def util() -> Int:\n    return 1\n");
-    const sha = try sha256Hex(h, "def util() -> Int:\n    return 1\n");
-    const unit = try std.mem.replaceOwned(u8, h.a(), util_graph_unit, "@SHA@", sha);
-    plan_graph = try std.mem.replaceOwned(u8, h.a(), fx.graph, "\"units\": [", try std.mem.concat(h.a(), u8, &.{ "\"units\": [", unit, odd_units }));
+    try h.put("pkgs/util/src/util/__init__.mojo", util_src);
+    plan_graph = try memberGraph(h, util_src, "k0", "../util/src/util", "../util/src/util/__init__.mojo", "");
 }
 
 test "sync and check: a package the graph imports from a sibling directory has its manifest in the table, and check follows it" {
@@ -771,7 +818,8 @@ test "sync and check: a package the graph imports from a sibling directory has i
     try t.expect(!kit.contains(lock, "\"../v/mopm.toml\""));
     try t.expect(!kit.contains(lock, "\"../elsewhere"));
     try t.expect(!kit.contains(lock, "xsrc/mopm.toml"));
-    // The member's manifest changed, and its source gained a file and a test.
+    // The member's manifest changed, and its source gained files: the manifest is the table's business (a new version or other dependencies change the
+    // graph), the member's sources are not (its own table lists them).
     try h.put("pkgs/util/mopm.toml", "[package]\nname = \"util\"\nversion = \"0.1.1\"\n");
     try h.put("pkgs/util/src/util/extra.mojo", "def f():\n    pass\n");
     try h.put("pkgs/util/src/util/tests/test_inner.mojo", "def main():\n    pass\n");
@@ -780,9 +828,9 @@ test "sync and check: a package the graph imports from a sibling directory has i
     const c = h.run(&.{ "mojo", "check" });
     try t.expectEqual(@as(u8, 1), c.code);
     try t.expect(kit.contains(c.err, "pkgs/util/mopm.toml changed since"));
-    try t.expect(kit.contains(c.err, "pkgs/util/src/util/extra.mojo is a source of util@0.1.0#mojo1.0.0/lib that the table does not know"));
+    try t.expect(!kit.contains(c.err, "extra.mojo"));
     try t.expect(!kit.contains(c.err, "skip.mojo"));
-    try t.expect(!kit.contains(c.err, "test_inner.mojo is a source"));
+    try t.expect(!kit.contains(c.err, "test_inner.mojo"));
     // The manifest is gone: sync says so, and the table is not written again.
     try h.tmp.dir.deleteFile("pkgs/util/mopm.toml");
     const gone = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
@@ -968,4 +1016,226 @@ test "check: the toolchain tables that are missing are stale, a glue file that i
     try t.expectEqual(@as(u8, 0), g.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
     const mc = @import("mojo_cmd.zig");
     try t.expectEqualStrings("\n" ++ mc.export_snippet, g.read("BUCK"));
+}
+
+// ---- path dependencies: identity in the table, and the repository root as the base of the graph's paths ----------------------------------
+
+const lock_path = "pkgs/base/buildrules.mojo.lock.bzl";
+
+test "mopm takes --workspace-root from 0.0.33 on, the pinned release and every earlier one do not, and nothing else is guessed" {
+    const tc = @import("toolchain.zig");
+    try t.expectEqual([3]u32{ 0, 0, 33 }, tc.workspace_root_since);
+    for ([_][]const u8{ "0.0.33", "0.0.34", "0.0.100", "0.1.0", "1.0.0", "9.9.9" }) |v| try t.expect(tc.supportsWorkspaceRoot(v));
+    // the release pinned today (rules/mopm/pins.bzl), the latest release at the time of writing, and the ones in between
+    for ([_][]const u8{ "0.0.25", "0.0.26", "0.0.32" }) |v| try t.expect(!tc.supportsWorkspaceRoot(v));
+    for ([_][]const u8{ "0.0.1", "0.0.20", "0.0.9", "0.0.0", "" }) |v| try t.expect(!tc.supportsWorkspaceRoot(v));
+    // not an exact release: no version is assumed to have the flag
+    for ([_][]const u8{ "0.0", "0.0.33-rc1", "latest", "0.0.x", "1.0.0-beta" }) |v| try t.expect(!tc.supportsWorkspaceRoot(v));
+}
+
+test "sync: with the release pinned today nothing is asked of mopm, and a mopm that fails says what a sibling path dependency needs" {
+    const h = try fresh();
+    defer h.destroy();
+    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.25\"\nmojo = \"1.0.0\"\n");
+    plan_code = 4;
+    const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expectEqual(@as(usize, 0), called("--workspace-root"));
+    try t.expect(kit.contains(r.err, "mopm 0.0.25 does not take --workspace-root (mopm 0.0.33 and later do), which a path dependency next to the package needs"));
+}
+
+/// The repository of `fresh` for a mopm that takes `--workspace-root`, with `util` a sibling of `base` (`pkgs/util`): the graph's paths start at the repository root.
+fn rootedWithSibling(h: *kit.Harness, src: []const u8, key: []const u8) !void {
+    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.33\"\nmojo = \"1.0.0\"\n");
+    try h.put("pkgs/util/mopm.toml", "[package]\nname = \"util\"\nversion = \"0.1.0\"\n");
+    try h.put("pkgs/util/src/util/__init__.mojo", src);
+    plan_graph = try memberGraph(h, src, key, "pkgs/util/src/util", "pkgs/util/src/util/__init__.mojo", "pkgs/base/");
+}
+
+test "sync: a mopm that takes --workspace-root is given the repository root, and the table records that its paths start there" {
+    const h = try fresh();
+    defer h.destroy();
+    try rootedWithSibling(h, util_src, "k0");
+    const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 0), r.code);
+    const root = try h.tmp.dir.realpathAlloc(h.a(), ".");
+    const want = try std.fmt.allocPrint(h.a(), "/fake/mopm plan --unit-graph --locked --mojo 1.0.0 --workspace-root {s}", .{root});
+    try t.expectEqual(@as(usize, 1), called(want));
+    // still run in the package's own directory
+    for (calls[0..n_calls], 0..) |c, i| {
+        if (kit.contains(c, "plan --unit-graph")) try t.expectEqualStrings("package", mopm_dir_seen[i]);
+    }
+    const lock = h.read(lock_path);
+    try t.expect(kit.contains(lock, "MOPM = {\"version\": \"0.0.33\", \"origin\": \"builtin\", \"workspace_root\": True}\n"));
+    // the sibling is a path dependency: its manifest, found from the package, is in the table; its sources are not
+    try t.expect(kit.contains(lock, "\"../util/mopm.toml\": \""));
+    try t.expect(!kit.contains(lock, "pkgs/util/src/util/__init__.mojo"));
+    // the package's own paths are the graph's, from the root
+    try t.expect(kit.contains(lock, "\"path\": \"pkgs/base/src/base/__init__.mojo\""));
+    const c = h.run(&.{ "mojo", "check" });
+    try t.expectEqual(@as(u8, 0), c.code);
+    // a new test file of the package, and a source edit, are found at the graph's paths
+    try h.put("pkgs/base/tests/test_new.mojo", "def main():\n    pass\n");
+    try h.put("pkgs/base/src/base/__init__.mojo", "def changed():\n    pass\n");
+    const stale = h.run(&.{ "mojo", "check" });
+    try t.expectEqual(@as(u8, 1), stale.code);
+    try t.expect(kit.contains(stale.err, "pkgs/base/tests/test_new.mojo is a test file that the table does not know"));
+    try t.expect(kit.contains(stale.err, "pkgs/base/src/base/__init__.mojo changed since `buildrules mojo sync`"));
+}
+
+test "sync: an older mopm is not given a flag it does not have, and its table says nothing of it" {
+    const h = try fresh();
+    defer h.destroy();
+    try withMember(h);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
+    try t.expectEqual(@as(usize, 0), called("--workspace-root"));
+    try t.expect(kit.contains(h.read(lock_path), "MOPM = {\"version\": \"0.0.1\", \"origin\": \"builtin\"}\n"));
+}
+
+test "sync: a path dependency is in the table by identity, so editing its source leaves the table as it was" {
+    for ([_]bool{ false, true }) |rooted| {
+        const h = try fresh();
+        defer h.destroy();
+        if (rooted) try rootedWithSibling(h, util_src, "k0") else try withMember(h);
+        try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
+        const before = h.read(lock_path);
+        try t.expect(kit.contains(before, "\"id\": \"util@0.1.0#mojo1.0.0/lib\""));
+        try t.expect(kit.contains(before, "\"outputs\": [\"util.mojoc\"]"));
+        try t.expect(!kit.contains(before, "util/__init__.mojo"));
+        try t.expect(!kit.contains(before, "\"key\": \"k0\""));
+        // the package's library imports util, and its test imports the library: their keys hash util's, so they are not in the table either; their
+        // sources are
+        try t.expect(!kit.contains(before, "\"key\""));
+        try t.expect(kit.contains(before, "fb0f853364953595d2c32433c6ffc27013146e9afbbb8e8e12ff472453038116"));
+        try t.expect(kit.contains(before, "35516852663564abe5b5bdc74703846e0833e0b69cc1481a51701fbe9543bea5"));
+
+        // util's source changes: mopm prints another hash and another key (and base's library another key)
+        const edited = "def util() -> Int:\n    return 2\n";
+        try h.put("pkgs/util/src/util/__init__.mojo", edited);
+        plan_graph = if (rooted)
+            try memberGraph(h, edited, "k1", "pkgs/util/src/util", "pkgs/util/src/util/__init__.mojo", "pkgs/base/")
+        else
+            try memberGraph(h, edited, "k1", "../util/src/util", "../util/src/util/__init__.mojo", "");
+        try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
+        try t.expectEqualStrings(before, h.read(lock_path));
+        // and the table is still the one the files describe
+        try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check" }).code);
+
+        // the package's own source is in the table: editing it is stale
+        try h.put("pkgs/base/src/base/__init__.mojo", "def other():\n    pass\n");
+        try t.expectEqual(@as(u8, 1), h.run(&.{ "mojo", "check" }).code);
+    }
+}
+
+test "sync: a path dependency outside the repository root is refused, naming it, and writes nothing" {
+    // rooted: the graph's own path leaves the root; older mopm: the package's path does
+    const cases = [_]struct { toolchain: []const u8, root: []const u8, path: []const u8, prefix: []const u8 }{
+        .{ .toolchain = "0.0.33", .root = "../outside/src/util", .path = "../outside/src/util/__init__.mojo", .prefix = "pkgs/base/" },
+        .{ .toolchain = "0.0.1", .root = "../../../outside/src/util", .path = "../../../outside/src/util/__init__.mojo", .prefix = "" },
+    };
+    for (cases) |c| {
+        const h = try fresh();
+        defer h.destroy();
+        try h.put("mopm-toolchain.toml", try std.fmt.allocPrint(h.a(), "[toolchain]\nmopm = \"{s}\"\nmojo = \"1.0.0\"\n", .{c.toolchain}));
+        plan_graph = try memberGraph(h, util_src, "k0", c.root, c.path, c.prefix);
+        const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+        try t.expectEqual(@as(u8, 1), r.code);
+        try t.expect(kit.contains(r.err, "pkgs/base: util@0.1.0#mojo1.0.0/lib lives in "));
+        try t.expect(kit.contains(r.err, "outside the repository root"));
+        try t.expect(!h.has(lock_path));
+    }
+}
+
+test "sync: a graph in a layout the committed form cannot edit is refused with the package and the mopm, and nothing is written" {
+    const h = try fresh();
+    defer h.destroy();
+    try withMember(h);
+    plan_graph = try std.mem.replaceOwned(u8, h.a(), plan_graph, "    {\n      \"id\": \"util@", "    {\n      \"note\": \"first\",\n      \"id\": \"util@");
+    const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "pkgs/base: mopm's unit graph is not in the layout `buildrules mojo sync` reads"));
+    try t.expect(kit.contains(r.err, "the pinned mopm 0.0.1"));
+    try t.expect(!h.has(lock_path));
+}
+
+test "sync: a mopm that was given --workspace-root and failed says so" {
+    const h = try fresh();
+    defer h.destroy();
+    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.33\"\nmojo = \"1.0.0\"\n");
+    plan_code = 4;
+    const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "`mopm plan --unit-graph --locked --mojo 1.0.0 --workspace-root <the repository root>` exited 4"));
+}
+
+test "sync: a path dependency at the repository root itself is a directory like another, and its manifest is found from the package" {
+    const h = try fresh();
+    defer h.destroy();
+    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.33\"\nmojo = \"1.0.0\"\n");
+    try h.put("mopm.toml", "[package]\nname = \"util\"\nversion = \"0.1.0\"\n");
+    try h.put("src/util/__init__.mojo", util_src);
+    plan_graph = try memberGraph(h, util_src, "k0", "src/util", "src/util/__init__.mojo", "pkgs/base/");
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
+    try t.expect(kit.contains(h.read(lock_path), "\"../../mopm.toml\": \""));
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "check" }).code);
+}
+
+test "sync: every path dependency outside the repository root is refused, an absolute path and a bare .. as much as a path up, and the first is named" {
+    const h = try fresh();
+    defer h.destroy();
+    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.33\"\nmojo = \"1.0.0\"\n");
+    const graph = try memberGraph(h, util_src, "k0", "/opt/outside/src/util", "/opt/outside/src/util/__init__.mojo", "pkgs/base/");
+    // a second dependency, also outside, as a bare `..`
+    const second = try std.mem.replaceOwned(u8, h.a(), try std.mem.replaceOwned(u8, h.a(), util_graph_unit, "@ROOT@", ".."), "util", "other");
+    const two = try std.mem.replaceOwned(u8, h.a(), graph, "\"units\": [\n", try std.mem.concat(h.a(), u8, &.{ "\"units\": [\n", try std.mem.replaceOwned(u8, h.a(), try std.mem.replaceOwned(u8, h.a(), second, "@PATH@", "x"), "@SHA@", "11"), "" }));
+    plan_graph = try std.mem.replaceOwned(u8, h.a(), two, "@KEY@", "k9");
+    const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "other@0.1.0#mojo1.0.0/lib lives in .., which is outside the repository root"));
+    try t.expect(!kit.contains(r.err, "util@0.1.0#mojo1.0.0/lib lives in /opt"));
+    try t.expect(!h.has(lock_path));
+}
+
+test "the root .buckconfig: the first include line is the one named, odd lines of it are skipped, and a repository with none is read with the default toolchains cell" {
+    const h = try fresh();
+    defer h.destroy();
+    try h.put(".buckconfig", "<file:first.bcfg>\n<file:second.bcfg>\n[cells\n[cells]\nloose line without a value\ntoolchains = toolchains\n");
+    var r = h.run(&.{ "mojo", "check" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, ".buckconfig has an include line (<file:first.bcfg>)"));
+    try t.expect(!kit.contains(r.err, "second.bcfg"));
+    try h.tmp.dir.deleteFile(".buckconfig");
+    r = h.run(&.{ "mojo", "check" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "pkgs/base/buildrules.mojo.lock.bzl is missing"));
+}
+
+test "check: what the table says about --workspace-root must be what its mopm release does" {
+    const h = try fresh();
+    defer h.destroy();
+    try rootedWithSibling(h, util_src, "k0");
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
+    const lock = h.read(lock_path);
+    // the flag taken off by hand: the paths of the graph would be read from the package
+    try h.put(lock_path, try std.mem.replaceOwned(u8, h.a(), lock, ", \"workspace_root\": True", ""));
+    var r = h.run(&.{ "mojo", "check" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "records mopm 0.0.33 without --workspace-root, but that release takes it"));
+    // and put on a table of a mopm that does not have it
+    try h.put(lock_path, try std.mem.replaceOwned(u8, h.a(), lock, "\"version\": \"0.0.33\"", "\"version\": \"0.0.20\""));
+    r = h.run(&.{ "mojo", "check" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "records mopm 0.0.20 with --workspace-root, but that release does not take it"));
+}
+
+test "check: a table that names a path dependency outside the repository root is stale" {
+    const h = try fresh();
+    defer h.destroy();
+    try rootedWithSibling(h, util_src, "k0");
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
+    const lock = h.read(lock_path);
+    try h.put(lock_path, try std.mem.replaceOwned(u8, h.a(), lock, "\"root\": \"pkgs/util/src/util\"", "\"root\": \"../elsewhere/src/util\""));
+    const r = h.run(&.{ "mojo", "check" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "lives in ../elsewhere/src/util, which is outside the repository root"));
 }

@@ -4,6 +4,8 @@
 
 const std = @import("std");
 const kit = @import("testkit.zig");
+const posix = std.posix;
+const supervise = @import("supervise.zig");
 
 const Env = struct {
     arena: std.heap.ArenaAllocator,
@@ -63,7 +65,7 @@ test "S1 usage: each bad command line exits 2, and an unreadable --after file fa
         .{ .argv = &.{ "step", "--status", "s", "--limit-s", "5" }, .msg = "mut_step: expected -- and a command\n" },
         .{ .argv = &.{ "step", "--status", "s", "--limit-s", "5", "--" }, .msg = "mut_step: expected -- and a command\n" },
     }) |c| {
-        const r = try kit.runGate(e.a, e.dir, c.argv, .{});
+        const r = try kit.runInline(e.a, e.dir, c.argv);
         if (r.status != 2 or !std.mem.eql(u8, r.err, c.msg)) {
             std.debug.print("{s}: exit {d}, stderr {s}\n", .{ std.mem.join(std.heap.page_allocator, " ", c.argv) catch "", r.status, r.err });
             return error.TestUnexpectedResult;
@@ -156,4 +158,101 @@ test "S3 @MUT_SCRATCH@: absolute, relative and unset scratch paths" {
         }
     }
     try std.testing.expect(found);
+}
+
+/// The exec that records which program the step asked for (in the file $GATE_RECORD), then behaves as the fixture.
+fn recordExec(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8) noreturn {
+    const file = posix.getenv("GATE_RECORD") orelse posix.exit(97);
+    kit.writeFile(file, std.mem.span(path)) catch posix.exit(97);
+    kit.fixture(path, argv, envp);
+}
+
+fn useRecordExec() void {
+    supervise.plat.exec = recordExec;
+}
+
+fn makeProgram(path: []const u8, mode: posix.mode_t) !void {
+    try kit.writeFile(path, "program\n");
+    try posix.fchmodat(posix.AT.FDCWD, path, mode, 0);
+}
+
+test "S7 program lookup: a name with no slash is the first executable of $PATH; an empty entry is the working directory; no match or no PATH leaves the name" {
+    const e = try Env.init();
+    defer e.deinit();
+    try makeProgram(e.p("noexec/exit"), 0o644);
+    try makeProgram(e.p("bin1/exit"), 0o755);
+    try makeProgram(e.p("bin2/exit"), 0o755);
+    try makeProgram(e.p("exit"), 0o755);
+    const rec = e.p("recorded");
+    const Case = struct { path: ?[]const u8, want: []const u8 };
+    for ([_]Case{
+        .{ .path = try std.fmt.allocPrint(e.a, "{s}:{s}:{s}:{s}", .{ e.p("nowhere"), e.p("noexec"), e.p("bin1"), e.p("bin2") }), .want = e.p("bin1/exit") },
+        .{ .path = try std.fmt.allocPrint(e.a, ":{s}", .{e.p("bin1")}), .want = "./exit" },
+        .{ .path = e.p("noexec"), .want = "exit" },
+        .{ .path = null, .want = "exit" },
+    }) |c| {
+        var env = std.ArrayList([]const u8).empty;
+        try env.append(e.a, "GATE_TEST=1");
+        try env.append(e.a, try std.fmt.allocPrint(e.a, "GATE_RECORD={s}", .{rec}));
+        if (c.path) |p| try env.append(e.a, try std.fmt.allocPrint(e.a, "PATH={s}", .{p}));
+        const r = try kit.runGate(e.a, e.dir, &.{ "step", "--status", "status", "--limit-s", "30", "--", "exit", "0" }, .{ .env = env.items, .setup = useRecordExec });
+        try std.testing.expectEqual(@as(u8, 0), r.status);
+        try std.testing.expectEqualStrings(c.want, try kit.readFile(e.a, rec));
+        try std.testing.expectEqualStrings("ok\n", try e.status());
+    }
+}
+
+fn deadClock() ?u64 {
+    return null;
+}
+
+fn useDeadClock() void {
+    supervise.plat.now_ms = deadClock;
+}
+
+test "S8 a clock that cannot be read: the step is not run unbounded, exit 2 with the message, and no status is written" {
+    const e = try Env.init();
+    defer e.deinit();
+    const r = try kit.runGate(e.a, e.dir, &.{ "step", "--status", "status", "--limit-s", "30", "--", "x/exit", "0" }, .{ .env = &no_scratch, .setup = useDeadClock });
+    try std.testing.expectEqual(@as(u8, 2), r.status);
+    try std.testing.expectEqualStrings("mut_step: the clock could not be read, so the step could not be bounded\n", r.err);
+    try std.testing.expect(!kit.exists(e.p("status")));
+}
+
+test "S9 a working directory that no longer exists is an error of the tool: exit 2 and the error's name, no status" {
+    const e = try Env.init();
+    defer e.deinit();
+    const r = try kit.runGate(e.a, e.dir, &.{ "step", "--status", "status", "--limit-s", "30", "--", "x/exit", "0" }, .{ .env = &no_scratch, .setup = kit.unlinkCwd });
+    try std.testing.expectEqual(@as(u8, 2), r.status);
+    try std.testing.expectEqualStrings("mut_step: CurrentWorkingDirectoryUnlinked\n", r.err);
+    try std.testing.expectEqualStrings("", r.out);
+}
+
+test "S10 memory: a skipped step that cannot get memory at any one of its allocations says so with exit 2; with enough it is skipped" {
+    const e = try Env.init();
+    defer e.deinit();
+    try kit.writeFile(e.p("before"), "fail 1\n");
+    const argv = [_][]const u8{ "step", "--status", "status", "--limit-s", "5", "--after", "before", "--", "x/exit", "0", "-o", "out/deep/x" };
+    var failures: usize = 0;
+    var index: usize = 0;
+    while (index < 500) : (index += 1) {
+        var failing = std.testing.FailingAllocator.init(e.a, .{ .fail_index = index });
+        const r = try kit.runInlineWith(e.a, failing.allocator(), e.dir, &argv);
+        if (r.status == 0) {
+            try std.testing.expectEqualStrings("skipped\n", try e.status());
+            try std.testing.expect(kit.exists(e.p("out/deep/x")));
+            break;
+        }
+        // Reading the --after file is the one place that reports a lack of memory as the file being unreadable.
+        if (r.status == 1) {
+            try std.testing.expectEqualStrings("mut_step: cannot read before\n", r.err);
+        } else {
+            try std.testing.expectEqual(@as(u8, 2), r.status);
+            try std.testing.expectEqualStrings("mut_step: OutOfMemory\n", r.err);
+        }
+        failures += 1;
+        std.fs.cwd().deleteFile(e.p("status")) catch {};
+    } else return error.TestUnexpectedResult;
+    // The --after file, the working directory, the scratch directory and the command are each an allocation that can fail.
+    try std.testing.expect(failures >= 3);
 }

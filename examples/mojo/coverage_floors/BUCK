@@ -1,9 +1,9 @@
 load("@buildrules//rules/mojo:defs.bzl", "mojo_coverage_floor")
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 
-# The coverage of ../partial (60.00% of its lines, 50.00% of its branch arms) held to floors that are not its own, one defect each. Each target must
-# fail, and say which way (ci/negative.bzl, COVERAGE_REDS). The floor that is exactly its coverage is ../partial/coverage_floor.txt, whose
-# `:coverage_floor` is green and is built by //ci:mojo.
+# The coverage of ../partial (60.00% of its lines, 50.00% of its branch arms) held to floors that are not its own. A floor above the coverage must fail,
+# and say so (ci/negative.bzl, COVERAGE_REDS); a floor below it passes (a floor is a minimum) and is built by //ci:mojo. The floor that is exactly its
+# coverage is ../partial/coverage_floor.txt, whose `:coverage_floor` is green and is built by //ci:mojo.
 #
 # The line figure: a floor above it, and one below it (the branch figure is right in both).
 mojo_coverage_floor(
@@ -18,7 +18,7 @@ mojo_coverage_floor(
     floor = "floor_below.txt",
 )
 
-# The branch figure: a floor above it, and one below it (the line figure is right in both).
+# The branch figure: a floor above it (fails), and one below it (passes) (the line figure is right in both).
 mojo_coverage_floor(
     name = "branches_floor_above_the_coverage",
     coverage = "//examples/mojo/partial:coverage",
@@ -38,11 +38,11 @@ mojo_coverage_floor(
     floor = "no_branches.txt",
 )
 
-# The coverage of ../reexport (every line hit, and no decision in its code, so no branches figure): a `branches` line has nothing to hold and is refused.
-# The floor that is exactly its coverage, `lines 100.00` alone, is ../reexport/coverage_floor.txt, whose `:coverage_floor` is green and is built by //ci:mojo.
+# The coverage of ../testdata (every line hit, and no decision in its code, so no branches figure): a `branches` line has nothing to hold and is refused.
+# The floor that is exactly its coverage, `lines 100.00` alone, is ../testdata/coverage_floor.txt, whose `:coverage_floor` is green and is built by //ci:mojo.
 mojo_coverage_floor(
     name = "branches_floor_on_no_decisions",
-    coverage = "//examples/mojo/reexport:coverage",
+    coverage = "//examples/mojo/testdata:coverage",
     floor = "branches_on_no_decisions.txt",
 )
 
