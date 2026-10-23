@@ -1309,6 +1309,12 @@ test "plan: a release that lacks a file, holds another digest or reports none is
     wrongly += @intFromBool(completeWith(a, withDigest(a, all, 1, null), c.r.sums));
     wrongly += @intFromBool(completeWith(a, all, forged));
     wrongly += @intFromBool(completeWith(a, all, c.r.sums[0 .. c.r.sums.len / 2]));
+    // a release that is consistent with itself but not with the commit: its SHA256SUMS lists another archive digest, the held archive carries that digest, the SHA256SUMS held
+    // carries the digest of those bytes, and every other file agrees; only the comparison of the archive with the commit's build tells it from a complete one
+    const archive_hex = assets.sha256Hex(c.r.b.archive);
+    const other_sums = std.mem.replaceOwned(u8, a, c.r.sums, &archive_hex, "f" ** 64) catch @panic("out of memory");
+    wrongly += @intFromBool(std.mem.eql(u8, other_sums, c.r.sums));
+    wrongly += @intFromBool(completeWith(a, withDigest(a, withDigest(a, all, 0, "f" ** 64), 6, &assets.sha256Hex(other_sums)), other_sums));
     // a bundle held with other bytes is the same file signed again: the release stays complete
     try t.expect(wrongly == 0 and completeWith(a, withDigest(a, all, 7, "1" ** 64), c.r.sums));
 }

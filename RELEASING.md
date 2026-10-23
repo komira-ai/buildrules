@@ -567,7 +567,7 @@ then (`tool/release tag`, `settleTag` in `tools/release/cmds.zig`). For the comm
 
 | what `tag` finds | what happens |
 |---|---|
-| a tag already names `C`, and it is the planned one | a re-run: the tag is kept, and `site`, `publish` and `bump` go on with it (even when newer releases exist: `publish` still refuses a release below the newest) |
+| a tag already names `C`, and it is the planned one | a re-run: the tag is kept, and `site`, `publish` and `bump` go on with it, unless the release already holds every file (then every job after the plan is skipped, `site`, `bump`, the tap and the apt deploy included; re-run only the failed job to retry one) (even when newer releases exist: `publish` still refuses a release below the newest) |
 | a tag names `C` under another number | the job fails (`TagMismatch`): the build carries the planned number |
 | `C` is contained in `N`'s commit (an ancestor of it) | the run ends **green as superseded**, with a notice naming `N`: that release carries `C`'s changes, so `site`, `publish` and `bump` are skipped and nothing is created |
 | `C` is not contained in `N`'s commit, and the planned number is the next free one | the tag is made, as before |
