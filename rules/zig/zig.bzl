@@ -21,7 +21,7 @@ ZigExeInfo = provider(fields = {
     "unit_tests": provider_field(list),
 })
 load("@buildrules//rules/core:test_runtime.bzl", "RUNNER_ENV", "data_map")
-load(":checks.bzl", "check_exe_target", "check_exec_tool_name", "check_module_name", "check_optimize", "check_same_tests", "check_target_triple", "check_unique_dep_names", "check_unique_imports", "zig_closure")
+load(":checks.bzl", "check_bootstrap", "check_exe_target", "check_exec_tool_name", "check_module_name", "check_optimize", "check_same_tests", "check_target_triple", "check_unique_dep_names", "check_unique_imports", "zig_closure")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/core:rerun.bzl", "RERUN_ATTRS", "rerun_env", "rerun_info")
 
@@ -196,22 +196,51 @@ def _zig_optimize(ctx):
     check_optimize(ctx.label.raw_target(), ctx.attrs.optimize)
     return ctx.attrs.optimize
 
+def zig_run(check, scratch, zig, *args):
+    """argv running `<zig>/zig ARGS` with `check run` (rules/check) in place of a shell script: in the action's working directory, with the action's
+    environment, and ZIG_GLOBAL_CACHE_DIR, ZIG_LOCAL_CACHE_DIR and HOME set to directories of a private scratch directory
+    (`$BUCK_SCRATCH_PATH/<scratch>`: made, emptied before the run and removed after it)."""
+    return cmd_args(
+        check,
+        "run",
+        "--scratch",
+        scratch,
+        "--dir",
+        "ZIG_GLOBAL_CACHE_DIR=zig-global",
+        "--dir",
+        "ZIG_LOCAL_CACHE_DIR=zig-local",
+        "--dir",
+        "HOME=home",
+        "--",
+        cmd_args(zig, "/zig", delimiter = ""),
+        *args
+    )
+
 def _zig_exe_impl(ctx):
-    bb = ctx.attrs.busybox[DefaultInfo].default_outputs[0]
     zig = ctx.attrs.zig[DefaultInfo].default_outputs[0]
     out = ctx.actions.declare_output(ctx.label.name)
-    script = _PRELUDE + """
-ZIG_GLOBAL_CACHE_DIR="$T/zig-global"; ZIG_LOCAL_CACHE_DIR="$T/zig-local"; HOME="$T/home"
-export ZIG_GLOBAL_CACHE_DIR ZIG_LOCAL_CACHE_DIR HOME
-"$1/zig" build-exe -OReleaseSafe -target TARGET -fstrip "$2" "-femit-bin=$3"
-rm -rf "$T"
-"""
-    # The target, the optimization mode and the strip flag are written into
-    # the script, so that with the defaults the command (and the action key)
-    # of every zig_exe is what it was before the attributes existed.
     check_target_triple(ctx.label, ctx.attrs.target)
-    script = script.replace("-OReleaseSafe -target TARGET -fstrip ", "-O{} -target {} {} ".format(_zig_optimize(ctx), ctx.attrs.target, "-fstrip" if ctx.attrs.strip else "-fno-strip"))
-    cmd = busybox_sh(bb, script, zig, _zig_root(ctx), out.as_output())
+    check_bootstrap(ctx.label.raw_target(), ctx.label.cell, ctx.label.package, ctx.attrs.bootstrap)
+    zig_bin = cmd_args(zig, "/zig", delimiter = "")
+    build = cmd_args(
+        "build-exe",
+        "-O" + _zig_optimize(ctx),
+        "-target",
+        ctx.attrs.target,
+        "-fstrip" if ctx.attrs.strip else "-fno-strip",
+        _zig_root(ctx),
+        cmd_args(out.as_output(), format = "-femit-bin={}"),
+    )
+    env = {}
+    if ctx.attrs.bootstrap:
+        # `check` and `toolbox` are built here, and `check run` is what builds every other executable: zig itself is the action's executable, with its caches
+        # in the action's working directory (as `zig_bootstrap_exe`), and no scratch directory or HOME of its own.
+        cmd = cmd_args(zig_bin, build)
+        env = {"ZIG_GLOBAL_CACHE_DIR": ".zig-cache/global", "ZIG_LOCAL_CACHE_DIR": ".zig-cache/local"}
+    else:
+        # `check run` (rules/check): zig starts in the action's working directory with the action's environment and the three variables of a private
+        # scratch directory (`$BUCK_SCRATCH_PATH/buildrules`, made, emptied before and removed after): zig's two caches and HOME.
+        cmd = zig_run(ctx.attrs.check[RunInfo], "buildrules", zig, build)
     if ctx.attrs.imports:
         # Files `src` imports by a relative name: inputs at their paths, so
         # beside it, and not on the command line.
@@ -223,13 +252,18 @@ rm -rf "$T"
     ctx.actions.run(
         cmd,
         category = "zig_build_exe",
+        env = env,
     )
     return [DefaultInfo(default_output = out), RunInfo(args = cmd_args(out)), ZigExeInfo(target = ctx.attrs.target, unit_tests = sorted([str(t.label.raw_target()) for t in ctx.attrs.unit_tests]))]
 
 zig_exe_rule = rule(
     impl = _zig_exe_impl,
     attrs = {
-        "busybox": attrs.dep(default = "buildrules//rules/pins:busybox"),
+        # True: zig is run directly, with no `check run` (the executables `check` itself is built and tested with: `check` and `toolbox`; a build
+        # that needed `check` to build `check` could not start). Everything else leaves it False.
+        "bootstrap": attrs.bool(default = False),
+        # `check` (rules/check), which starts zig. The macro below sets it unless `bootstrap`: an executable that is built without it must not depend on it.
+        "check": attrs.option(attrs.exec_dep(providers = [RunInfo]), default = None),
         # `zig_module` targets `src` imports by name.
         "deps": attrs.list(attrs.dep(providers = [ZigModuleInfo]), default = []),
         "imports": attrs.list(attrs.source(), default = []),
@@ -443,7 +477,15 @@ conda_libs = _on_linux(conda_libs_rule)
 
 zig_dist = _on_linux(zig_dist_rule)
 zig_bootstrap_exe = _on_linux(zig_bootstrap_exe_rule)
-zig_exe = _on_linux(zig_exe_rule)
+_zig_exe_on_linux = _on_linux(zig_exe_rule)
+
+def zig_exe(**kwargs):
+    """`zig_exe_rule` on the linux execution platform, started by `check run` unless `bootstrap = True`."""
+    if "check" in kwargs:
+        fail("zig_exe {}: `check` is set by the macro, not by the target".format(kwargs.get("name")))
+    if not kwargs.get("bootstrap"):
+        kwargs["check"] = "buildrules//rules/check:check"
+    return _zig_exe_on_linux(**kwargs)
 zig_test = _on_linux(zig_test_rule)
 zig_module = zig_module_rule
 

@@ -8,7 +8,6 @@ load(":toolchain.bzl", "zig_exe")
 zig_exe(
     name = "rustc_launch",
     src = "rustc_launch.zig",
-    busybox = "toolchains//:busybox_pin",
     zig = "toolchains//:zig",
     visibility = ["PUBLIC"],
 )
@@ -17,7 +16,6 @@ zig_exe(
 zig_exe(
     name = "bs_runner",
     src = "bs_runner.zig",
-    busybox = "toolchains//:busybox_pin",
     zig = "toolchains//:zig",
     visibility = ["PUBLIC"],
 )
@@ -40,7 +38,6 @@ seed_zig_exe(
     exec_compatible_with = LINUX_X86_64,
     src = "crate_patch.zig",
     unit_tests = [":crate_patch_unit"],
-    busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig",
     visibility = ["PUBLIC"],
 )
@@ -94,7 +91,6 @@ seed_zig_exe(
     exec_compatible_with = LINUX_X86_64,
     src = "sync_stage.zig",
     unit_tests = [":sync_stage_unit"],
-    busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
     visibility = ["PUBLIC"],
 )

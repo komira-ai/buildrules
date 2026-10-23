@@ -47,22 +47,36 @@ zig_dist = rule(
     },
 )
 
-_ZIG_EXE = """set -eu
-BB="$1"; ZIG="$2"; SRC="$3"; OUT="$4"
-case "$BUCK_SCRATCH_PATH" in
-    /*) S="$BUCK_SCRATCH_PATH/br" ;;
-    *) S="$PWD/$BUCK_SCRATCH_PATH/br" ;;
-esac
-"$BB" mkdir -p "$S/g" "$S/l"
-export ZIG_GLOBAL_CACHE_DIR="$S/g" ZIG_LOCAL_CACHE_DIR="$S/l" HOME="$S"
-exec "$ZIG/zig" build-exe "$SRC" -O ReleaseSafe -fstrip -target x86_64-linux-musl -femit-bin="$OUT" --name rustc_launch
-"""
-
 def _zig_exe_impl(ctx):
     out = ctx.actions.declare_output(ctx.label.name)
-    bb = _file(ctx.attrs.busybox)
+
+    # `check run` (rules/check): zig starts in the action's working directory with the action's environment and a private scratch directory
+    # (`$BUCK_SCRATCH_PATH/br`: made, emptied before and removed after) holding its two caches (`g`, `l`); HOME is the scratch directory itself.
     ctx.actions.run(
-        cmd_args(bb, "sh", "-c", _ZIG_EXE, "sh", bb, _file(ctx.attrs.zig), ctx.attrs.src, out.as_output()),
+        cmd_args(
+            ctx.attrs._check_exe[RunInfo],
+            "run",
+            "--scratch",
+            "br",
+            "--dir",
+            "ZIG_GLOBAL_CACHE_DIR=g",
+            "--dir",
+            "ZIG_LOCAL_CACHE_DIR=l",
+            "--dir",
+            "HOME=.",
+            "--",
+            cmd_args(_file(ctx.attrs.zig), "/zig", delimiter = ""),
+            "build-exe",
+            ctx.attrs.src,
+            "-O",
+            "ReleaseSafe",
+            "-fstrip",
+            "-target",
+            "x86_64-linux-musl",
+            cmd_args(out.as_output(), format = "-femit-bin={}"),
+            "--name",
+            "rustc_launch",
+        ),
         category = "zig_exe",
         env = _ENV,
     )
@@ -71,9 +85,9 @@ def _zig_exe_impl(ctx):
 zig_exe = rule(
     impl = _zig_exe_impl,
     attrs = {
-        "busybox": attrs.exec_dep(),
         "src": attrs.source(),
         "zig": attrs.exec_dep(),
+        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
     },
 )
 

@@ -7,6 +7,8 @@ Make the fixture valid (give it `exec_compatible_with = test_exec_compatible_wit
 control's own error. ci/negative_check.zig holds the wiring of this file to the fixtures, in //ci:all.
 """
 
+load("@buildrules//ci/runners:tools.bzl", "REFUSED", "refusal_target")
+
 PLATFORM = "buildrules//platforms:linux_x86_64_v3"
 FIXTURE = "//ci/negative:v3_test_without_isa_property"
 CONTROL = "//ci/negative:v3_test_with_isa_property"
@@ -20,6 +22,7 @@ REASON = "built for ISA x86-64-v3 but its execution platform reports ISA="
 # rules/coverage/checks.bzl, rules/mojo/unit.bzl).
 CASES = [
     ("//ci/negative:zig_exe_with_a_dep_of_the_wrong_kind", PLATFORM, "Attribute requires a dep that provides `ZigModuleInfo`"),
+    ("//ci/negative:zig_exe_with_bootstrap_outside_check", PLATFORM, "bootstrap = True is for rules/check and rules/toolbox only"),
     ("//ci/negative:cxx_library_gated_by_the_wrong_kind", PLATFORM, "Attribute requires a dep that provides `ValidationInfo`"),
     ("//ci/negative:npm_tarball_with_a_dep_of_the_wrong_kind", PLATFORM, "Attribute requires a dep that provides `NpmPackageInfo`"),
     ("//ci/negative:zig_coverage_of_no_test", PLATFORM, "test_targets is empty: a package with no test has no coverage to measure"),
@@ -27,6 +30,27 @@ CASES = [
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys/base_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
+]
+
+# The runner rules (zig_exe, c_exe, c_shared, node's c_shared_lib, the Rust toolchain's zig_exe) start zig with `check run`, and the C/C++ toolchain's refusals are
+# `check run --refuse` (ci/runners/BUCK). Each row of RUNNERS is a target that must fail, and the text its failure must hold. A refusal must say the toolchain's own
+# message (and not complain about the arguments the prelude appends to a tool); a zig_exe row must carry what the stand-in zig says of the one argument that differs.
+# The controls, the same rules on the arguments that are right, must build (so the failure is for that argument and not for something else).
+RUNNER_CONTROLS = [
+    "//ci/runners:zig_exe_runs",
+    "//ci/runners:c_exe_runs",
+    "//ci/runners:c_shared_runs",
+    "//ci/runners:node_c_shared_runs",
+    "//ci/runners:rust_zig_exe_runs",
+]
+
+RUNNERS = [
+    ("//ci/runners:zig_exe_optimized_for_debug", "stand-in zig: zig_exe: argument 2 is `-ODebug`, expected `-OReleaseSafe`"),
+    ("//ci/runners:zig_exe_not_stripped", "stand-in zig: zig_exe: argument 5 is `-fno-strip`, expected `-fstrip`"),
+    ("//ci/runners:refused_python_interpreter", "python bootstrap toolchain: no Python interpreter is provided (see rules/cxx/toolchain.bzl)"),
+] + [
+    ("//ci/runners:" + refusal_target(what), "cxx toolchain: {} is not provided (see rules/cxx/toolchain.bzl)".format(what))
+    for what in REFUSED
 ]
 
 def _analyse(ctx, label, platform = PLATFORM):
@@ -55,7 +79,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx)
+    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + runner_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
@@ -245,4 +269,19 @@ def test_command_problems(ctx):
         for want in labels:
             if want not in (info.labels or []):
                 problems.append("{}: the labels `buck2 test` is given lack `{}`: {}".format(label, want, info.labels))
+    return problems
+
+def runner_problems(ctx):
+    """Every way a runner case (RUNNERS) does not fail with its message, or a control (RUNNER_CONTROLS) is not green: a list of strings, empty when all hold."""
+    problems = []
+    for label in RUNNER_CONTROLS:
+        built, failed = _built(ctx, label)
+        if failed or not built:
+            problems.append("{} (a runner rule on the arguments that are right) must build, and it built {} artifact(s) and failed {}".format(label, built, failed))
+    for label, reason in RUNNERS:
+        built, failed = _built(ctx, label)
+        if not failed:
+            problems.append("{} built ({} artifact(s)): it must fail, and a failure left the target green".format(label, built))
+        elif reason not in _failures(ctx, label):
+            problems.append("{} fails, but not with the message it must give (expected \"{}\"): {}".format(label, reason, _failures(ctx, label)))
     return problems

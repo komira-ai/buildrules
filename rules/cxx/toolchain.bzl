@@ -46,14 +46,16 @@ load("@prelude//linking:link_info.bzl", "LinkStyle")
 load("@prelude//python_bootstrap:python_bootstrap.bzl", "PythonBootstrapToolchainInfo")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 
-def _refusal(bb, what):
-    # A tool the toolchain does not provide. It is still a declared input (the busybox), so reaching it
-    # fails the action with a message, never a search of the worker's PATH.
+def _refusal(check, what):
+    # A tool the toolchain does not provide. `check run --refuse` (rules/check) writes the message to stderr and exits 2; it is a declared
+    # input, so reaching the tool fails the action with a message, never a search of the worker's PATH. The final `--` keeps the arguments
+    # the prelude appends to the tool as the program's (never started), where they would otherwise be options `check` does not know.
     return RunInfo(args = cmd_args(
-        bb,
-        "sh",
-        "-c",
-        "echo \"cxx toolchain: {} is not provided (see rules/cxx/toolchain.bzl)\" >&2; exit 2".format(what),
+        check,
+        "run",
+        "--refuse",
+        "cxx toolchain: {} is not provided (see rules/cxx/toolchain.bzl)".format(what),
+        "--",
     ))
 
 def _zig_tool(launcher, zig, sub):
@@ -62,7 +64,7 @@ def _zig_tool(launcher, zig, sub):
     return RunInfo(args = cmd_args(launcher, zig, sub))
 
 def _zig_cxx_toolchain_impl(ctx):
-    bb = ctx.attrs.busybox[DefaultInfo].default_outputs[0]
+    check = ctx.attrs._check_exe[RunInfo]
     zig = ctx.attrs.zig[DefaultInfo].default_outputs[0]
     launcher = ctx.attrs.launcher[DefaultInfo].default_outputs[0]
     cc = _zig_tool(launcher, zig, "cc")
@@ -124,7 +126,7 @@ def _zig_cxx_toolchain_impl(ctx):
         use_archiver_flags = True,
         is_pdb_generated = False,
     )
-    refuse = lambda what: _refusal(bb, what)
+    refuse = lambda what: _refusal(check, what)
     internal_tools = CxxInternalTools(
         check_nonempty_output = refuse("check_nonempty_output"),
         clang_tidy_wrapper = refuse("clang_tidy_wrapper"),
@@ -172,7 +174,6 @@ zig_cxx_toolchain = rule(
     impl = _zig_cxx_toolchain_impl,
     is_toolchain_rule = True,
     attrs = {
-        "busybox": attrs.exec_dep(),
         "c_compiler_flags": attrs.list(attrs.string(), default = []),
         "cxx_compiler_flags": attrs.list(attrs.string(), default = []),
         # A `zig_exe` of rules/cxx/zig_cc_launcher.zig.
@@ -182,19 +183,19 @@ zig_cxx_toolchain = rule(
         # zig's -mcpu without the dashes' meaning: `x86-64` is zig's baseline x86_64, `x86-64-v3` AVX2.
         "target_cpu": attrs.string(),
         "zig": attrs.exec_dep(),
+        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
     },
 )
 
 def _no_python_bootstrap_toolchain_impl(ctx):
-    bb = ctx.attrs.busybox[DefaultInfo].default_outputs[0]
     return [
         DefaultInfo(),
         PythonBootstrapToolchainInfo(interpreter = cmd_args(
-            bb,
-            "sh",
-            "-c",
-            "echo 'python bootstrap toolchain: no Python interpreter is provided (see rules/cxx/toolchain.bzl)' >&2; exit 2",
-            "sh",
+            ctx.attrs._check_exe[RunInfo],
+            "run",
+            "--refuse",
+            "python bootstrap toolchain: no Python interpreter is provided (see rules/cxx/toolchain.bzl)",
+            "--",
         )),
     ]
 
@@ -205,13 +206,12 @@ def _no_python_bootstrap_toolchain_impl(ctx):
 no_python_bootstrap_toolchain = rule(
     impl = _no_python_bootstrap_toolchain_impl,
     is_toolchain_rule = True,
-    attrs = {"busybox": attrs.exec_dep()},
+    attrs = {"_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo])},
 )
 
 def cxx_toolchains(
         target = "x86_64-linux-gnu.2.34",
         target_cpu = "x86-64",
-        busybox = "buildrules//rules/pins:busybox",
         zig = "buildrules//rules/pins:zig",
         launcher = "buildrules//rules/cxx:zig_cc_launcher"):
     """Declare `:cxx`, `:cxx_no_default_deps` and `:python_bootstrap` in the calling package.
@@ -221,7 +221,6 @@ def cxx_toolchains(
     """
     zig_cxx_toolchain(
         name = "cxx",
-        busybox = busybox,
         launcher = launcher,
         target = target,
         target_cpu = target_cpu,
@@ -241,7 +240,6 @@ def cxx_toolchains(
     )
     no_python_bootstrap_toolchain(
         name = "python_bootstrap",
-        busybox = busybox,
         exec_compatible_with = LINUX_X86_64,
         visibility = ["PUBLIC"],
     )

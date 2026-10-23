@@ -77,7 +77,16 @@ zig_exe(
     name = "zig_exe_with_a_dep_of_the_wrong_kind",
     src = "negative_check.zig",
     deps = ["//examples/zig:hello_zig"],
-    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+# `bootstrap = True` builds an executable with zig run directly, without `check run`; only rules/check and rules/toolbox (what `check run` is built and tested with) may.
+# Here another package asks for it, and the rule must refuse (rules/zig/checks.bzl, `check_bootstrap`).
+zig_exe(
+    name = "zig_exe_with_bootstrap_outside_check",
+    bootstrap = True,
+    src = "negative_check.zig",
     zig = "buildrules//rules/pins:zig_next",
     target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
 )

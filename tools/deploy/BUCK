@@ -29,7 +29,6 @@ zig_exe(
     src = "apt_publish.zig",
     imports = _APT_SRCS,
     unit_tests = [":apt_publish_unit"],
-    busybox = _BB,
     visibility = ["PUBLIC"],
 )
 
@@ -39,7 +38,6 @@ zig_exe(
     exec_compatible_with = LINUX_X86_64,
     src = "tap_main.zig",
     imports = ["tap.zig", "ghtool.zig"],
-    busybox = _BB,
     visibility = ["PUBLIC"],
 )
 
@@ -49,7 +47,6 @@ zig_exe(
         name = "fake_" + n,
         exec_compatible_with = LINUX_X86_64,
         src = "drivers/fake_" + n + ".zig",
-        busybox = _BB,
     )
     for n in ["aws", "gpg", "curl", "gh", "git"]
 ]

@@ -24,9 +24,11 @@ zig_test(
     zig = _ZIG,
 )
 
-# The executable, built only when the unit tests passed.
+# The executable, built only when the unit tests passed. It is built by zig directly (`bootstrap`): the tests of `check` start it, and `check run` builds
+# every other zig_exe, so building it with `check` would be a cycle.
 zig_exe(
     name = "toolbox",
+    bootstrap = True,
     src = "toolbox.zig",
     imports = _SRCS,
     unit_tests = [":toolbox_unit", _ZIG_VERSION],

@@ -29,7 +29,6 @@ zig_exe(
     src = "main.zig",
     imports = _SRCS,
     unit_tests = [":channels_test"],
-    busybox = "buildrules//rules/pins:busybox",
     visibility = ["PUBLIC"],
 )
 

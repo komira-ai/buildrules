@@ -12,7 +12,6 @@ zig_exe(
     name = "zig_cc_launcher",
     exec_compatible_with = LINUX_X86_64,
     src = "zig_cc_launcher.zig",
-    busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig",
     visibility = ["PUBLIC"],
 )
@@ -50,7 +49,6 @@ zig_exe(
     imports = _SRCS,
     src = "prefix/src/main.zig",
     unit_tests = [":prefix_tool_unit", _ZIG_VERSION],
-    busybox = "buildrules//rules/pins:busybox",
     zig = _ZIG,
     visibility = ["PUBLIC"],
 )
@@ -72,7 +70,6 @@ zig_exe(
     imports = ["floor/src/floor_test.zig"],
     src = "floor/src/floor.zig",
     unit_tests = [":glibc_floor_unit", _ZIG_VERSION],
-    busybox = "buildrules//rules/pins:busybox",
     zig = _ZIG,
     visibility = ["PUBLIC"],
 )
@@ -94,7 +91,6 @@ zig_exe(
     imports = ["hermetic/src/hermetic_test.zig"],
     src = "hermetic/src/hermetic.zig",
     unit_tests = [":hermetic_unit", _ZIG_VERSION],
-    busybox = "buildrules//rules/pins:busybox",
     zig = _ZIG,
     visibility = ["PUBLIC"],
 )

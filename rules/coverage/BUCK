@@ -28,7 +28,6 @@ zig_exe(
     exec_compatible_with = LINUX_X86_64,
     src = "tools/debug_relocate.zig",
     unit_tests = [":debug_relocate_unit", _ZIG_VERSION],
-    busybox = _BB,
     zig = _ZIG,
 )
 
@@ -68,7 +67,6 @@ zig_exe(
     exec_compatible_with = LINUX_X86_64,
     src = "tools/cov_normalize.zig",
     unit_tests = [":cov_normalize_unit", _ZIG_VERSION],
-    busybox = _BB,
     zig = _ZIG,
 )
 
@@ -98,7 +96,6 @@ zig_exe(
     name = "cov_zig_stub",
     exec_compatible_with = LINUX_X86_64,
     src = "tools/cov_zig_stub.zig",
-    busybox = _BB,
     zig = _ZIG,
 )
 
@@ -123,7 +120,6 @@ zig_exe(
     exec_compatible_with = LINUX_X86_64,
     src = "tools/cov_zig.zig",
     unit_tests = [":cov_zig_unit", _ZIG_VERSION],
-    busybox = _BB,
     zig = _ZIG,
 )
 
@@ -165,7 +161,6 @@ zig_exe(
     name = "conda_payload",
     exec_compatible_with = LINUX_X86_64,
     src = "tools/conda_payload.zig",
-    busybox = _BB,
     zig = _ZIG,
 )
 
@@ -183,7 +178,6 @@ zig_exe(
     exec_compatible_with = LINUX_X86_64,
     src = "tools/kcov_build.zig",
     unit_tests = [":kcov_build_unit", _ZIG_VERSION],
-    busybox = _BB,
     zig = _ZIG,
     visibility = ["PUBLIC"],
 )
@@ -193,7 +187,6 @@ zig_exe(
     name = "elf_rpath",
     exec_compatible_with = LINUX_X86_64,
     src = "tools/elf_rpath.zig",
-    busybox = _BB,
     zig = _ZIG,
 )
 
@@ -238,7 +231,6 @@ zig_exe(
     exec_compatible_with = LINUX_X86_64,
     src = "tools/cov_run.zig",
     unit_tests = [":cov_run_unit", _ZIG_VERSION],
-    busybox = _BB,
     zig = _ZIG,
     visibility = ["PUBLIC"],
 )
@@ -257,7 +249,6 @@ zig_exe(
     exec_compatible_with = LINUX_X86_64,
     src = "tools/cov_summary.zig",
     unit_tests = [":cov_summary_unit", _ZIG_VERSION],
-    busybox = _BB,
     zig = _ZIG,
     visibility = ["PUBLIC"],
 )
@@ -288,7 +279,6 @@ zig_exe(
     imports = ["tools/cov_run.zig"],
     src = "tools/zig_cover.zig",
     unit_tests = [":zig_cover_unit", _ZIG_VERSION],
-    busybox = _BB,
     zig = _ZIG,
 )
 
@@ -339,7 +329,6 @@ zig_exe(
     exec_compatible_with = LINUX_X86_64,
     src = "tools/cov_floor.zig",
     unit_tests = [":cov_floor_unit", _ZIG_VERSION],
-    busybox = _BB,
     zig = _ZIG,
     visibility = ["PUBLIC"],
 )

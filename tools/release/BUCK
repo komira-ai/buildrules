@@ -87,7 +87,6 @@ zig_exe(
     src = "release.zig",
     imports = ["version.zig", "gz.zig", "tar.zig", "assets.zig", "page.zig", "cmds.zig", "bump.zig", "binaries.zig", "debs.zig", "debs_test.zig"],
     deps = ["//tools/scrub:scrub_lib", ":binhdr"],
-    busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
     unit_tests = [":release_unit", "buildrules//rules/pins:zig_next_version"],
     visibility = ["PUBLIC"],

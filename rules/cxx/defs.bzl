@@ -14,39 +14,24 @@ execution platform and fails unless it exits 0 and prints exactly what is
 expected (a self-check binary, as a validation). `staged_files` copies sources
 under buck-out.
 
-`c_exe` runs under the pinned busybox, and the source it compiles is copied
+`c_exe` and `c_shared` run the pinned zig with `check run` (rules/check/README.md), and the source they compile is copied
 under buck-out first: a source file's path differs between a standalone
 checkout and a repository mounting buildrules as a cell, and so would the
 action's digest.
 """
 
+load("@buildrules//rules/zig:zig.bzl", "zig_run")
 
-_BUSYBOX = "buildrules//rules/pins:busybox"
+_CHECK = "buildrules//rules/check:check"
 
 def _staged(ctx, src):
     return ctx.actions.copy_file("_staged/" + src.short_path, src)
 
 def _c_exe_impl(ctx):
-    bb = ctx.attrs.busybox[DefaultInfo].default_outputs[0]
     zig = ctx.attrs.zig[DefaultInfo].default_outputs[0]
     out = ctx.actions.declare_output(ctx.label.name)
-    script = """
-BB="$1"; shift
-case "$BB" in /*) ;; *) BB="$PWD/$BB" ;; esac
-case "${BUCK_SCRATCH_PATH:-}" in
-    "") T="$PWD/.buildrules_c_exe" ;;
-    /*) T="$BUCK_SCRATCH_PATH/c_exe" ;;
-    *) T="$PWD/$BUCK_SCRATCH_PATH/c_exe" ;;
-esac
-"$BB" mkdir -p "$T/bin" "$T/zig-global" "$T/zig-local" "$T/home"
-"$BB" --install -s "$T/bin"
-PATH="$T/bin"; ZIG_GLOBAL_CACHE_DIR="$T/zig-global"; ZIG_LOCAL_CACHE_DIR="$T/zig-local"; HOME="$T/home"
-export PATH ZIG_GLOBAL_CACHE_DIR ZIG_LOCAL_CACHE_DIR HOME
-"$1/zig" cc -target x86_64-linux-musl -O2 -static -Wall -Werror "$2" -o "$3"
-rm -rf "$T"
-"""
     ctx.actions.run(
-        cmd_args(bb, "sh", "-euc", script, "sh", bb, zig, _staged(ctx, ctx.attrs.src), out.as_output()),
+        zig_run(ctx.attrs._check_exe[RunInfo], "c_exe", zig, "cc", "-target", "x86_64-linux-musl", "-O2", "-static", "-Wall", "-Werror", _staged(ctx, ctx.attrs.src), "-o", out.as_output()),
         category = "c_exe",
     )
     return [DefaultInfo(default_output = out), RunInfo(args = cmd_args(out))]
@@ -55,35 +40,37 @@ _c_exe = rule(
     impl = _c_exe_impl,
     doc = "One C file built into a static x86_64 Linux (musl) executable with the pinned zig.",
     attrs = {
-        "busybox": attrs.dep(default = _BUSYBOX),
         "src": attrs.source(),
         "zig": attrs.dep(default = "buildrules//rules/pins:zig"),
+        "_check_exe": attrs.exec_dep(default = _CHECK, providers = [RunInfo]),
     },
 )
 
 c_exe = _c_exe
 
 def _c_shared_impl(ctx):
-    bb = ctx.attrs.busybox[DefaultInfo].default_outputs[0]
     zig = ctx.attrs.zig[DefaultInfo].default_outputs[0]
     out = ctx.actions.declare_output(ctx.attrs.soname)
-    script = """
-BB="$1"; shift
-case "$BB" in /*) ;; *) BB="$PWD/$BB" ;; esac
-case "${BUCK_SCRATCH_PATH:-}" in
-    "") T="$PWD/.buildrules_c_shared" ;;
-    /*) T="$BUCK_SCRATCH_PATH/c_shared" ;;
-    *) T="$PWD/$BUCK_SCRATCH_PATH/c_shared" ;;
-esac
-"$BB" mkdir -p "$T/bin" "$T/zig-global" "$T/zig-local" "$T/home"
-"$BB" --install -s "$T/bin"
-PATH="$T/bin"; ZIG_GLOBAL_CACHE_DIR="$T/zig-global"; ZIG_LOCAL_CACHE_DIR="$T/zig-local"; HOME="$T/home"
-export PATH ZIG_GLOBAL_CACHE_DIR ZIG_LOCAL_CACHE_DIR HOME
-"$1/zig" cc -target "$4" -O2 -g0 -fPIC -shared -Wall -Werror "-Wl,-soname,$5" -Wl,--build-id=none "$2" -o "$3"
-rm -rf "$T"
-"""
     ctx.actions.run(
-        cmd_args(bb, "sh", "-euc", script, "sh", bb, zig, _staged(ctx, ctx.attrs.src), out.as_output(), ctx.attrs.target, ctx.attrs.soname),
+        zig_run(
+            ctx.attrs._check_exe[RunInfo],
+            "c_shared",
+            zig,
+            "cc",
+            "-target",
+            ctx.attrs.target,
+            "-O2",
+            "-g0",
+            "-fPIC",
+            "-shared",
+            "-Wall",
+            "-Werror",
+            "-Wl,-soname," + ctx.attrs.soname,
+            "-Wl,--build-id=none",
+            _staged(ctx, ctx.attrs.src),
+            "-o",
+            out.as_output(),
+        ),
         category = "c_shared",
     )
     return [DefaultInfo(default_output = out)]
@@ -92,12 +79,12 @@ _c_shared = rule(
     impl = _c_shared_impl,
     doc = "One C file built into a shared library (glibc target) with the pinned zig: the native library of a Mojo package.",
     attrs = {
-        "busybox": attrs.dep(default = _BUSYBOX),
         "soname": attrs.string(),
         "src": attrs.source(),
         # zig's -target: the glibc floor of the Mojo toolchain (mopm's graph names the same triple as `cc_target`).
         "target": attrs.string(default = "x86_64-linux-gnu.2.34"),
         "zig": attrs.dep(default = "buildrules//rules/pins:zig"),
+        "_check_exe": attrs.exec_dep(default = _CHECK, providers = [RunInfo]),
     },
 )
 

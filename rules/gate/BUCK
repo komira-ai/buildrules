@@ -48,7 +48,6 @@ zig_exe(
     imports = _SRCS,
     src = "gate.zig",
     unit_tests = [":" + t for t in _TESTS] + [_ZIG_VERSION],
-    busybox = "buildrules//rules/pins:busybox",
     zig = _ZIG,
     visibility = ["PUBLIC"],
 )
