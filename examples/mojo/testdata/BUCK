@@ -1,0 +1,27 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A package whose tests read files and variables that the build gives them (docs/contract.md, section 12.9; rules/mojo/test_data.bzl):
+#
+#   "*"                  every test: a golden file of this package (`golden/greeting.txt`)
+#   test_data_files      a pinned third-party file (`third_party/example.thrift`) and the library's own source, read as data
+#   test_data_program    a program another target builds (`//examples/zig:hello_zig`), staged as `bin/hello` with its executable bit and started by the test
+#   test_env             TESTDATA_MODE, for every test
+#
+# The files are in the working directory of the test run and of its coverage run, and BUILDRULES_TEST_DATA names that directory. Change a staged file or
+# the variable and the test runs again (they are inputs of the actions); the stand-in test of ci/mojo_data proves the same without a compiler and proves each
+# way the staging goes wrong. It has a coverage_floor.txt: the floor is exactly the coverage.
+mojo_package(
+    path = ".",
+    test_data = {
+        "*": {"golden/greeting.txt": "golden/greeting.txt"},
+        "tests/test_data_files.mojo": {
+            "third_party/example.thrift": "third_party/example.thrift",
+            "lib/__init__.mojo": "src/testdata/__init__.mojo",
+        },
+        "tests/test_data_program.mojo": {"bin/hello": "//examples/zig:hello_zig"},
+    },
+    test_env = {"TESTDATA_MODE": "strict"},
+)
+
+scrub_files()

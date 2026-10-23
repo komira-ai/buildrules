@@ -9,6 +9,7 @@
     copy_of_base/          base's sources at another path; `:same_bytes` fails unless the two `.mojoc` files are equal
     reexport/              a package whose `__init__.mojo` only re-exports (a docstring and `from .ops import ...`): the Mojo coverage report omits it and `:coverage` lists it `0/0`
     partial/               a package whose test runs one arm of a function (60.00% of its lines), with a `coverage_floor.txt` of exactly that: its `:coverage_floor` is green
+    testdata/              a package whose tests read files and variables the build gives them (`test_data`, `test_env`; docs/contract.md, section 12.9): a golden file, a third-party `.thrift`, a library source, and a program another target built, staged with its executable bit; in `:ci` and `:coverage`
     coverage_floors/       the same `:coverage` held to a floor above it and to one below it: each fails, saying "coverage fell" or "raise the floor to 60.00" (ci/negative.bzl, COVERAGE_REDS)
     coverage_records_test.zig  `:coverage` and `:coverage[reports]` of `reexport` and `partial` held to each other, file by file (`:coverage_records`)
     reexport_unused/       PLANTED DEFECT: the same plus a function nothing calls; `:coverage` must stay red with "is in no report" (ci/negative.bzl, COVERAGE_REDS)

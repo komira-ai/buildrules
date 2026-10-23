@@ -594,6 +594,44 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 
 A library that is not tested is not a library: `:lib` is the `.mojoc` behind the run of every test of its package (`mojo_gated_lib_rule`, rules/mojo/unit.bzl). `:lib_ungated` is the compile (`mopm unit build`), the package's own tests import it (they cannot import `:lib`, which waits for them), and `:lib` is a copy of its bytes made by the `mojo_gate` action, whose inputs are the compiled file and the marker each test run writes after the test exited 0. A failing test leaves no marker, so the action never runs; everything that reads `:lib` (a member's unit through `--deps`, a binary, `:build`, `:ci`, `mopm pack`) is red with it. The bytes are the compiled ones, so a dependent's key moves only when the library does and not when only a test changes. A package with no test has nothing to wait for; `:coverage` is what refuses it. The proof is a pair of fixtures that need no compiler (`ci/mojo_gate`): a library behind a failing test makes its consumer red, the same behind a passing one is green, and `ci/negative.bzl` requires both outcomes, plus the wiring: the real packages' `:lib` has every test run among its dependencies.
 
+### 12.9 Test data and variables
+
+A test that reads a golden file, a fixture, a pinned third-party file (a `.thrift` specification), library sources, or starts a program, needs those files where it runs. The
+build action of a test sees only its inputs, and its working directory is the execution root, so `mojo_package` takes them as arguments and makes them inputs of the test run
+and of the coverage run:
+
+```python
+mojo_package(
+    path = ".",
+    test_data = {
+        "*": {"golden/out.txt": "golden/out.txt"},                          # every test of the package: {staged path: file or target}
+        "tests/test_tool.mojo": {"bin/tool": "//tools:tool"},               # one test, named as the graph names its source; its entries are added to `*`
+    },
+    test_env = {"MODE": "strict"},                                          # every test of the package: {NAME: value}
+)
+```
+
+- **Where the files are.** Each test has a directory of its own, `data`, made by copying every staged file to its staged path. It is the test's working directory, so a relative path opens
+  a staged file, and the variable `BUILDRULES_TEST_DATA` holds its absolute path. A test without data has neither: its working directory and environment are as before. The directory is an input, so
+  treat it as read-only and write under `TMPDIR`.
+- **Files and programs.** A value is a file of the package or a target (`//pkg:name`, `:name`, resolved from the BUCK file's directory); a target is staged as its default output, with the executable bit it has,
+  so a program built by another target starts from the staged path. A target with more than one default output is refused by Buck2.
+- **The test run and the coverage run.** `:<stem>` (and `buck2 test`, whose command is the same start without a marker) runs `check marker|run --env BUILDRULES_TEST_DATA=<dir> --abs BUILDRULES_TEST_DATA
+  --cwd-env BUILDRULES_TEST_DATA`, then one `--env NAME=VALUE` per `test_env` entry. `:<stem>__cov` stages the same files into the tree that is kcov's working directory (`cov_run --data-env BUILDRULES_TEST_DATA
+  --env NAME=VALUE`): that tree also holds the test's source and the library's sources under the names the line tables use, so the test sees the same files plus those.
+- **The action key.** The staged files are inputs of both actions by their digests, and the variables are arguments, so a change to a staged file, to which file a path names, or to a variable runs the test again, and a
+  test that depends on the new content can turn red; a change that touches none of them is a cache hit. On the farm a file that is not an input is not there at all, so a test cannot read what it did not declare.
+- **Refused at load** (rules/mojo/test_data.bzl, each an analysis test in rules/mojo/tests): a key that is no test of the package (a mistyped path stages nothing); a staged path that is empty, absolute, ends in `/`, or holds `.`, `..` or an empty
+  segment (it would leave the directory); a staged path that is also the directory of another, or that is staged twice for one test (by `*` and by the test); a staged path that is, or is inside, a path the coverage tree holds (the test's
+  source, a library source) or holds one; a staged value that is not a string; a variable name that is not a shell name or that the runner sets (`PATH`, `LD_LIBRARY_PATH`, `LD_PRELOAD`, `DYLD_*`, `TMPDIR`, `TEST_TMPDIR`, `HOME`, `PWD`,
+  `BUILDRULES_TEST_DATA`, `BUILDRULES_UNIT_NONCE`, `BUCK_SCRATCH_PATH`); a `test_env` value that is not a string. `mojo_test_run_rule` and `mojo_cov_run_rule` (`data`, `test_env`) repeat the checks on their own arguments.
+- **Proof.** `ci/mojo_data` runs a stand-in test (a program that reads the staged file by a relative path, checks the working directory against `BUILDRULES_TEST_DATA`, checks a variable, and starts a staged program) with the
+  Mojo test run rule, without a compiler: green when everything is staged, and red, for its reason, with other content, another variable value, no program, and a program without the executable bit (`ci/negative.bzl`, `PLANTED`).
+  `examples/mojo/testdata` is the real thing: a package whose tests read a golden file, a third-party file, a library source and a variable, and start a program, in `:ci` and in `:coverage`.
+
+Not in `mopm.toml`: the unit graph is mopm's, and a test's data is how a build system gives a test its files, not what a package is. When mopm's graph carries a package's test files (a `[tests]` table of globs), `buildrules mojo sync` could
+generate `test_data` from it; until then the declaration is the BUCK file's, and nothing in mopm changes.
+
 ### Status
 
 The examples: `examples/mojo/ws` (`app` -> `util` -> `base`, three packages in a chain, plus the registry package `cnative` with a C library built by `rules/cxx`'s `c_shared`) and

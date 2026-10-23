@@ -1,0 +1,89 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//ci/planted:fixture.bzl", "planted_mojo_toolchain")
+load("@buildrules//rules:isa.bzl", "test_exec_compatible_with")
+load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe")
+load(":fixture.bzl", "probe_test")
+
+# The data and the variables of a Mojo test (docs/contract.md, section 12.9), proven without a Mojo compiler. `mojo_test_run_rule` runs a stand-in "test", the
+# data probe (probe.zig), with what `mojo_package(test_data = ..., test_env = ...)` gives each test. The probe passes only if:
+#
+#   - the working directory is the directory BUILDRULES_TEST_DATA names, and a relative path opens `greeting.txt` there with the content the fixture stages;
+#   - PROBE_MODE is `strict`, the variable the fixture gives it;
+#   - `bin/hello`, a program built by another target and staged as data, starts: it kept its executable bit.
+#
+# green  `run_green` stages all three and builds. //ci:all builds it, and it is the control of every red below.
+# red    each of the others changes one thing, and its run must FAIL for the reason the probe gives. They are excluded from the wildcard build (ci/all.bzl), and
+#        `buck2 bxl //ci:negative.bxl:check` builds each and requires the failure and the reason (ci/negative.bzl, `planted_problems`):
+#          run_red_content        `greeting.txt` is another file: what the test reads is what was staged, not something else
+#          run_red_env            PROBE_MODE is another value
+#          run_red_no_program     `bin/hello` is not staged
+#          run_red_not_executable `bin/hello` is a plain file: the executable bit of a program's output is what lets it start, so a copy that dropped it is red
+# The real packages' runs and coverage runs, which stage the same kinds of data under kcov, are examples/mojo/testdata (//ci:mojo).
+zig_exe(
+    name = "probe",
+    src = "probe.zig",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+probe_test(name = "probe_test", program = ":probe")
+
+planted_mojo_toolchain(name = "toolchain")
+
+export_file(name = "greeting.txt", src = "greeting.txt", visibility = ["PUBLIC"])
+
+export_file(name = "greeting_other.txt", src = "greeting_other.txt", visibility = ["PUBLIC"])
+
+_HELLO = "//examples/zig:hello_zig"
+
+mojo_test_run_rule(
+    name = "run_green",
+    bin = ":probe_test",
+    data = {"greeting.txt": ":greeting.txt", "bin/hello": _HELLO},
+    test_env = {"PROBE_MODE": "strict"},
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+    visibility = ["//ci:"],
+)
+
+# PLANTED DEFECT: a staged file with other content.
+mojo_test_run_rule(
+    name = "run_red_content",
+    bin = ":probe_test",
+    data = {"greeting.txt": ":greeting_other.txt", "bin/hello": _HELLO},
+    test_env = {"PROBE_MODE": "strict"},
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
+# PLANTED DEFECT: another value of the variable.
+mojo_test_run_rule(
+    name = "run_red_env",
+    bin = ":probe_test",
+    data = {"greeting.txt": ":greeting.txt", "bin/hello": _HELLO},
+    test_env = {"PROBE_MODE": "lax"},
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
+# PLANTED DEFECT: the program is not staged.
+mojo_test_run_rule(
+    name = "run_red_no_program",
+    bin = ":probe_test",
+    data = {"greeting.txt": ":greeting.txt"},
+    test_env = {"PROBE_MODE": "strict"},
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
+# PLANTED DEFECT: the "program" is a source file, which has no executable bit.
+mojo_test_run_rule(
+    name = "run_red_not_executable",
+    bin = ":probe_test",
+    data = {"greeting.txt": ":greeting.txt", "bin/hello": ":greeting.txt"},
+    test_env = {"PROBE_MODE": "strict"},
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
+scrub_files()
