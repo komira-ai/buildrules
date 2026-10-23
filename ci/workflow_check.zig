@@ -12,6 +12,7 @@
 //!    `$BUCK2`, or a shell wrapper (`bash -c`, `eval`, `env`, `sudo`, ...) around one is refused, because a command this check cannot
 //!    read as `./buck2 <subcommand> <args>` is a command whose mode it cannot check), or names a remote-execution endpoint;
 //!  - a buck2 install that drifted from the release pinned in tools/buck2 (url or sha256).
+//!  - a package installed from the runner's archive without an exact version (`apt-get install name`, not `name=version`): the gate would change with the archive.
 //!  - a `push` trigger on ci.yml: a push to main is tested through release.yml (ci/release_check.zig), which calls this workflow.
 //!
 //! The pure checks that release.yml shares with this file (`pinnedUses`, `localMode`, `buck2Install`) are public here.
@@ -76,6 +77,59 @@ pub fn hasLine(text: []const u8, exact: []const u8) bool {
         if (std.mem.eql(u8, std.mem.trimRight(u8, line, " \r"), exact)) return true;
     }
     return false;
+}
+
+/// `s` without a trailing YAML comment and without surrounding blanks.
+fn stripComment(s: []const u8) []const u8 {
+    var end = s.len;
+    for (s, 0..) |c, i| {
+        if (c == '#' and (i == 0 or s[i - 1] == ' ' or s[i - 1] == '\t')) {
+            end = i;
+            break;
+        }
+    }
+    return std.mem.trim(u8, s[0..end], " \t\r");
+}
+
+/// Why the `on:` block of `text` cannot be checked line by line, or null when it is plain block style with its triggers indented two spaces.
+/// The trigger checks above compare whole lines (`  push:`), so `on: push`, `on: [push, pull_request]` and `  push: {branches: [main]}` would
+/// slip past them; those spellings are refused rather than parsed.
+pub fn triggerStyleProblem(text: []const u8) ?[]const u8 {
+    var in_on = false;
+    var base: ?usize = null;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimRight(u8, raw, " \t\r");
+        const body = std.mem.trimLeft(u8, line, " ");
+        if (body.len == 0 or body[0] == '#') continue;
+        const indent = line.len - body.len;
+        if (indent == 0) {
+            in_on = false;
+            for ([_][]const u8{ "on:", "\"on\":", "'on':" }) |key| {
+                if (!std.mem.startsWith(u8, line, key)) continue;
+                in_on = true;
+                if (stripComment(line[key.len..]).len != 0) return "`on:` is written in flow or scalar form (`on: push`, `on: [push]`, `on: {push: {}}`): write one trigger per line, as a block";
+            }
+            if (!in_on and (std.mem.startsWith(u8, line, "on ") or std.mem.startsWith(u8, line, "on\t") or std.mem.startsWith(u8, line, "\"on\" ") or std.mem.startsWith(u8, line, "'on' "))) {
+                return "`on` has blanks before its colon: write the key as `on:`, which is the spelling the trigger checks read";
+            }
+            continue;
+        }
+        if (!in_on) continue;
+        if (base == null) {
+            base = indent;
+            if (indent != 2) return "the triggers under `on:` are not indented two spaces, which is the spelling the trigger checks read";
+        }
+        if (indent == base.?) {
+            if (body[0] == '"' or body[0] == '\'') return "a trigger under `on:` is quoted: write the key bare, which is the spelling the trigger checks read";
+            const colon = std.mem.indexOfScalar(u8, body, ':') orelse return "a line under `on:` is not a `trigger:` key (a list or flow form is refused): write one trigger per line, as a block";
+            if (colon > 0 and (body[colon - 1] == ' ' or body[colon - 1] == '\t')) return "a trigger under `on:` has blanks before its colon: write `trigger:`, which is the spelling the trigger checks read";
+            if (stripComment(body[colon + 1 ..]).len != 0) return "a trigger under `on:` has its value on the same line (`push: {branches: [main]}`, `push: null`): write the trigger alone and its settings as a block below it";
+        } else if (indent > base.? and (body[0] == '{' or body[0] == '[')) {
+            return "a trigger under `on:` is given a flow-style value: write its settings as a block";
+        }
+    }
+    return null;
 }
 
 /// Whether a line of the workflow (not a comment) is the target `tg`, as a line of the build command: `//pkg:name \\` or `//pkg:name`.
@@ -443,6 +497,38 @@ fn inlineExprs(a: std.mem.Allocator, f: *Findings, text: []const u8) !void {
     }
 }
 
+/// Every package an `apt-get install` or `apt install` of `workflow` names carries an exact version (`name=version`). A package installed by name alone is
+/// whatever the runner's archive holds that day, so the gate would change with no change of ours; this workflow installs nothing from an archive.
+pub fn aptInstalls(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !void {
+    for (try commands(a, workflow)) |cmd| {
+        var words = std.mem.tokenizeAny(u8, cmd, " \t");
+        // `after_apt`: an apt command word was seen and its subcommand has not yet; `installing`: the subcommand was `install`.
+        var after_apt = false;
+        var installing = false;
+        var skip_value = false;
+        while (words.next()) |w| {
+            if (std.mem.eql(u8, w, "&&") or std.mem.eql(u8, w, "||") or std.mem.eql(u8, w, ";") or std.mem.eql(u8, w, "|")) {
+                after_apt = false;
+                installing = false;
+                skip_value = false;
+            } else if (skip_value) {
+                skip_value = false;
+            } else if (w[0] == '-') {
+                // an option of the apt command; these take their value as the next word
+                if (after_apt or installing) skip_value = std.mem.eql(u8, w, "-o") or std.mem.eql(u8, w, "-t") or std.mem.eql(u8, w, "-c") or std.mem.eql(u8, w, "-a");
+            } else if (installing) {
+                if (std.mem.indexOfScalar(u8, w, '=') == null)
+                    try add(a, f, "`{s}` is installed from the archive without an exact version (`name=version`): {s}", .{ w, cmd });
+            } else if (after_apt) {
+                after_apt = false;
+                installing = std.mem.eql(u8, w, "install");
+            } else if (std.mem.eql(u8, w, "apt-get") or std.mem.eql(u8, w, "apt") or std.mem.eql(u8, w, "aptitude")) {
+                after_apt = true;
+            }
+        }
+    }
+}
+
 /// `text` without its comment-only lines.
 fn withoutComments(a: std.mem.Allocator, text: []const u8) ![]u8 {
     var out = std.ArrayList(u8).init(a);
@@ -461,6 +547,7 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
 
     try noContinueOnError(a, &f, workflow);
     try noInlineContext(a, &f, workflow);
+    try aptInstalls(a, &f, workflow);
 
     // Every `uses:` is pinned to a full commit.
     const uses = try pinnedUses(a, &f, workflow, &.{});
@@ -481,6 +568,7 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
     }
 
     // Triggers and runner.
+    if (triggerStyleProblem(workflow)) |why| try add(a, &f, "{s}", .{why});
     if (!hasLine(workflow, "  pull_request:")) try add(a, &f, "`on: pull_request` is missing", .{});
     // A push to main is tested by release.yml (its gate stage calls this workflow), not twice.
     if (!hasLine(workflow, "  workflow_call:")) try add(a, &f, "`on: workflow_call` is missing (release.yml calls this workflow as its gate stage)", .{});
@@ -746,6 +834,43 @@ test "a missing trigger or runner is found" {
     try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", ""), "workflow_call");
     try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  push:\n    branches: [main]\n"), "`on: push` is present");
     try expectFinding(a, r, try mutate(a, r.wf, "runs-on: ubuntu-latest", "runs-on: self-hosted"), "ubuntu-latest");
+}
+
+test "a trigger spelled in flow or scalar style is refused, whichever trigger it names" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const on_block = "on:\n  pull_request:\n  workflow_call:\n";
+    // the whole `on:` in one line
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on: push\n"), "flow or scalar");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on: [push, pull_request, workflow_call]\n"), "flow or scalar");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on: {pull_request: {}, workflow_call: {}, push: {branches: [main]}}\n"), "flow or scalar");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "\"on\": [push, pull_request]\n"), "flow or scalar");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on: [pull_request, workflow_call] # not a block\n"), "flow or scalar");
+    // one trigger with its value on its own line
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push: {branches: [main]}\n"), "same line");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  workflow_dispatch: {}\n"), "same line");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  schedule: [{cron: '0 3 * * *'}]\n"), "same line");
+    try expectFinding(a, r, try mutate(a, r.wf, "  pull_request:\n", "  pull_request: {branches: [main]}\n"), "same line");
+    // a flow value on the line below its trigger, a list under `on:`, and a trigger indented four spaces
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push:\n    {branches: [main]}\n"), "flow-style value");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on:\n  - push\n  - pull_request\n"), "not a `trigger:` key");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on:\n    pull_request:\n    workflow_call:\n    push:\n"), "indented two spaces");
+    // a flow sequence on the line below its trigger
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push:\n    [main]\n"), "flow-style value");
+    // a `#` with no blank before it is part of the value, not a comment
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push: main#branch\n"), "same line");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on: push#not-a-comment\n"), "flow or scalar");
+    // a quoted trigger key, and blanks before a colon
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  \"push\":\n"), "quoted");
+    try expectFinding(a, r, try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call:\n  push :\n"), "blanks before its colon");
+    try expectFinding(a, r, try mutate(a, r.wf, on_block, "on :\n  pull_request:\n  workflow_call:\n  push:\n"), "blanks before its colon");
+    // block style with settings below a trigger, and a comment after a key, stay accepted
+    const ok = try mutate(a, r.wf, "  workflow_call:\n", "  workflow_call: # the release's gate\n    inputs:\n      x:\n        type: string\n");
+    const f = try check(a, ok, r.ds, r.cb);
+    for (f.items) |m| try t.expect(std.mem.indexOf(u8, m, "`on:`") == null and std.mem.indexOf(u8, m, "same line") == null);
+    try t.expect(triggerStyleProblem(r.wf) == null);
 }
 
 test "a pull-request check that runs more than build and unit tests is found" {
@@ -1018,4 +1143,34 @@ test "ci.yml: continue-on-error and an inline vars or github.event expansion in 
     try expectFinding(a, r, try mutate(a, r.wf, "    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    continue-on-error: true\n"), "`continue-on-error` is set to");
     try expectFinding(a, r, try mutate(a, r.wf, "        run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check\n", "        run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check ${{ vars.X }}\n"), "expands `vars.` inline");
     try expectFinding(a, r, try mutate(a, r.wf, "          ./buck2 --version\n", "          ./buck2 --version ${{ github.event.pull_request.title }}\n"), "expands `github.event.` inline");
+}
+
+test "ci.yml: a package installed from the archive without an exact version is found" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    const stop = "      - name: Stop buck2\n";
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt-get install -y -qq lintian\n" ++ stop), "`lintian` is installed");
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt install lintian=2.1 file\n" ++ stop), "`file` is installed");
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt-get update -qq && sudo apt-get install -y lintian\n" ++ stop), "`lintian` is installed");
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: |\n          sudo apt-get install -y \\\n            lintian\n" ++ stop), "`lintian` is installed");
+    // options before the subcommand do not hide the install
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt-get -y install lintian\n" ++ stop), "`lintian` is installed");
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt --yes install lintian\n" ++ stop), "`lintian` is installed");
+    try expectFinding(a, r, try mutate(a, r.wf, stop, "      - run: sudo apt-get -o Dpkg::Options=x install lintian\n" ++ stop), "`lintian` is installed");
+    // an option value is not a package
+    {
+        const f = try check(a, try mutate(a, r.wf, stop, "      - run: sudo apt-get -o Dpkg::Options=x install -t jammy lintian=2.1\n" ++ stop), r.ds, r.cb);
+        for (f.items) |m| try t.expect(std.mem.indexOf(u8, m, "installed from the archive") == null);
+    }
+    // an exact version, an update, and a comment that names the command are not installs of an unpinned package
+    for ([_][]const u8{
+        "      - run: sudo apt-get install -y -qq lintian=2.122.0ubuntu2.1\n",
+        "      - run: sudo apt-get update -qq\n",
+        "      # sudo apt-get install lintian\n",
+    }) |ok| {
+        const f = try check(a, try mutate(a, r.wf, stop, try std.mem.concat(a, u8, &.{ ok, stop })), r.ds, r.cb);
+        for (f.items) |m| try t.expect(std.mem.indexOf(u8, m, "installed from the archive") == null);
+    }
 }

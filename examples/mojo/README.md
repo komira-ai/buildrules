@@ -6,10 +6,17 @@
     registry/probe_sys/    the publisher's side of probe_sys: a `-sys` package (an empty Mojo module over a static C library) that needs base_sys's
       base_sys/            the other `-sys` package, a workspace member of probe_sys
     sys_app/               imports probe_sys from the registry stand-in: both static archives come out of the `.conda` files, with no `natives` in its BUCK file
+    sibfake/base, app/     `app` imports `../base`, a sibling rather than a directory below it. Their tables are written by hand with `"workspace_root": True` (the record of a mopm that
+                           takes --workspace-root, 0.0.33 and later) and hold the member by identity only; the pinned mopm rejects the flag, so `:table` is not built for them
+    sibfake/stale/         PLANTED DEFECT: `app` synced when `base` was 0.2.0; its library is built from 0.1.0, so analysis of `:lib_ungated` must stay red (ci/negative.bzl, CASES)
     copy_of_base/          base's sources at another path; `:same_bytes` fails unless the two `.mojoc` files are equal
     member_native/         cshim_user -> cshim: two members; cshim has a C shim of its own (`[native.shim]`), built by `mojo_package` (`:native_shim`), linked into both members' tests and packed into `cshim:conda`
     copy_of_cshim/         cshim's C at another path; `:same_bytes` fails unless the two archives are equal
-    reexport/              a package whose `__init__.mojo` only re-exports (a docstring and `from .ops import ...`): the Mojo coverage report omits it and `:coverage` lists it `0/0`
+    reexport/              a package whose `__init__.mojo` only re-exports (a docstring and `from .ops import ...`): the Mojo coverage report omits it and `:coverage` lists it `0/0`, and so it does `aliases.mojo`, a file of `comptime` aliases only
+    partial/               a package whose test runs one arm of a function (60.00% of its lines), with a `coverage_floor.txt` of exactly that: its `:coverage_floor` is green
+    testdata/              a package whose tests read files and variables the build gives them (`test_data`, `test_env`; docs/contract.md, section 12.9): a golden file, a third-party `.thrift`, a library source, and a program another target built, staged with its executable bit; in `:ci` and `:coverage`
+    coverage_floors/       the same `:coverage` held to a floor above it (fails, "coverage fell"; ci/negative.bzl, COVERAGE_REDS) and to one below it (passes, with a hint that the floor may be raised; built by //ci:mojo)
+    coverage_records_test.zig  `:coverage` and `:coverage[reports]` of `reexport` and `partial` held to each other, file by file (`:coverage_records`)
     reexport_unused/       PLANTED DEFECT: the same plus a function nothing calls; `:coverage` must stay red with "is in no report" (ci/negative.bzl, COVERAGE_REDS)
     mopm-toolchain.toml    the versions every package here is built with (found by walking up)
 

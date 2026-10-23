@@ -27,6 +27,8 @@ CASES = [
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys/base_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
+    # A sibling whose table names another version of the library than the one next to it is (rules/mojo/unit.bzl, `check_closure_ids`).
+    ("//examples/mojo/sibfake/stale:lib_ungated", "buildrules//platforms:linux_x86_64", "the graph imports base as base@0.2.0#mojo1.0.0/lib but the dependency target provides base@0.1.0#mojo1.0.0/lib"),
 ]
 
 def _analyse(ctx, label, platform = PLATFORM):
@@ -55,12 +57,13 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx)
+    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
 COVERAGE_REDS = [
     ("//examples/mojo/reexport_unused:coverage", "is in no report: no test compiled it, or kcov could not open it"),
+    ("//examples/mojo/coverage_floors:floor_above_the_coverage", "line coverage is 60.00% (3/5), below its floor 70.00%: coverage fell"),
 ]
 
 def coverage_red_problems(ctx):
@@ -72,6 +75,33 @@ def coverage_red_problems(ctx):
             problems.append("{} built ({} artifact(s)): the planted defect is no longer red".format(label, built))
         elif reason not in failed:
             problems.append("{} is red, but not for the reason it plants (expected \"{}\"): {}".format(label, reason, failed))
+    return problems
+
+# A package has a `:coverage_floor` exactly when it has a coverage_floor.txt beside its BUCK file (rules/mojo/defs.bzl): a package without one has the targets it
+# had before floors existed. (package, whether it has a floor file)
+COVERAGE_FLOOR_PACKAGES = [
+    ("//examples/mojo/partial", True),
+    ("//examples/mojo/reexport", False),
+    ("//examples/mojo/reexport_unused", False),
+    ("//examples/mojo/copy_of_base", False),
+    ("//examples/mojo/sys_app", False),
+    ("//examples/mojo/ws", False),
+    ("//examples/mojo/ws/util", False),
+    ("//examples/mojo/ws/util/base", False),
+]
+
+def coverage_floor_wiring_problems(ctx):
+    """Every package that has (or lacks) a `:coverage_floor` against its coverage_floor.txt: a list of strings, empty when all agree."""
+    problems = []
+    q = ctx.uquery()
+    for package, has_floor_file in COVERAGE_FLOOR_PACKAGES:
+        names = [t.label.name for t in q.eval(package + ":")]
+        if "coverage" not in names:
+            problems.append("{} has no :coverage: the floor check has nothing to hold there".format(package))
+        elif has_floor_file and "coverage_floor" not in names:
+            problems.append("{} has a coverage_floor.txt and no :coverage_floor: its floor is read by nothing".format(package))
+        elif not has_floor_file and "coverage_floor" in names:
+            problems.append("{} has a :coverage_floor and no coverage_floor.txt: a package without a floor must be as it was".format(package))
     return problems
 
 def _built_with_why(ctx, label):
@@ -100,9 +130,12 @@ GATE_REDS = ["//ci/mojo_gate:consumer_of_red", "//ci/mojo_gate:consumer_of_red_f
 GATE_EDGES = [
     ("//examples/mojo/ws", "//examples/mojo/ws/util"),
     ("//examples/mojo/ws/util", "//examples/mojo/ws/util/base"),
+    ("//examples/mojo/sibfake/app", "//examples/mojo/sibfake/base"),
 ]
 GATE_PACKAGES = [
     "//examples/mojo/copy_of_base",
+    "//examples/mojo/sibfake/app",
+    "//examples/mojo/sibfake/base",
     "//examples/mojo/ws",
     "//examples/mojo/ws/util",
     "//examples/mojo/ws/util/base",
@@ -174,6 +207,12 @@ PLANTED = [
     ("//ci/planted:native_with_an_undefined_symbol", "//ci/planted:native_good", "undefined symbol: planted_missing_helper"),
     ("//ci/planted:native_newer_than_the_floor", "//ci/planted:native_good", "undefined symbol: arc4random"),
     ("//ci/planted:native_with_debug_info", "//ci/planted:native_good", "member debug_info.c.pic.o has 1 debug section(s), first .debug_planted"),
+    # The data and the variables of a Mojo test (ci/mojo_data/BUCK): the stand-in test reads what is staged and says which of its expectations failed.
+    # The control of each is the run that stages everything the probe expects.
+    ("//ci/mojo_data:run_red_content", "//ci/mojo_data:run_green", "data_probe: greeting.txt holds other data"),
+    ("//ci/mojo_data:run_red_env", "//ci/mojo_data:run_green", "data_probe: PROBE_MODE is lax, not strict"),
+    ("//ci/mojo_data:run_red_no_program", "//ci/mojo_data:run_green", "data_probe: cannot start bin/hello: FileNotFound"),
+    ("//ci/mojo_data:run_red_not_executable", "//ci/mojo_data:run_green", "data_probe: cannot start bin/hello: AccessDenied"),
 ]
 
 def _failures(ctx, label):
@@ -223,6 +262,13 @@ TEST_COMMANDS = [
         "\"run\", \"--ld-library-path\", cmd_args(<build artifact check",
         "\"/lib\", delimiter=\"\"), \"--\", <build artifact check",
     ], [], [], ["test", "mojo"], ["hidden=[<build artifact check"]),
+    # A Mojo test with data and variables: the data directory is the working directory and named by BUILDRULES_TEST_DATA, made absolute (the command starts in
+    # the execution root), and the variable is given; the directory is an input of the command.
+    ("//ci/mojo_data:run_green", [
+        "\"--abs\", \"BUILDRULES_TEST_DATA\", \"--cwd-env\", \"BUILDRULES_TEST_DATA\"",
+        "\"PROBE_MODE=strict\"",
+        "cmd_args(\"BUILDRULES_TEST_DATA=\"",
+    ], [], [], ["test", "mojo"], ["hidden=["]),
 ]
 
 def test_command_problems(ctx):

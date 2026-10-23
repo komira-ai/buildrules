@@ -24,6 +24,10 @@ const Fake = struct {
     head_code: u8 = 0,
     status: []const u8 = "",
     status_code: u8 = 0,
+    /// what `git status` prints once the build has run (the build wrote into the tree); null leaves it as `status`
+    status_after_build: ?[]const u8 = null,
+    status_code_after_build: u8 = 0,
+    built: bool = false,
 
     fn deinit(self: *Fake) void {
         for (self.calls.items) |c| a.free(c);
@@ -42,9 +46,11 @@ const Fake = struct {
         const prog = argv[0];
         if (std.mem.eql(u8, prog, "fake-git")) {
             if (std.mem.eql(u8, argv[3], "rev-parse")) return .{ .code = self.head_code, .out = try alloc.dupe(u8, self.head) };
+            if (self.built) if (self.status_after_build) |s| return .{ .code = self.status_code_after_build, .out = try alloc.dupe(u8, s) };
             return .{ .code = self.status_code, .out = try alloc.dupe(u8, self.status) };
         }
         if (std.mem.eql(u8, prog, "fake-buck2")) {
+            self.built = true;
             if (self.build_code != 0) return .{ .code = self.build_code, .out = try alloc.dupe(u8, "") };
             var out = std.ArrayList(u8).empty;
             for (pins.hosts) |h| {
@@ -642,6 +648,38 @@ test "the release points at the commit the programs were built from, and a tree 
         var out = Lines{};
         defer out.deinit();
         try t.expectEqual(@as(u8, 2), try pub_.publish(a, w.options(false), f.runner(), out.say()));
+    }
+}
+
+test "a build that leaves the tree with changes is refused in a dry run and in --apply, before anything is hashed or written" {
+    for ([_]bool{ false, true }) |apply| {
+        var w = try World.init(null);
+        defer w.deinit();
+        var f = w.fake();
+        defer f.deinit();
+        f.status_after_build = "?? built-by-the-build.txt\n";
+        var out = Lines{};
+        defer out.deinit();
+        try t.expectEqual(@as(u8, 2), try pub_.publish(a, w.options(apply), f.runner(), out.say()));
+        try t.expect(out.has("changes that are not committed after the build"));
+        try t.expect(out.has("?? built-by-the-build.txt"));
+        try t.expectEqual(@as(usize, 1), f.called("fake-buck2"));
+        try t.expectEqual(@as(usize, 0), f.called("fake-gh"));
+        try t.expect(!out.has("2. hash them"));
+    }
+    // a status that cannot be read after the build is a refusal too
+    {
+        var w = try World.init(null);
+        defer w.deinit();
+        var f = w.fake();
+        defer f.deinit();
+        f.status_after_build = "";
+        f.status_code_after_build = 128;
+        var out = Lines{};
+        defer out.deinit();
+        try t.expectEqual(@as(u8, 2), try pub_.publish(a, w.options(true), f.runner(), out.say()));
+        try t.expect(out.has("changes that are not committed after the build"));
+        try t.expectEqual(@as(usize, 0), f.called("fake-gh"));
     }
 }
 

@@ -17,6 +17,8 @@ A unit's output directory is the action's single output. A library's `.mojoc` is
 load("//rules:isa.bzl", "isa_satisfies")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
 load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoTestRunInfo", "MojoToolchainInfo")
+load("//rules/core:test_runtime.bzl", "check_data_destinations")
+load(":test_data.bzl", "DATA_ENV", "check_test_env")
 
 # `-c buildrules.unit_nonce=N` changes every unit action's key without changing any input the compiler sees: the compile
 # really re-executes, so two builds can be compared byte for byte.
@@ -35,31 +37,48 @@ def _validated(ctx, info):
         ]))
     return info
 
+def check_closure_ids(who, want, have, refuse = fail):
+    """Each library the dependency targets provide is the one the graph names. `want` and `have` are `{package: unit id}` (the graph's closure of the unit,
+    and what the `MojoLibInfo` of the targets say they were built as); a unit id is `<package>@<version>#mojo<Mojo version>/lib`, so a library built
+    from another version of its package, or for another Mojo, is not the graph's. `refuse` is `fail` in a build; a test passes a recorder
+    (rules/rust/refusal.bzl)."""
+    for package in sorted(want.keys()):
+        if package not in have:
+            refuse("{}: the graph imports {} as {} but no dependency target says which library it provides for {}: every library of the closure must come from a target of these rules".format(who, package, want[package], package))
+        elif have[package] != want[package]:
+            refuse(("{}: the graph imports {} as {} but the dependency target provides {}: that library was built from another version of the package, " +
+                    "or for another Mojo. Run `buildrules mojo sync` where the library is and where it is imported").format(who, package, want[package], have[package]))
+
 def _unit_impl(ctx):
     tc = ctx.attrs.toolchain[MojoToolchainInfo]
     if tc.version != ctx.attrs.mojo:
         fail("{}: the graph is for Mojo {} but the toolchain {} is Mojo {}".format(ctx.label, ctx.attrs.mojo, ctx.attrs.toolchain.label, tc.version))
 
-    # The sources, at the paths the graph names (relative to the package directory).
+    # The sources, at the paths the graph names. The graph's paths start at `graph_base`, a directory of the repository (the package's, or the root
+    # when mopm was given --workspace-root), so a source is staged at its repository path less that directory.
     srcs = {}
+    where = ctx.label.package
     for s in ctx.attrs.srcs:
-        rel = s.short_path
-        if ctx.attrs.src_root:
-            if not rel.startswith(ctx.attrs.src_root + "/"):
-                fail("{}: source {} is not under {}".format(ctx.label, s, ctx.attrs.src_root))
-            rel = rel[len(ctx.attrs.src_root) + 1:]
+        rel = (where + "/" if where else "") + s.short_path
+        if ctx.attrs.graph_base:
+            if not rel.startswith(ctx.attrs.graph_base + "/"):
+                fail("{}: source {} is not under {}".format(ctx.label, s, ctx.attrs.graph_base))
+            rel = rel[len(ctx.attrs.graph_base) + 1:]
         srcs[rel] = s
     for want in ctx.attrs.src_paths:
         if want not in srcs:
             fail("{}: the graph names the source {} but the target's `srcs` do not include it".format(ctx.label, want))
     src_dir = ctx.actions.copied_dir("src", srcs)
 
-    # The dependencies' `.mojoc`, flat, and a check that the targets give exactly the closure the graph has.
+    # The dependencies' `.mojoc`, flat, and a check that the targets give exactly the closure the graph has, each library built as the graph says.
     closure = {}
+    ids = {}
     for d in ctx.attrs.deps:
         closure.update(d[MojoLibInfo].closure)
-    if sorted(closure.keys()) != sorted(ctx.attrs.closure_names):
-        fail("{}: the graph's closure of {} is {} but the dependency targets give {}".format(ctx.label, ctx.attrs.unit_id, sorted(ctx.attrs.closure_names), sorted(closure.keys())))
+        ids.update(d[MojoLibInfo].ids)
+    if sorted(closure.keys()) != sorted(ctx.attrs.closure_ids.keys()):
+        fail("{}: the graph's closure of {} is {} but the dependency targets give {}".format(ctx.label, ctx.attrs.unit_id, sorted(ctx.attrs.closure_ids.keys()), sorted(closure.keys())))
+    check_closure_ids(str(ctx.label), ctx.attrs.closure_ids, ids)
 
     # The native libraries by soname.
     natives = {}
@@ -113,9 +132,10 @@ def _unit_impl(ctx):
     if ctx.attrs.kind == "lib":
         mojoc = out.project(ctx.attrs.product)
         closure[ctx.attrs.package] = mojoc
+        ids[ctx.attrs.package] = ctx.attrs.unit_id
         return _validated(ctx, [
             DefaultInfo(default_output = mojoc),
-            MojoLibInfo(id = ctx.attrs.unit_id, mojoc = mojoc, closure = closure),
+            MojoLibInfo(id = ctx.attrs.unit_id, mojoc = mojoc, closure = closure, ids = ids),
             MojoNativeArchiveInfo(sonames = list(ctx.attrs.native_sonames), archives = natives),
         ])
     return _validated(ctx, [
@@ -139,13 +159,15 @@ mojo_unit_rule = rule(
         "natives": attrs.dict(attrs.string(), attrs.dep(), default = {}),
         # Arguments mojo_launch puts right after `build` (the ISA flags of a test or binary).
         "build_args": attrs.list(attrs.string(), default = []),
-        "closure_names": attrs.list(attrs.string(), default = []),
+        # package name -> unit id, for every unit this one imports (directly or not): the graph's closure, which the dependency targets must give.
+        "closure_ids": attrs.dict(attrs.string(), attrs.string(), default = {}),
+        # The directory (of the repository) the graph's paths start at: the package's own, or "" when mopm was given --workspace-root.
+        "graph_base": attrs.string(default = ""),
         "package": attrs.string(),
         # The file name of the product inside the output directory: `<package>.mojoc` or the executable's name.
         "product": attrs.string(),
-        # Paths the graph names for this unit's sources, and the directory of the BUCK file's package they are relative to.
+        # Paths the graph names for this unit's sources (`srcs` are the files at those paths, in this BUCK file's package).
         "src_paths": attrs.list(attrs.string(), default = []),
-        "src_root": attrs.string(default = ""),
         "srcs": attrs.list(attrs.source(), default = []),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         "unit_id": attrs.string(),
@@ -169,10 +191,13 @@ def _prebuilt_impl(ctx):
             sub_targets[soname] = [DefaultInfo(default_output = natives.project(soname))]
     ctx.actions.run(cmd, category = "mojo_prebuilt", identifier = ctx.attrs.unit_id)
     closure = {}
+    ids = {}
     for d in ctx.attrs.deps:
         closure.update(d[MojoLibInfo].closure)
+        ids.update(d[MojoLibInfo].ids)
     closure[ctx.attrs.package] = out
-    return [DefaultInfo(default_output = out, sub_targets = sub_targets), MojoLibInfo(id = ctx.attrs.unit_id, mojoc = out, closure = closure)]
+    ids[ctx.attrs.package] = ctx.attrs.unit_id
+    return [DefaultInfo(default_output = out, sub_targets = sub_targets), MojoLibInfo(id = ctx.attrs.unit_id, mojoc = out, closure = closure, ids = ids)]
 
 # A registry dependency: the `.mojoc` inside the sha256-pinned `.conda` the graph names, never compiled, and the static native libraries
 # the lock pins for the package (`natives`: soname -> sha256, in the graph's order), which come out of the same file.
@@ -193,6 +218,27 @@ mojo_prebuilt_rule = rule(
 # runpath ($ORIGIN/lib). The build action is `check marker` (rules/check): the marker is written, `passed`, only when the binary exited 0; the
 # `buck2 test` command is `check run`, the same start without a marker.
 
+def _data_dir(ctx):
+    """The directory a test finds its staged data in, or None for a test without data: a copy of each file (a label's default output keeps its executable
+    bit) at its staged path, so the directory is an input of the action by the digests of the files in it."""
+    where = str(ctx.label.raw_target())
+    check_test_env(where, ctx.attrs.test_env)
+    if not ctx.attrs.data:
+        return None
+    check_data_destinations(where + ": data", ctx.attrs.data.keys())
+    return ctx.actions.copied_dir("data", dict(ctx.attrs.data))
+
+def _start_options(ctx, data_dir):
+    """`check run|marker` options that give a test its data and variables: the data directory as the working directory and under `BUILDRULES_TEST_DATA`
+    (made absolute, because the action runs in the execution root), then each `test_env` entry. They are arguments of the action, so a change to either
+    is a new action key."""
+    opts = []
+    if data_dir:
+        opts += ["--env", cmd_args(DATA_ENV + "=", data_dir, delimiter = ""), "--abs", DATA_ENV, "--cwd-env", DATA_ENV]
+    for name in sorted(ctx.attrs.test_env.keys()):
+        opts += ["--env", "{}={}".format(name, ctx.attrs.test_env[name])]
+    return opts
+
 def _test_run_impl(ctx):
     info = ctx.attrs.bin[MojoExeInfo]
     have = ctx.attrs._exec_isa[ExecIsaInfo].level
@@ -204,19 +250,27 @@ def _test_run_impl(ctx):
     check = ctx.attrs._check_exe[RunInfo]
     compiler = ctx.attrs.toolchain[MojoToolchainInfo].compiler
     libs = cmd_args(compiler, "/lib", delimiter = "")
+    data_dir = _data_dir(ctx)
+    start = _start_options(ctx, data_dir)
     marker = ctx.actions.declare_output(ctx.label.name + ".passed")
     ctx.actions.run(
-        cmd_args(check, "marker", "--out", marker.as_output(), "--ld-library-path", libs, "--", info.exe, hidden = [info.dir]),
+        cmd_args(check, "marker", "--out", marker.as_output(), "--ld-library-path", libs, start, "--", info.exe, hidden = [info.dir]),
         category = ctx.attrs.category,
         identifier = ctx.label.name,
         env = {"BUILDRULES_UNIT_NONCE": _NONCE},
     )
+
+    # The command of `buck2 test`: the same start, without a marker. A test without data or variables has the plain command.
+    if start:
+        run = cmd_args(check, "run", "--ld-library-path", libs, start, "--", info.exe, hidden = [info.dir])
+    else:
+        run = cmd_args(check, "run", "--ld-library-path", libs, "--", info.exe, hidden = [info.dir])
     return _validated(ctx, [
         DefaultInfo(default_output = marker),
         MojoTestRunInfo(marker = marker),
         ExternalRunnerTestInfo(
             type = "custom",
-            command = [cmd_args(check, "run", "--ld-library-path", libs, "--", info.exe, hidden = [info.dir])],
+            command = [run],
             labels = ["test", "mojo"],
         ),
     ])
@@ -227,7 +281,12 @@ mojo_test_run_rule = rule(
         "check": _CHECK_ATTR,
         "bin": attrs.dep(providers = [MojoExeInfo]),
         "category": attrs.string(default = "mojo_test"),
+        # The files the test reads, `{staged path: file or target}`: copied to a directory that is the test's working directory and is named by
+        # BUILDRULES_TEST_DATA (test_data.bzl). A target's default output is staged with the executable bit it has.
+        "data": attrs.dict(attrs.string(), attrs.source(), default = {}),
         "required_isa": attrs.string(default = ""),
+        # The variables the test is given besides its own: `{NAME: value}`.
+        "test_env": attrs.dict(attrs.string(), attrs.string(), default = {}),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
         "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
@@ -252,7 +311,7 @@ def _gated_lib_impl(ctx):
     natives = ctx.attrs.lib.get(MojoNativeArchiveInfo) or MojoNativeArchiveInfo(sonames = [], archives = {})
     return _validated(ctx, [
         DefaultInfo(default_output = out),
-        MojoLibInfo(id = lib.id, mojoc = out, closure = closure),
+        MojoLibInfo(id = lib.id, mojoc = out, closure = closure, ids = lib.ids),
         # The libraries are not behind the tests: they are inputs of the library's own compile and of its tests, which `out` waits for.
         MojoNativeArchiveInfo(sonames = natives.sonames, archives = natives.archives),
     ])
@@ -277,8 +336,19 @@ def _cov_run_impl(ctx):
     if not isa_satisfies(have, want):
         fail(("{}: built for ISA {} but its execution platform reports ISA={}: set exec_compatible_with = test_exec_compatible_with() (rules/isa.bzl), " +
               "which the mojo_package macro does.").format(ctx.label, want, have))
-    # The tree kcov's working directory is: the test source and the library's sources at the relative names the line tables use.
-    share = ctx.actions.copied_dir("share", {dest: src for dest, src in ctx.attrs.share.items()})
+    # The tree kcov's working directory is: the test source and the library's sources at the relative names the line tables use, and the test's
+    # staged data (the same files the test run is given, test_data.bzl): the test under kcov reads them from its working directory, and from the
+    # directory BUILDRULES_TEST_DATA names, which is this tree.
+    where = str(ctx.label.raw_target())
+    check_test_env(where, ctx.attrs.test_env)
+    check_data_destinations(where + ": data", ctx.attrs.data.keys())
+    tree = {dest: src for dest, src in ctx.attrs.share.items()}
+    for dest, src in ctx.attrs.data.items():
+        for held in tree.keys():
+            if dest == held or held.startswith(dest + "/") or dest.startswith(held + "/"):
+                fail("{}: the staged data {} collides with {}, which the coverage tree holds (the test's source or the library's)".format(where, dest, held))
+        tree[dest] = src
+    share = ctx.actions.copied_dir("share", tree)
     report = ctx.actions.declare_output(ctx.label.name + ".cobertura.xml")
     cmd = cmd_args(
         ctx.attrs.runner[RunInfo],
@@ -301,6 +371,10 @@ def _cov_run_impl(ctx):
         ".stage/src/",
         hidden = [info.dir],
     )
+    if ctx.attrs.data:
+        cmd.add("--data-env", DATA_ENV)
+    for name in sorted(ctx.attrs.test_env.keys()):
+        cmd.add("--env", "{}={}".format(name, ctx.attrs.test_env[name]))
     for m in ctx.attrs.maps:
         cmd.add("--map", m)
     for i in ctx.attrs.includes:
@@ -314,6 +388,9 @@ mojo_cov_run_rule = rule(
     attrs = {
         "check": _CHECK_ATTR,
         "bin": attrs.dep(providers = [MojoExeInfo]),
+        # The test's staged data and variables: the very ones of its test run (`mojo_test_run_rule`).
+        "data": attrs.dict(attrs.string(), attrs.source(), default = {}),
+        "test_env": attrs.dict(attrs.string(), attrs.string(), default = {}),
         "includes": attrs.list(attrs.string()),
         "kcov": attrs.exec_dep(default = "buildrules//rules/coverage:kcov"),
         "maps": attrs.list(attrs.string()),
@@ -341,7 +418,13 @@ def _cov_summary_impl(ctx):
     for r in ctx.attrs.reports:
         cmd.add(_file(r))
     ctx.actions.run(cmd, category = "mojo_cov_summary", identifier = ctx.label.name)
-    return _validated(ctx, [DefaultInfo(default_output = out)])
+
+    # `:coverage[reports]`: the per-line records the summary was made from, one kcov Cobertura file per test (docs/contract.md, section 12.4).
+    # They are the very files the summary action read, so a consumer that takes them gets what `coverage.txt` counted.
+    return _validated(ctx, [DefaultInfo(
+        default_output = out,
+        sub_targets = {"reports": [DefaultInfo(default_outputs = [_file(r) for r in ctx.attrs.reports])]},
+    )])
 
 # The package's line coverage from its tests' reports; fails when one of its own sources is in none.
 mojo_cov_summary_rule = rule(

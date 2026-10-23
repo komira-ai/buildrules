@@ -26,6 +26,10 @@ zig_module(
     src = ":version_zig",
 )
 
+# The modules every program of the CLI is built with: the version, and the committed form of a Mojo unit graph (rules/mojo/tools/graph_norm.zig),
+# which `buildrules mojo sync` writes and the `:table` check of the rules compares.
+_DEPS = [":buildrules_version", "//rules/mojo:mojo_graph_norm"]
+
 # The bytes of version.zig for a VERSION file (cli/version.bzl `version_stamp`), pinned as analysis tests (rules/rust/refusal.bzl): what the sed this replaced
 # accepted gives its exact bytes (a final newline or none, a lone matching line among others), and what it could not turn into a compiling program is refused.
 # The stamp is also held end to end by :version_unit below, on the real VERSION file.
@@ -94,7 +98,7 @@ _TESTS = [
         name = name + "_unit",
         src = "src/" + name + "_test.zig",
         imports = _SRCS,
-        deps = [":buildrules_version"],
+        deps = _DEPS,
         zig = _ZIG,
     )
     for name in _TESTS
@@ -105,7 +109,7 @@ zig_test(
     name = "all_unit",
     src = "src/all_test.zig",
     imports = _SRCS,
-    deps = [":buildrules_version"],
+    deps = _DEPS,
     zig = _ZIG,
 )
 
@@ -115,7 +119,7 @@ zig_test(
     name = "version_unit",
     src = "src/version_test.zig",
     imports = _SRCS,
-    deps = [":buildrules_version"],
+    deps = _DEPS,
     data = {"VERSION": "//:VERSION"},
     zig = _ZIG,
 )
@@ -131,7 +135,7 @@ zig_exe(
     name = "buildrules",
     src = "src/main.zig",
     imports = _SRCS,
-    deps = [":buildrules_version"],
+    deps = _DEPS,
     zig = _ZIG,
     unit_tests = [":" + name + "_unit" for name in _TESTS] + [":version_unit"],
     visibility = ["PUBLIC"],
@@ -159,7 +163,7 @@ _CROSS = {
         name = "buildrules_" + name.replace("-", "_"),
         src = "src/main.zig",
         imports = _SRCS,
-        deps = [":buildrules_version"],
+        deps = _DEPS,
         zig = _ZIG,
         target = triple,
         unit_tests = [":" + test + "_unit" for test in _TESTS] + [":version_unit"],

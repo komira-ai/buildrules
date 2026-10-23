@@ -9,7 +9,9 @@
 #   tool       builds the release tool (tools/release, Zig), the stage tool (tools/stage) and the tools of the channels (tools/channels: the .deb and the formula;
 #              tools/deploy: the tap pull request and the apt publish) before any job holds a token, and hands the binaries on.
 #   plan       read-only: decides whether this commit is released (docs and CI alone are not; a RELEASE_FREEZE of `true` stops every release, and only this
-#              job reads it) and which version (the highest patch of VERSION's MAJOR.MINOR plus one). It creates nothing.
+#              job reads it) and which version (the highest patch of VERSION's MAJOR.MINOR plus one). It creates nothing. For a commit that already has its tag it
+#              also asks whether that release is complete (output `complete`: all fourteen files, with the digests of the commit's archive and of the release's own
+#              SHA256SUMS); then build-cli, beta, gamma and archive are skipped, and every job after them with them, instead of rebuilding for a release that is made.
 #   build-cli  builds the command line for the three release targets from the tested commit with the planned version stamped in, and packages the three tarballs
 #              and, from the very same two Linux binaries, the two .debs.
 #   beta       hello-world repositories per language that consume the candidate commit as a user would, with the linux-x86_64 command line that build-cli
@@ -148,6 +150,7 @@ jobs:
       FREEZE: ${{ vars.RELEASE_FREEZE }}
     outputs:
       released: ${{ steps.version.outputs.released }}
+      complete: ${{ steps.version.outputs.complete }}
       tag: ${{ steps.version.outputs.tag }}
       number: ${{ steps.version.outputs.number }}
       previous: ${{ steps.version.outputs.previous }}
@@ -164,7 +167,9 @@ jobs:
       - run: chmod +x tool/release
       - name: The version of this commit, if it is released
         id: version
-        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$CANDIDATE" --freeze "$FREEZE" --dry false --output "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tool/release plan --root "$GITHUB_WORKSPACE" --sha "$CANDIDATE" --repo "$GITHUB_REPOSITORY" --freeze "$FREEZE" --dry false --output "$GITHUB_OUTPUT"
 
   # The command line for the three release targets, built from the tested commit with the planned version stamped in (-c buildrules.release_version, read by
   # cli/BUCK), in one directory (//cli:release_binaries) and then packaged as the three tarballs the release ships, and the two Linux binaries as the two .debs
@@ -172,7 +177,7 @@ jobs:
   # .debs are handed to the archive. It runs the buck2 that `tool` handed on, as the literal `./buck2`.
   build-cli:
     needs: [plan, tool]
-    if: ${{ needs.plan.outputs.released == 'true' }}
+    if: ${{ needs.plan.outputs.released == 'true' && needs.plan.outputs.complete != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -227,7 +232,7 @@ jobs:
   # farm's network, so the call may grant `id-token`.
   beta:
     needs: [plan, build-cli]
-    if: ${{ needs.plan.outputs.released == 'true' }}
+    if: ${{ needs.plan.outputs.released == 'true' && needs.plan.outputs.complete != 'true' }}
     permissions:
       contents: read
       id-token: write
@@ -240,7 +245,7 @@ jobs:
   # first step names every repository variable that is empty), and so no release is made: a candidate that was not built on the farm is not released.
   gamma:
     needs: [plan, beta, tool]
-    if: ${{ needs.plan.outputs.released == 'true' }}
+    if: ${{ needs.plan.outputs.released == 'true' && needs.plan.outputs.complete != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
     permissions:
@@ -294,7 +299,7 @@ jobs:
   # architecture; SHA256SUMS lists the six files. The job holds no token beyond reading: the signing is attest.
   archive:
     needs: [plan, build-cli, beta, gamma, tool]
-    if: ${{ needs.plan.outputs.released == 'true' }}
+    if: ${{ needs.plan.outputs.released == 'true' && needs.plan.outputs.complete != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -356,7 +361,10 @@ jobs:
           name: release-unsigned
           path: dist
       - run: chmod +x tool/release
+      # The retry of `release verify` reads cosign's stderr, whose shape is that of this release: it is named, not left to the action's default.
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.0.6'
       - name: Sign the seven files, keyless
         run: tool/release sign --dist dist --dry false
       - name: Attest the archive, the three tarballs, the two .debs and SHA256SUMS
@@ -411,7 +419,10 @@ jobs:
           name: channel-tools
           path: tool
       - run: chmod +x buck2 tool/release tool/channels
+      # The retry of `release verify` reads cosign's stderr, whose shape is that of this release: it is named, not left to the action's default.
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.0.6'
       - name: Build the command line again for the three targets
         run: ./buck2 build --console simple -c buildrules_re.mode=local -c "buildrules.release_version=$NUMBER" --out rebuilt-bins //cli:release_binaries
       - name: Package the three tarballs again

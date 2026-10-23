@@ -7,7 +7,7 @@
 //!
 //!   cov_run --kcov <dir> --normalize <exe> --compiler <dir> --binary <file> --share <dir> --out <report.xml>
 //!           [--map <share-relative dir>=<repository dir>]... --must-contain <repository path>
-//!           [--include <share-relative path>]... [--refuse-in-binary <text>]...
+//!           [--include <share-relative path>]... [--refuse-in-binary <text>]... [--env NAME=VALUE]... [--data-env NAME]
 //!
 //!   --kcov      the kcov distribution (bin/kcov, lib/libgcc_s.so.1); it is run in place
 //!   --compiler  the compiler closure; its lib/ is on LD_LIBRARY_PATH (the test binary loads libKGENCompilerRTShared.so from it)
@@ -18,6 +18,9 @@
 //!   --include   what kcov measures, by path in the tree (comma and colon are refused: kcov's option splits on them)
 //!   --refuse-in-binary  fail before kcov runs when the binary holds this text: a binary that names the sources by the directory they
 //!               were staged in (`.stage/src/`) would have kcov drop them without an error
+//!   --env       a variable the test is given (the test's own, `test_env` of mojo_package); the names the runner sets itself are refused
+//!   --data-env  the variable that names the tree (`--share`, made absolute): the directory the test is given its staged data in, which is
+//!               also its working directory under kcov
 //!
 //! Exit status: the test's under kcov when it fails (128+N for signal N); 1 when the binary names staged paths, kcov wrote no report,
 //! or the report was refused; 2 for a usage error.
@@ -37,6 +40,10 @@ pub const Args = struct {
     maps: []const Map = &.{},
     includes: []const []const u8 = &.{},
     refuse: []const []const u8 = &.{},
+    /// `NAME=VALUE` entries of the test's environment.
+    env: []const []const u8 = &.{},
+    /// The variable that holds the absolute path of `share`, or empty.
+    data_env: []const u8 = "",
     /// Arguments of the test binary (zig_cover.zig gives the runner its report path); cov_run's own command line has none.
     binary_args: []const []const u8 = &.{},
 };
@@ -52,6 +59,7 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, diag: *[]const u8) 
     var maps = std.ArrayList(Map).empty;
     var includes = std.ArrayList([]const u8).empty;
     var refuse = std.ArrayList([]const u8).empty;
+    var envs = std.ArrayList([]const u8).empty;
     var i: usize = 0;
     while (i < argv.len) : (i += 2) {
         const flag = argv[i];
@@ -98,6 +106,23 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, diag: *[]const u8) 
                 return error.Usage;
             }
             try refuse.append(a, v);
+        } else if (std.mem.eql(u8, flag, "--env")) {
+            const eq = std.mem.indexOfScalar(u8, v, '=') orelse 0;
+            if (eq == 0) {
+                diag.* = try std.fmt.allocPrint(a, "--env {s} is not NAME=VALUE", .{v});
+                return error.Usage;
+            }
+            if (ownEnv(v[0..eq])) {
+                diag.* = try std.fmt.allocPrint(a, "--env {s}: cov_run sets {s} itself", .{ v, v[0..eq] });
+                return error.Usage;
+            }
+            try envs.append(a, v);
+        } else if (std.mem.eql(u8, flag, "--data-env")) {
+            if (v.len == 0 or std.mem.indexOfScalar(u8, v, '=') != null or ownEnv(v)) {
+                diag.* = try std.fmt.allocPrint(a, "--data-env {s} is not a variable name cov_run may set", .{v});
+                return error.Usage;
+            }
+            r.data_env = v;
         } else {
             diag.* = try std.fmt.allocPrint(a, "unknown option {s}", .{flag});
             return error.Usage;
@@ -116,7 +141,27 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, diag: *[]const u8) 
     r.maps = try maps.toOwnedSlice(a);
     r.includes = try includes.toOwnedSlice(a);
     r.refuse = try refuse.toOwnedSlice(a);
+    r.env = try envs.toOwnedSlice(a);
     return r;
+}
+
+/// The variables cov_run sets for the test itself; a test's own `--env` may not replace them.
+fn ownEnv(name: []const u8) bool {
+    return std.mem.eql(u8, name, "LD_LIBRARY_PATH") or std.mem.eql(u8, name, "PATH");
+}
+
+/// The environment kcov, and the test under it, get: the compiler's `lib/` for the library path, a fixed PATH, each `--env`, and `--data-env` naming `share`
+/// (the tree is the test's working directory, so a relative path and the variable reach the same files).
+pub fn testEnv(a: std.mem.Allocator, r: Args, compiler: []const u8, share: []const u8) !std.process.EnvMap {
+    var env = std.process.EnvMap.init(a);
+    try env.put("LD_LIBRARY_PATH", try std.fs.path.join(a, &.{ compiler, "lib" }));
+    try env.put("PATH", "/usr/bin:/bin");
+    for (r.env) |entry| {
+        const eq = std.mem.indexOfScalar(u8, entry, '=') orelse continue;
+        try env.put(entry[0..eq], entry[eq + 1 ..]);
+    }
+    if (r.data_env.len > 0) try env.put(r.data_env, share);
+    return env;
 }
 
 /// kcov's command line. `share` is the absolute (real) path of the tree, `work` where the report goes.
@@ -205,9 +250,7 @@ pub fn main() !void {
     rr.kcov = kcov_dir;
     rr.binary = binary;
     const kargv = try kcovArgv(a, rr, share, work_abs);
-    var env = std.process.EnvMap.init(a);
-    try env.put("LD_LIBRARY_PATH", try std.fs.path.join(a, &.{ compiler, "lib" }));
-    try env.put("PATH", "/usr/bin:/bin");
+    var env = try testEnv(a, rr, compiler, share);
     const code = try run(a, kargv, share, &env);
     if (code != 0) die(code, "kcov (or the test under it) exited {d}", .{code});
 

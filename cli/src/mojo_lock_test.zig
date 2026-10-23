@@ -99,6 +99,37 @@ test "parse: every problem of a table is a message, and the table is refused" {
     }
 }
 
+test "workspace_root: rendered as Starlark's True, read back, and a lowercase true is refused instead of read as not rooted" {
+    var e = Env.init();
+    defer e.deinit();
+    const a = e.a();
+    var rooted = lock_l;
+    rooted.workspace_root = true;
+    const text = try lockm.render(a, rooted);
+    try t.expect(std.mem.indexOf(u8, text, "MOPM = {\"version\": \"0.0.1\", \"origin\": \"builtin\", \"workspace_root\": True}\n") != null);
+    try t.expect(std.mem.indexOf(u8, text, "true") == null);
+    var d = Diag.init(a);
+    const back = try lockm.parse(a, "l.bzl", text, &d);
+    try t.expect(back.workspace_root);
+    try t.expectEqual(@as(usize, 0), d.count());
+    // a table that is not rooted says nothing about it and reads as not rooted
+    const plain = try lockm.render(a, lock_l);
+    try t.expect(std.mem.indexOf(u8, plain, "workspace_root") == null);
+    try t.expect(!(try lockm.parse(a, "l.bzl", plain, &d)).workspace_root);
+    // the spelling Starlark does not have: refused, naming the file, the word and the fix
+    const lower = try std.mem.replaceOwned(u8, a, text, "\"workspace_root\": True", "\"workspace_root\": true");
+    var d2 = Diag.init(a);
+    try t.expectError(error.Invalid, lockm.parse(a, "l.bzl", lower, &d2));
+    try expectMsg(&d2, "l.bzl: the MOPM line is not");
+    try expectMsg(&d2, "Starlark spells the boolean True");
+    try expectMsg(&d2, "buildrules mojo sync");
+    try kit.sweepRefusalLast(lockm.parse, .{ "l.bzl", lower });
+    // and so is a value that is neither
+    const odd = try std.mem.replaceOwned(u8, a, text, "\"workspace_root\": True", "\"workspace_root\": False");
+    var d3 = Diag.init(a);
+    try t.expectError(error.Invalid, lockm.parse(a, "l.bzl", odd, &d3));
+}
+
 test "parse: the lines that are optional in the middle of a table are skipped, not fatal" {
     var e = Env.init();
     defer e.deinit();

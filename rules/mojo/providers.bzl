@@ -26,6 +26,15 @@ MojoLibInfo = provider(fields = {
     "mojoc": provider_field(typing.Any),
     # package name -> its `.mojoc`, this unit and everything it imports (a unit's `--deps` directory holds these, flat).
     "closure": provider_field(dict),
+    # package name -> the id of its unit (`<name>@<version>#mojo<mojo version>/lib`), the same keys: what each `.mojoc` of the closure was built as.
+    # A unit that imports it checks these against its own graph (rules/mojo/unit.bzl, `check_closure_ids`).
+    "ids": provider_field(dict),
+})
+
+# The files `mopm plan` reads for a package and for the path dependencies it imports, at their repository paths (rules/mojo/check.bzl).
+MojoWorkspaceInfo = provider(fields = {
+    # repository path -> file: this package's files and everything its path dependencies' workspaces hold.
+    "files": provider_field(dict),
 })
 
 # The native libraries a library unit links, which an adopted label hands to a dependent that still links through other rules: the unit's `natives` in the

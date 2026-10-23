@@ -1,0 +1,9 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A package whose one test takes one arm of a function: the other arm's lines are recorded and never run, so its line coverage is below 100%.
+# It has a coverage_floor.txt, so it has a `:coverage_floor` (the floor is exactly the coverage); ../coverage_floors checks the same coverage
+# against a floor above it and a floor below it.
+mojo_package(path = ".")
+
+scrub_files()

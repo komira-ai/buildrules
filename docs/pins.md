@@ -28,6 +28,12 @@ mopm 0.0.25 is the published release, https://github.com/komira-ai/mopm/releases
 `mopm-0.0.25-linux-x86_64.tar.gz` is 1074723 bytes with sha256 `1848ffbb6c3f3522e95c36d3d5f7d4260abb8dde2cb3c415b17ca94dc48edeac`, the digest in the release's
 `SHA256SUMS` (downloaded and compared, 2026-10-22; the sigstore bundle of the tarball carries the same digest); it unpacks into `mopm-0.0.25-linux-x86_64/` holding `mopm` and `LICENSE`.
 
+The digest is also checked against its signer on every pull request, and not by hand: the workflow `.github/workflows/mopm-pin.yml` (the check `mopm-pin / verify`) builds `//ci:mopm_pin`,
+which reads every row of `MOPM_VERSIONS` in `rules/mopm/pins.bzl`, downloads the row's tarball and its `.sigstore.json` bundle, requires the pinned size and sha256, and runs
+`cosign verify-blob` with the identity of mopm's `release.yml` on `refs/heads/main` and the GitHub Actions issuer (cosign v3.0.6 and its installer, pinned as `release.yml` pins them).
+A pin whose digest was changed to a build mopm's release did not sign, or whose release was never signed by that workflow, fails the job. `ci/mopm_pin_workflow_check.zig` holds the
+workflow to being a check that cannot be removed or softened. The branch-protection rule that requires `mopm-pin / verify` is the repository owner's setting; the workflow is the part this tree can hold.
+
 ## Mirrors
 
 `buildrules.url_map` (rules/core/url_map.bzl) replaces the leading part of a download's URL and nothing else: the sha256 and size are still checked, so a mirror
