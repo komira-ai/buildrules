@@ -51,6 +51,7 @@ _ZIG_VERSION = "buildrules//rules/pins:zig_next_version"
         zig = _ZIG,
     )
     for name in [
+        "fetch",
         "lockfmt",
         "main",
         "npm",
@@ -72,6 +73,7 @@ zig_exe(
     src = "main.zig",
     imports = _SRCS,
     unit_tests = [
+        ":fetch_unit",
         ":lockfmt_unit",
         ":main_unit",
         ":npm_unit",
@@ -91,7 +93,7 @@ zig_exe(
 
 # The coverage of the sources the tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to.
 zig_coverage(
-    test_targets = [":" + name + "_unit" for name in ["lockfmt", "main", "npm", "oom", "pins", "refusal", "resolve", "toml", "update", "valid"]],
+    test_targets = [":" + name + "_unit" for name in ["fetch", "lockfmt", "main", "npm", "oom", "pins", "refusal", "resolve", "toml", "update", "valid"]],
     expect = ["rules/kpin/" + f for f in _SRCS],
 )
 
