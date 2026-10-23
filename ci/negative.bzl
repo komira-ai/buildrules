@@ -199,6 +199,12 @@ PLANTED = [
     ("//ci/planted:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
     ("//ci/planted:lib_behind_a_failing_test", "//examples/hello:hello_lib", "this test fails by design"),
     ("//ci/planted:mojo_test_that_fails", None, "check marker: TEST FAILED: "),
+    # The data and the variables of a Mojo test (ci/mojo_data/BUCK): the stand-in test reads what is staged and says which of its expectations failed.
+    # The control of each is the run that stages everything the probe expects.
+    ("//ci/mojo_data:run_red_content", "//ci/mojo_data:run_green", "data_probe: greeting.txt holds other data"),
+    ("//ci/mojo_data:run_red_env", "//ci/mojo_data:run_green", "data_probe: PROBE_MODE is lax, not strict"),
+    ("//ci/mojo_data:run_red_no_program", "//ci/mojo_data:run_green", "data_probe: cannot start bin/hello: FileNotFound"),
+    ("//ci/mojo_data:run_red_not_executable", "//ci/mojo_data:run_green", "data_probe: cannot start bin/hello: AccessDenied"),
 ]
 
 def _failures(ctx, label):
@@ -248,6 +254,13 @@ TEST_COMMANDS = [
         "\"run\", \"--ld-library-path\", cmd_args(<build artifact check",
         "\"/lib\", delimiter=\"\"), \"--\", <build artifact check",
     ], [], [], ["test", "mojo"], ["hidden=[<build artifact check"]),
+    # A Mojo test with data and variables: the data directory is the working directory and named by BUILDRULES_TEST_DATA, made absolute (the command starts in
+    # the execution root), and the variable is given; the directory is an input of the command.
+    ("//ci/mojo_data:run_green", [
+        "\"--abs\", \"BUILDRULES_TEST_DATA\", \"--cwd-env\", \"BUILDRULES_TEST_DATA\"",
+        "\"PROBE_MODE=strict\"",
+        "cmd_args(\"BUILDRULES_TEST_DATA=\"",
+    ], [], [], ["test", "mojo"], ["hidden=["]),
 ]
 
 def test_command_problems(ctx):
