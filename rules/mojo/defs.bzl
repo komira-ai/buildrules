@@ -25,6 +25,12 @@ anything. The static libraries (`lib<stem>.a`) of a registry package come from t
 library it needs) with nothing written in the BUCK file. Any other native library (a shared one, a workspace member's) is an entry of
 `natives = {"<soname>": "<target>"}`; one the lock provides may not also be named there.
 
+Test data and variables. A test that reads files (goldens, fixtures, a pinned third-party file, a program it starts) names them in
+`test_data = {"<test source or *>": {"<staged path>": "<file or target>"}}`, and one that reads variables in `test_env = {"NAME": "value"}`
+(rules/mojo/test_data.bzl, docs/contract.md section 12.9). The files are copied to a directory per test, which is the test's working directory in
+its run and in its coverage run and is named by `BUILDRULES_TEST_DATA`; the files and the variables are inputs of both actions, so a change to
+either runs the test again.
+
 The gate. `:lib` is a copy of `:lib_ungated` made by an action that takes the marker of every test run as an input, and a test run writes
 its marker only when the test passed. A failing test therefore leaves `:lib` unbuildable, and so every target that imports it (a
 member's units, a binary, `:build`, a conda package made from it). Build `:lib_ungated` to work on a library whose tests are red.
@@ -40,6 +46,7 @@ load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
 load(":check.bzl", "mojo_check_rule", "mojo_table_rule", "mojo_workspace_rule")
+load(":test_data.bzl", "check_test_env", "stage_test_data")
 load(":unit.bzl", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_gated_lib_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
 
 SCHEMA = 1
@@ -154,7 +161,7 @@ def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
         visibility = visibility,
     )
 
-def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]):
+def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, visibility = ["PUBLIC"]):
     if table == None:
         fail("mojo_package needs its table: load mojo_package from the buildrules.mojo.bzl next to mopm.toml (`buildrules mojo sync` writes it)")
     _check_table(table)
@@ -313,6 +320,19 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
         if units[uid]["kind"] == "lib" and units[uid]["package"] == root:
             own_lib = units[uid]
     here_repo = _join(here, project)
+    lib_share = {}
+    if own_lib:
+        prefix = own_lib["root"] + "/"
+        for s in own_lib["srcs"]:
+            if not s["path"].startswith(prefix):
+                fail("{}: source {} is not under the library root {}".format(here, s["path"], own_lib["root"]))
+            lib_share[root + "/" + s["path"][len(prefix):]] = _join(project, s["path"])
+
+    # What the tests are given besides their binaries (rules/mojo/test_data.bzl): `test_data` per test file, `test_env` for all. The coverage run's
+    # working directory holds the test's source and the library's sources, so a staged path may not be one of those.
+    test_sources = [units[u]["srcs"][0]["path"] for u in sorted(units.keys()) if units[u]["kind"] == "test"]
+    check_test_env(here, test_env)
+    staged = stage_test_data(here, test_sources, test_data, {t: [t] + sorted(lib_share.keys()) for t in test_sources})
     for uid in sorted(units.keys()):
         u = units[uid]
         kind = u["kind"]
@@ -347,6 +367,8 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
                 name = name_once(stem),
                 bin = ":" + stem + "__bin",
                 check = ":check",
+                data = staged[units[uid]["srcs"][0]["path"]],
+                test_env = test_env,
                 required_isa = required_isa(),
                 toolchain = toolchain,
                 exec_compatible_with = test_exec_compatible_with(),
@@ -368,17 +390,15 @@ def mojo_package(path = ".", table = None, natives = {}, visibility = ["PUBLIC"]
             maps = [(test_dir + "/=" + _join(here_repo, test_dir) + "/") if test_dir else "=" + here_repo + "/"]
             includes = [test_src]
             if own_lib:
-                prefix = own_lib["root"] + "/"
-                for s in own_lib["srcs"]:
-                    if not s["path"].startswith(prefix):
-                        fail("{}: source {} is not under the library root {}".format(here, s["path"], own_lib["root"]))
-                    share[root + "/" + s["path"][len(prefix):]] = _join(project, s["path"])
+                share.update(lib_share)
                 maps.append(root + "/=" + _join(here_repo, own_lib["root"]) + "/")
                 includes.append(root)
             mojo_cov_run_rule(
                 name = name_once(stem + "__cov"),
                 bin = ":" + stem + "__cov_bin",
                 check = ":check",
+                data = staged[test_src],
+                test_env = test_env,
                 includes = includes,
                 maps = maps,
                 must_contain = _join(here_repo, test_src),
