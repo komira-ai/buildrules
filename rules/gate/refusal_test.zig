@@ -28,7 +28,7 @@ const Env = struct {
 
     /// The gate over `argv`: it must refuse with `status` and exactly `msg` on stderr, and write nothing.
     fn refuses(e: *Env, name: []const u8, argv: []const []const u8, status: u8, msg: []const u8) !void {
-        const r = try kit.runGate(e.a, e.dir, argv, .{});
+        const r = try kit.runInline(e.a, e.dir, argv);
         if (r.status != status or !std.mem.eql(u8, r.err, msg) or r.out.len != 0) {
             std.debug.print("{s}: exit {d} (want {d}), stderr:\n{s}\nwant:\n{s}\nstdout:\n{s}\n", .{ name, r.status, status, r.err, msg, r.out });
             return error.TestUnexpectedResult;

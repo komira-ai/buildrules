@@ -12,8 +12,8 @@ One line per package. The targets come from the package's unit graph, which `bui
     :build      the library and the binaries of `[targets] bins`
     :coverage   every test again as a debug build run under kcov, one Cobertura report per test file; `coverage.txt` is the per-file count, and
                 `:coverage[reports]` is the per-line records of every test (kcov's Cobertura XML in repository paths)
-    :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green only while `:coverage` is exactly that floor (below it:
-                "coverage fell"; above it: "raise the floor to X"), the check of every other package's floor (rules/coverage/README.md, "The floor")
+    :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green while `:coverage` is at least that floor (below it:
+                "coverage fell"; at or above it passes, and above it prints "you may raise the floor to X"), the check of every other package's floor (rules/coverage/README.md, "The floor")
     :ci        `:build` and `:test`
     :table      the committed graph is, byte for byte, what the pinned mopm prints now (a check of its own; `:workspace` holds the files it reads)
 
@@ -143,8 +143,8 @@ def native_wiring(unit, prebuilt_packages, user_natives, here, refuse = fail):
 COVERAGE_FLOOR_FILE = "coverage_floor.txt"
 
 def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
-    """Green only while the `coverage.txt` of `coverage` (a mojo_package's `:coverage`) is exactly the figures of the file `floor` (`lines NN.NN`):
-    lower fails with "coverage fell", higher fails with "raise the floor to NN.NN" (rules/coverage/tools/cov_floor.zig). `mojo_package` makes
+    """Green only while the `coverage.txt` of `coverage` (a mojo_package's `:coverage`) is at least the figures of the file `floor` (`lines NN.NN`):
+    lower fails with "coverage fell", at or above passes, and above prints "you may raise the floor to NN.NN" (rules/coverage/tools/cov_floor.zig). `mojo_package` makes
     `:coverage_floor` itself when `coverage_floor.txt` is beside the BUCK file; this is for a check of the same coverage against another file."""
     zig_coverage_floor_rule(
         name = name,

@@ -117,6 +117,9 @@ test "a source with no executable line is 0/0 in the summary and has no class in
     const records = try work(a, "reexport/reports.cobertura.xml");
     try t.expect(std.mem.indexOf(u8, summary, "examples/mojo/reexport/src/reexport/__init__.mojo 0/0 0%\n") != null);
     try t.expect(std.mem.indexOf(u8, records, "reexport/__init__.mojo") == null);
+    // a file of alias declarations only is listed, not refused, and likewise has no class
+    try t.expect(std.mem.indexOf(u8, summary, "examples/mojo/reexport/src/reexport/aliases.mojo 0/0 0%\n") != null);
+    try t.expect(std.mem.indexOf(u8, records, "reexport/aliases.mojo") == null);
     try t.expect((try classOf(a, records, "examples/mojo/reexport/src/reexport/ops.mojo")) != null);
 }
 
@@ -152,9 +155,10 @@ test "a package without a floor file has the summary it always had" {
     const a = arena.allocator();
     try t.expectEqualStrings(
         "examples/mojo/reexport/src/reexport/__init__.mojo 0/0 0%\n" ++
-            "examples/mojo/reexport/src/reexport/ops.mojo 4/4 100%\n" ++
-            "examples/mojo/reexport/tests/test_ops.mojo 6/6 100% (not counted)\n" ++
-            "total 4/4 100%\n",
+            "examples/mojo/reexport/src/reexport/aliases.mojo 0/0 0%\n" ++
+            "examples/mojo/reexport/src/reexport/ops.mojo 10/10 100%\n" ++
+            "examples/mojo/reexport/tests/test_ops.mojo 16/16 100% (not counted)\n" ++
+            "total 10/10 100%\n",
         try work(a, "reexport/coverage.txt"),
     );
 }

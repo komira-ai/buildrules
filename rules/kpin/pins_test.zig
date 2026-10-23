@@ -118,6 +118,58 @@ test "load refusals: each validated field" {
     try refuses("[a]\nversion = \"1\"\nurl = \"https://h.example/x\"\nversion_prefix = \"-\"" ++ plat, "version_prefix");
 }
 
+test "load refusals: tables that are not a pin or a platform, and fields of the wrong type" {
+    try refuses(head ++ "[a.platform.p.x]\n", "not a pin table or a [name.platform.id] table");
+    try refuses(head ++ "[a.platform]\n", "not a pin table or a [name.platform.id] table");
+    try refuses(head ++ "[a.platform.p]\ntoken = 5\n", "`token` in [a.platform.p] must be a string");
+    try refuses(head ++ "[a.platform.p]\nsha256 = 5\nsize = 3\n", "`sha256` in [a.platform.p] must be a string");
+    try refuses("[a]\nversion = \"1\"\nurl = \"https://h.example/x\"\nlatest_url = 5\nlatest_field = \"v\"" ++ plat, "`latest_url` in [a] must be a string");
+    try refuses("[a]\nversion = \"1\"\nurl = \"https://h.example/x\"\nversion_prefix = 5" ++ plat, "`version_prefix` in [a] must be a string");
+    // The text is not even TOML: the parser's complaint is the answer.
+    try refuses("[a\n", "malformed table header");
+    // Every pin with a problem is named, not only the first.
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    var d = Diag.init(ar.allocator());
+    try t.expectError(error.Invalid, pins.load(ar.allocator(), "[a]\nversion = \"1\"\nurl = \"https://h.example/x\"\n[b]\nurl = \"https://h.example/x\"\n", &d));
+    try t.expectEqual(@as(usize, 2), d.count());
+}
+
+test "load: a latest_url and latest_field given together are kept, the prefix is optional, a token is used as given" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    var d = Diag.init(ar.allocator());
+    const list = try pins.load(ar.allocator(), head ++ "latest_url = \"https://h.example/l\"\nlatest_field = \"info.version\"\n[a.platform.p]\ntoken = \"Darwin_1.0+x\"\n", &d);
+    try t.expectEqualStrings("https://h.example/l", list[0].latest_url.?);
+    try t.expectEqualStrings("info.version", list[0].latest_field.?);
+    try t.expectEqualStrings("", list[0].version_prefix);
+    try t.expectEqualStrings("Darwin_1.0+x", list[0].platforms[0].token);
+    try t.expect(list[0].platforms[0].sha256 == null and list[0].platforms[0].size == null);
+}
+
+test "setVersion: a version line that is not a quoted string, or a pin without one, is NotFound and nothing is returned" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expectError(error.NotFound, pins.setVersion(a, "[a]\nversion = 1\n", "a", "2"));
+    try t.expectError(error.NotFound, pins.setVersion(a, "[a]\nurl = \"https://h.example/x\"\n", "a", "2"));
+    // `[ab]` is not `[a]`, and `version_prefix` is not `version`.
+    try t.expectError(error.NotFound, pins.setVersion(a, "[ab]\nversion = \"1\"\n", "a", "2"));
+    try t.expectError(error.NotFound, pins.setVersion(a, "[a]\nversion_prefix = \"v\"\n", "a", "2"));
+    // The first `version` of the section is the one set, whatever follows it.
+    const out = try pins.setVersion(a, "[a]\nversion_prefix = \"v\"\nversion=\"1\"\nversion = \"9\"\n", "a", "2");
+    try t.expectEqualStrings("[a]\nversion_prefix = \"v\"\nversion=\"2\"\nversion = \"9\"\n", out);
+}
+
+test "expand: a brace that opens or closes nothing is a bad template" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expectError(error.BadTemplate, pins.expand(a, "https://h.example/{vers", "1", "l"));
+    try t.expectError(error.BadTemplate, pins.expand(a, "https://h.example/{{version}}", "1", "l"));
+    try t.expectEqualStrings("https://h.example/1/1", try pins.expand(a, "https://h.example/{version}/{version}", "1", "l"));
+}
+
 test "setVersion finds a [name] header that has a comment, as the parser does" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();

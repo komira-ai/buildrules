@@ -1,7 +1,7 @@
 //! `release`: the steps of the automatic release (RELEASING.md). The logic is in cmds.zig, version.zig, assets.zig, gz.zig and tar.zig, each
 //! tested; this file reads the command line and runs the real `git` and `gh`.
 //!
-//!   release plan    --root DIR --sha SHA [--output FILE] [--freeze true|false|] [--dry true|false]
+//!   release plan    --root DIR --sha SHA [--output FILE] [--freeze true|false|] [--dry true|false] [--repo OWNER/NAME]   (--repo: say whether an existing release is complete; GH_TOKEN)
 //!   release tag     --root DIR --repo OWNER/NAME --tag TAG --sha SHA
 //!   release archive --root DIR --tag TAG --sha SHA --out DIR
 //!   release verify  --root DIR --repo OWNER/NAME --tag TAG --sha SHA --dist DIR --workflow PATH --cli PATH --rebuilt DIR --dry true|false
@@ -168,12 +168,12 @@ pub fn main() !u8 {
 
 fn run(a: std.mem.Allocator, io: cmds.Io, cmd: []const u8, rest: []const []const u8) !u8 {
     if (std.mem.eql(u8, cmd, "plan")) {
-        const g = try parseArgs(a, rest, &.{ "root", "sha", "output", "freeze", "dry" });
+        const g = try parseArgs(a, rest, &.{ "root", "sha", "output", "freeze", "dry", "repo" });
         const dry = try boolFlag(g, "dry", false);
         const root = try g.need("root");
         const version_path = try join(a, root, "VERSION");
         const version_file = try std.fs.cwd().readFileAlloc(a, version_path, 1024);
-        const r = try cmds.plan(a, io, .{ .root = root, .sha = try g.need("sha"), .version_file = version_file, .freeze = g.get("freeze") orelse "", .dry = dry });
+        const r = try cmds.plan(a, io, .{ .root = root, .sha = try g.need("sha"), .version_file = version_file, .freeze = g.get("freeze") orelse "", .dry = dry, .repo = g.get("repo") orelse "" });
         const out = try cmds.planOutputs(a, r);
         say("{s}", .{out});
         if (g.get("output")) |p| try appendFile(p, out);
@@ -623,6 +623,42 @@ test "tag: the step writes the job outputs, and a superseded run says so and exi
     try t.expect(std.mem.startsWith(u8, text, "superseded=true\ntag=\nnumber=\nmade=none\nreason="));
     // a usage error: the tag is required
     try t.expectError(error.Usage, run(a, newer.io(), "tag", &.{ "--root", "/w", "--repo", "o/n", "--sha", "a" ** 40 }));
+}
+
+test "plan: --repo lets the step ask about a release, and an answer it cannot read leaves the build on" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const base = try tmp.dir.realpathAlloc(a, ".");
+    try tmp.dir.writeFile(.{ .sub_path = "VERSION", .data = "0.0\n" });
+    // every command answers with the one tag, v0.0.2 at the commit; the answer of `gh api` is then not a release, so the question is not answered
+    var tagged = Says{ .says = "v0.0.2\ttag\t" ++ "2" ** 40 ++ "\t" ++ "a" ** 40 ++ "\n" };
+    const out_path = try join(a, base, "out");
+    const args = [_][]const u8{ "--root", base, "--sha", "a" ** 40, "--repo", "o/n", "--output", out_path };
+    const code = try run(a, tagged.io(), "plan", &args);
+    const text = try tmp.dir.readFileAlloc(a, "out", 4096);
+    // without --repo the step asks nothing: the one `git for-each-ref`
+    var quiet = Says{ .says = tagged.says };
+    const quiet_code = try run(a, quiet.io(), "plan", args[0..4]);
+    try t.expect(code == 0 and quiet_code == 0 and tagged.calls > 1 and quiet.calls == 1 and
+        std.mem.startsWith(u8, text, "released=true\nnew=false\ncomplete=false\ntag=v0.0.2\n"));
+}
+
+test "archive: the step writes the archive and its SHA256SUMS under --out and prints the sums" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const base = try tmp.dir.realpathAlloc(a, ".");
+    var git = Says{ .says = "not really a tar" };
+    const out_dir = try join(a, base, "dist");
+    const code = try run(a, git.io(), "archive", &.{ "--root", "/w", "--tag", "v0.0.2", "--sha", "a" ** 40, "--out", out_dir });
+    const sums = try tmp.dir.readFileAlloc(a, "dist/SHA256SUMS", 4096);
+    const archive = try tmp.dir.readFileAlloc(a, "dist/buildrules-0.0.2.tar.gz", 1 << 20);
+    try t.expect(code == 0 and git.calls == 1 and std.mem.endsWith(u8, sums, "  buildrules-0.0.2.tar.gz\n") and archive.len > 0);
 }
 
 /// `args` and `--dry value`.

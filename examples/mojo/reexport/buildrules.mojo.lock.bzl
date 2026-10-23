@@ -33,14 +33,15 @@ GRAPH_JSON = r'''{
       "kind": "lib",
       "root": "src/reexport",
       "srcs": [
-        {"path": "src/reexport/__init__.mojo", "sha256": "6bde24367eef0bb5307abb5b47f3b8eec51f1171c58190e01c2bf6d8e2ed3e10"},
-        {"path": "src/reexport/ops.mojo", "sha256": "76c1fc6ce2110f2e9aed0d1a38ab3374aa73b7886cdb7c8d70db165c68331083"}
+        {"path": "src/reexport/__init__.mojo", "sha256": "9d8fc9b5f3dac346533587ec16de95c7be74634b4a0c13e27f670dad7ec9eca2"},
+        {"path": "src/reexport/aliases.mojo", "sha256": "fae8257cbc620b15e4cafdb26b0266cc948e70d2671abaec1931be7964586905"},
+        {"path": "src/reexport/ops.mojo", "sha256": "84348fe21c938477dcdee82577e1de31b68fc42acc2cba42f91dff87fb0d42f5"}
       ],
       "deps": [],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["reexport.mojoc"],
-      "key": "006f185437df75390ffefefaf43b6d3a73685699c66126900490084dc70cc387"
+      "key": "c0ad6bb6ae72843d0dbbceb02e97c634d0c8d6a38c274f31af7750a606986954"
     },
     {
       "id": "reexport@0.1.0#mojo1.0.0/test:tests/test_ops.mojo",
@@ -48,13 +49,13 @@ GRAPH_JSON = r'''{
       "version": "0.1.0",
       "kind": "test",
       "srcs": [
-        {"path": "tests/test_ops.mojo", "sha256": "bfb4eb93307cb74ed294efed83e53e984aa963b5e4568f90745d11f75bf1f37b"}
+        {"path": "tests/test_ops.mojo", "sha256": "7a7a7d068a9f29ccf0485678ace50eef7c0a12fe6506a700e5bf30c224a7ed87"}
       ],
       "deps": ["reexport@0.1.0#mojo1.0.0/lib"],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_ops.pass"],
-      "key": "38ebac1d4599902afb7f987b1ec35a0095e88ddff41b0ec1780396d7420fc74e"
+      "key": "dfeae15b57fa826740e14c35d8019981977bd43d9df33076eab64b9a337d7dcc"
     }
   ]
 }

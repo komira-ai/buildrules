@@ -39,7 +39,7 @@ const tool = "\"$RUNNER_TEMP/publish_unpack\"";
 /// buck2 is installed outside the checkout, so the tree stays the commit (publish_unpack refuses an untracked file, in the dry run too).
 const buck2_dir = "\"$RUNNER_TEMP/buck2-bin\"";
 const buck2_bin = "\"$RUNNER_TEMP/buck2-bin/buck2\"";
-const common =" --root \"$GITHUB_WORKSPACE\" --buck2 " ++ buck2_bin ++ " --buck2-config buildrules_re.mode=local";
+const common = " --root \"$GITHUB_WORKSPACE\" --buck2 " ++ buck2_bin ++ " --buck2-config buildrules_re.mode=local";
 const dry_cmd = tool ++ common;
 const apply_cmd = tool ++ " --apply --work \"$RUNNER_TEMP/unpack-work\"" ++ common;
 const apply_body = "          mkdir \"$RUNNER_TEMP/unpack-work\"\n          " ++ apply_cmd;
