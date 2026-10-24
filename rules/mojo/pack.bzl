@@ -13,17 +13,52 @@ load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/cxx:providers.bzl", "NativeArchiveInfo")
 load(":providers.bzl", "MojoLibInfo")
 
+def _within(path):
+    """`a/b/../c` -> `a/c`; None when the path leaves the directory it starts in."""
+    out = []
+    for p in path.split("/"):
+        if p in ("", "."):
+            continue
+        if p == "..":
+            if not out:
+                return None
+            out.pop()
+        else:
+            out.append(p)
+    return "/".join(out)
+
+def workspace_tree(dir, manifest, members):
+    """The files `mopm pack` reads, laid out as the repository has them: `{"<repository path>/mopm.toml": <file>}`.
+
+    `dir` is the package's directory from the repository root ("" for the root itself) and `members` maps each path dependency, as the package's mopm.toml
+    writes it (`util`, or `../b` for a sibling), to that package's mopm.toml. mopm reads the manifest of a path dependency at
+    `<dir of --manifest>/<path>/mopm.toml`, so the package and every member are put at their own repository paths and a sibling's `..` stays inside the
+    tree. (A copied_dir refuses a key that is not normalized, which `../b/mopm.toml` is: keyed by the path as it is written, a sibling cannot be staged.)
+    Fails for a path that leaves the repository, and for two entries that land on one file."""
+    tree = {}
+    here = _within(dir)
+    if here == None:
+        fail("mojo_conda: the package directory {} leaves the repository".format(dir))
+    own = (here + "/" if here else "") + "mopm.toml"
+    tree[own] = manifest
+    for path, member in members.items():
+        at = _within((here + "/" if here else "") + path)
+        if at == None:
+            fail("mojo_conda: the member {} of the package at {} leaves the repository".format(path, here or "."))
+        file = (at + "/" if at else "") + "mopm.toml"
+        if file in tree:
+            fail("mojo_conda: the member {} of the package at {} is {}, which is already staged".format(path, here or ".", file))
+        tree[file] = member
+    return tree, own
+
 def _impl(ctx):
     lib = ctx.attrs.lib[MojoLibInfo]
     out = ctx.actions.declare_output("channel", dir = True)
     manifest = ctx.attrs.manifest
     if ctx.attrs.members:
-        # mopm reads the manifest of each path dependency at `<dir of --manifest>/<path>/mopm.toml`: lay the manifests out as the workspace has them.
-        tree = {"mopm.toml": manifest}
-        for path, member in ctx.attrs.members.items():
-            tree[path + "/mopm.toml"] = member
+        tree, own = workspace_tree(ctx.attrs.dir, manifest, ctx.attrs.members)
         workspace = ctx.actions.copied_dir("workspace", tree)
-        manifest = cmd_args(workspace.project("mopm.toml"), hidden = workspace)
+        manifest = cmd_args(workspace.project(own), hidden = workspace)
     cmd = cmd_args(
         ctx.attrs.mopm[RunInfo],
         "pack",
@@ -51,6 +86,9 @@ _mojo_conda = rule(
     attrs = {
         "lib": attrs.dep(providers = [MojoLibInfo]),
         "manifest": attrs.source(),
+        # The package's directory from the repository root, which `members` are laid out around ("" when it is the root). A member's path may start with `..`
+        # (a sibling directory): it is staged at its repository path, below the same workspace as the package.
+        "dir": attrs.string(default = ""),
         # The manifests of the path dependencies (workspace members) the manifest names: `{"<path as the manifest writes it>": "<their mopm.toml>"}`.
         "members": attrs.dict(attrs.string(), attrs.source(), default = {}),
         # `[native.<id>]` of the manifest -> the static archive (a `cxx_library[static-pic]`) packed as `lib<id>.a` (mopm pack --native).
@@ -71,6 +109,14 @@ def _holds_impl(ctx):
     cmd = cmd_args(ctx.attrs.unpacker[DefaultInfo].default_outputs[0], ctx.attrs.conda[DefaultInfo].default_outputs[0], ctx.attrs.package, out.as_output(), "--natives", natives.as_output())
     for soname, archive in sorted(ctx.attrs.natives.items()):
         cmd.add("--native-from", cmd_args("{}=".format(soname), archive[DefaultInfo].default_outputs[0], delimiter = ""))
+    if ctx.attrs.sole:
+        cmd.add("--sole")
+    if ctx.attrs.depends != None:
+        if ctx.attrs.depends:
+            for dep in ctx.attrs.depends:
+                cmd.add("--depends", dep)
+        else:
+            cmd.add("--no-depends")
     ctx.actions.run(cmd, category = "mojo_conda_holds", identifier = ctx.label.name)
     return [DefaultInfo(default_output = out)]
 
@@ -81,11 +127,18 @@ _mojo_conda_holds = rule(
         # `{"lib<id>.a": <the archive target>}`: the `.conda` must hold `lib/<soname>` with exactly the bytes of that target's file.
         "natives": attrs.dict(attrs.string(), attrs.dep(), default = {}),
         "package": attrs.string(),
+        # `sole`: the `.conda` holds nothing under `lib/mojo/` but the package's own `.mojoc` and `.mopm.json` (a package packed from a workspace holds none of
+        # its siblings).
+        "sole": attrs.bool(default = False),
+        # `depends`: the dependencies the `.conda` records after the compiler, exactly and in order, each as conda spells it (`"mojo-<name> <range>"`); `[]` is
+        # none. Unset, they are not checked.
+        "depends": attrs.option(attrs.list(attrs.string()), default = None),
         "unpacker": attrs.exec_dep(default = "buildrules//rules/mojo:prebuilt_unpack"),
     },
 )
 
 def mojo_conda_holds(**kwargs):
     """The `.conda` of `mojo_conda` holds each native library at `lib/<soname>` with the bytes the build made: unpacked by `prebuilt_unpack`, which refuses a
-    member that is missing, empty, a link, or whose sha256 is not that of the file. Building it is the check."""
+    member that is missing, empty, a link, or whose sha256 is not that of the file. Building it is the check. With `sole = True` it also refuses a `.conda`
+    that holds a file of another package under `lib/mojo/`, and with `depends = [...]` one whose recorded dependencies are not those, exactly."""
     _mojo_conda_holds(exec_compatible_with = LINUX_X86_64, **kwargs)

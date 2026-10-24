@@ -1,8 +1,20 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:pack.bzl", "mojo_conda_holds")
 load(":buildrules.mojo.bzl", "mojo_package")
 
 # The top of the diamond top -> (left, right) -> bottom (examples/mojo/sibfake/diamond): imports ../left and ../right, which both import ../bottom,
 # so bottom is one unit of the graph with two dependents. The table holds the three members by identity only.
-mojo_package(path = ".")
+mojo_package(path = ".", conda = True)
+
+# `:conda` is `mopm pack` of this package with the manifests of its sibling members staged at their repository paths (rules/mojo/pack.bzl). It holds this
+# package only, and records each sibling as an ordinary versioned dependency: the sibling is not in it, and no path is.
+mojo_conda_holds(
+    name = "conda_holds",
+    conda = ":conda",
+    package = "dia_top",
+    sole = True,
+    depends = ["mojo-dia_left >=0.1,<0.2", "mojo-dia_right >=0.1,<0.2"],
+    visibility = ["//ci:"],
+)
 
 scrub_files()

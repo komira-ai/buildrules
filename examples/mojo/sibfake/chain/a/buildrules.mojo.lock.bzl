@@ -6,10 +6,10 @@ MOJO = "1.0.0"
 CLOSURE_SHA256 = "fd654c4192487587d8f8d9402d060e45e218b79da7b8964503a703710e49b15d"
 MANIFEST_SHA256 = {
     "../../../mopm-toolchain.toml": "8e295d32ac613175c0495a74e344365c94a43904ff7c4961413163ba4bc21105",
-    "../b/mopm.toml": "5e5c87c17e19850e0dfdd153943739acec3f8d42f5a613c2fd18c9400fe1f192",
+    "../b/mopm.toml": "ebf0eec47158217677689a0edeac1aef452bd88f65d0e73f8f7152bb7faee94f",
     "../c/mopm.toml": "ab01df94248dcfc8923c1ab55828bbbb83e5ef9f5acc42c41f2ced95053e8546",
     "mopm.lock": "ad4d3075eeece362583dcf070faa76d5a066985ece16ea5239266f6c5eb5d567",
-    "mopm.toml": "762b76bfa4ee1d0cc497bc3ee36c75ac0665e9d7e319f8a07aa79be72d365187",
+    "mopm.toml": "1dccfb917a4b6607279f1e8deae4c0727f67d01da4f8a23beead3c0d2821ecaf",
 }
 GRAPH_JSON = r'''{
   "unit_graph": 2,

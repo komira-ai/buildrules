@@ -29,7 +29,7 @@ anything. The static libraries (`lib<stem>.a`) of a registry package come from t
 library it needs) with nothing written in the BUCK file. A workspace member's own `[native.<id>] kind = "static"` is a native unit of the graph
 (`native:<package>/<id>`): its package builds it from its C sources, `:native_<id>_cxx` (a `cxx_library`) and `:native_<id>` (its `native_archive`, rules/cxx/native.bzl),
 and every unit that links it has an entry with `built` that this macro maps to that target, again with nothing written in the BUCK file. A package that builds natives
-also gets `:conda`, with the archives packed as `lib<id>.a`. The names `:native_<id>` and `:native_<id>_cxx` are stable: a repository that lists libraries by target can name
+also gets `:conda`, with the archives packed as `lib<id>.a`; `conda = True` gives any package one (a package whose dependencies are workspace members, children or siblings, is packed with each as a versioned dependency: its `mopm.toml` writes `{ path = "../b", version = "0.1" }`). The names `:native_<id>` and `:native_<id>_cxx` are stable: a repository that lists libraries by target can name
 them. Any other native library (a shared one) is an entry of `natives = {"<soname>": "<target>"}`; one the lock or the graph provides may not also be named there.
 Every library target carries `MojoNativeArchiveInfo` (its natives in link order, and their files), which a label that adopts the package hands to a dependent
 that links through other rules.
@@ -255,7 +255,7 @@ def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
         visibility = visibility,
     )
 
-def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, test_layout = "default", visibility = ["PUBLIC"]):
+def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, test_layout = "default", conda = False, visibility = ["PUBLIC"]):
     if table == None:
         fail("mojo_package needs its table: load mojo_package from the buildrules.mojo.bzl next to mopm.toml (`buildrules mojo sync` writes it)")
     _check_table(table)
@@ -696,10 +696,11 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     # `:conda`, the package as a registry would serve it, for a package that builds native libraries of its own: `mopm pack` of the gated `:lib`, with each
     # archive packed as `lib<id>.a` beside the `.mojoc` (rules/mojo/pack.bzl). Its sha256 goes into the lock of a consumer, which gets the archive as a
     # prebuilt: the archive that was tested is the archive that ships.
-    if own_native_ids:
+    if own_native_ids or conda:
         mojo_conda(
             name = name_once("conda"),
             lib = ":lib",
+            dir = pkg_dir,
             manifest = ":mopm.toml",
             members = {_relative(pkg_dir, l[2:-len(":lib")]): l[:-len(":lib")] + ":mopm.toml" for l in member_libs.values() if l != None},
             mojo = mojo,

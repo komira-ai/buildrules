@@ -1,8 +1,20 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:pack.bzl", "mojo_conda_holds")
 load(":buildrules.mojo.bzl", "mojo_package")
 
 # The leaf of the chain a -> b -> c (examples/mojo/sibfake/chain): imports nothing, and a sibling imports it. Its table is mopm's own output for
 # `plan --unit-graph --locked --workspace-root <the repository root>`.
-mojo_package(path = ".")
+mojo_package(path = ".", conda = True)
+
+# `:conda` is `mopm pack` of this package with the manifests of its sibling members staged at their repository paths (rules/mojo/pack.bzl). It holds this
+# package only, and records each sibling as an ordinary versioned dependency: the sibling is not in it, and no path is.
+mojo_conda_holds(
+    name = "conda_holds",
+    conda = ":conda",
+    package = "chain_c",
+    sole = True,
+    depends = [],
+    visibility = ["//ci:"],
+)
 
 scrub_files()
