@@ -7,10 +7,10 @@ CLOSURE_SHA256 = "fd654c4192487587d8f8d9402d060e45e218b79da7b8964503a703710e49b1
 MANIFEST_SHA256 = {
     "../../../mopm-toolchain.toml": "8e295d32ac613175c0495a74e344365c94a43904ff7c4961413163ba4bc21105",
     "../bottom/mopm.toml": "023cd13d9899de5a21102ec0f311c82d1e422568e7eced104e9ecd5e4f773401",
-    "../left/mopm.toml": "3c66c33f060493340d57a9e20af584d1c5409b52f89aa49b73c75946544cfca9",
-    "../right/mopm.toml": "9d6823a1724d4e8093a701522eca618fb29e6a49ea8ef74cd01932e5d056b1a1",
+    "../left/mopm.toml": "781bcc285c6d0a0b3aed3f0c3bd74509138eb26afce16a3a592dc20381d942e2",
+    "../right/mopm.toml": "fe86750c6b6a77e11c375ea8818a90a25397e9c5b2869ca6d8166723fe6c2380",
     "mopm.lock": "99081b9c0fea84a3f89ac6547320133c9b37e3e743e7cd355c20c07e08410470",
-    "mopm.toml": "371cf0d1ab4c39570b03ac9c9e6988c9d974edae8417a75f0cdcab9e54a997d8",
+    "mopm.toml": "05eb6c82836ce6d844ea0031e5b3c475a31d762342be5e3f3340c49bc8fb8879",
 }
 GRAPH_JSON = r'''{
   "unit_graph": 2,

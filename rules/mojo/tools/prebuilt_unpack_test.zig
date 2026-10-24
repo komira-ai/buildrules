@@ -721,6 +721,159 @@ test "every refusal of run is still a refusal when the allocation that words it 
     try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--natives", "n", "--native-from", "libbase_sys.a=other.a" }, error.Sha256Mismatch);
 }
 
+/// A `.conda` with an `info-*.tar.zst` holding `info/index.json` = `index` as well as the package tar.
+fn condaIndexed(a: std.mem.Allocator, files: []const Ent, index: []const u8) ![]u8 {
+    const info = try zipStored(a, "info-mojo-p-1.0.0-mojo1.0.0_0.tar.zst", try zstdRaw(a, try tar(a, &.{.{ .name = "info/index.json", .body = index }})));
+    return std.mem.concat(a, u8, &.{ info, try conda(a, files) });
+}
+
+const own_files = [_]Ent{ .{ .name = "lib/mojo/p.mojoc", .body = m1 }, .{ .name = "lib/mojo/p.mopm.json", .body = "{}" } };
+const idx_q = "{\"build\":\"mojo1.0.0_0\",\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-q >=0.1,<0.2\"],\"name\":\"mojo-p\"}";
+
+test "run --sole: a package that holds only itself is unpacked; one that holds a sibling's library or metadata, or any other file under lib/mojo, is refused and nothing is written" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const ok = try conda(a, &(own_files ++ [_]Ent{.{ .name = "lib/libbase_sys.a", .body = libb }}));
+    try t.expect((try runWith(a, tmp.dir, ok, &.{ "--sole", "--natives", "n", "--native", try nativeArg(a, "libbase_sys.a", libb) })).err == null);
+    try t.expectEqualStrings(m1, try read(a, tmp.dir, "out.mojoc"));
+    const foreign = [_][]const Ent{
+        &(own_files ++ [_]Ent{.{ .name = "lib/mojo/q.mojoc", .body = "SIBLING" }}),
+        &(own_files ++ [_]Ent{.{ .name = "lib/mojo/q.mopm.json", .body = "{}" }}),
+        &(own_files ++ [_]Ent{.{ .name = "lib/mojo/stray.txt", .body = "x" }}),
+        &(own_files ++ [_]Ent{.{ .name = "lib/mojo/p.mojoc.bak", .body = "x" }}),
+    };
+    for (foreign) |files| {
+        tmp.dir.deleteFile("out.mojoc") catch |e| try t.expectEqual(error.FileNotFound, e);
+        const r = try runWith(a, tmp.dir, try conda(a, files), &.{"--sole"});
+        try t.expectEqual(@as(?anyerror, error.ForeignMember), r.err);
+        try t.expect(std.mem.indexOf(u8, r.why, "which is not the package p itself") != null);
+        try t.expect(absent(tmp.dir, "out.mojoc"));
+    }
+    // Without --sole the same package is taken as before.
+    try t.expect((try runWith(a, tmp.dir, try conda(a, foreign[0]), &.{})).err == null);
+}
+
+test "run --sole: a package tar that is cut is an error, not a pass" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const all = try tar(a, &.{ .{ .name = "info/big", .body = "b" ** 3000 }, .{ .name = "lib/mojo/p.mojoc", .body = m1 } });
+    const framed = try zstdRaw(a, all);
+    const header_len = 4 + 1 + 4 + 3;
+    const cut = try zipStored(a, pkg_name, framed[0 .. header_len + 100]);
+    const r = try runWith(a, tmp.dir, cut, &.{"--sole"});
+    try t.expect(r.err != null);
+    try t.expect(absent(tmp.dir, "out.mojoc"));
+}
+
+test "run --depends: the compiler first and then exactly the given dependencies, in order" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const spec = "mojo-q >=0.1,<0.2";
+    const good = try condaIndexed(a, &own_files, idx_q);
+    try t.expect((try runWith(a, tmp.dir, good, &.{ "--depends", spec })).err == null);
+    try t.expectEqualStrings(m1, try read(a, tmp.dir, "out.mojoc"));
+    const two = try condaIndexed(a, &own_files, "{\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-l >=0.1,<0.2\",\"mojo-r >=0.1,<0.2\"]}");
+    try t.expect((try runWith(a, tmp.dir, two, &.{ "--depends", "mojo-l >=0.1,<0.2", "--depends", "mojo-r >=0.1,<0.2", "--sole" })).err == null);
+    const none = try condaIndexed(a, &own_files, "{\"depends\":[\"mojo-compiler ==1.0.0\"]}");
+    try t.expect((try runWith(a, tmp.dir, none, &.{"--no-depends"})).err == null);
+
+    const wrong = [_]struct { conda: []const u8, args: []const []const u8, why: []const u8 }{
+        // a sibling that is missing from depends
+        .{ .conda = none, .args = &.{ "--depends", spec }, .why = "depends is [mojo-compiler ==1.0.0]" },
+        // a dependency nothing asked for
+        .{ .conda = good, .args = &.{"--no-depends"}, .why = "mojo-q >=0.1,<0.2" },
+        // the right name with another range
+        .{ .conda = good, .args = &.{ "--depends", "mojo-q >=0.2,<0.3" }, .why = "depends is [" },
+        // the same two in the other order
+        .{ .conda = two, .args = &.{ "--depends", "mojo-r >=0.1,<0.2", "--depends", "mojo-l >=0.1,<0.2" }, .why = "depends is [" },
+        // a dependency more than the list
+        .{ .conda = two, .args = &.{ "--depends", "mojo-l >=0.1,<0.2" }, .why = "exactly the 1 given" },
+        // no compiler first
+        .{ .conda = try condaIndexed(a, &own_files, "{\"depends\":[\"mojo-q >=0.1,<0.2\"]}"), .args = &.{ "--depends", spec }, .why = "depends is [" },
+        // an entry that is not text
+        .{ .conda = try condaIndexed(a, &own_files, "{\"depends\":[\"mojo-compiler ==1.0.0\",7]}"), .args = &.{ "--depends", spec }, .why = "(not text)" },
+        .{ .conda = try condaIndexed(a, &own_files, "{\"depends\":{}}"), .args = &.{ "--depends", spec }, .why = "not a list" },
+        .{ .conda = try condaIndexed(a, &own_files, "{\"name\":\"mojo-p\"}"), .args = &.{ "--depends", spec }, .why = "has no depends" },
+        .{ .conda = try condaIndexed(a, &own_files, "[]"), .args = &.{ "--depends", spec }, .why = "not an object" },
+        .{ .conda = try condaIndexed(a, &own_files, "{\"depends\":"), .args = &.{ "--depends", spec }, .why = "not JSON" },
+    };
+    for (wrong) |w| {
+        tmp.dir.deleteFile("out.mojoc") catch |e| try t.expectEqual(error.FileNotFound, e);
+        const r = try runWith(a, tmp.dir, w.conda, w.args);
+        try t.expect(r.err != null);
+        try t.expect(std.mem.indexOf(u8, r.why, w.why) != null);
+        try t.expect(absent(tmp.dir, "out.mojoc"));
+    }
+}
+
+test "run --depends: a package with no info tar, or an info tar without index.json, is refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const bare = try conda(a, &own_files);
+    try t.expectEqual(@as(?anyerror, error.NoPayload), (try runWith(a, tmp.dir, bare, &.{"--no-depends"})).err);
+    const info = try zipStored(a, "info-mojo-p-1.0.0-mojo1.0.0_0.tar.zst", try zstdRaw(a, try tar(a, &.{.{ .name = "info/paths.json", .body = "{}" }})));
+    const no_index = try std.mem.concat(a, u8, &.{ info, bare });
+    try t.expectEqual(@as(?anyerror, error.NoMember), (try runWith(a, tmp.dir, no_index, &.{"--no-depends"})).err);
+    try t.expect(absent(tmp.dir, "out.mojoc"));
+}
+
+test "the command line: --sole, --depends and --no-depends" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    const o0 = try U.parseArgs(a, &.{ "p.conda", "p", "o" }, &why);
+    try t.expect(!o0.sole and o0.depends == null);
+    const o1 = try U.parseArgs(a, &.{ "p.conda", "p", "o", "--sole", "--depends", "mojo-l >=1", "--depends", "mojo-r" }, &why);
+    try t.expect(o1.sole);
+    try t.expectEqual(@as(usize, 2), o1.depends.?.len);
+    try t.expectEqualStrings("mojo-r", o1.depends.?[1]);
+    const o2 = try U.parseArgs(a, &.{ "p.conda", "p", "o", "--no-depends" }, &why);
+    try t.expectEqual(@as(usize, 0), o2.depends.?.len);
+    const bad = [_][]const []const u8{
+        &.{ "p.conda", "p", "o", "--depends" },
+        &.{ "p.conda", "p", "o", "--depends", "mojo-l", "--no-depends" },
+        &.{ "p.conda", "p", "o", "--no-depends", "--depends", "mojo-l" },
+    };
+    for (bad) |args| {
+        try t.expectError(error.BadUsage, U.parseArgs(a, args, &why));
+    }
+}
+
+test "run: every allocation failing in turn is an error with --sole and --depends too" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "p.conda", .data = try condaIndexed(a, &own_files, idx_q) });
+    const args = [_][]const u8{ "p.conda", "p", "out.mojoc", "--sole", "--depends", "mojo-q >=0.1,<0.2" };
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        var inner = std.heap.ArenaAllocator.init(t.allocator);
+        defer inner.deinit();
+        var fa = t.FailingAllocator.init(inner.allocator(), .{ .fail_index = i });
+        var why: []const u8 = "";
+        if (U.run(fa.allocator(), tmp.dir, &args, &why)) |_| {
+            try t.expect(!fa.has_induced_failure);
+            return;
+        } else |e| try t.expectEqual(error.OutOfMemory, e);
+    }
+    return error.SweepDidNotEnd;
+}
+
 test "run: every allocation failing in turn is an error with --native-from too" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();

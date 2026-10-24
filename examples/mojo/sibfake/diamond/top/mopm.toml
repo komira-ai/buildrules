@@ -4,8 +4,8 @@ version = "0.1.0"
 mojo = ["1.0.0"]
 
 [dependencies]
-dia_left = { path = "../left" }
-dia_right = { path = "../right" }
+dia_left = { path = "../left", version = "0.1" }
+dia_right = { path = "../right", version = "0.1" }
 
 [targets]
 lib = { path = "src/dia_top" }

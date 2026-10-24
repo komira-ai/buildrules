@@ -8,7 +8,7 @@ MANIFEST_SHA256 = {
     "../../../mopm-toolchain.toml": "8e295d32ac613175c0495a74e344365c94a43904ff7c4961413163ba4bc21105",
     "../c/mopm.toml": "ab01df94248dcfc8923c1ab55828bbbb83e5ef9f5acc42c41f2ced95053e8546",
     "mopm.lock": "b6e9e76486afdcdb5626749b24af3d085699cd56a30f3769f57c2195cba46a0e",
-    "mopm.toml": "5e5c87c17e19850e0dfdd153943739acec3f8d42f5a613c2fd18c9400fe1f192",
+    "mopm.toml": "ebf0eec47158217677689a0edeac1aef452bd88f65d0e73f8f7152bb7faee94f",
 }
 GRAPH_JSON = r'''{
   "unit_graph": 2,

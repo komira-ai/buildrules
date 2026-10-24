@@ -532,6 +532,11 @@ every declared input, then executes `T/mojo_compile` with an empty environment).
   as `mopm pack` writes it with each archive packed as `lib/lib<id>.a`, which a consumer's lock pins by sha256 (`mojo_conda_holds` unpacks it and requires each archive to be the bytes of the target). A graph in which
   a `built` entry names a unit the graph does not have is refused by `buildrules mojo sync` and by `mojo_package`. Every library target (`:lib`, `:lib_ungated`) carries `MojoNativeArchiveInfo`, the unit's natives in
   link order and the file of each, so a label that adopts the package hands the archives to a dependent that still links through other rules. (The `cnative` example's shared library is a `natives = {...}` entry.)
+  `mojo_package(conda = True)` gives a package `:conda` without natives. A package whose dependencies are workspace members is packed with each member staged at its repository path in one workspace
+  directory (the package at `<dir>/mopm.toml`, a member at `<dir>/<path>/mopm.toml` with the path normalized, so a sibling `../b` is `<dir>/../b` made `<parent>/b`), because `mopm pack` reads the manifest of each
+  path dependency beside the `--manifest` it is given (it takes no `--workspace-root`); a member that leaves the repository, or lands on a file already staged, is refused. Each such dependency must name a `version`
+  beside its `path`: the `.conda` holds the package alone and records the member as `mojo-<name> <range>`, never a path. `mojo_conda_holds(sole = True, depends = [...])` requires exactly that of the built file:
+  nothing under `lib/mojo/` but the package's own `.mojoc` and `.mopm.json`, and, after the compiler, exactly the listed dependencies in order.
 - `--toolchain`: a directory assembled from `mojo_launch` (as `mojo_compile`), the wrapper (`wrapper`), the compiler closure (`compiler`), the zig (`zig`), `CLOSURE_SHA256`
   and `toolchain.cfg`. `mojo_launch` puts the wrapper's options (where the closure and the zig are) in front of mopm's arguments, inserts the ISA flags after `build`,
   and rewrites mopm's `--source-root` for `precompile` (below). It runs no compiler and owns no policy.

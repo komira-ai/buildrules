@@ -5,6 +5,11 @@
 //! `--native-from` is `--native` with the digest taken from a file the caller has: the package this build just packed must hold exactly
 //! the library the build made (rules/mojo/pack.bzl, `mojo_conda_holds`).
 //!
+//! `--sole` holds the package to being itself: no member under `lib/mojo/` but its own `.mojoc` and `.mopm.json` (a package that was packed from
+//! a workspace holds none of its siblings). `--depends <spec>` (repeated) or `--no-depends` holds `info/index.json` to `mojo-compiler <pin>` and then
+//! exactly those `depends` entries in that order (`mojo-<name> <range>`: each sibling is an ordinary versioned dependency). Both are checked before
+//! anything is written.
+//!
 //! A registry package is a `.conda` holding `lib/mojo/<name>.mojoc` (and `lib/mojo/<name>.mopm.json`), written by
 //! `mopm pack` (spec/package-metadata.schema.json). The zip walk and the zstd/tar reading are those of
 //! conda_unpack.zig (the compiler closure's unpacker), which cannot be used here: it insists on the compiler's
@@ -61,6 +66,15 @@ pub const Error = anyerror;
 
 /// The body of the `pkg-*.tar.zst` member of a `.conda` (a zip of stored members).
 pub fn payload(data: []const u8) Error![]const u8 {
+    return tarOf(data, "pkg-");
+}
+
+/// The body of the `info-*.tar.zst` member of a `.conda`: `info/index.json` and the other facts about the package.
+pub fn infoPayload(data: []const u8) Error![]const u8 {
+    return tarOf(data, "info-");
+}
+
+fn tarOf(data: []const u8, prefix: []const u8) Error![]const u8 {
     var pkg: ?[]const u8 = null;
     var off: usize = 0;
     while (off + 30 <= data.len and le32(data, off) == 0x04034b50) {
@@ -79,7 +93,7 @@ pub fn payload(data: []const u8) Error![]const u8 {
         if (start + csize > data.len) return error.BadZip;
         const body = data[start .. start + @as(usize, @intCast(csize))];
         off = start + @as(usize, @intCast(csize));
-        if (std.mem.startsWith(u8, name, "pkg-") and std.mem.endsWith(u8, name, ".tar.zst")) {
+        if (std.mem.startsWith(u8, name, prefix) and std.mem.endsWith(u8, name, ".tar.zst")) {
             // A `.conda` has one; with two, which one an unpacker takes is its own business, so there is no right answer.
             if (pkg != null) return error.DuplicatePayload;
             pkg = body;
@@ -134,6 +148,64 @@ pub fn members(a: std.mem.Allocator, tar_zst: []const u8, wants: []const []const
     return out;
 }
 
+/// The name of every member of the zstd-compressed tar `tar_zst`, in archive order, whatever its kind.
+pub fn listNames(a: std.mem.Allocator, tar_zst: []const u8) Error![][]const u8 {
+    var names = std.ArrayList([]const u8).empty;
+    const window = try a.alloc(u8, window_len + std.compress.zstd.block_size_max);
+    defer a.free(window);
+    var name_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var link_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var zin: std.Io.Reader = .fixed(tar_zst);
+    var dz = std.compress.zstd.Decompress.init(&zin, window, .{ .window_len = window_len });
+    var it = std.tar.Iterator.init(&dz.reader, .{ .file_name_buffer = &name_buf, .link_name_buffer = &link_buf });
+    while (try it.next()) |f| {
+        try names.append(a, try a.dupe(u8, f.name));
+        // The iterator would discard the body itself, but the discard of this release's zstd reader asserts: stream it into nothing.
+        if (f.size != 0) {
+            var sink = std.Io.Writer.Discarding.init(&.{});
+            try it.streamRemaining(f, &sink.writer);
+        }
+    }
+    return names.items;
+}
+
+/// Whether `depends`, the `depends` of an `info/index.json`, is `mojo-compiler <pin>` and then exactly `want`, in order. When it is not, `why.*` says what it is.
+fn dependsAre(a: std.mem.Allocator, index_json: []const u8, want: []const []const u8, why: *[]const u8) Error!bool {
+    const parsed = std.json.parseFromSlice(std.json.Value, a, index_json, .{}) catch |e| switch (e) {
+        error.OutOfMemory => return e,
+        else => {
+            why.* = "info/index.json is not JSON";
+            return false;
+        },
+    };
+    if (parsed.value != .object) {
+        why.* = "info/index.json is not an object";
+        return false;
+    }
+    const field = parsed.value.object.get("depends") orelse {
+        why.* = "info/index.json has no depends";
+        return false;
+    };
+    if (field != .array) {
+        why.* = "the depends of info/index.json is not a list";
+        return false;
+    }
+    var seen = std.ArrayList(u8).empty;
+    var same = field.array.items.len == 1 + want.len;
+    for (field.array.items, 0..) |item, i| {
+        const text: []const u8 = if (item == .string) item.string else "(not text)";
+        if (i != 0) try seen.appendSlice(a, ", ");
+        try seen.appendSlice(a, text);
+        if (i == 0) {
+            same = same and std.mem.startsWith(u8, text, "mojo-compiler ");
+        } else if (i - 1 < want.len) {
+            same = same and std.mem.eql(u8, text, want[i - 1]);
+        }
+    }
+    if (!same) why.* = try std.fmt.allocPrint(a, "depends is [{s}]; wanted mojo-compiler and then exactly the {d} given by --depends", .{ seen.items, want.len });
+    return same;
+}
+
 fn indexOf(names: []const []const u8, name: []const u8) ?usize {
     for (names, 0..) |n, i| if (std.mem.eql(u8, n, name)) return i;
     return null;
@@ -175,9 +247,13 @@ pub const Options = struct {
     natives_dir: ?[]const u8 = null,
     natives: []const Native = &.{},
     files: []const NativeFile = &.{},
+    /// `--sole`: the package holds nothing under `lib/mojo/` but its own `.mojoc` and `.mopm.json`.
+    sole: bool = false,
+    /// `--depends` / `--no-depends`: the Mojo packages the `.conda` depends on, exactly, in order (null: not checked).
+    depends: ?[]const []const u8 = null,
 };
 
-const usage = "usage: prebuilt_unpack <package.conda> <name> <out.mojoc> [--natives <out-dir> [--native <soname>=<sha256>]... [--native-from <soname>=<file>]...]";
+const usage = "usage: prebuilt_unpack <package.conda> <name> <out.mojoc> [--natives <out-dir> [--native <soname>=<sha256>]... [--native-from <soname>=<file>]...]] [--sole] [--depends <spec>... | --no-depends]";
 
 /// The command line, or `BadUsage` / `BadNative` / `BadSoname` / `DuplicateNative` with the reason in `why.*`.
 pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8, why: *[]const u8) Error!Options {
@@ -185,9 +261,28 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8, why: *[]const u
     var o = Options{ .conda = args[0], .name = args[1], .out = args[2] };
     var natives = std.ArrayList(Native).empty;
     var files = std.ArrayList(NativeFile).empty;
+    var depends = std.ArrayList([]const u8).empty;
+    var depends_given = false;
     var i: usize = 3;
     while (i < args.len) : (i += 1) {
         const flag = args[i];
+        if (std.mem.eql(u8, flag, "--sole")) {
+            o.sole = true;
+            continue;
+        }
+        if (std.mem.eql(u8, flag, "--no-depends")) {
+            // Either none or some, not both: a list that was asked to be empty and is not is the thing this flag is for.
+            if (depends.items.len != 0) return refuse(why, error.BadUsage, usage);
+            depends_given = true;
+            continue;
+        }
+        if (std.mem.eql(u8, flag, "--depends")) {
+            if (i + 1 >= args.len or (depends_given and depends.items.len == 0)) return refuse(why, error.BadUsage, usage);
+            i += 1;
+            try depends.append(a, args[i]);
+            depends_given = true;
+            continue;
+        }
         const is_dir = std.mem.eql(u8, flag, "--natives");
         const is_native = std.mem.eql(u8, flag, "--native");
         const is_from = std.mem.eql(u8, flag, "--native-from");
@@ -233,6 +328,7 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8, why: *[]const u
     if ((natives.items.len != 0 or files.items.len != 0) and o.natives_dir == null) return refuse(why, error.BadUsage, usage);
     o.natives = natives.items;
     o.files = files.items;
+    if (depends_given) o.depends = depends.items;
     return o;
 }
 
@@ -258,6 +354,38 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, args: []const []const u8, why:
         why.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ o.conda, @errorName(e) });
         return e;
     };
+    if (o.sole) {
+        const own = [_][]const u8{
+            try std.fmt.allocPrint(a, "lib/mojo/{s}.mojoc", .{o.name}),
+            try std.fmt.allocPrint(a, "lib/mojo/{s}.mopm.json", .{o.name}),
+        };
+        const listed = listNames(a, pkg) catch |e| {
+            why.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ o.conda, @errorName(e) });
+            return e;
+        };
+        for (listed) |n| {
+            if (std.mem.startsWith(u8, n, "lib/mojo/") and indexOf(&own, n) == null) {
+                why.* = try std.fmt.allocPrint(a, "{s} holds {s}, which is not the package {s} itself", .{ o.conda, n, o.name });
+                return error.ForeignMember;
+            }
+        }
+    }
+    if (o.depends) |want| {
+        const info = infoPayload(data) catch |e| {
+            why.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ o.conda, @errorName(e) });
+            return e;
+        };
+        var bad_info: []const u8 = "";
+        const index = members(a, info, &.{"info/index.json"}, &bad_info) catch |e| {
+            why.* = try std.fmt.allocPrint(a, "{s}: {s}: {s}", .{ o.conda, bad_info, @errorName(e) });
+            return e;
+        };
+        var reason: []const u8 = "";
+        if (!try dependsAre(a, index[0], want, &reason)) {
+            why.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ o.conda, reason });
+            return error.WrongDepends;
+        }
+    }
     // The libraries to hold the package to: the lock's values, then the hashes of the files the caller has.
     var wanted = std.ArrayList(Native).empty;
     try wanted.appendSlice(a, o.natives);
