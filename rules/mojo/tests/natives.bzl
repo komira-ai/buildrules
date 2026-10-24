@@ -5,7 +5,7 @@ needs: the order of the link line, which is not the sorted order), and a shared 
 (rules/rust/refusal.bzl) and refuses with what is wrong, so a test target is green only if nothing was.
 """
 
-load("//rules/mojo:defs.bzl", "is_native_unit", "native_unit_id", "native_wiring", "own_static_natives")
+load("//rules/mojo:defs.bzl", "is_native_unit", "native_include_dirs", "native_unit_id", "native_wiring", "own_static_natives")
 
 PROBE = {"id": "probe_sys", "soname": "libprobe_sys.a", "sha256": "aa", "package": "probe_sys", "kind": "static", "needs": ["libbase_sys.a"]}
 BASE = {"id": "base_sys", "soname": "libbase_sys.a", "sha256": "bb", "package": "base_sys", "kind": "static"}
@@ -62,3 +62,25 @@ def native_units_are_told_by_their_id(refuse = fail):
         refuse("is_native_unit does not tell a native unit by its id")
     if native_unit_id("native:app/shim") != "shim" or native_unit_id("native:core/a/b") != "a/b":
         refuse("native_unit_id is not what follows the first slash")
+
+def native_includes_are_below_the_package_in_both_bases(refuse = fail):
+    """`includes` is used as the graph prints it, in a rooted graph and an unrooted one (mopm prints directories below the member either way), and is
+    never joined to the package's directory again."""
+    for rooted, pkg_dir in [(True, "examples/x"), (False, "examples/x"), (True, "")]:
+        got = native_include_dirs({"includes": ["native", "extra"], "hdrs": []}, pkg_dir, rooted, refuse)
+        if got != ["native", "extra"]:
+            refuse("includes are not used as printed (rooted={}, package {}): {}".format(rooted, repr(pkg_dir), got))
+
+def native_includes_default_to_the_header_directories_below_the_package(refuse = fail):
+    """A unit that prints no `includes` has the directories of its headers: for a rooted graph the headers carry the repository path, and the default is
+    still below the package (`native`, not `examples/x/native`); sorted, each directory once."""
+    hdrs = [{"path": "examples/x/native/b.h"}, {"path": "examples/x/native/a.h"}, {"path": "examples/x/third/inc/c.h"}, {"path": "examples/x/top.h"}]
+    got = native_include_dirs({"hdrs": hdrs}, "examples/x", True, refuse)
+    if got != ["", "native", "third/inc"]:
+        refuse("the default of a rooted graph is not the header directories below the package: {}".format(got))
+    unrooted = [{"path": "native/a.h"}, {"path": "native/b.h"}]
+    got = native_include_dirs({"hdrs": unrooted}, "examples/x", False, refuse)
+    if got != ["native"]:
+        refuse("the default of an unrooted graph is not the header directories: {}".format(got))
+    if native_include_dirs({"hdrs": []}, "examples/x", True, refuse) != []:
+        refuse("a unit with no header and no includes has no include directory")

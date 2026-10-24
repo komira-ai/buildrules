@@ -5,6 +5,7 @@ existing (analysis fails: "expected a refusal"). `:test_data` is the group of th
 ci/mojo_data (a stand-in for the compiler) and examples/mojo/testdata (the real thing).
 """
 
+load("//rules/mojo:defs.bzl", "stage_package_test_data")
 load("//rules/mojo:test_data.bzl", "check_installed_tree", "check_test_env", "check_test_layout", "stage_test_data")
 load("//rules/mojo:unit.bzl", "mojo_group")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
@@ -34,6 +35,22 @@ _STAGE = [
     ("test_data_value_that_is_not_a_string_is_refused", {"*": {"a.txt": 5}}, ["\"a.txt\" must be a label or a file name (a string), not int"]),
     ("test_data_that_is_not_a_dict_is_refused", ["a.txt"], ["test_data must be a dict"]),
     ("test_data_of_a_test_that_is_not_a_dict_is_refused", {"*": ["a.txt"]}, ["test_data[\"*\"] must be a dict {staged path: label or file}, not list"]),
+]
+
+# A package below the repository root with a rooted graph: the test is `tests/test_a.mojo` to the package and `examples/x/tests/test_a.mojo` in the graph, and
+# the tree of its coverage run holds it at the graph's name (rules/mojo/defs.bzl, `stage_package_test_data`).
+_ROOTED_TESTS = {"tests/test_a.mojo": "examples/x/tests/test_a.mojo"}
+_ROOTED_LIB = ["pkg/__init__.mojo"]
+
+# (name, test_data, what the refusal says)
+_ROOTED = [
+    ("rooted_test_data_on_the_graphs_test_path_is_refused", {"tests/test_a.mojo": {"examples/x/tests/test_a.mojo": "x"}}, ["stages \"examples/x/tests/test_a.mojo\" for tests/test_a.mojo", "already holds \"examples/x/tests/test_a.mojo\""]),
+    ("rooted_test_data_over_a_library_source_is_refused", {"*": {"pkg/__init__.mojo": "x"}}, ["already holds \"pkg/__init__.mojo\""]),
+]
+
+# (name, test_data): accepted, and with the same package-relative name the test has to the package: the tree holds the test at the graph's name only.
+_ROOTED_ACCEPTED = [
+    ("rooted_test_data_at_the_packages_test_name_is_accepted", {"tests/test_a.mojo": {"tests/test_a.mojo": "x"}}),
 ]
 
 # (name, test_env, what the refusal says): the runner's own variables, and the ones these rules set.
@@ -82,6 +99,8 @@ def test_data_targets():
     targets = [_check_target(name, check) for name, check in _CHECKS]
     targets.append(accepts(name = "test_env_names_and_values_are_accepted", check = check_test_env, args = [_R, {"MODE": "strict", "_x2": "y", "EMPTY": ""}]))
     targets += [refuses(name = n, check = stage_test_data, args = [_R, TESTS, d, HELD], contains = c) for n, d, c in _STAGE]
+    targets += [refuses(name = n, check = stage_package_test_data, args = [_R, _ROOTED_TESTS, _ROOTED_LIB, d, False], contains = c) for n, d, c in _ROOTED]
+    targets += [accepts(name = n, check = stage_package_test_data, args = [_R, _ROOTED_TESTS, _ROOTED_LIB, d, False]) for n, d in _ROOTED_ACCEPTED]
     targets += [refuses(name = n, check = check_test_env, args = [_R, e], contains = c) for n, e, c in _ENV]
     targets += [refuses(name = n, check = check_test_layout, args = [_R, l], contains = c) for n, l, c in _LAYOUT]
     targets += [refuses(name = n, check = check_installed_tree, args = [_R, s], contains = c) for n, s, c in _INSTALLED_TREE]
