@@ -5,10 +5,10 @@ existing (analysis fails: "expected a refusal"). `:test_data` is the group of th
 ci/mojo_data (a stand-in for the compiler) and examples/mojo/testdata (the real thing).
 """
 
-load("//rules/mojo:test_data.bzl", "check_installed_tree", "check_test_env", "check_test_layout", "stage_test_data")
+load("//rules/mojo:test_data.bzl", "check_installed_tree", "check_test_defines", "check_test_env", "check_test_layout", "stage_test_data")
 load("//rules/mojo:unit.bzl", "mojo_group")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
-load(":test_data.bzl", "HELD", "TESTS", "a_path_next_to_the_coverage_tree_is_not_in_it", "no_data_is_no_staging", "staging_is_per_test_and_star_is_all")
+load(":test_data.bzl", "HELD", "TESTS", "a_path_next_to_the_coverage_tree_is_not_in_it", "a_refused_define_leaves_no_arguments", "defines_become_dash_d_pairs_in_name_order", "no_data_is_no_staging", "no_defines_no_arguments", "staging_is_per_test_and_star_is_all")
 
 _R = "examples/x"
 
@@ -50,6 +50,24 @@ _ENV = [
     ("test_env_that_is_not_a_dict_is_refused", ["A=1"], ["test_env must be a dict"]),
 ]
 
+# (name, test_defines, what the refusal says): a define that is not `NAME=value` for the compiler, or that the profile sets.
+_DEFINES = [
+    ("test_defines_name_with_a_dash_is_refused", {"MY-FLAG": "1"}, ["test_defines name \"MY-FLAG\" is not a define name"]),
+    ("test_defines_name_starting_with_a_digit_is_refused", {"1FLAG": "1"}, ["test_defines name \"1FLAG\" is not a define name"]),
+    ("test_defines_name_with_an_equals_sign_is_refused", {"A=B": "1"}, ["test_defines name \"A=B\" is not a define name"]),
+    ("test_defines_empty_name_is_refused", {"": "1"}, ["test_defines name \"\" is not a define name"]),
+    ("test_defines_name_that_is_not_a_string_is_refused", {5: "1"}, ["test_defines name 5 is not a define name"]),
+    ("test_defines_assert_is_refused", {"ASSERT": "none"}, ["test_defines sets ASSERT, which the unit's profile sets itself"]),
+    ("test_defines_empty_value_is_refused", {"FLAG": ""}, ["test_defines FLAG is \"\": a value is one or more printable characters"]),
+    ("test_defines_value_with_a_space_is_refused", {"FLAG": "a b"}, ["test_defines FLAG is \"a b\"", "no space or line break"]),
+    # A line break would end the `build_arg=` line of the toolchain file and start another key.
+    ("test_defines_value_with_a_line_break_is_refused", {"FLAG": "1\nbuild_arg=--x"}, ["test_defines FLAG is ", "no space or line break"]),
+    ("test_defines_value_with_a_tab_is_refused", {"FLAG": "a\tb"}, ["a value is one or more printable characters"]),
+    ("test_defines_value_that_is_a_list_is_refused", {"FLAG": ["1"]}, ["test_defines FLAG must be a string, a bool or an int, not list"]),
+    ("test_defines_value_that_is_none_is_refused", {"FLAG": None}, ["test_defines FLAG must be a string, a bool or an int, not NoneType"]),
+    ("test_defines_that_is_not_a_dict_is_refused", ["FLAG=1"], ["test_defines must be a dict"]),
+]
+
 # (name, test_layout, what the refusal says): the layouts a test is run in are `default` and `installed`, and nothing else.
 _LAYOUT = [
     ("test_layout_unknown_value_is_refused", "installd", ["examples/x: test_layout \"installd\" is not one of default, installed"]),
@@ -70,6 +88,9 @@ _CHECKS = [
     ("test_data_staging_is_per_test_and_star_is_all", staging_is_per_test_and_star_is_all),
     ("test_data_absent_stages_nothing", no_data_is_no_staging),
     ("test_data_beside_the_coverage_tree_is_accepted", a_path_next_to_the_coverage_tree_is_not_in_it),
+    ("test_defines_become_dash_d_pairs_in_name_order", defines_become_dash_d_pairs_in_name_order),
+    ("test_defines_absent_adds_no_argument", no_defines_no_arguments),
+    ("test_defines_refused_leaves_no_arguments", a_refused_define_leaves_no_arguments),
 ]
 
 def _check_target(name, check):
@@ -83,6 +104,8 @@ def test_data_targets():
     targets.append(accepts(name = "test_env_names_and_values_are_accepted", check = check_test_env, args = [_R, {"MODE": "strict", "_x2": "y", "EMPTY": ""}]))
     targets += [refuses(name = n, check = stage_test_data, args = [_R, TESTS, d, HELD], contains = c) for n, d, c in _STAGE]
     targets += [refuses(name = n, check = check_test_env, args = [_R, e], contains = c) for n, e, c in _ENV]
+    targets.append(accepts(name = "test_defines_names_and_values_are_accepted", check = check_test_defines, args = [_R, {"TRACE_ARC": "true", "_x2": 3, "ON": True, "OFF": False, "NEG": -1, "PATHY": "a/b=c:d"}]))
+    targets += [refuses(name = n, check = check_test_defines, args = [_R, d], contains = c) for n, d, c in _DEFINES]
     targets += [refuses(name = n, check = check_test_layout, args = [_R, l], contains = c) for n, l, c in _LAYOUT]
     targets += [refuses(name = n, check = check_installed_tree, args = [_R, s], contains = c) for n, s, c in _INSTALLED_TREE]
     targets.append(accepts(name = "test_layout_default_is_accepted", check = check_test_layout, args = [_R, "default"]))

@@ -1,0 +1,18 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A package whose tests are built with compile-time defines (docs/contract.md, section 12.9; rules/mojo/test_data.bzl): a flag a test reads with `is_defined`
+# or `get_defined_int` is chosen by `test_defines`, a bool, an int and a string here. They are `-D NAME=value` on the build of each test, in its run, its coverage run and
+# the bitcode of its branch run, and on nothing else: the library's `.mojoc` is built without them (//ci:negative.bxl holds that wiring), but its code reads the define of the test build that imports it
+# (its tests say so: a module-level `comptime` gate, a function and a generic function).
+# //rules/mojo/tests:test_data refuses a define the compiler would misread.
+mojo_package(
+    path = ".",
+    test_defines = {
+        "BR_TEST_FLAG": True,
+        "BR_TEST_LEVEL": 3,
+        "BR_TEST_NAME": "probe",
+    },
+)
+
+scrub_files()
