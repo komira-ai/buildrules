@@ -1,0 +1,12 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A package that is NOT at the repository root, with a graph whose paths are printed from the repository root (`MOPM.workspace_root`): its test is
+# `examples/mojo/rooted/data/tests/test_rooted_data.mojo` there. `test_data` names the test as the package does (`tests/test_rooted_data.mojo`), the
+# same way a package at the root, or one with an unrooted graph, does.
+mojo_package(
+    path = ".",
+    test_data = {"tests/test_rooted_data.mojo": {"golden/word.txt": "golden/word.txt"}},
+)
+
+scrub_files()
