@@ -1,0 +1,43 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/node:npm_dyn.bzl", "npm_modules_dyn")
+
+# PROTOTYPE (not for merge): node_modules from package-lock.json alone. No table of hashes: the lockfile's `resolved` and sha512
+# `integrity` are the inputs of one fetch action per package (rules/node/npm_dyn.bzl).
+npm_modules_dyn(
+    name = "modules",
+    lock = "package-lock.json",
+    visibility = ["PUBLIC"],
+)
+
+# The offline lock with one base64 character of ms's integrity changed (still a well-formed sha512): must be RED, exit 3 of the fetch tool.
+npm_modules_dyn(
+    name = "modules_bad",
+    lock = "lock_bad/package-lock.json",
+    allow_data = True,
+    visibility = ["PUBLIC"],
+)
+
+# Test seam: the lock's `resolved` are data: URLs, so the fetch actions run on a worker with no network. Same action shape.
+npm_modules_dyn(
+    name = "offline",
+    lock = "data_fixture/package-lock.json",
+    allow_data = True,
+    visibility = ["PUBLIC"],
+)
+
+# The offline lock with ms bumped from 2.1.3 to 2.1.1 (what a Dependabot pull request does): one new fetch, two cache hits.
+npm_modules_dyn(
+    name = "offline_bump",
+    lock = "lock_bump/package-lock.json",
+    allow_data = True,
+    visibility = ["PUBLIC"],
+)
+
+# A lock entry that names a lookalike host: refused when the lock is read, before any action exists (must be RED).
+npm_modules_dyn(
+    name = "modules_evil_host",
+    lock = "lock_host/package-lock.json",
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

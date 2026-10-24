@@ -1,0 +1,12 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/node:npm_dyn.bzl", "npm_modules_dyn")
+
+# PROTOTYPE (not for merge): a real 385-package lockfile (the lock of a registry API service), as test data for the analysis time of
+# the dynamic_output that reads it. Fetching needs a network lane; without one every fetch action fails with a DNS error.
+npm_modules_dyn(
+    name = "modules",
+    lock = "package-lock.json",
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

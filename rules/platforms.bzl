@@ -37,8 +37,10 @@ def _refuse_local_beside_remote(key):
             fail(("`[buildrules_re] mode = local` but `[{}] {}` is set: a remote-execution setup is configured, " +
                   "and a machine that has one does not run actions locally. Remove one of the two.").format(section, name))
 
-def _properties(key):
+def _properties(key, required = True):
     raw = (read_config("buildrules_re", key, "")).strip()
+    if not raw and not required:
+        return {}
     if not raw:
         fail(("`[buildrules_re] {}` is not set. Copy .buckconfig.local.example to " +
               ".buckconfig.local and fill in the remote-execution endpoint and worker " +
@@ -94,6 +96,14 @@ def _impl(ctx):
             configuration = plat[PlatformInfo].configuration,
             executor_config = _executor(None if ctx.attrs.local else props),
         ))
+    # The network-egress platform: remote only with its own property set (a distinct set is a distinct worker queue); in local
+    # mode the machine has the network, so it is a local executor. Absent: no target may ask for it.
+    if ctx.attrs.net_platform and (ctx.attrs.local or ctx.attrs.net_properties):
+        platforms.append(ExecutionPlatformInfo(
+            label = ctx.attrs.net_platform.label.raw_target(),
+            configuration = ctx.attrs.net_platform[PlatformInfo].configuration,
+            executor_config = _executor(None if ctx.attrs.local else ctx.attrs.net_properties),
+        ))
     return [DefaultInfo(), ExecutionPlatformRegistrationInfo(platforms = platforms)]
 
 _exec_platforms = rule(
@@ -101,6 +111,8 @@ _exec_platforms = rule(
     attrs = {
         "isa_platforms": attrs.dict(attrs.string(), attrs.dep(providers = [PlatformInfo]), default = {}),
         "linux_x86_64": attrs.dep(providers = [PlatformInfo]),
+        "net_platform": attrs.option(attrs.dep(providers = [PlatformInfo]), default = None),
+        "net_properties": attrs.dict(attrs.string(), attrs.string(), default = {}),
         "local_platform": attrs.option(attrs.dep(providers = [PlatformInfo]), default = None),
         # Empty in local mode.
         "properties": attrs.dict(attrs.string(), attrs.string()),
@@ -115,14 +127,16 @@ def host_name():
     cpu = "x86_64" if h.arch.is_x86_64 else ("aarch64" if h.arch.is_aarch64 else "other")
     return os + "-" + cpu
 
-def buildrules_execution_platforms(name, linux_x86_64, isa_platforms = {}, host_platforms = {}, visibility = None):
+def buildrules_execution_platforms(name, linux_x86_64, isa_platforms = {}, host_platforms = {}, net_platform = None, visibility = None):
     """`isa_platforms`: REAPI `ISA` value (`x86-64-v3`) -> the execution platform of that level (platforms/BUCK `exec_<id>`).
     `host_platforms`: `<os>-<cpu>` -> the platform local mode registers on a machine of that kind (linux x86_64 needs none: it is `linux_x86_64`).
+    `net_platform`: the platform of the OPTIONAL network lane (`[buildrules_re] linux_x86_64_net_properties`): a worker pool allowed to reach a package registry, for the fetch actions of rules/node/npm_dyn.bzl. Registered only when that key is set (or in local mode).
 
     Remote unless `[buildrules_re] mode = local` (the module doc)."""
     local_platform = None
     if _mode() == "local":
         _refuse_local_beside_remote("linux_x86_64_properties")
+        _refuse_local_beside_remote("linux_x86_64_net_properties")
         host = host_name()
         if host != "linux-x86_64":
             if host not in host_platforms:
@@ -130,11 +144,14 @@ def buildrules_execution_platforms(name, linux_x86_64, isa_platforms = {}, host_
             # The x86-64 ISA platforms cannot run here, so none is registered.
             local_platform = host_platforms[host]
             isa_platforms = {}
+            net_platform = None
     _exec_platforms(
         name = name,
         linux_x86_64 = linux_x86_64,
         local_platform = local_platform,
         isa_platforms = isa_platforms,
+        net_platform = net_platform,
+        net_properties = _properties("linux_x86_64_net_properties", required = False) if _mode() == "remote" else {},
         properties = _properties("linux_x86_64_properties") if _mode() == "remote" else {},
         local = _mode() == "local",
         visibility = visibility,
