@@ -1,0 +1,8 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# The middle of the chain a -> b -> c (examples/mojo/sibfake/chain): imports the sibling ../c, and ../a imports this one, so c is a dependency of a
+# that a's own mopm.toml does not name.
+mojo_package(path = ".")
+
+scrub_files()

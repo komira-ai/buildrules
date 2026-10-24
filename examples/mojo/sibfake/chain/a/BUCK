@@ -1,0 +1,8 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# The top of the chain a -> b -> c (examples/mojo/sibfake/chain): imports the sibling ../b, which imports ../c. The table is mopm's own output for
+# `plan --unit-graph --locked --workspace-root <the repository root>`; it holds b and c by identity only.
+mojo_package(path = ".")
+
+scrub_files()

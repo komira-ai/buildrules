@@ -1,0 +1,12 @@
+[package]
+name = "dia_top"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[dependencies]
+dia_left = { path = "../left" }
+dia_right = { path = "../right" }
+
+[targets]
+lib = { path = "src/dia_top" }
+tests = ["tests"]

@@ -461,12 +461,12 @@ not covered by this.
 
 ```toml
 [toolchain]
-mopm = "0.0.25"     # an exact release: a version of rules/mopm/pins.bzl, or one buildrules-pins.toml gives a URL, sha256 and size for
+mopm = "0.0.34"     # an exact release: a version of rules/mopm/pins.bzl, or one buildrules-pins.toml gives a URL, sha256 and size for
 mojo = "1.0.0"     # an exact release mopm pins a toolchain for; the graph is made for it
 ```
 
 **It is required**, like `rust-toolchain.toml`, and there is no implicit default: without it `mojo sync`, `mojo check` and the analysis of every
-package stop, name `mopm-toolchain.toml`, and print a minimal example (`[toolchain]`, `mopm = "0.0.25"`, `mojo = "1.0.0"`). Required was chosen because
+package stop, name `mopm-toolchain.toml`, and print a minimal example (`[toolchain]`, `mopm = "0.0.34"`, `mojo = "1.0.0"`). Required was chosen because
 the Rust side is, and one rule is easier to teach; the other choice, a default in `sync`, would pick a compiler for a repository that never named one.
 
 ### 12.3 The table: `buildrules.mojo.lock.bzl`, schema 1
@@ -586,7 +586,7 @@ to the records of `:coverage[branches]` file by file). The classifier refuses wh
 
 ### 12.5 Versions: pinned mopm, the Mojo version
 
-`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.25` is the published mopm release (its linux-x86_64 tarball;
+`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.34` is the published mopm release (its linux-x86_64 tarball;
 the digest and size are the row's in `rules/mopm/pins.bzl`, the source of truth, which match the release's `SHA256SUMS`); a machine that mirrors the download points it at its copy with `url_map`.
 A version not in the table is refused by `mojo sync` (the message names `buildrules-pins.toml` and the table to add) unless `buildrules-pins.toml` has `[mopm."V"]` with `url`, `sha256`, `size`.
 The mopm binary is an input of every unit action: a mopm bump re-keys every unit on purpose. The Mojo version comes from the graph: mopm pins one (`1.0.0`) today, so no package here

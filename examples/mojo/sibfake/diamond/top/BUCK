@@ -1,0 +1,8 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# The top of the diamond top -> (left, right) -> bottom (examples/mojo/sibfake/diamond): imports ../left and ../right, which both import ../bottom,
+# so bottom is one unit of the graph with two dependents. The table holds the three members by identity only.
+mojo_package(path = ".")
+
+scrub_files()

@@ -33,7 +33,7 @@ CASES = [
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys/base_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     # A sibling whose table names another version of the library than the one next to it is (rules/mojo/unit.bzl, `check_closure_ids`).
-    ("//examples/mojo/sibfake/stale:lib_ungated", "buildrules//platforms:linux_x86_64", "the graph imports base as base@0.2.0#mojo1.0.0/lib but the dependency target provides base@0.1.0#mojo1.0.0/lib"),
+    ("//examples/mojo/sibfake/stale:lib_ungated", "buildrules//platforms:linux_x86_64", "the graph imports chain_c as chain_c@0.2.0#mojo1.0.0/lib but the dependency target provides chain_c@0.1.0#mojo1.0.0/lib"),
 ]
 
 def _analyse(ctx, label, platform = PLATFORM):
@@ -126,8 +126,13 @@ BRANCH_PACKAGES = [
     ("//examples/mojo/ws/util/base", "test_base", True),
     ("//examples/mojo/testdata", "test_data_files", True),
     ("//examples/mojo/branch_shapes", "test_branch_shapes", True),
-    ("//examples/mojo/sibfake/app", "test_util", True),
-    ("//examples/mojo/sibfake/base", "test_base", True),
+    ("//examples/mojo/sibfake/chain/a", "test_chain_a", True),
+    ("//examples/mojo/sibfake/chain/b", "test_chain_b", True),
+    ("//examples/mojo/sibfake/chain/c", "test_chain_c", True),
+    ("//examples/mojo/sibfake/diamond/top", "test_dia_top", True),
+    ("//examples/mojo/sibfake/diamond/left", "test_dia_left", True),
+    ("//examples/mojo/sibfake/diamond/right", "test_dia_right", True),
+    ("//examples/mojo/sibfake/diamond/bottom", "test_dia_bottom", True),
     ("//examples/mojo/ws", "test_app", True),
     ("//examples/mojo/sys_app", "test_sys_app", True),
     ("//examples/mojo/installed", "test_installed_layout", False),
@@ -216,12 +221,22 @@ GATE_REDS = ["//ci/mojo_gate:consumer_of_red", "//ci/mojo_gate:consumer_of_red_f
 GATE_EDGES = [
     ("//examples/mojo/ws", "//examples/mojo/ws/util"),
     ("//examples/mojo/ws/util", "//examples/mojo/ws/util/base"),
-    ("//examples/mojo/sibfake/app", "//examples/mojo/sibfake/base"),
+    ("//examples/mojo/sibfake/chain/a", "//examples/mojo/sibfake/chain/b"),
+    ("//examples/mojo/sibfake/chain/b", "//examples/mojo/sibfake/chain/c"),
+    ("//examples/mojo/sibfake/diamond/top", "//examples/mojo/sibfake/diamond/left"),
+    ("//examples/mojo/sibfake/diamond/top", "//examples/mojo/sibfake/diamond/right"),
+    ("//examples/mojo/sibfake/diamond/left", "//examples/mojo/sibfake/diamond/bottom"),
+    ("//examples/mojo/sibfake/diamond/right", "//examples/mojo/sibfake/diamond/bottom"),
 ]
 GATE_PACKAGES = [
     "//examples/mojo/copy_of_base",
-    "//examples/mojo/sibfake/app",
-    "//examples/mojo/sibfake/base",
+    "//examples/mojo/sibfake/chain/a",
+    "//examples/mojo/sibfake/chain/b",
+    "//examples/mojo/sibfake/chain/c",
+    "//examples/mojo/sibfake/diamond/top",
+    "//examples/mojo/sibfake/diamond/left",
+    "//examples/mojo/sibfake/diamond/right",
+    "//examples/mojo/sibfake/diamond/bottom",
     "//examples/mojo/ws",
     "//examples/mojo/ws/util",
     "//examples/mojo/ws/util/base",

@@ -4,6 +4,6 @@
   "toolchain": {"1.0.0": {"linux-64": "fd654c4192487587d8f8d9402d060e45e218b79da7b8964503a703710e49b15d"}},
   "channels": ["https://conda.mopm.dev/"],
   "packages": [
-    {"name": "base", "version": "0.2.0", "source": "path", "path": "../base"}
+    {"name": "chain_c", "version": "0.2.0", "source": "path", "path": "../chain/c"}
   ]
 }
