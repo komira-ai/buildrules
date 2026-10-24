@@ -1,0 +1,8 @@
+[package]
+name = "chain_c"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[targets]
+lib = { path = "src/chain_c" }
+tests = ["tests"]

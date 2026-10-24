@@ -2,19 +2,20 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("@buildrules//rules/mojo:same.bzl", "mojo_report_is")
 
 # What the coverage report of a package whose table is rooted ("workspace_root": True) says: the sources of the package itself, once each, at the
-# repository paths the unrooted examples use (examples/mojo/ws/util has the same shape), and none of a sibling's. `app` imports `../base`, and
-# `base`'s source is not in `app`'s report. The expected texts are committed here, outside the two packages, so they are not inputs of their `:table`.
+# repository paths the unrooted examples use (examples/mojo/ws/util has the same shape), and none of a sibling's. `chain/a` imports `../b`, which
+# imports `../c`, and `diamond/top` imports `../left` and `../right`, which both import `../bottom`; no sibling's source is in either report. The
+# expected texts are committed here, outside the packages, so they are not inputs of their `:table`.
 mojo_report_is(
-    name = "app_coverage_lists_its_own_sources_at_repository_paths",
-    report = "//examples/mojo/sibfake/app:coverage",
-    want = "app.coverage.txt",
+    name = "chain_a_coverage_lists_its_own_sources_at_repository_paths",
+    report = "//examples/mojo/sibfake/chain/a:coverage",
+    want = "chain_a.coverage.txt",
     visibility = ["PUBLIC"],
 )
 
 mojo_report_is(
-    name = "base_coverage_lists_its_own_sources_at_repository_paths",
-    report = "//examples/mojo/sibfake/base:coverage",
-    want = "base.coverage.txt",
+    name = "diamond_top_coverage_lists_its_own_sources_at_repository_paths",
+    report = "//examples/mojo/sibfake/diamond/top:coverage",
+    want = "diamond_top.coverage.txt",
     visibility = ["PUBLIC"],
 )
 

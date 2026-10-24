@@ -6,9 +6,11 @@
     registry/probe_sys/    the publisher's side of probe_sys: a `-sys` package (an empty Mojo module over a static C library) that needs base_sys's
       base_sys/            the other `-sys` package, a workspace member of probe_sys
     sys_app/               imports probe_sys from the registry stand-in: both static archives come out of the `.conda` files, with no `natives` in its BUCK file; its test takes both arms of a decision in the library, so the package has branch records of its own through the native link and a `coverage_floor.txt` of `lines 100.00` and `branches 100.00`
-    sibfake/base, app/     `app` imports `../base`, a sibling rather than a directory below it. Their tables are written by hand with `"workspace_root": True` (the record of a mopm that
-                           lists --workspace-root in its help) and hold the member by identity only; the pinned mopm rejects the flag, so `:table` is not built for them
-    sibfake/stale/         PLANTED DEFECT: `app` synced when `base` was 0.2.0; its library is built from 0.1.0, so analysis of `:lib_ungated` must stay red (ci/negative.bzl, CASES)
+    sibfake/chain/         a -> b -> c: every dependency is a sibling directory (`{ path = "../b" }`), not a directory below its user. `a` names only `b`; its `mopm.lock` records `c` too, and its table holds `b` and `c` by identity
+    sibfake/diamond/       top -> (left, right) -> bottom: `bottom` is one unit of `top`'s graph with two dependents
+                           Each table is mopm's own output for `plan --unit-graph --locked --workspace-root <the repository root>` (`"workspace_root": True`; the paths of the graph start at the repository root, and a
+                           test unit's id names its file from there), held to it by `:table`, which is in //ci:mojo_tables. The path dependencies are held by identity only; a leaf's table also holds the `key` of its units
+    sibfake/stale/         RED BY DESIGN: `chain_stale` synced when `chain/c` was 0.2.0; its library is built from 0.1.0, so analysis of `:lib_ungated` must stay red (ci/negative.bzl, CASES)
     copy_of_base/          base's sources at another path; `:same_bytes` fails unless the two `.mojoc` files are equal
     installed/             a package whose tests run in the installed layout (`test_layout = "installed"`; docs/contract.md, section 12.9): each test from a fresh root, its binary at `<root>/bin/<exe>`, its data under `<root>/share`, `<root>` as the working directory, and a private `TMPDIR`, `TEST_TMPDIR` and `HOME`; the library finds its own files from `/proc/self/exe`; in `:ci` and `:coverage`, with a `coverage_floor.txt` of `lines` alone (no branch run in the installed layout)
     reexport/              a package whose `__init__.mojo` only re-exports (a docstring and `from .ops import ...`): the Mojo coverage report omits it and `:coverage` lists it `0/0`, and so it does `aliases.mojo`, a file of `comptime` aliases only; `ops.mojo` has two decisions (an `if` and a `for`, 4 of 4 branch arms), so its `coverage_floor.txt` has a `branches` figure
@@ -36,4 +38,4 @@ a lock that disagrees with a `.conda` fails the download's check, and one that d
 
 The URL in the lock is a placeholder channel; a machine that has the file points the download at it in the `.buckconfig.local` of the cell that declares it, for example
 `[buildrules] url_map = https://conda.mopm.dev/=http://mirror.invalid/channel/` in the root `.buckconfig.local` (the sha256 is still checked). The mopm tarball
-(`rules/mopm/pins.bzl`, the published mopm 0.0.25) is a download of the `toolchains` cell from its release URL and needs no mirror.
+(`rules/mopm/pins.bzl`, the published mopm 0.0.34) is a download of the `toolchains` cell from its release URL and needs no mirror.

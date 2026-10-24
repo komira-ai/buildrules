@@ -8,7 +8,7 @@ load(":natives.bzl", "PREBUILT", "UNIT", "USER", "own_natives", "reversed_graph_
 load(":siblings.bzl", "graph_paths_below_the_package", "nested_member_keeps_its_target", "sibling_is_named_by_its_directory", "sibling_with_a_path_up_is_named_by_its_directory", "workspace_is_flat_at_repository_paths")
 load(":test_data_targets.bzl", "test_data_targets")
 
-_NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.25\"", "mojo = \"1.0.0\""]
+_NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.34\"", "mojo = \"1.0.0\""]
 
 # A table whose recorded files do not include the toolchain file (made by hand, or before the file was required): refused.
 _r1, _f1 = recording()

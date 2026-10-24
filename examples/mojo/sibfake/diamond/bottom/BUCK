@@ -1,0 +1,7 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# The shared leaf of the diamond top -> (left, right) -> bottom (examples/mojo/sibfake/diamond): both ../left and ../right import it.
+mojo_package(path = ".")
+
+scrub_files()
