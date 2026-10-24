@@ -190,6 +190,28 @@ test "first difference: the line, both texts, and a longer text on either side" 
     try t.expectEqual(@as(usize, 2), nl.no);
 }
 
+test "first difference: a text that differs only after a long shared prefix is found at its line, with both lines whole" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    // 300 identical lines of 40 bytes (12 KB), then a line that differs near its end, then more text
+    var common = std.ArrayList(u8).empty;
+    for (0..300) |i| try common.appendSlice(a, try std.fmt.allocPrint(a, "line {d:0>4} of a lock file, identical here\n", .{i}));
+    const have = try std.mem.concat(a, u8, &.{ common.items, "pin = \"0.0.41\"\ntail\n" });
+    const want = try std.mem.concat(a, u8, &.{ common.items, "pin = \"0.0.42\"\ntail\n" });
+    const d = S.firstDifference(have, want).?;
+    try t.expectEqual(@as(usize, 301), d.no);
+    try t.expectEqualStrings("pin = \"0.0.41\"", d.have);
+    try t.expectEqualStrings("pin = \"0.0.42\"", d.want);
+    // the difference is the very last byte of a long text
+    const last = S.firstDifference(try std.mem.concat(a, u8, &.{ common.items, "x" }), try std.mem.concat(a, u8, &.{ common.items, "y" })).?;
+    try t.expectEqual(@as(usize, 301), last.no);
+    try t.expectEqualStrings("x", last.have);
+    try t.expectEqualStrings("y", last.want);
+    // two long texts that are equal have no difference
+    try t.expect(S.firstDifference(have, try a.dupe(u8, have)) == null);
+}
+
 test "compare: committed files equal to the sync pass (a file that is not committed is not held), a stale or an unknown one is named with the fix" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
@@ -265,4 +287,34 @@ test "apply: files that differ are written, identical ones are left alone, and a
     var again = std.ArrayList([]const u8).empty;
     try S.apply(a, from, tree, &again);
     try t.expectEqual(@as(usize, 0), again.items.len);
+}
+
+test "apply: a file whose new contents are as long as the old ones, in one byte or in all, is still written" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("synced");
+    var from = try tmp.dir.openDir("synced", .{ .iterate = true });
+    defer from.close();
+    try writeSynced(from);
+
+    try tmp.dir.makePath("tree");
+    var tree = try tmp.dir.openDir("tree", .{});
+    defer tree.close();
+    try tree.writeFile(.{ .sub_path = ".buckconfig", .data = "[cells]\n" });
+    try tree.makePath("pkgs/a");
+    try tree.makePath("tc");
+    try tree.writeFile(.{ .sub_path = "pkgs/a/buildrules.mojo.lock.bzl", .data = "LOCL\n" }); // one byte off, same length as "LOCK\n"
+    try tree.writeFile(.{ .sub_path = "pkgs/a/buildrules.mojo.bzl", .data = "glue\n" }); // every byte off
+    try tree.writeFile(.{ .sub_path = "tc/mojo_pins.bzl", .data = "MOJO\n" }); // right already
+    var wrote = std.ArrayList([]const u8).empty;
+    try S.apply(a, from, tree, &wrote);
+    try t.expectEqualStrings("LOCK\n", try tree.readFileAlloc(a, "pkgs/a/buildrules.mojo.lock.bzl", 1 << 10));
+    try t.expectEqualStrings("GLUE\n", try tree.readFileAlloc(a, "pkgs/a/buildrules.mojo.bzl", 1 << 10));
+    try t.expectEqualStrings("MOPM\n", try tree.readFileAlloc(a, "tc/mopm_pins.bzl", 1 << 10));
+    // the two same-length files and the missing table are reported; the file that was right is not
+    try t.expectEqual(@as(usize, 3), wrote.items.len);
+    for (wrote.items) |p| try t.expect(!std.mem.eql(u8, p, "tc/mojo_pins.bzl"));
 }
