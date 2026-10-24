@@ -178,7 +178,7 @@ _CLASSIFY_CASE_INPUTS = [
     "fixtures/try.ll",
 ]
 
-_CLASSIFY_CASES = ["andor", "case", "files", "main", "rules", "try"]
+_CLASSIFY_CASES = ["andor", "case", "files", "fold", "main", "rules", "try"]
 
 [
     zig_test(

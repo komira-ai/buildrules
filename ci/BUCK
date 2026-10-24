@@ -114,6 +114,9 @@ group(name = "matrix", deps = [
 # `cnative` as a download: a machine that has no copy of it points the URL at one with `buildrules.url_map` (examples/mojo/README.md), so
 # these are not in //ci:matrix.
 group(name = "mojo", deps = [
+    "//examples/mojo/branch_shapes:ci",
+    "//examples/mojo/branch_shapes:coverage",
+    "//examples/mojo/branch_shapes:coverage_floor",
     "//examples/mojo/copy_of_base:ci",
     "//examples/mojo/copy_of_base:coverage",
     "//examples/mojo/copy_of_base:same_bytes",
@@ -392,6 +395,7 @@ no_shell(
         "//examples/cxx:scrub_files",
         "//examples/hello:scrub_files",
         "//examples/isa:scrub_files",
+        "//examples/mojo/branch_shapes:scrub_files",
         "//examples/mojo/copy_of_base:scrub_files",
         "//examples/mojo/coverage_floors:scrub_files",
         "//examples/mojo/installed:scrub_files",
@@ -540,6 +544,7 @@ group(name = "floors", deps = [
 # `mopm plan --unit-graph --locked` prints for it now. Needs no package channel (mopm reads the lock, offline), so the public runner builds them,
 # unlike the rest of the Mojo examples (//ci:mojo).
 group(name = "mojo_tables", deps = [
+    "//examples/mojo/branch_shapes:table",
     "//examples/mojo/copy_of_base:table",
     "//examples/mojo/installed:table",
     "//examples/mojo/partial:table",

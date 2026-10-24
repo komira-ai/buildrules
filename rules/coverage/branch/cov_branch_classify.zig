@@ -57,6 +57,14 @@
 //! or skipped); its right operand is counted too (`rhs`) when a source
 //! decision tests the whole condition (cov_branch_andor.zig).
 //!
+//! Not decisions, whatever the token: a br or select on a condition the
+//! build decided (the literal `true`/`false`, or the result of a call of a
+//! `std::sys::info::...,value=#kgen.target<...>` target query), and at a
+//! call's `(` a select between the constants 0 and 1 (a Bool converted to
+//! an Int). The decisions in the body of a `comptime for`, which the
+//! compiler unrolls into one copy per iteration, are one record (`0/1`)
+//! whatever the number of copies; an `if` with an `elif` in it is not.
+//!
 //! Output: per measured file the IR holds code of, `SF:<repository path>`,
 //! its records, `end_of_record` (a file with no decision: no record), files
 //! sorted bytewise; empty when the IR holds no code of a measured file.
@@ -146,6 +154,11 @@ pub const Dec = struct {
     // Why a test of its result gave no right operand (an error text): it
     // ran another number of times than the left operand.
     unmatched: []const u8 = "",
+    // In the body of a `comptime for`, which the compiler unrolls: one copy
+    // of this decision per iteration, all at one location. They are one
+    // record (README.md, "Unrolled loops"), however many iterations a copy
+    // of the function has.
+    unrolled: bool = false,
     parent: ?usize = null, // rhs: its and/or
     keep: bool = true,
     ordinal: usize = 0,
@@ -167,6 +180,7 @@ pub const State = struct {
     outside: usize = 0,
     derived: usize = 0,
     escaped: usize = 0, // and/or results no test reads: the and/or's two arms
+    folded: usize = 0, // branches and selects on a condition the build decided (buildConstant)
     same: usize = 0,
     function: usize = 0,
     // The function being read: its instructions, its decisions, and the
@@ -304,6 +318,14 @@ fn branch(st: *State, kind: Kind, arms: usize, cond: []const u8, text: []const u
             return .{ .weights = w };
         }
     }
+    // A condition the build decided (a literal, or a call of a target
+    // query such as `CompilationTarget.is_x86()`): a branch or select on
+    // it chooses nothing at run time, whatever the token (README.md,
+    // "Folded conditions").
+    if (kind != .@"switch" and st.fun.buildConstant(cond)) {
+        st.folded += 1;
+        return .{ .weights = w };
+    }
     // A String's destructor or copy, at any token (README.md, "String
     // lifetime"); at a decision's token only when the tested instruction is
     // at the branch's own location, so a decision on such a test stays one.
@@ -345,12 +367,21 @@ fn branch(st: *State, kind: Kind, arms: usize, cond: []const u8, text: []const u
         st.err("{s}: a br at '[' that is not on a raising call's error flag (the i1, or field 0 of the {{ i1, ... }}, a call at this location returns): what it is is not known: {s}", .{ where, code });
         return .{ .weights = w };
     }
+    // A Bool converted to an Int (`Int(flag)`) is a select between 0 and 1
+    // at the call's `(`: no source decision (README.md, "Bool to Int").
+    if (c.class == .call and kind == .select and ir_mod.zeroOneSelect(text)) {
+        return .{ .weights = w };
+    }
     if (c.class == .call and kind == .select and !st.fun.raisingFlag(cond, dbg, false) and !st.fun.brOn(cond, dbg, prof)) {
-        st.err("{s}: a select at '{s}' that is not on a raising call's error flag (field 0 of the {{ i1, ... }} a call at this location returns, or a value a br at this location with the same weights tests): what it is is not known: {s}", .{ where, c.token, code });
+        st.err("{s}: a select at '{s}' that is not on a raising call's error flag (field 0 of the {{ i1, ... }} a call at this location returns, or a value a br at this location with the same weights tests, or a Bool converted to an Int: a select between 0 and 1): what it is is not known: {s}", .{ where, c.token, code });
         return .{ .weights = w };
     }
     if (!c.class.decision()) return .{ .weights = w };
-    st.decs.append(st.alloc, .{ .file = at.file, .line = at.line, .col = at.col, .inl = at.inlined_at, .kind = kind, .class = c.class, .arms = arms, .weights = w, .cond = cond, .prof = prof, .fp = condPos(st, cond, at), .block = blk }) catch oom();
+    // In the body of a `comptime for`: the copies per iteration are one
+    // decision. An `if` with an `elif` clause is not: its copies at one
+    // location are told apart by their order.
+    const unrolled = source.inUnrolled(st.alloc, at.file, at.line) and !((c.class == .if_ or c.class == .elif) and source.hasElif(at.file, at.line));
+    st.decs.append(st.alloc, .{ .file = at.file, .line = at.line, .col = at.col, .inl = at.inlined_at, .kind = kind, .class = c.class, .arms = arms, .weights = w, .cond = cond, .prof = prof, .fp = condPos(st, cond, at), .block = blk, .unrolled = unrolled }) catch oom();
     return .{ .dec = st.decs.items.len - 1, .weights = w, .decision = true };
 }
 
@@ -424,13 +455,18 @@ fn endFunction(st: *State) void {
     for (order.items) |copy| {
         const idx = per.get(copy).?.items;
         var fp = st.alloc.alloc(Pos, idx.len) catch oom();
+        // The iterations of an unrolled loop are one decision, whatever
+        // their number: one record, every iteration's arms summed.
+        const unrolled = ds[idx[0]].unrolled;
+        if (unrolled) fp = fp[0..1];
         for (idx, 0..) |i, n| {
-            ds[i].ordinal = n;
-            ds[i].total = idx.len;
-            fp[n] = ds[i].fp;
+            ds[i].ordinal = if (unrolled) 0 else n;
+            ds[i].total = if (unrolled) 1 else idx.len;
+            if (!unrolled) fp[n] = ds[i].fp;
         }
+        if (unrolled) fp[0] = ds[idx[0]].fp;
         const c = st.copies.getPtr(copy).?;
-        c.n = idx.len;
+        c.n = if (unrolled) 1 else idx.len;
         c.fp = fp;
     }
     for (ds) |d| {
@@ -444,6 +480,22 @@ fn endFunction(st: *State) void {
     }
     st.decs.clearRetainingCapacity();
     st.awaits.clearRetainingCapacity();
+}
+
+/// Whether instruction `t` is branch-like, read loosely (by its first word,
+/// not by the shapes `walk` parses): a conditional br (two labels), a
+/// switch, a select, or an invoke, indirectbr or callbr. A decision-looking
+/// line the build folded to straight-line code holds none.
+fn branchLike(t: []const u8) bool {
+    const eq = std.mem.indexOf(u8, t, " = ");
+    const body = std.mem.trimLeft(u8, if (eq) |e| t[e + 3 ..] else t, " ");
+    const end = std.mem.indexOfAny(u8, body, " \t") orelse body.len;
+    const word = body[0..end];
+    if (std.mem.eql(u8, word, "br")) return std.mem.count(u8, body, "label ") >= 2;
+    for ([_][]const u8{ "switch", "select", "invoke", "indirectbr", "callbr" }) |w| {
+        if (std.mem.eql(u8, word, w)) return true;
+    }
+    return false;
 }
 
 /// One function, its lines read into st.fun: its branches and phis, in
@@ -467,7 +519,10 @@ fn walk(st: *State) void {
         const dbg = metaId(t, "!dbg !");
         if (dbg) |d| {
             if (st.locate(d)) |at| {
-                if (at.file.where == .measured) at.file.exec.put(at.line, {}) catch oom();
+                if (at.file.where == .measured) {
+                    at.file.exec.put(at.line, {}) catch oom();
+                    if (branchLike(t)) at.file.branchy.put(at.line, {}) catch oom();
+                }
             }
         }
         const eq = std.mem.indexOf(u8, t, " = ");
@@ -690,8 +745,11 @@ pub fn main() void {
         }
     }
 
-    // A measured file with code on a decision line but no branch: the
-    // branches were not parsed (or the location format moved).
+    // A measured file with a branch-like instruction on a decision line but
+    // no branch parsed: the branches were not parsed (or the location
+    // format moved). A decision line whose IR holds code but no branch-like
+    // instruction (`CompilationTarget.is_x86() and ...`, which the build
+    // folded to straight-line code) is 0/0, not a refusal.
     var fi = st.files.valueIterator();
     var measured_files: usize = 0;
     while (fi.next()) |fp| {
@@ -703,7 +761,7 @@ pub fn main() void {
         var at: u64 = 0;
         while (li.next()) |k| {
             if (k.* < 1 or k.* > f.lines.len) continue;
-            if (decisionLine(f.lines[@intCast(k.* - 1)]) and (at == 0 or k.* < at)) at = k.*;
+            if (f.branchy.contains(k.*) and decisionLine(f.lines[@intCast(k.* - 1)]) and (at == 0 or k.* < at)) at = k.*;
         }
         if (at != 0) st.err("{s}: zero branches parsed, yet the IR has code on its decision line {d}: the branches of this file were not read", .{ f.repo, at });
     }
@@ -744,4 +802,5 @@ pub fn main() void {
         cn[@intFromEnum(Class.plus)],         cn[@intFromEnum(Class.call)],            cn[@intFromEnum(Class.subscript)], cn[@intFromEnum(Class.floordiv)],
         cn[@intFromEnum(Class.mod)],          st.outside,
     });
+    if (st.folded > 0) std.debug.print("cov_branch_classify: {d} branch(es) or select(s) on a condition the build decided (a target query's result) not written\n", .{st.folded});
 }

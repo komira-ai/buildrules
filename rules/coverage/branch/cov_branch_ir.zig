@@ -305,6 +305,24 @@ pub const Fn = struct {
         return false;
     }
 
+    // ---- a condition the build decided ------------------------------------
+
+    /// Whether the condition `cond` of a br or select is a constant of the
+    /// build, no decision of the run: the literal `true` or `false`, or the
+    /// `i1` a call of the standard library's target queries returns
+    /// (`CompilationTarget.is_x86()`: `std::sys::info::...,value=#kgen.target<...>`,
+    /// a function specialised on the target the module is compiled for).
+    /// Mojo folds an operand like `simd_width_of[DType.uint32]() == 16` away
+    /// but keeps the call of such a query, whose result a branch or select
+    /// then tests.
+    pub fn buildConstant(self: *const Fn, cond: []const u8) bool {
+        if (std.mem.eql(u8, cond, "true") or std.mem.eql(u8, cond, "false")) return true;
+        const b = self.body(cond) orelse return false;
+        const r = after(b, "tail call i1 @\"") orelse after(b, "call i1 @\"") orelse return false;
+        const name = r[0 .. std.mem.indexOfScalar(u8, r, '"') orelse r.len];
+        return std.mem.startsWith(u8, name, "std::sys::info::") and std.mem.indexOf(u8, name, ",value=#kgen.target<") != null;
+    }
+
     // ---- a raising call ----------------------------------------------------
 
     /// Whether `cond` is a raising call's error flag at `dbg`: the `i1` a
@@ -483,4 +501,45 @@ fn brKey(alloc: Alloc, cond: []const u8, dbg: u32, prof: u32) []const u8 {
 fn isCall(b: []const u8, ty: []const u8) bool {
     const r = after(b, "tail call ") orelse after(b, "call ") orelse return false;
     return std.mem.startsWith(u8, r, ty) and std.mem.startsWith(u8, r[ty.len..], " @");
+}
+
+/// Whether instruction text `t` (`%6 = select i1 %5, i64 1, i64 0, !dbg !7`)
+/// is a select between the integer constants 0 and 1, in either order: a
+/// Bool converted to an Int (`Int(flag)`, `UInt8(flag)`), the zext of an
+/// `i1` that Mojo writes as a select. It chooses between no two paths of
+/// the source, so it is no decision.
+pub fn zeroOneSelect(t: []const u8) bool {
+    const eq = std.mem.indexOf(u8, t, " = select ") orelse return false;
+    var rest = t[eq + " = select ".len ..];
+    var more = true;
+    while (more) {
+        more = false;
+        for ([_][]const u8{ "nnan ", "ninf ", "nsz ", "arcp ", "contract ", "afn ", "reassoc ", "fast " }) |f| {
+            if (std.mem.startsWith(u8, rest, f)) {
+                rest = rest[f.len..];
+                more = true;
+            }
+        }
+    }
+    rest = after(rest, "i1 ") orelse return false;
+    const cond = operand(rest);
+    if (rest.len <= cond.len + 2) return false;
+    rest = rest[cond.len + 2 ..];
+    const a = operand(rest);
+    if (rest.len <= a.len + 2) return false;
+    const b = operand(rest[a.len + 2 ..]);
+    const av = intConst(a) orelse return false;
+    const bv = intConst(b) orelse return false;
+    return av != bv;
+}
+
+/// The value 0 or 1 of an operand `i64 1` (an integer type, then a literal).
+fn intConst(op: []const u8) ?u8 {
+    const sp = std.mem.indexOfScalar(u8, op, ' ') orelse return null;
+    const ty = op[0..sp];
+    if (ty.len < 2 or ty[0] != 'i' or !std.ascii.isDigit(ty[1]) or std.mem.eql(u8, ty, "i1")) return null;
+    const v = op[sp + 1 ..];
+    if (std.mem.eql(u8, v, "0")) return 0;
+    if (std.mem.eql(u8, v, "1")) return 1;
+    return null;
 }
