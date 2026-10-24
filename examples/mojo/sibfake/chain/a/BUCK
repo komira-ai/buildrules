@@ -1,5 +1,6 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("@buildrules//rules/mojo:pack.bzl", "mojo_conda_holds")
+load("@buildrules//rules/mojo:sync.bzl", "mojo_sync")
 load(":buildrules.mojo.bzl", "mojo_package")
 
 # The top of the chain a -> b -> c (examples/mojo/sibfake/chain): imports the sibling ../b, which imports ../c. The table is mopm's own output for
@@ -15,6 +16,18 @@ mojo_conda_holds(
     sole = True,
     depends = ["mojo-chain_b >=0.1,<0.2"],
     visibility = ["//ci:"],
+)
+
+# `buildrules mojo sync` as a farm action (rules/mojo/sync.bzl): the package and its siblings b and c are staged at their repository paths (`:workspace`), the pinned
+# mopm 0.0.42 plans offline from mopm.lock, and the output holds the two files a sync writes here (and the toolchain tables). `:sync_check` is red unless the committed
+# files are those; `buck2 run //examples/mojo/sibfake/chain/a:sync` writes them into the working tree.
+mojo_sync(
+    name = "sync",
+    committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
+    files = ["//examples/mojo:mopm-toolchain.toml"],
+    mopm = "0.0.42",
+    visibility = ["//ci:"],
+    workspaces = [":workspace"],
 )
 
 scrub_files()

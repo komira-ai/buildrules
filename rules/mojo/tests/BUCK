@@ -6,6 +6,8 @@ load("//rules/mojo:unit.bzl", "check_closure_ids", "cov_link_natives")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
 load(":natives.bzl", "BUILT", "BUILT_UNIT", "PREBUILT", "UNIT", "USER", "built_natives_are_the_targets_of_their_units", "native_includes_are_below_the_package_in_both_bases", "native_includes_default_to_the_header_directories_below_the_package", "native_units_are_told_by_their_id", "own_natives", "reversed_graph_is_reversed", "wiring_is_as_the_graph_says")
 load(":siblings.bzl", "graph_paths_below_the_package", "nested_member_keeps_its_target", "sibling_is_named_by_its_directory", "sibling_with_a_path_up_is_named_by_its_directory", "workspace_is_flat_at_repository_paths")
+load("//rules/mojo:sync.bzl", "sync_packages", "sync_stage_tree")
+load(":sync.bzl", "packages_are_normalized", "stage_holds_the_workspaces_and_the_other_files_once")
 load(":test_data_targets.bzl", "test_data_targets")
 
 _NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.42\"", "mojo = \"1.0.0\""]
@@ -267,6 +269,50 @@ accepts(
     check = check_closure_ids,
     args = ["//x:t", {"util": "util@0.1.0#mojo1.0.0/lib", "base": "base@0.1.0#mojo1.0.0/lib"}, {"base": "base@0.1.0#mojo1.0.0/lib", "util": "util@0.1.0#mojo1.0.0/lib"}],
 )
+# mojo_sync (rules/mojo/sync.bzl, rules/mojo/tests/sync.bzl has the checks): which directories it syncs, what it stages, and what it refuses.
+_r20, _f20 = recording()
+packages_are_normalized(_f20)
+refusal_test(name = "sync_packages_are_normalized", refusals = _r20, none = True, visibility = ["PUBLIC"])
+
+_r21, _f21 = recording()
+stage_holds_the_workspaces_and_the_other_files_once(_f21)
+refusal_test(name = "sync_stage_holds_the_workspaces_and_the_other_files_once", refusals = _r21, none = True, visibility = ["PUBLIC"])
+
+refuses(
+    name = "sync_of_no_package_is_refused",
+    check = sync_packages,
+    args = [[]],
+    contains = ["`packages` is empty"],
+)
+
+refuses(
+    name = "sync_of_a_package_above_the_root_is_refused",
+    check = sync_packages,
+    args = [["examples/../../x"]],
+    contains = ["examples/../../x", "not a directory below the repository root"],
+)
+
+refuses(
+    name = "sync_of_an_absolute_package_is_refused",
+    check = sync_packages,
+    args = [["/opt/x"]],
+    contains = ["/opt/x", "not a directory below the repository root"],
+)
+
+refuses(
+    name = "sync_of_a_package_twice_is_refused",
+    check = sync_packages,
+    args = [["a/b", "./a/b/"]],
+    contains = ["named twice"],
+)
+
+refuses(
+    name = "sync_stage_of_two_files_at_one_path_is_refused",
+    check = sync_stage_tree,
+    args = [[{"a/mopm.toml": "a"}], {"a/mopm.toml": "other"}],
+    contains = ["two different files are staged at a/mopm.toml"],
+)
+
 # mojo_package(test_data = ..., test_env = ...) (rules/mojo/test_data.bzl, docs/contract.md section 12.9): what is staged for each test, and each way
 # the arguments are refused. `:test_data` is the group of them all.
 test_data_targets()

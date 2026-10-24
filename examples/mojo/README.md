@@ -31,6 +31,10 @@
     buck2 build //examples/mojo/ws:ci //examples/mojo/ws:coverage
     buildrules mojo check              # offline
 
+On a machine that may not run a built binary, `mojo_sync` (rules/mojo/sync.bzl, docs/contract.md section 12.10) is the same sync as a farm action. `sibfake/chain/a` and `sibfake/diamond/top` carry it:
+`buck2 build //examples/mojo/sibfake/chain/a:sync_check` is red unless the committed `buildrules.mojo.lock.bzl` and `buildrules.mojo.bzl` are what a sync writes now, and
+`buck2 run //examples/mojo/sibfake/chain/a:sync` (from the repository root) writes them into the tree.
+
 `member_native/` and `member_native/cshim/` hold graphs (`buildrules.mojo.lock.bzl`) in the shape of unit graph format 2 (a `native:<package>/<id>` unit and `built` entries,
 spec/unit-graph.md of mopm), which the pinned mopm prints (`:table` holds each to its output). Their tests, coverage and `cshim:conda_holds` are built by `//ci:mojo`.
 

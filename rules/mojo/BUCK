@@ -133,6 +133,25 @@ zig_exe(
     visibility = ["PUBLIC"],
 )
 
+# `buildrules mojo sync` as a farm action, and the copy of the files it writes back into a working tree (`mojo_sync`, rules/mojo/sync.bzl).
+zig_test(
+    name = "mojo_sync_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/mojo_sync_test.zig",
+    imports = ["tools/mojo_sync.zig"],
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+zig_exe(
+    name = "mojo_sync",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/mojo_sync_main.zig",
+    imports = ["tools/mojo_sync.zig"],
+    zig = "buildrules//rules/pins:zig_next",
+    unit_tests = [":mojo_sync_unit", "buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
+)
+
 # Read by the buildrules.dev site tests (site/BUCK), which check its pages against this file.
 export_file(
     name = "defs.bzl",
@@ -151,6 +170,15 @@ export_file(
 zig_coverage(
     test_targets = [":mojo_launch_unit", ":prebuilt_unpack_unit", ":files_check_unit", ":table_check_unit", ":graph_norm_unit"],
     expect = ["rules/mojo/tools/" + f for f in ["mojo_launch.zig", "prebuilt_unpack.zig", "files_check.zig", "table_check.zig", "graph_norm.zig"]],
+)
+
+# mojo_sync.zig has a floor of its own: its figures are not averaged into the tools above. mojo_sync_main.zig (the command line: argument parsing and the
+# run of `buildrules mojo sync`, which is the farm's build of examples/mojo/sibfake/chain/a:sync_check) has no unit test and is not measured.
+zig_coverage(
+    name = "coverage_mojo_sync",
+    floor = "coverage_mojo_sync_floor.txt",
+    test_targets = [":mojo_sync_unit"],
+    expect = ["rules/mojo/tools/mojo_sync.zig"],
 )
 
 scrub_files()
