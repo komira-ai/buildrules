@@ -106,7 +106,7 @@ link, and `mojo_package` gives `__pgo` nothing else to decide from:
   - a strong definition in a native against a weak definition in the object is not flagged (the ordinary link does not flag it either);
   - a shared native that defines a symbol the object defines too is refused, which is stricter than the ordinary link (the executable's definition simply wins there);
   - a thin archive is not supported: its members live in other files, which `llvm-nm` on the archive may not list as the linker would read them.
-  The wiring itself is held by `ci/negative.bzl` (`native_link_problems`): for `ws` and `sys_app`, `__pgo`'s `native_sonames` and `native_needs` are the committed graph's, and the
+  The wiring itself is held by `ci/negative.bzl` (`native_link_problems`): for `ws`, `sys_app` and the two members of `member_native` (an archive a member builds), `__pgo`'s `native_sonames` and `native_needs` are the committed graph's, and the
   link action's `--native` flags are in the graph's order.
 
 ## cov_branch run

@@ -125,6 +125,12 @@ group(name = "mojo", deps = [
     "//examples/mojo/copy_of_base:coverage",
     "//examples/mojo/copy_of_base:same_bytes",
     "//examples/mojo:coverage_records",
+    "//examples/mojo/member_native:ci",
+    "//examples/mojo/member_native:coverage",
+    "//examples/mojo/member_native/cshim:ci",
+    "//examples/mojo/member_native/cshim:conda",
+    "//examples/mojo/member_native/cshim:conda_holds",
+    "//examples/mojo/member_native/cshim:coverage",
     "//examples/mojo/installed:ci",
     "//examples/mojo/installed:coverage",
     "//examples/mojo/installed:coverage_floor",
@@ -141,8 +147,10 @@ group(name = "mojo", deps = [
     "//examples/mojo/registry/cnative:conda",
     "//examples/mojo/registry/probe_sys:ci",
     "//examples/mojo/registry/probe_sys:conda",
+    "//examples/mojo/registry/probe_sys:conda_holds",
     "//examples/mojo/registry/probe_sys/base_sys:ci",
     "//examples/mojo/registry/probe_sys/base_sys:conda",
+    "//examples/mojo/registry/probe_sys/base_sys:conda_holds",
     # Siblings (examples/mojo/sibfake): a chain a -> b -> c and a diamond top -> (left, right) -> bottom, every dependency a sibling directory, not a
     # directory below its user. The tables say `"workspace_root": True`, hold the members by identity only, and are mopm's own output (`:table`, in
     # //ci:mojo_tables).
@@ -585,6 +593,8 @@ group(name = "mojo_tables", deps = [
     "//examples/mojo/branch_shapes:table",
     "//examples/mojo/copy_of_base:table",
     "//examples/mojo/installed:table",
+    "//examples/mojo/member_native:table",
+    "//examples/mojo/member_native/cshim:table",
     "//examples/mojo/partial:table",
     "//examples/mojo/reexport:table",
     "//examples/mojo/reexport_unused:table",

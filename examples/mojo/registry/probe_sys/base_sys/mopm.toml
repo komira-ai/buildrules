@@ -5,6 +5,7 @@ mojo = ["1.0.0"]
 
 [native.base_sys]
 kind = "static"
+srcs = ["native/*.c"]
 
 [targets]
 lib = { path = "src/base_sys" }

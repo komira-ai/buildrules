@@ -29,8 +29,7 @@
     buildrules mojo check              # offline
 
 `member_native/` and `member_native/cshim/` hold graphs (`buildrules.mojo.lock.bzl`) in the shape of unit graph format 2 (a `native:<package>/<id>` unit and `built` entries,
-spec/unit-graph.md of mopm), written by hand and then made equal, key for key, to what a build of the mopm change that prints them says (`:table`). The pinned mopm prints format 1 and
-does not read them, so their unit builds wait for the mopm release that does; the pin bump runs `buildrules mojo sync` there and moves them to `//ci:mojo`.
+spec/unit-graph.md of mopm), which the pinned mopm prints (`:table` holds each to its output). Their tests, coverage and `cshim:conda_holds` are built by `//ci:mojo`.
 
 `mopm.lock` files are written by hand here: `mopm lock` needs a registry even for path dependencies, and the lock of `ws/` names a registry package.
 `ws/mopm.lock` records the `cnative` package as it would come from a registry: the URL, sha256 and size of the `.conda` that
@@ -38,10 +37,10 @@ does not read them, so their unit builds wait for the mopm release that does; th
 When `cnative`'s sources change, rebuild both, put the new sha256 and size in `ws/mopm.lock` and run `buildrules mojo sync`.
 
 `sys_app/mopm.lock` records `base_sys` and `probe_sys` the same way, and also what `mopm lock` writes for a package with a static native library: the sha256 of the archive
-(`lib/libbase_sys.a` and `lib/libprobe_sys.a` of the `.conda`, which are the `cxx_library` archives `:base_c[static-pic]` and `:probe_c[static-pic]`), its `kind`, and probe_sys's `needs`.
+(`lib/libbase_sys.a` and `lib/libprobe_sys.a` of the `.conda`, which are the archives `:native_base_sys` and `:native_probe_sys` that `mojo_package` builds from each package's `[native.<id>]`), its `kind`, and probe_sys's `needs`.
 Build the two `:conda` targets (`registry/probe_sys:conda`, `registry/probe_sys/base_sys:conda`) and the two archives, put the four sha256 and the two sizes in the lock, and run `buildrules mojo sync`:
 a lock that disagrees with a `.conda` fails the download's check, and one that disagrees with an archive fails `prebuilt_unpack` (a hash that differs) before anything is linked.
 
 The URL in the lock is a placeholder channel; a machine that has the file points the download at it in the `.buckconfig.local` of the cell that declares it, for example
 `[buildrules] url_map = https://conda.mopm.dev/=http://mirror.invalid/channel/` in the root `.buckconfig.local` (the sha256 is still checked). The mopm tarball
-(`rules/mopm/pins.bzl`, the published mopm 0.0.34) is a download of the `toolchains` cell from its release URL and needs no mirror.
+(`rules/mopm/pins.bzl`, the published mopm 0.0.42) is a download of the `toolchains` cell from its release URL and needs no mirror.

@@ -172,7 +172,7 @@ TOOLCHAIN_FILE = "mopm-toolchain.toml"
 
 # mopm-toolchain.toml is required: no mopm and no Mojo is chosen for a package that does not name them.
 TOOLCHAIN_FILE_HELP = ("{} is required and there is no default. Create it at or above the package directory, for example:\n\n" +
-                       "[toolchain]\nmopm = \"0.0.34\"\nmojo = \"1.0.0\"\n\n(an exact release each), then run `buildrules mojo sync`.").format(TOOLCHAIN_FILE)
+                       "[toolchain]\nmopm = \"0.0.42\"\nmojo = \"1.0.0\"\n\n(an exact release each), then run `buildrules mojo sync`.").format(TOOLCHAIN_FILE)
 
 def check_toolchain_file_recorded(t, refuse = fail):
     """A table made without mopm-toolchain.toml (or by hand) is refused: the file is what chooses mopm and Mojo. `refuse` is `fail` in a
@@ -620,7 +620,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                     **common(uid, "test", stem, _BITCODE_PROFILE)
                 )
                 # The instrumented link gets the test's native libraries as its ordinary link does (the graph's order and the same targets).
-                pgo_sonames, pgo_natives = native_wiring(u, prebuilt_packages, natives, here)
+                pgo_sonames, pgo_natives = native_wiring(u, prebuilt_packages, natives, here, built = built_labels)
                 mojo_cov_pgo_rule(
                     name = name_once(stem + "__pgo"),
                     bc = ":" + stem + "__bc",

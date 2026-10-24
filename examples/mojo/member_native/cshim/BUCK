@@ -14,6 +14,7 @@ mojo_conda_holds(
     conda = ":conda",
     natives = {"libshim.a": ":native_shim"},
     package = "cshim",
+    visibility = ["//ci:"],
 )
 
 scrub_files()
