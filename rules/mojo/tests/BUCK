@@ -4,7 +4,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("//rules/mojo:defs.bzl", "check_toolchain_file_present", "check_toolchain_file_recorded", "graph_path_in_package", "member_label", "native_wiring")
 load("//rules/mojo:unit.bzl", "check_closure_ids", "cov_link_natives")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
-load(":natives.bzl", "BUILT", "BUILT_UNIT", "PREBUILT", "UNIT", "USER", "built_natives_are_the_targets_of_their_units", "native_units_are_told_by_their_id", "own_natives", "reversed_graph_is_reversed", "wiring_is_as_the_graph_says")
+load(":natives.bzl", "BUILT", "BUILT_UNIT", "PREBUILT", "UNIT", "USER", "built_natives_are_the_targets_of_their_units", "native_includes_are_below_the_package_in_both_bases", "native_includes_default_to_the_header_directories_below_the_package", "native_units_are_told_by_their_id", "own_natives", "reversed_graph_is_reversed", "wiring_is_as_the_graph_says")
 load(":siblings.bzl", "graph_paths_below_the_package", "nested_member_keeps_its_target", "sibling_is_named_by_its_directory", "sibling_with_a_path_up_is_named_by_its_directory", "workspace_is_flat_at_repository_paths")
 load(":test_data_targets.bzl", "test_data_targets")
 
@@ -46,6 +46,15 @@ refusal_test(name = "native_order_is_not_sorted", refusals = _r7, none = True, v
 _r8, _f8 = recording()
 own_natives(_f8)
 refusal_test(name = "prebuilt_unit_extracts_its_own_static_natives", refusals = _r8, none = True, visibility = ["PUBLIC"])
+
+# The include directories of a member's native library, in a rooted graph and an unrooted one (rules/mojo/defs.bzl, `native_include_dirs`).
+_r8a, _f8a = recording()
+native_includes_are_below_the_package_in_both_bases(_f8a)
+refusal_test(name = "native_includes_are_used_as_the_graph_prints_them", refusals = _r8a, none = True, visibility = ["PUBLIC"])
+
+_r8b, _f8b = recording()
+native_includes_default_to_the_header_directories_below_the_package(_f8b)
+refusal_test(name = "native_includes_default_to_the_header_directories_of_a_rooted_graph", refusals = _r8b, none = True, visibility = ["PUBLIC"])
 
 # Natives a member builds (rules/mojo/tests/natives.bzl has the unit): a `built` entry is the target of the native unit it names.
 _r9, _f9 = recording()
