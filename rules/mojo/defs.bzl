@@ -457,10 +457,12 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         nid = native_unit_id(uid)
         if u.get("kind") == "shared":
             fail("{}: {} is a shared library; a member's native library is static".format(here, uid))
-        srcs = [s["path"] for s in u.get("srcs", [])]
+        # The files of the native unit are named as the graph names every file: from the repository root when it is rooted, so below the package like the
+        # Mojo sources. Its `includes` are directories below the package whichever base the graph prints (mopm 0.0.42 prints `native`, not the repository path).
+        srcs = [in_package(s["path"]) for s in u.get("srcs", [])]
         if not srcs:
             fail("{}: the native unit {} has no source".format(here, uid))
-        hdrs = [h["path"] for h in u.get("hdrs", [])]
+        hdrs = [in_package(h["path"]) for h in u.get("hdrs", [])]
         dirs = u.get("includes")
         if dirs == None:
             dirs = sorted({h.rpartition("/")[0]: True for h in hdrs}.keys())
@@ -517,7 +519,10 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
 
     # What the tests are given besides their binaries (rules/mojo/test_data.bzl): `test_data` per test file, `test_env` for all. The coverage run's
     # working directory holds the test's source and the library's sources, so a staged path may not be one of those.
-    test_sources = [units[u]["srcs"][0]["path"] for u in sorted(units.keys()) if units[u]["kind"] == "test"]
+    # `test_data` names a test as the package does (below its directory, `tests/test_x.mojo`), whatever base the graph prints; the tree of a run holds the
+    # test at the name the graph gives it (`test_graph_of`), which is what a staged path may not collide with.
+    test_graph_of = {in_package(units[u]["srcs"][0]["path"]): units[u]["srcs"][0]["path"] for u in sorted(units.keys()) if units[u]["kind"] == "test"}
+    test_sources = sorted(test_graph_of.keys())
     check_test_env(here, test_env)
     check_test_layout(here, test_layout)
     installed = test_layout == LAYOUT_INSTALLED
@@ -525,8 +530,11 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     # In the installed layout the data is staged under `<root>/share`, apart from the sources the coverage run's root holds beside it, so no staged path can
     # collide with one of them; but those sources may not be in `bin/` or `share/`.
     if installed:
-        check_installed_tree(here, test_sources + sorted(lib_share.keys()))
-    staged = stage_test_data(here, test_sources, test_data, {t: ([] if installed else [t] + sorted(lib_share.keys())) for t in test_sources})
+        check_installed_tree(here, sorted(test_graph_of.values()) + sorted(lib_share.keys()))
+    staged_by_test = stage_test_data(here, test_sources, test_data, {t: ([] if installed else [test_graph_of[t]] + sorted(lib_share.keys())) for t in test_sources})
+
+    # What the rules below look a test's data up by: the path the graph gives the test.
+    staged = {test_graph_of[t]: staged_by_test[t] for t in test_sources}
     for uid in sorted(units.keys()):
         u = units[uid]
         kind = u["kind"]

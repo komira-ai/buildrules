@@ -1,0 +1,9 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A package with a C shim of its own (`[native.shim]` in mopm.toml) that is NOT at the repository root, with a graph whose paths are printed from the
+# repository root (`MOPM.workspace_root`, as `mopm --workspace-root` does): the unit of the native library names `examples/mojo/rooted/native/native/rshim.c`,
+# and the macro builds it from the file below this package, as it builds the Mojo sources.
+mojo_package(path = ".")
+
+scrub_files()

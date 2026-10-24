@@ -1,0 +1,8 @@
+[package]
+name = "rooted_data"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[targets]
+lib = { path = "src/rooted_data" }
+tests = ["tests"]
