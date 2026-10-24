@@ -533,8 +533,9 @@ def _branch_run_impl(ctx):
     llvm = ctx.attrs.branch[CovBranchInfo]
 
     # The tree the test runs in: the test source and the library's sources at the relative names the line tables use, and its staged data, as the kcov run's.
-    # The branch run has the default layout only (mojo_package gives a package with `test_layout = "installed"` no branch rows).
-    share, _, _ = _coverage_tree(ctx)
+    # In the installed layout (`test_layout = "installed"`) the instrumented binary is run from `<root>/bin`, the sources are copied into `<root>` and the data into
+    # `<root>/share`, with a TMPDIR, TEST_TMPDIR and HOME of the run's own: the layout of the test run and of the kcov run (`cov_branch run --installed`).
+    share, installed, data_dir = _coverage_tree(ctx)
     profdata = ctx.actions.declare_output(ctx.label.name + ".profdata")
     cmd = cmd_args(
         ctx.attrs.tool[RunInfo],
@@ -562,7 +563,12 @@ def _branch_run_impl(ctx):
     if libs:
         cmd.add("--lib-dir", libs[DefaultInfo].default_outputs[0])
 
-    # The variables of the test run, and the directory of its staged data (the tree, which is also the working directory).
+    if installed:
+        cmd.add("--installed")
+        if data_dir:
+            cmd.add("--data", data_dir)
+
+    # The variables of the test run, and the directory of its staged data (the tree, which is also the working directory; `<root>/share` when installed).
     if ctx.attrs.data:
         cmd.add("--data-env", DATA_ENV)
     for name in sorted(ctx.attrs.test_env.keys()):

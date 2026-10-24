@@ -247,3 +247,72 @@ test "usage errors and a missing llvm-profdata: exit 2, the test never runs" {
     try expect("no profdata", try b.run(try b.runArgs(&.{}), &ENV), 2, "cov_branch run: llvm/bin/llvm-profdata is missing");
     try testing.expect(!b.exists("bin/argv"));
 }
+
+/// The installed layout a failed run left in `scr/cov_branch_run`: `<dir>/root`, as a path relative to the box. Exactly one run's directory is there.
+fn installedRoot(b: *Box) ![]const u8 {
+    var dir = try b.tmp.dir.openDir("scr/cov_branch_run", .{ .iterate = true });
+    defer dir.close();
+    var found: ?[]const u8 = null;
+    var it = dir.iterate();
+    while (try it.next()) |e| {
+        if (!std.mem.startsWith(u8, e.name, "buildrules_test.")) continue;
+        try testing.expect(found == null);
+        found = try std.fmt.allocPrint(b.a(), "scr/cov_branch_run/{s}/root", .{e.name});
+    }
+    return found orelse error.TestUnexpectedResult;
+}
+
+fn sub(b: *Box, root: []const u8, rel: []const u8) []const u8 {
+    return std.fmt.allocPrint(b.a(), "{s}/{s}", .{ root, rel }) catch unreachable;
+}
+
+test "an installed run as a process: the test is the copy at <root>/bin, started in <root>, with its sources, its data in <root>/share, and private scratch directories" {
+    var b = try Box.init();
+    defer b.deinit();
+    try b.put("data/golden/greeting.txt", "hello");
+    // The stand-in test exits 3 so the layout it ran in is kept in the scratch directory to be read back.
+    try b.put("bin/stub_rc", "3");
+    const r = try b.run(try b.runArgs(&.{ "--installed", "--data", "data", "--data-env", "BUILDRULES_TEST_DATA", "--env", "A=1" }), &ENV);
+    try expect("installed", r, 3, "BRANCH COVERAGE RUN FAILED: //pkg:test_one\nThe test failed instrumented for branch coverage (exit 3).");
+    const root = try installedRoot(&b);
+    const real = b.p(root);
+
+    // It ran as the installed copy: its working directory is the root, which holds the sources, the data under share/, and the binary under bin/.
+    try testing.expectEqualStrings(real, b.read(sub(&b, root, "bin/cwd")).?);
+    try testing.expectEqualStrings("def main(): pass\n", b.read(sub(&b, root, "tests/test_one.mojo")).?);
+    try testing.expectEqualStrings("hello", b.read(sub(&b, root, "share/golden/greeting.txt")).?);
+    try testing.expect(b.exists(sub(&b, root, "bin/test_one")));
+    try testing.expectEqualStrings("", b.read(sub(&b, root, "bin/argv")).?);
+
+    // Its environment: exactly the default layout's, the data variable naming the root's share/, and the run's private directories.
+    const env = b.read(sub(&b, root, "bin/env")).?;
+    const dir = std.fs.path.dirname(real).?;
+    try testing.expectEqualStrings(try std.fmt.allocPrint(b.a(), "PATH=/usr/bin:/bin\nLD_LIBRARY_PATH={s}/lib\nA=1\nBUILDRULES_TEST_DATA={s}/share\nTMPDIR={s}/tmp\nTEST_TMPDIR={s}/tmp\nHOME={s}/home\nLLVM_PROFILE_FILE={s}/prof/%p.profraw\n", .{ b.p("tc"), real, dir, dir, dir, b.p("scr/cov_branch_run") }), env);
+
+    // The tree and the binary it was made from were not touched, and the private directories were empty when the test began.
+    try testing.expect(!b.exists("share/bin"));
+    try testing.expect(!b.exists("share/share"));
+    try testing.expect(!b.exists("bin/cwd"));
+    try b.tmp.dir.access(sub(&b, std.fs.path.dirname(root).?, "tmp"), .{});
+    try b.tmp.dir.access(sub(&b, std.fs.path.dirname(root).?, "home"), .{});
+}
+
+test "an installed run that passes: exit 0, the profile merged, silence, and the whole layout taken away with the scratch directory" {
+    var b = try Box.init();
+    defer b.deinit();
+    try b.put("data/golden/greeting.txt", "hello");
+    const r = try b.run(try b.runArgs(&.{ "--installed", "--data", "data", "--data-env", "BUILDRULES_TEST_DATA" }), &ENV);
+    try expect("installed passes", r, 0, "");
+    try testing.expectEqualStrings("", r.stderr);
+    try testing.expectEqualStrings("indexed", b.read("out/test_one.profdata").?);
+    try testing.expect(!b.exists("scr/cov_branch_run"));
+}
+
+test "an installed run of a tree that holds a bin: exit 1 from the tool, the test never starts" {
+    var b = try Box.init();
+    defer b.deinit();
+    try b.put("share/bin/f", "x");
+    const r = try b.run(try b.runArgs(&.{"--installed"}), &ENV);
+    try expect("tree holds bin", r, 1, "cov_branch run: cannot stage the run in ");
+    try testing.expect(!b.exists("bin/cwd"));
+}

@@ -14,7 +14,7 @@ One line per package. The targets come from the package's unit graph, which `bui
                 (`<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info`: rules/coverage/branch/README.md); `coverage.txt` is the per-file count of lines, then of
                 branch arms; `:coverage[reports]` is the per-line records of every test (kcov's Cobertura XML in repository paths) and `:coverage[branches]` the
                 branch records (lcov `BRDA` lines in repository paths). The instrumented link of a test gets the test's native libraries as its ordinary link does.
-                A package whose tests run in the installed layout has no branch rows and no `[branches]`.
+                A package whose tests run in the installed layout (`test_layout = "installed"`) has them too: the instrumented binary is run from the installed tree, as the kcov run is.
     :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green while `:coverage` is at least that floor (`lines NN.NN`, and
                 `branches NN.NN` when `coverage.txt` has branch rows; below it: "coverage fell"; at or above it passes, and above it prints "you may raise the
                 floor to X"), the check of every other package's floor (rules/coverage/README.md, "The floor")
@@ -500,8 +500,8 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     # Branch coverage of the package's tests (rules/coverage/branch/README.md): bitcode, an instrumented binary, its run, the annotated IR and
     # the classified records, five actions after the compile. A test that links native libraries is instrumented too: its instrumented link is given
     # the same libraries in the same order (`__pgo`), and its run finds the shared ones through the library path. A package with `test_layout = "installed"`
-    # has the line figure alone: the branch run has no installed layout yet.
-    branches_on = test_layout != LAYOUT_INSTALLED and own_lib != None and bool([x for x in units.values() if x["kind"] == "test"])
+    # runs the instrumented binary in the installed layout too (`__profdata` is given the layout), so it has branch rows like any other.
+    branches_on = own_lib != None and bool([x for x in units.values() if x["kind"] == "test"])
 
     # The library's sources: in the coverage tree at the names its `.mojoc` gives them (`<import>/<file>`), and for the classifier by the name relative
     # to the library root.
@@ -643,6 +643,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                     required_isa = required_isa(),
                     share = share,
                     test_env = test_env,
+                    test_layout = test_layout,
                     toolchain = toolchain,
                     exec_compatible_with = test_exec_compatible_with(),
                     visibility = visibility,

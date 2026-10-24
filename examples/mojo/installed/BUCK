@@ -10,7 +10,9 @@ load(":buildrules.mojo.bzl", "mojo_package")
 #
 # Every test run and coverage run also has a TMPDIR, TEST_TMPDIR and HOME of its own (absolute, empty at the start), which tests/test_scratch_a.mojo and
 # tests/test_scratch_b.mojo check. The coverage run is in the same layout: kcov wraps the binary at <root>/bin, and the sources the line tables name are beside bin/
-# and share/ in the root. The floor is exactly the coverage.
+# and share/ in the root. The branch run is in the same layout too (`cov_branch run --installed`): the instrumented binary is started as <root>/bin/<exe>, so the tests that
+# find their files from /proc/self/exe, read share/ and check their scratch directories pass there as in the test run, and `coverage.txt` has branch rows. The floor is
+# exactly the coverage, lines and branches.
 mojo_package(
     path = ".",
     test_data = {"*": {"golden/greeting.txt": "golden/greeting.txt"}},

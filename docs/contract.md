@@ -693,7 +693,8 @@ mojo_package(
   `check marker|run --private-scratch --installed --install-share <data dir> --share-env BUILDRULES_TEST_DATA` does it for the test run. The coverage run uses the same layout (`cov_run --private-scratch --installed --data <data dir>
   --data-env BUILDRULES_TEST_DATA`): kcov wraps the copy at `<root>/bin/<exe>` with `<root>` as its working directory, and the root also holds the test's source and the library's sources under the names the line tables
   use, beside `bin/` and `share/`; a source whose first directory is `bin` or `share` is refused. In this layout a staged path may be any path (the data is under `share/`, apart from the sources). A value other than
-  `"default"` and `"installed"` is refused when the package loads.
+  `"default"` and `"installed"` is refused when the package loads. The branch coverage run (`cov_branch run --installed --data <data dir> --data-env BUILDRULES_TEST_DATA`) lays out the same tree for the
+  instrumented binary, so a package in this layout has branch records and a `branches` floor like any other.
 - **The action key.** The staged files are inputs of both actions by their digests, and the variables are arguments, so a change to a staged file, to which file a path names, or to a variable runs the test again, and a
   test that depends on the new content can turn red; a change that touches none of them is a cache hit. On the farm a file that is not an input is not there at all, so a test cannot read what it did not declare.
 - **Refused at load** (rules/mojo/test_data.bzl, each an analysis test in rules/mojo/tests): a key that is no test of the package (a mistyped path stages nothing); a staged path that is empty, absolute, ends in `/`, or holds `.`, `..` or an empty

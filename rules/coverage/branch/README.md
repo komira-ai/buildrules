@@ -114,6 +114,13 @@ link, and `mojo_package` gives `__pgo` nothing else to decide from:
 `cov_branch run` ([`cov_branch_run.zig`](cov_branch_run.zig)), with `--compiler`, `--share`, `--label`, `--profdata`, `--raw-version`, `--binary`, `--out`, a `--lib-dir <directory>` for each
 directory of shared native libraries ([above](#native-libraries)), the test's `--env NAME=VALUE`s and, when the test has staged data, `--data-env NAME` (the variable that names `--share`, made absolute: `mojo_package`'s `test_data` is copied into that tree, which is the test's working directory here as under kcov).
 
+A package whose tests run in the installed layout (`test_layout = "installed"`, docs/contract.md, section 12.9) also gives `--installed` and, when the test has data, `--data <directory>`: the run is
+laid out as the test run and the kcov run have it (`install_root.zig`, shared with `check` and `cov_run`). The directory of `--binary` (the instrumented test) is copied to `<root>/bin` and the test is started as
+`<root>/bin/<name>`, so `/proc/self/exe` is there; `--share` (the sources) is copied into `<root>`, `--data` into `<root>/share` (empty without `--data`), `<root>` is the working directory, and `--data-env` names
+`<root>/share`. `TMPDIR`, `TEST_TMPDIR` and `HOME` are the empty directories of the run's own, beside `<root>`; `--env` and `--data-env` may not name them. A `--share` that holds a `bin` or a `share` is refused
+(exit 1, the test never starts). The layout is made inside the scratch directory, so a failed run keeps it with the rest of the scratch for diagnosis and a success removes it. The profile does not name the binary
+or the sources: it is keyed by function name and hash, so the annotate and classify steps read the same counters whether the test ran from the build output or from `<root>/bin`.
+
 1. The test runs in `--share`, the tree of copies of the test source and the library's sources at the relative names the line tables use (the tree `cov_run` gives kcov), with exactly this
    environment: `PATH=/usr/bin:/bin`, `LD_LIBRARY_PATH=<compiler>/lib` followed by each `--lib-dir` (made absolute), the `--env` entries, `--data-env`'s variable, and `LLVM_PROFILE_FILE=<scratch>/prof/%p.profraw` (`%p`, the pid: a child the test starts writes
    a profile of its own; setting it by `--env` is a usage error). Nothing of the tool's own environment reaches the test. The test must pass; when it fails, so does the action, with the

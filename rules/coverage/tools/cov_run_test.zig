@@ -35,6 +35,14 @@ test "parse: refusals name the option" {
     try t.expect(std.mem.indexOf(u8, d, "both sides are relative directories ending in /") != null);
     try t.expectError(error.Usage, C.parse(a, try args(a, &.{ "--map", "/abs/=pkg/" }), &d));
     try t.expectError(error.Usage, C.parse(a, try args(a, &.{"--bogus"}), &d));
+    try t.expectEqualStrings("--bogus needs a value", d);
+    // An option the tool does not have, given with a value; a map with no `=`; text to refuse that is empty.
+    try t.expectError(error.Usage, C.parse(a, try args(a, &.{ "--bogus", "x" }), &d));
+    try t.expectEqualStrings("unknown option --bogus", d);
+    try t.expectError(error.Usage, C.parse(a, try args(a, &.{ "--map", "nothing/" }), &d));
+    try t.expectEqualStrings("--map nothing/ is not <share dir>=<repository dir>", d);
+    try t.expectError(error.Usage, C.parse(a, try args(a, &.{ "--refuse-in-binary", "" }), &d));
+    try t.expectEqualStrings("--refuse-in-binary needs text", d);
     try t.expectError(error.Usage, C.parse(a, &.{ "--kcov", "/k" }, &d));
     try t.expect(std.mem.indexOf(u8, d, "is required") != null);
     // No include path: kcov would measure nothing, and say nothing.

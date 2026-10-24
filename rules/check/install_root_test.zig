@@ -174,6 +174,50 @@ test "installBinary: a binary that is not there, one in a directory that is a fi
     try t.expectError(error.NotDir, ir.installBinary(e.a(), try e.at("blocked"), try e.at("out/test")));
 }
 
+test "installTree: the binary at root/bin, the sources in root, the data in root/share; without data root/share stays empty" {
+    var e = try Env.init();
+    defer e.deinit();
+    try e.put("out/test", "binary", 0o755);
+    try e.put("tree/tests/test_x.mojo", "source", 0o644);
+    try e.put("tree/pkg/mod.mojo", "library", 0o644);
+    try e.put("data/golden/greeting.txt", "hello", 0o644);
+    const s = try ir.make(e.a(), try e.at("parent"));
+    defer ir.remove(s);
+    const installed = try ir.installTree(e.a(), s, try e.at("tree"), try e.at("out/test"), try e.at("data"));
+    try t.expectEqualStrings(try std.fs.path.join(e.a(), &.{ s.root, "bin/test" }), installed);
+    var root = try std.fs.openDirAbsolute(s.root, .{});
+    defer root.close();
+    try t.expectEqualStrings("binary", try root.readFileAlloc(e.a(), "bin/test", 1 << 20));
+    try t.expectEqualStrings("source", try root.readFileAlloc(e.a(), "tests/test_x.mojo", 1 << 20));
+    try t.expectEqualStrings("library", try root.readFileAlloc(e.a(), "pkg/mod.mojo", 1 << 20));
+    try t.expectEqualStrings("hello", try root.readFileAlloc(e.a(), "share/golden/greeting.txt", 1 << 20));
+    const bare = try ir.make(e.a(), try e.at("parent"));
+    defer ir.remove(bare);
+    _ = try ir.installTree(e.a(), bare, try e.at("tree"), try e.at("out/test"), null);
+    try t.expect(try isEmpty(bare.share));
+}
+
+test "installTree: a tree that holds a bin or a share is refused before anything is copied" {
+    var e = try Env.init();
+    defer e.deinit();
+    try e.put("out/test", "binary", 0o755);
+    for ([_][]const u8{ "bin", "share" }) |name| {
+        const f = try std.fmt.allocPrint(e.a(), "tree_{s}/{s}/f", .{ name, name });
+        try e.put(f, "x", 0o644);
+        const s = try ir.make(e.a(), try e.at("parent"));
+        defer ir.remove(s);
+        try t.expectError(error.TreeHoldsLayoutName, ir.installTree(e.a(), s, try e.at(std.fs.path.dirname(std.fs.path.dirname(f).?).?), try e.at("out/test"), null));
+        try t.expect(try isEmpty(s.share));
+        try t.expectError(error.FileNotFound, accessIn(s.root, "bin"));
+    }
+}
+
+fn accessIn(root: []const u8, name: []const u8) !void {
+    var d = try std.fs.openDirAbsolute(root, .{});
+    defer d.close();
+    try d.access(name, .{});
+}
+
 test "copyTree: directories, files with their permission bits, and what a link names; an entry already there is replaced" {
     var e = try Env.init();
     defer e.deinit();
@@ -256,6 +300,21 @@ test "copyTree, installBinary and make: every allocation failed in turn is an er
             continue;
         };
         ir.remove(s);
+        try t.expect(!fa.has_induced_failure);
+        break;
+    }
+    // installTree, with data: the layout is made with the test allocator, so only installTree's own allocations are failed.
+    try e.put("tree/tests/t.mojo", "source", 0o644);
+    try e.put("data/d.txt", "data", 0o644);
+    i = 0;
+    while (i < 1000) : (i += 1) {
+        const s = try ir.make(e.a(), e.here);
+        defer ir.remove(s);
+        var fa = std.testing.FailingAllocator.init(e.a(), .{ .fail_index = i });
+        _ = ir.installTree(fa.allocator(), s, try e.at("tree"), try e.at("out/test"), try e.at("data")) catch |err| {
+            try t.expect(err == error.OutOfMemory);
+            continue;
+        };
         try t.expect(!fa.has_induced_failure);
         break;
     }

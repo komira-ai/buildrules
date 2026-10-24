@@ -31,10 +31,38 @@ const Fake = struct {
     show_text: []const u8 = SHOW_OK,
     /// The step whose start fails (error.ForkFailed), or none.
     fail_start: ?[]const u8 = null,
+    /// Paths relative to the test's working directory that the stand-in test reads while it runs (`seen` gets one `path=<contents>` line each, or
+    /// `path=<missing>`), as the real test reads its files; and, for the directories TMPDIR and HOME name, whether they were there and empty.
+    probe: []const []const u8 = &.{},
+    seen: std.ArrayList(u8),
     calls: std.ArrayList(proc.Spec),
 
     fn init() Fake {
-        return .{ .calls = std.ArrayList(proc.Spec).empty };
+        return .{ .calls = std.ArrayList(proc.Spec).empty, .seen = std.ArrayList(u8).empty };
+    }
+
+    fn look(self: *Fake, alloc: std.mem.Allocator, spec: proc.Spec) !void {
+        const w = self.seen.writer(alloc);
+        for (self.probe) |rel| {
+            const path = try std.fs.path.join(alloc, &.{ spec.cwd.?, rel });
+            if (std.fs.cwd().readFileAlloc(alloc, path, 1 << 20)) |bytes| {
+                try w.print("{s}={s}\n", .{ rel, bytes });
+            } else |_| try w.print("{s}=<missing>\n", .{rel});
+        }
+        try w.print("binary={s}\n", .{if (std.fs.cwd().access(spec.argv[0], .{})) |_| "there" else |_| "<missing>"});
+        for ([_][]const u8{ "TMPDIR", "TEST_TMPDIR", "HOME" }) |name| {
+            const dir = envValue(spec.env, name) orelse {
+                try w.print("{s}=<unset>\n", .{name});
+                continue;
+            };
+            var d = std.fs.cwd().openDir(dir, .{ .iterate = true }) catch {
+                try w.print("{s}=<missing>\n", .{name});
+                continue;
+            };
+            defer d.close();
+            var it = d.iterate();
+            try w.print("{s}={s}\n", .{ name, if ((try it.next()) == null) "empty" else "not empty" });
+        }
     }
 
     fn runner(self: *Fake) common.Runner {
@@ -62,6 +90,7 @@ const Fake = struct {
         const step: []const u8 = if (is_test) "test" else spec.argv[1];
         if (self.fail_start) |f| if (std.mem.eql(u8, f, step)) return error.ForkFailed;
         if (is_test) {
+            try self.look(alloc, spec);
             // The profile file name template, as the runtime expands %p.
             const tmpl = envValue(spec.env, "LLVM_PROFILE_FILE").?;
             const dir = std.fs.path.dirname(tmpl).?;
@@ -475,4 +504,150 @@ test "headJoined: the first N lines, each that ended in a newline followed by a 
     try testing.expectEqualStrings("a b ", try r.headJoined(a, "a\nb\nc\n", 2));
     try testing.expectEqualStrings("a b", try r.headJoined(a, "a\nb", 3));
     try testing.expectEqualStrings("a ", try r.headJoined(a, "a\n", 3));
+}
+
+/// The installed flags after the common ones, and the stand-in test's view of the run: the layout the test finds, read while the test runs.
+fn installedArgs(c: *Case, extra: []const []const u8) ![]const []const u8 {
+    var full = std.ArrayList([]const u8).empty;
+    try full.appendSlice(c.a(), c.argv());
+    try full.appendSlice(c.a(), &.{ "--installed", "--data", c.p("data"), "--data-env", "BUILDRULES_TEST_DATA", "--env", "A=1" });
+    try full.appendSlice(c.a(), extra);
+    return full.items;
+}
+
+fn envOf(spec: proc.Spec, name: []const u8) []const u8 {
+    return Fake.envValue(spec.env, name).?;
+}
+
+test "installed: the test is started as <root>/bin/<name> in <root>, which holds the sources; its data is <root>/share; TMPDIR, TEST_TMPDIR and HOME are private and empty" {
+    var c = try Case.init();
+    defer c.deinit();
+    try c.put("data/golden/greeting.txt", "hello");
+    try c.put("bin/lib/libn.so", "native beside the binary");
+    var fake = Fake.init();
+    const b = good();
+    fake.raw_bytes = &b;
+    fake.probe = &.{ "tests/test_one.mojo", "share/golden/greeting.txt", "bin/lib/libn.so", "bin/test_one", "data" };
+    try testing.expectEqual(@as(u8, 0), try r.cli(c.a(), try installedArgs(&c, &.{}), c.where(), fake.runner(), &c.err));
+    try testing.expectEqualStrings("", c.err.items);
+    const t = fake.calls.items[0];
+
+    // The program is the installed copy: <scratch>/buildrules_test.<random>/root/bin/test_one, and its directory's parent is the working directory.
+    const exe = t.argv[0];
+    try testing.expect(std.mem.startsWith(u8, exe, c.p("scratch/cov_branch_run/buildrules_test.")));
+    try testing.expect(std.mem.endsWith(u8, exe, "/root/bin/test_one"));
+    const root = std.fs.path.dirname(std.fs.path.dirname(exe).?).?;
+    try testing.expectEqualStrings(root, t.cwd.?);
+
+    // What the test found: the sources and the data in the root, the library beside the binary, the binary itself; nothing of the data tree's own name.
+    try testing.expectEqualStrings("binary=there\nTMPDIR=empty\nTEST_TMPDIR=empty\nHOME=empty\n", fake.seen.items[std.mem.indexOf(u8, fake.seen.items, "binary=").?..]);
+    try testing.expect(std.mem.startsWith(u8, fake.seen.items, "tests/test_one.mojo=def main(): pass\n\nshare/golden/greeting.txt=hello\nbin/lib/libn.so=native beside the binary\nbin/test_one=binary\ndata=<missing>\n"));
+
+    // The environment: the data variable names <root>/share, the scratch variables the private directories, the profile file still last.
+    try testing.expectEqual(@as(usize, 8), t.env.len);
+    try testing.expectEqualStrings("A=1", t.env[2]);
+    try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "BUILDRULES_TEST_DATA={s}/share", .{root}), t.env[3]);
+    const scratch = std.fs.path.dirname(root).?;
+    try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "{s}/tmp", .{scratch}), envOf(t, "TMPDIR"));
+    try testing.expectEqualStrings(envOf(t, "TMPDIR"), envOf(t, "TEST_TMPDIR"));
+    try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "{s}/home", .{scratch}), envOf(t, "HOME"));
+    try testing.expect(std.mem.startsWith(u8, t.env[7], "LLVM_PROFILE_FILE="));
+
+    // The tree and the binary it was made from are as they were, and a success takes the layout away with the scratch directory.
+    try testing.expect(!c.exists("share/bin"));
+    try testing.expect(!c.exists("share/share"));
+    try testing.expect(!c.exists("scratch/cov_branch_run"));
+    try testing.expectEqualStrings("indexed", try c.tmp.dir.readFileAlloc(c.a(), "out/test_one.profdata", 100));
+}
+
+test "installed: a failed test leaves its layout in the scratch directory, and without --data the root/share it finds is empty" {
+    var c = try Case.init();
+    defer c.deinit();
+    var fake = Fake.init();
+    fake.test_status = .{ .exited = 3 };
+    var full = std.ArrayList([]const u8).empty;
+    try full.appendSlice(c.a(), c.argv());
+    try full.appendSlice(c.a(), &.{ "--installed", "--data-env", "BUILDRULES_TEST_DATA" });
+    try testing.expectEqual(@as(u8, 3), try r.cli(c.a(), full.items, c.where(), fake.runner(), &c.err));
+    const t = fake.calls.items[0];
+    const root = std.fs.path.dirname(std.fs.path.dirname(t.argv[0]).?).?;
+    try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "BUILDRULES_TEST_DATA={s}/share", .{root}), t.env[2]);
+    var share = try std.fs.cwd().openDir(try std.fmt.allocPrint(c.a(), "{s}/share", .{root}), .{ .iterate = true });
+    defer share.close();
+    var it = share.iterate();
+    try testing.expect((try it.next()) == null);
+    try std.fs.cwd().access(t.argv[0], .{});
+}
+
+test "installed: a tree that holds a bin or a share is refused with exit 1, the test never starts, and no private directory is left" {
+    for ([_][]const u8{ "bin", "share" }) |name| {
+        var c = try Case.init();
+        defer c.deinit();
+        try c.put(try std.fmt.allocPrint(c.a(), "share/{s}/f", .{name}), "x");
+        try c.put("data/f", "y");
+        var fake = Fake.init();
+        try testing.expectEqual(@as(u8, 1), try r.cli(c.a(), try installedArgs(&c, &.{}), c.where(), fake.runner(), &c.err));
+        try c.has("cov_branch run: cannot stage the run in ");
+        try c.has("TreeHoldsLayoutName");
+        try testing.expectEqual(@as(usize, 0), fake.calls.items.len);
+        var k = try c.tmp.dir.openDir("scratch/cov_branch_run", .{ .iterate = true });
+        defer k.close();
+        var it = k.iterate();
+        while (try it.next()) |e| try testing.expectEqualStrings("prof", e.name);
+    }
+}
+
+test "installed: data or a binary that is not there is a staging error, exit 1" {
+    var c = try Case.init();
+    defer c.deinit();
+    var fake = Fake.init();
+    try testing.expectEqual(@as(u8, 1), try r.cli(c.a(), try installedArgs(&c, &.{}), c.where(), fake.runner(), &c.err));
+    try c.has("cov_branch run: cannot stage the run in ");
+    try c.has("FileNotFound");
+    try testing.expectEqual(@as(usize, 0), fake.calls.items.len);
+}
+
+test "--installed takes no value, in any place among the flags; --data takes a directory and needs --installed" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    const full = [_][]const u8{ "--compiler", "c", "--share", "s", "--label", "l", "--profdata", "p", "--raw-version", "11", "--binary", "b", "--out", "o" };
+    const before = (try r.parseArgs(a, &([_][]const u8{"--installed"} ++ full), &why)).?;
+    const middle = (try r.parseArgs(a, &(full[0..6].* ++ [_][]const u8{"--installed"} ++ full[6..].*), &why)).?;
+    const after = (try r.parseArgs(a, &(full ++ [_][]const u8{ "--installed", "--data", "d" }), &why)).?;
+    try testing.expect(before.installed and middle.installed and after.installed);
+    try testing.expectEqualStrings("o", before.out);
+    try testing.expectEqualStrings("o", middle.out);
+    try testing.expectEqualStrings("s", middle.share);
+    try testing.expectEqualStrings("d", after.data);
+    const plain = (try r.parseArgs(a, &full, &why)).?;
+    try testing.expect(!plain.installed);
+    try testing.expectEqualStrings("", plain.data);
+
+    const cases = [_]struct { argv: []const []const u8, why: []const u8 }{
+        .{ .argv = &(full ++ [_][]const u8{ "--data", "d" }), .why = "--data needs --installed" },
+        .{ .argv = &(full ++ [_][]const u8{ "--installed", "--installed" }), .why = "--installed given twice" },
+        .{ .argv = &(full ++ [_][]const u8{ "--installed", "--data", "d", "--data", "e" }), .why = "--data given twice" },
+        .{ .argv = &(full ++ [_][]const u8{ "--installed", "--data", "" }), .why = "--data is empty" },
+        .{ .argv = &(full ++ [_][]const u8{ "--installed", "--data" }), .why = "unknown argument --data" },
+    };
+    for (cases) |cs| {
+        try testing.expect((try r.parseArgs(a, cs.argv, &why)) == null);
+        try testing.expectEqualStrings(cs.why, why);
+    }
+}
+
+test "installed: TMPDIR, TEST_TMPDIR and HOME are the run's own, so --env and --data-env may not name them" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    const full = [_][]const u8{ "--compiler", "c", "--share", "s", "--label", "l", "--profdata", "p", "--raw-version", "11", "--binary", "b", "--out", "o", "--installed" };
+    for ([_][]const u8{ "TMPDIR", "TEST_TMPDIR", "HOME" }) |n| {
+        try testing.expect((try r.parseArgs(a, &(full ++ [_][]const u8{ "--env", try std.fmt.allocPrint(a, "{s}=/x", .{n}) }), &why)) == null);
+        try testing.expectEqualStrings(try std.fmt.allocPrint(a, "--env {s}=/x: an installed run sets {s} itself (its private scratch directories)", .{ n, n }), why);
+        try testing.expect((try r.parseArgs(a, &(full ++ [_][]const u8{ "--data-env", n }), &why)) == null);
+        try testing.expectEqualStrings(try std.fmt.allocPrint(a, "--data-env '{s}' is a variable the installed run sets itself", .{n}), why);
+    }
 }

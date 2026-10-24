@@ -89,6 +89,21 @@ pub fn installBinary(a: Alloc, root: []const u8, exe: []const u8) anyerror![]con
     return installed;
 }
 
+/// Lays out the installed run `s` (from `make`): the binary `exe` (absolute) installed as `root/bin/<name>` (`installBinary`), the tree `tree` (absolute: the sources
+/// the binary's line tables name) copied into `root`, and `data` (absolute, or null) copied to `root/share`. Returns the path of the installed binary. A tree that
+/// holds a `bin` or a `share` would be merged into the layout, so it is refused (`TreeHoldsLayoutName`) before anything is copied. The coverage runs of a Mojo test
+/// (`cov_run`, and `cov_branch run`) lay out their runs with this one function, so the kcov run and the branch run see the layout of the test run.
+pub fn installTree(a: Alloc, s: Scratch, tree: []const u8, exe: []const u8, data: ?[]const u8) anyerror![]const u8 {
+    for ([_][]const u8{ "bin", "share" }) |reserved| {
+        std.fs.cwd().access(try join(a, &.{ tree, reserved }), .{}) catch continue;
+        return error.TreeHoldsLayoutName;
+    }
+    const installed = try installBinary(a, s.root, exe);
+    try copyTree(a, tree, s.root);
+    if (data) |d| try copyTree(a, d, s.share);
+    return installed;
+}
+
 /// Copies the tree `from` (absolute) into `to` (absolute, made): directories, files with their permission bits, and what a link names (a link is
 /// followed, so the copy holds no link into the build's outputs). An entry that is already there is replaced; a kind of file that is none of those (a named
 /// pipe) is an error.
