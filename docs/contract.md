@@ -727,6 +727,37 @@ Limits: linux x86-64 only; one Mojo version (mopm pins one); the coverage is lin
 upper bound); a workspace member's native library is static (a `shared` one is refused by mopm); the archive's undefined-symbol check knows the C library only by `floor_symbols.txt`, so a call to a symbol
 that list lacks is refused until it is added there (`native_archive` takes `allow`, but a manifest has no field for it); `mopm unit test` and the supervisor, a published mopm release, and Arm are not covered.
 
+### 12.10 `mojo_sync`: the sync as a build action
+
+`buildrules mojo sync` is the only writer of `<pkg>/buildrules.mojo.lock.bzl`, `<pkg>/buildrules.mojo.bzl`, `toolchains/mojo_pins.bzl` and `toolchains/mopm_pins.bzl`. A box that may not run a
+built binary (a session that builds only on the farm) cannot run it, and so could not follow a mopm bump or a change to a `mopm.toml`. `mojo_sync` (rules/mojo/sync.bzl, the Mojo counterpart of
+`cargo_sync`) runs it as an action. Nothing in the action needs a shell: the staging, the run and the comparison are one Zig program (rules/mojo/tools/mojo_sync.zig).
+
+```python
+load("@buildrules//rules/mojo:sync.bzl", "mojo_sync")
+mojo_sync(
+    name = "sync",
+    workspaces = [":workspace"],                      # the package's :workspace (12.1), and the :workspace of any other package synced with it
+    files = ["//dir:mopm-toolchain.toml"],            # the other files the sync reads: the toolchain file, a buildrules-pins.toml
+    mopm = "0.0.42",                                  # the version mopm-toolchain.toml names; built as toolchains//:mopm_0_0_42
+    committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
+)
+```
+
+| target | what |
+|---|---|
+| `:sync` | the action's output: a directory holding the files a sync writes, at their repository paths (the lock and the glue of each package, `<toolchains>/mojo_pins.bzl`, `<toolchains>/mopm_pins.bzl`) and nothing else. `buck2 run //pkg:sync` writes them into the working tree (from the repository root; `-- --to DIR` names another directory, which must hold a `.buckconfig`), only where the bytes differ, and prints each file it wrote. `buck2 build //pkg:sync --show-full-output` names the directory without writing |
+| `:sync_check` | (with `committed`) red unless each committed file is, byte for byte, what the sync writes now; the message names the file, the first differing line and `buck2 run //pkg:sync`. Nothing is written: the build failing is the check |
+
+What the action does: it copies the staged files (the `workspaces` hold the package and its path dependencies, siblings included, at their repository paths, without the generated files, so a stale table
+is no input of the table that replaces it) into a scratch directory, adds a `.buckconfig` naming the toolchains directory (`toolchains = "toolchains"`; the attribute names another), and runs
+`buildrules mojo sync --mopm <the pinned mopm> <packages>` there. mopm plans from each `mopm.lock` with no network. Only the files listed above leave the scratch directory. It refuses, before running
+anything, a package whose `mopm-toolchain.toml` names another mopm than `mopm = "..."`: the lock records the mopm version, and the file it is written with must be that one.
+
+Limits. A package whose toolchain file lives in a directory with no `export_file` of it gets the export added by a sync; that BUCK file is not an output, so run `buildrules mojo sync` where you can once. A path
+dependency added to a `mopm.toml` since the last sync is not in the stale table's `:workspace`: add its `:workspace` to `workspaces`. `mojo_pins.bzl` holds the toolchains of the packages synced together:
+sync every package of a repository that uses several Mojo versions in one target. A repository with a `buildrules-pins.toml` stages it in `files` (the lock records `origin: builtin` otherwise).
+
 ## 13. npm packages: `npm_package(path = ".")` **[chosen]**
 
 The npm counterpart of `cargo_package`: one directory with a `package.json` and a `package-lock.json`
