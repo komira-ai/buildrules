@@ -210,7 +210,11 @@ def native_link_problems(ctx):
 TEST_DEFINES_PACKAGE = "//examples/mojo/test_defines"
 TEST_DEFINES_STEM = "test_defines_on"
 TEST_DEFINES_ARGS = ["-D", "BR_TEST_FLAG=true", "-D", "BR_TEST_LEVEL=3", "-D", "BR_TEST_NAME=probe"]
-TEST_DEFINES_ABSENT = ["//examples/mojo/test_defines:lib_ungated", "//examples/mojo/partial:lib_ungated", "//examples/mojo/partial:test_partial__bin", "//examples/mojo/partial:test_partial__cov_bin", "//examples/mojo/partial:test_partial__bc"]
+TEST_DEFINES_ABSENT = ["//examples/mojo/test_defines:lib_ungated", "//examples/mojo/partial:lib_ungated", "//examples/mojo/partial:test_partial__bin", "//examples/mojo/partial:test_partial__cov_bin", "//examples/mojo/partial:test_partial__bc", "//examples/mojo/ws:bin_app_main", "//examples/mojo/ws/util:lib_ungated", "//examples/mojo/ws/util/base:lib_ungated"]
+
+# A package that gives defines and also has a binary and members it depends on (`ws`): its tests carry the defines, so the absences above are not vacuous there.
+TEST_DEFINES_WS_TEST = "//examples/mojo/ws:test_app__bin"
+TEST_DEFINES_WS_ARGS = ["-D", "BR_WS_FLAG=true"]
 
 def _build_args(ctx, label):
     node = ctx.configured_targets(label, target_platform = GATE_PLATFORM)
@@ -225,6 +229,10 @@ def test_defines_problems(ctx):
         got = _build_args(ctx, label)
         if not [i for i in range(len(got) - n + 1) if got[i:i + n] == TEST_DEFINES_ARGS]:
             problems.append("{}: build_args is {}, it must hold {} in this order: the test is not built with the defines the package gives it".format(label, got, TEST_DEFINES_ARGS))
+    got = _build_args(ctx, TEST_DEFINES_WS_TEST)
+    k = len(TEST_DEFINES_WS_ARGS)
+    if not [i for i in range(len(got) - k + 1) if got[i:i + k] == TEST_DEFINES_WS_ARGS]:
+        problems.append("{}: build_args is {}, it must hold {}: the package's binary is checked for absence next to a test that has them".format(TEST_DEFINES_WS_TEST, got, TEST_DEFINES_WS_ARGS))
     for label in TEST_DEFINES_ABSENT:
         got = _build_args(ctx, label)
         if "-D" in got:
