@@ -83,6 +83,8 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:sibling_written_with_a_path_up_is_named_by_its_directory",
     "//rules/mojo/tests:workspace_holds_every_file_at_its_repository_path",
     "//rules/mojo/tests:graph_paths_are_read_from_the_base_the_table_says",
+    "//rules/mojo/tests:native_includes_are_used_as_the_graph_prints_them",
+    "//rules/mojo/tests:native_includes_default_to_the_header_directories_of_a_rooted_graph",
     "//rules/mojo/tests:member_outside_the_root_is_refused",
     "//rules/mojo/tests:member_above_the_root_from_the_package_is_refused",
     "//rules/mojo/tests:member_with_an_absolute_root_is_refused",

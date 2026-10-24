@@ -174,6 +174,27 @@ def graph_path_in_package(path, pkg_dir, rooted, refuse = fail):
         return path
     return path[len(pkg_dir) + 1:]
 
+def native_include_dirs(u, pkg_dir, rooted, refuse = fail):
+    """The include directories of a native unit, below the package's directory. mopm prints a unit's `includes` as the manifest wrote them (directories below
+    the member) in both graph bases, and when the manifest names none (or an empty list, `len > 0`) it prints the directories of the headers relative to the member (`addNatives` in
+    mopm v0.0.42 `src/core/unit_graph.zig`, the `includes` binding: `n.includes` if given, else `dirsOf` of each header's path with `member_rel` cut off).
+    So `includes` is used as printed, never rooted again; only the headers of the default carry the repository root when the graph is rooted, and are cut
+    to the package first."""
+    if len(u.get("includes") or []) > 0:
+        return u["includes"]
+    hdrs = [graph_path_in_package(h["path"], pkg_dir, rooted, refuse) for h in u.get("hdrs", [])]
+    # A header at the member's directory is `.`, as `dirsOf` prints it.
+    return sorted({(h.rpartition("/")[0] or "."): True for h in hdrs}.keys())
+
+def stage_package_test_data(where, test_graph_of, lib_names, test_data, installed, refuse = fail):
+    """The staged data of each test of a package, `{test source as the package names it: {staged path: label or file}}`. `test_graph_of` maps a test as the
+    package names it (`tests/test_x.mojo`) to the path the graph gives it (the same, or below the repository root for a rooted graph); the tree of a
+    coverage run holds the test at the graph's name, so that is the name a staged path may not collide with. `lib_names` are the library sources of that
+    tree. The installed layout stages the data apart from the sources, so nothing can collide there."""
+    tests = sorted(test_graph_of.keys())
+    held = {t: ([] if installed else [test_graph_of[t]] + sorted(lib_names)) for t in tests}
+    return stage_test_data(where, tests, test_data, held, refuse)
+
 TOOLCHAIN_FILE = "mopm-toolchain.toml"
 
 # mopm-toolchain.toml is required: no mopm and no Mojo is chosen for a package that does not name them.
@@ -464,14 +485,13 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         if u.get("kind") == "shared":
             fail("{}: {} is a shared library; a member's native library is static".format(here, uid))
         # The files of the native unit are named as the graph names every file: from the repository root when it is rooted, so below the package like the
-        # Mojo sources. Its `includes` are directories below the package whichever base the graph prints (mopm 0.0.42 prints `native`, not the repository path).
+        # Mojo sources. Its `includes` are directories below the package whichever base the graph prints (`native_include_dirs`: mopm prints them
+        # package-relative, so they are not rooted again).
         srcs = [in_package(s["path"]) for s in u.get("srcs", [])]
         if not srcs:
             fail("{}: the native unit {} has no source".format(here, uid))
         hdrs = [in_package(h["path"]) for h in u.get("hdrs", [])]
-        dirs = u.get("includes")
-        if dirs == None:
-            dirs = sorted({h.rpartition("/")[0]: True for h in hdrs}.keys())
+        dirs = native_include_dirs(u, pkg_dir, rooted)
         needs = []
         for s in u.get("needs", []):
             t = target_of_soname(s)
@@ -543,7 +563,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     # collide with one of them; but those sources may not be in `bin/` or `share/`.
     if installed:
         check_installed_tree(here, sorted(test_graph_of.values()) + sorted(lib_share.keys()))
-    staged_by_test = stage_test_data(here, test_sources, test_data, {t: ([] if installed else [test_graph_of[t]] + sorted(lib_share.keys())) for t in test_sources})
+    staged_by_test = stage_package_test_data(here, test_graph_of, lib_share.keys(), test_data, installed)
 
     # What the rules below look a test's data up by: the path the graph gives the test.
     staged = {test_graph_of[t]: staged_by_test[t] for t in test_sources}
