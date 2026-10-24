@@ -1,0 +1,8 @@
+[package]
+name = "branch_shapes"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[targets]
+lib = { path = "src/branch_shapes" }
+tests = ["tests"]

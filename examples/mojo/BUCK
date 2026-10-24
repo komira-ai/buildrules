@@ -5,12 +5,13 @@ load("//rules/zig:zig.bzl", "zig_test")
 # (rules/mojo/check.bzl); `buildrules mojo sync` writes this file when the directory of the toolchain file has no BUCK file.
 export_file(
     name = "mopm-toolchain.toml",
-    src = "mopm-toolchain.toml" if glob(["mopm-toolchain.toml"]) else fail("mopm-toolchain.toml is required and there is no default. Create it, for example:\n\n[toolchain]\nmopm = '0.0.25'\nmojo = '1.0.0'\n"),
+    src = "mopm-toolchain.toml" if glob(["mopm-toolchain.toml"]) else fail("mopm-toolchain.toml is required and there is no default. Create it, for example:\n\n[toolchain]\nmopm = '0.0.34'\nmojo = '1.0.0'\n"),
     visibility = ["PUBLIC"],
 )
 
-# What `:coverage` gives a consumer, held to the real outputs of three packages (coverage_records_test.zig): the count per file and the records
-# it was counted from (`:coverage[reports]`, the per-line records; `:coverage[branches]`, the branch records) agree file by file. Needs the Mojo
+# What `:coverage` gives a consumer, held to the real outputs of five packages (coverage_records_test.zig): the count per file and the records
+# it was counted from (`:coverage[reports]`, the per-line records; `:coverage[branches]`, the branch records) agree file by file. The branch records
+# and rows of `testdata` and of the two packages whose tests link native libraries (`sys_app`: static archives, `ws`: a shared object) are held too. Needs the Mojo
 # toolchain, so //ci:mojo builds it.
 zig_test(
     name = "coverage_records",
@@ -23,6 +24,10 @@ zig_test(
         "partial/coverage.txt": "//examples/mojo/partial:coverage",
         "partial/reports.cobertura.xml": "//examples/mojo/partial:coverage[reports]",
         "partial/branches.info": "//examples/mojo/partial:coverage[branches]",
+        "sys_app/coverage.txt": "//examples/mojo/sys_app:coverage",
+        "sys_app/branches.info": "//examples/mojo/sys_app:coverage[branches]",
+        "ws/coverage.txt": "//examples/mojo/ws:coverage",
+        "ws/branches.info": "//examples/mojo/ws:coverage[branches]",
         "testdata/coverage.txt": "//examples/mojo/testdata:coverage",
         "testdata/branches.info": "//examples/mojo/testdata:test_data_files__info",
     },

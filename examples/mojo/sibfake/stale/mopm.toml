@@ -1,11 +1,11 @@
 [package]
-name = "util"
+name = "chain_stale"
 version = "0.1.0"
 mojo = ["1.0.0"]
 
 [dependencies]
-base = { path = "../base" }
+chain_c = { path = "../chain/c" }
 
 [targets]
-lib = { path = "src/util" }
+lib = { path = "src/chain_stale" }
 tests = ["tests"]

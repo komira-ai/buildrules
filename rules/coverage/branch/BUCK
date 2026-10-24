@@ -98,6 +98,8 @@ zig_test(
     env_tools = {
         "COV_BRANCH": ":cov_branch_exe",
         "COV_BRANCH_LINK_STUB": ":cov_branch_link_stub",
+        # The pinned LLVM 23 tools: the real llvm-nm, and the profile runtime archive it lists.
+        "LLVM23": ":llvm23",
     },
     imports = ["proc.zig"],
     src = "cov_branch_link_exe_test.zig",
@@ -176,7 +178,7 @@ _CLASSIFY_CASE_INPUTS = [
     "fixtures/try.ll",
 ]
 
-_CLASSIFY_CASES = ["andor", "case", "files", "main", "rules", "try"]
+_CLASSIFY_CASES = ["andor", "case", "files", "fold", "main", "rules", "try"]
 
 [
     zig_test(

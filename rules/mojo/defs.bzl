@@ -13,7 +13,8 @@ One line per package. The targets come from the package's unit graph, which `bui
     :coverage   every test again as a debug build run under kcov, one Cobertura report per test file, and as LLVM bitcode instrumented for branch counts
                 (`<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info`: rules/coverage/branch/README.md); `coverage.txt` is the per-file count of lines, then of
                 branch arms; `:coverage[reports]` is the per-line records of every test (kcov's Cobertura XML in repository paths) and `:coverage[branches]` the
-                branch records (lcov `BRDA` lines in repository paths). A package whose tests link a native library, or run in the installed layout, has no branch rows and no `[branches]`.
+                branch records (lcov `BRDA` lines in repository paths). The instrumented link of a test gets the test's native libraries as its ordinary link does.
+                A package whose tests run in the installed layout has no branch rows and no `[branches]`.
     :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green while `:coverage` is at least that floor (`lines NN.NN`, and
                 `branches NN.NN` when `coverage.txt` has branch rows; below it: "coverage fell"; at or above it passes, and above it prints "you may raise the
                 floor to X"), the check of every other package's floor (rules/coverage/README.md, "The floor")
@@ -171,7 +172,7 @@ TOOLCHAIN_FILE = "mopm-toolchain.toml"
 
 # mopm-toolchain.toml is required: no mopm and no Mojo is chosen for a package that does not name them.
 TOOLCHAIN_FILE_HELP = ("{} is required and there is no default. Create it at or above the package directory, for example:\n\n" +
-                       "[toolchain]\nmopm = \"0.0.25\"\nmojo = \"1.0.0\"\n\n(an exact release each), then run `buildrules mojo sync`.").format(TOOLCHAIN_FILE)
+                       "[toolchain]\nmopm = \"0.0.34\"\nmojo = \"1.0.0\"\n\n(an exact release each), then run `buildrules mojo sync`.").format(TOOLCHAIN_FILE)
 
 def check_toolchain_file_recorded(t, refuse = fail):
     """A table made without mopm-toolchain.toml (or by hand) is refused: the file is what chooses mopm and Mojo. `refuse` is `fail` in a
@@ -497,9 +498,10 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     branches = []
     branch_tc = "toolchains//:mojo_{}_cov_branch".format(vname(mojo))
     # Branch coverage of the package's tests (rules/coverage/branch/README.md): bitcode, an instrumented binary, its run, the annotated IR and
-    # the classified records, five actions after the compile. A test that links a native library is not yet instrumented (the link line of the
-    # instrumented binary has no native libraries), so a package with one has the line figure alone. A package with `test_layout = "installed"` has the line figure alone too: the branch run has no installed layout yet.
-    branches_on = test_layout != LAYOUT_INSTALLED and own_lib != None and bool([x for x in units.values() if x["kind"] == "test"]) and not [x for x in units.values() if x["kind"] == "test" and x["natives"]]
+    # the classified records, five actions after the compile. A test that links native libraries is instrumented too: its instrumented link is given
+    # the same libraries in the same order (`__pgo`), and its run finds the shared ones through the library path. A package with `test_layout = "installed"`
+    # has the line figure alone: the branch run has no installed layout yet.
+    branches_on = test_layout != LAYOUT_INSTALLED and own_lib != None and bool([x for x in units.values() if x["kind"] == "test"])
 
     # The library's sources: in the coverage tree at the names its `.mojoc` gives them (`<import>/<file>`), and for the classifier by the name relative
     # to the library root.
@@ -617,11 +619,16 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                     build_args = build_args + _BITCODE_ARGS,
                     **common(uid, "test", stem, _BITCODE_PROFILE)
                 )
+                # The instrumented link gets the test's native libraries as its ordinary link does (the graph's order and the same targets).
+                pgo_sonames, pgo_natives = native_wiring(u, prebuilt_packages, natives, here)
                 mojo_cov_pgo_rule(
                     name = name_once(stem + "__pgo"),
                     bc = ":" + stem + "__bc",
                     branch = branch_tc,
                     check = ":check",
+                    native_needs = {n["soname"]: n["needs"] for n in u["natives"] if n.get("needs")},
+                    native_sonames = pgo_sonames,
+                    natives = pgo_natives,
                     toolchain = toolchain,
                     exec_compatible_with = LINUX_X86_64,
                     visibility = visibility,

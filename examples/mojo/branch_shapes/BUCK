@@ -1,0 +1,9 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# Three valid constructs whose compiled form the branch classifier (rules/coverage/branch) once refused, and so failed :coverage: a Bool converted to an Int,
+# a per-lane `if` in an unrolled `comptime for`, and an `and` of compile-time constants in a runtime function. One test per construct; the floor is
+# what the tests measure.
+mojo_package(path = ".")
+
+scrub_files()

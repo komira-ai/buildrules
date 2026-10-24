@@ -1,0 +1,5 @@
+examples/mojo/sibfake/diamond/top/src/dia_top/__init__.mojo 2/2 100%
+examples/mojo/sibfake/diamond/top/tests/test_dia_top.mojo 5/5 100% (not counted)
+total 2/2 100%
+branches examples/mojo/sibfake/diamond/top/src/dia_top/__init__.mojo 0/0 0%
+branches total 0/0 0%

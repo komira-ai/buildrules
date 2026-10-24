@@ -1,0 +1,11 @@
+[package]
+name = "chain_b"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[dependencies]
+chain_c = { path = "../c" }
+
+[targets]
+lib = { path = "src/chain_b" }
+tests = ["tests"]

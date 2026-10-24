@@ -30,6 +30,8 @@ pub const File = struct {
     repo: []const u8 = "",
     lines: [][]const u8 = &.{},
     exec: std.AutoHashMap(u64, void),
+    // Lines whose IR holds a branch-like instruction (a conditional br, a switch, a select, an invoke, indirectbr or callbr), read loosely, not by the parser's shapes.
+    branchy: std.AutoHashMap(u64, void),
     branches: usize = 0,
     // Per line: no statement's first line (quotedLines; null: not read yet).
     quoted: ?[]bool = null,
@@ -66,7 +68,7 @@ pub fn cleanRel(rel: []const u8) bool {
 }
 
 pub fn placeFile(alloc: Alloc, o: *const Opts, name: []const u8) File {
-    var f = File{ .where = .unmapped, .name = name, .exec = std.AutoHashMap(u64, void).init(alloc) };
+    var f = File{ .where = .unmapped, .name = name, .exec = std.AutoHashMap(u64, void).init(alloc), .branchy = std.AutoHashMap(u64, void).init(alloc) };
     if (std.mem.startsWith(u8, name, o.prefix)) {
         const rel = name[o.prefix.len..];
         for (o.gens) |g| {
@@ -505,6 +507,59 @@ pub fn inTry(alloc: Alloc, f: *File, line: u64) ?bool {
         for (stops) |s| {
             if (std.mem.eql(u8, w, s)) return false;
         }
+    }
+    return false;
+}
+
+/// Whether 1-based `line` of `f` is in the body of a `comptime for` of its
+/// own function (README.md, "Unrolled loops"): walking back over the lines
+/// indented less than the one before (blank, comment, triple-quoted and
+/// continuation lines skipped), a `comptime for` line (or a `for` line
+/// whose previous line is `@parameter`) is met before a `def`, `fn`,
+/// `struct`, `trait` or `class` line. The loop is unrolled by the compiler:
+/// one copy of the body, and so of each decision in it, per iteration.
+/// False when the brackets of the file do not balance (which lines are
+/// continuations cannot be told): the decision then stays one per copy.
+pub fn inUnrolled(alloc: Alloc, f: *File, line: u64) bool {
+    const q = f.quoted orelse blk: {
+        const m = quotedLines(alloc, f);
+        f.quoted = m;
+        break :blk m;
+    };
+    if (f.unbalanced.len > 0) return false;
+    if (line < 1 or line > f.lines.len) return false;
+    const stops = [_][]const u8{ "def", "fn", "struct", "trait", "class" };
+    var idx: usize = @intCast(line - 1);
+    var cur = indentOf(f.lines[idx]);
+    while (idx > 0 and cur > 0) {
+        idx -= 1;
+        if (q[idx]) continue;
+        const l = f.lines[idx];
+        const ind = indentOf(l);
+        if (ind == l.len or l[ind] == '#' or l[ind] == '\r' or ind >= cur) continue;
+        cur = ind;
+        const w = firstWord(l);
+        if (std.mem.eql(u8, w, "comptime") and std.mem.startsWith(u8, l[ind + w.len ..], " for ")) return true;
+        if (std.mem.eql(u8, w, "for") and idx > 0 and std.mem.eql(u8, std.mem.trim(u8, f.lines[idx - 1], " \t\r"), "@parameter")) return true;
+        for (stops) |s| {
+            if (std.mem.eql(u8, w, s)) return false;
+        }
+    }
+    return false;
+}
+
+/// Whether the `if` statement at 1-based `line` of `f` has an `elif` clause:
+/// the first line after its body that is indented no more than the `if` is
+/// an `elif` (an `else` or another statement ends the chain).
+pub fn hasElif(f: *File, line: u64) bool {
+    if (line < 1 or line > f.lines.len) return false;
+    const own = indentOf(f.lines[@intCast(line - 1)]);
+    var i: usize = @intCast(line);
+    while (i < f.lines.len) : (i += 1) {
+        const l = f.lines[i];
+        const ind = indentOf(l);
+        if (ind == l.len or l[ind] == '#' or l[ind] == '\r' or ind > own) continue;
+        return ind == own and std.mem.eql(u8, firstWord(l), "elif");
     }
     return false;
 }

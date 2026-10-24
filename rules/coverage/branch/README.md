@@ -21,7 +21,7 @@ buck2 build //pkg:test_x__info --show-full-output         # one test's records
 | target | what |
 |---|---|
 | `:cov_branch` | the tool of the link, run and annotate actions: [`cov_branch.zig`](cov_branch.zig) importing [`cov_branch_link.zig`](cov_branch_link.zig), [`cov_branch_run.zig`](cov_branch_run.zig), [`cov_branch_annotate.zig`](cov_branch_annotate.zig), [`cov_branch_common.zig`](cov_branch_common.zig) and [`proc.zig`](proc.zig) (a command run with an exact environment, waited for, its output in files). A static executable built with the pinned zig 0.15.2 behind its unit tests (`:cov_branch_unit`: the three subcommands in-process over stand-in steps, and what they share); handed out only with its process tests passed (`:cov_branch_exe_test`, `:cov_branch_link_exe_test`, `:cov_branch_run_exe_test`, `:cov_branch_proc_test`), which run the executable as a child over stand-in programs and are validations of it |
-| `:cov_branch_classify` | [`cov_branch_classify.zig`](cov_branch_classify.zig) (importing [`cov_branch_andor.zig`](cov_branch_andor.zig), [`cov_branch_source.zig`](cov_branch_source.zig), [`cov_branch_ir.zig`](cov_branch_ir.zig) and [`cov_branch_records.zig`](cov_branch_records.zig)), a static executable, handed out only with its six groups of cases passing ([Tests](#tests)) |
+| `:cov_branch_classify` | [`cov_branch_classify.zig`](cov_branch_classify.zig) (importing [`cov_branch_andor.zig`](cov_branch_andor.zig), [`cov_branch_source.zig`](cov_branch_source.zig), [`cov_branch_ir.zig`](cov_branch_ir.zig) and [`cov_branch_records.zig`](cov_branch_records.zig)), a static executable, handed out only with its seven groups of cases passing ([Tests](#tests)) |
 | `:llvm23`, `:llvm23_check` | `bin/llvm-profdata`, `bin/llvm-nm` of LLVM 23.1.3 with the libraries they load under `lib/`, and `runtime/libclang_rt.profile-x86_64.a`, the compiler-rt 23.1.3 profile runtime, unpacked from pinned conda-forge packages ([`pins.bzl`](../pins.bzl), `LLVM_BRANCH_PINS`); and the check that the directory holds exactly those files, that `llvm-profdata --version` prints 23.1.3 and that the runtime defines `__llvm_profile_runtime` and `__llvm_profile_write_file` |
 | `toolchains//:mojo_<v>_lld24`, `_lld24_check` | `bin/lld` of the pinned Mojo compiler package of version `<v>` (LLD 24, the LLVM the compiler is built on) with the C++ runtime libraries it loads; the check that the directory holds exactly those files and that `lld -flavor gnu --version` prints `LLD 24.` |
 | `toolchains//:mojo_<v>_raw_version_check` | the version coupling ([below](#the-version-coupling)) |
@@ -44,21 +44,25 @@ last is `:coverage[branches]`'s file:
 | `:test_x__info` | `mojo_cov_branch_classify` | `test_x__info.info` | [cov_branch_classify](#cov_branch_classify) |
 
 `:coverage` waits for every `__info`, so a test that fails instrumented, a profile that does not fit its bitcode, or a branch the classifier refuses fails `:coverage`
-(and `:coverage_floor`), and nothing else: `:lib`, `:build` and `:test` do not wait for these actions. A package whose test links a native library has none of
-them: the link line of the instrumented binary does not carry the libraries, so its `coverage.txt` has no `branches` rows and its floor may not have a `branches` figure.
+(and `:coverage_floor`), and nothing else: `:lib`, `:build` and `:test` do not wait for these actions. A package whose test links native libraries has the same
+actions: the instrumented link is given those libraries ([native libraries](#native-libraries)).
 
 ## cov_branch link
 
 `cov_branch link` ([`cov_branch_link.zig`](cov_branch_link.zig)), with `--compiler`, `--zig` (the Mojo toolchain's zig directory), `--target`, `--lld`, `--runtime`,
-`--bitcode` and `--out`.
+`--bitcode`, `--out`, `--nm` (`llvm-nm` of the LLVM 23 tools) and one `--native <library>` for each native library of the test's unit.
 
-0. The scratch directory's `bin`, `home` and `tmp` are made (exit 2 if not). Then lld, the runtime, the compiler's `lib/libKGENCompilerRTShared.so`, zig and the bitcode, in
-   this order, must be files that are not empty (a usage error, exit 2), and the bitcode must start with the bitcode magic `BC 0xC0DE`.
+0. The scratch directory's `bin`, `home` and `tmp` are made (exit 2 if not). Then lld, the runtime, the compiler's `lib/libKGENCompilerRTShared.so`, zig, the bitcode, `llvm-nm` and
+   each native library, in this order, must be files that are not empty (a usage error, exit 2), and the bitcode must start with the bitcode magic `BC 0xC0DE`.
 1. `lld` reads the bitcode as an LTO link with `-r`, `--lto-O0`, the pass pipeline `pgo-instr-gen,instrprof,default<O0>` and `-mllvm -instrprof-atomic-counter-update-all`: a
    relocatable object whose code counts its edges, each counter updated atomically ([below](#atomic-counters)). Only this LLVM 24 reads the bitcode ([why LLVM 23 tools are safe
    next to it](#why-llvm-23-tools-are-safe-next-to-llvm-24)).
+1b. With native libraries, `llvm-nm` lists the global symbols the object defines and, for each library in turn, those it defines (weak ones left out; a shared object by its dynamic
+   table). A library that defines a symbol the object defines too fails the link, naming the library and the first five symbols: the linker takes one definition and says nothing
+   (an archive member is pulled in only for a symbol still undefined), so the binary would not be the program the test links ([native libraries](#native-libraries)).
 2. The Mojo toolchain's zig links it as `mojo_compile`'s `cc` shim links a release test ([`cc_shim.zig`](../../mojo/tools/cc_shim.zig): the compiler's `libKGENCompilerRTShared.so`,
-   `--gc-sections`, `-lm`, `--strip-debug`, the one run path `$ORIGIN/lib`), with the profile runtime as a whole archive.
+   `--gc-sections`, `-lm`, `--strip-debug`, the one run path `$ORIGIN/lib`), with the profile runtime as a whole archive. The native libraries stand right after the object, each by
+   its path, in the order of the `--native` flags.
 3. The binary must be an ELF file holding no path of the action (its working directory, then its scratch directory).
 
 lld and zig run with the tool's environment but for `PATH` (an empty directory of the scratch), `HOME`, `TMPDIR` and zig's cache directories (in the scratch directory) and `LC_ALL=C`; their
@@ -79,12 +83,39 @@ counts from them by sums and differences, saturating at 0: a counted edge that l
 covered). Any test that runs the measured code on several threads at once could flip an arm of the records from one run to the next. `cov_branch_link_test.zig` holds the option in the
 command line (`-mllvm` and `-instrprof-atomic-counter-update-all`, adjacent, once).
 
+### Native libraries
+
+A test whose unit links native libraries (a registry package's static archives, a `natives = {...}` shared object) is linked instrumented with the same libraries as its ordinary
+link, and `mojo_package` gives `__pgo` nothing else to decide from:
+
+- **The same libraries, the same order.** `__pgo` takes `native_sonames`, the unit's list from the graph, and `natives`, the target of each: the very wiring of `__bin` (`native_wiring`,
+  [`defs.bzl`](../../mojo/defs.bzl)). Mopm gives the ordinary link one `-Xlinker <path>` per library in that order, which the compiler's `cc` shim passes to zig as a bare path; the
+  instrumented link passes the same paths in the same order, after the object. A library the unit links that `natives` does not provide, a library `natives` has that the unit does not
+  link, and an order in which a library stands before one that needs it are each refused when the target is analysed, naming the library
+  (`cov_link_natives`, [`unit.bzl`](../../mojo/unit.bzl); `ci/negative` holds the missing library and the wrong order as must-fail fixtures).
+- **`needs` and the order.** The graph lists a static archive before every archive it needs (`needs` in the graph's entry for it): a static archive resolves only what is still
+  undefined when the linker reaches it, so the archive that needs `libbase_sys.a` stands before it. `__pgo` checks the order the graph gave against `needs` and refuses a graph in
+  which an archive stands after one that needs it, or needs a library the unit does not link.
+- **Static and shared.** A static archive (`lib<stem>.a`) is linked into the binary. A shared object is linked by path too, and the binary then loads it by its soname at run time: an
+  ordinary test finds it in the `lib/` beside it (the run path `$ORIGIN/lib`, which `mopm unit build` fills), so `__pgo` has a sub-target `[libs]`, a directory of the unit's shared
+  objects by soname, which `__profdata` passes as `cov_branch run --lib-dir`. A unit with only static archives has no `[libs]`.
+- **A symbol both define.** An archive member is taken only for a symbol that is still undefined, so a library that defines a symbol the instrumented object defines too is passed over
+  without a message, and the run measures a program that is not the test (the object's copy of the symbol runs, or the library's, whichever the linker found first). `cov_branch link`
+  lists both with `llvm-nm` and fails, naming the library and the first five symbols. Weak definitions are left out: a weak symbol is meant to be replaced.
+  Limits of the check, each a difference from the ordinary link or a case it does not cover:
+  - a strong definition in a native against a weak definition in the object is not flagged (the ordinary link does not flag it either);
+  - a shared native that defines a symbol the object defines too is refused, which is stricter than the ordinary link (the executable's definition simply wins there);
+  - a thin archive is not supported: its members live in other files, which `llvm-nm` on the archive may not list as the linker would read them.
+  The wiring itself is held by `ci/negative.bzl` (`native_link_problems`): for `ws` and `sys_app`, `__pgo`'s `native_sonames` and `native_needs` are the committed graph's, and the
+  link action's `--native` flags are in the graph's order.
+
 ## cov_branch run
 
-`cov_branch run` ([`cov_branch_run.zig`](cov_branch_run.zig)), with `--compiler`, `--share`, `--label`, `--profdata`, `--raw-version`, `--binary`, `--out`, the test's `--env NAME=VALUE`s and, when the test has staged data, `--data-env NAME` (the variable that names `--share`, made absolute: `mojo_package`'s `test_data` is copied into that tree, which is the test's working directory here as under kcov).
+`cov_branch run` ([`cov_branch_run.zig`](cov_branch_run.zig)), with `--compiler`, `--share`, `--label`, `--profdata`, `--raw-version`, `--binary`, `--out`, a `--lib-dir <directory>` for each
+directory of shared native libraries ([above](#native-libraries)), the test's `--env NAME=VALUE`s and, when the test has staged data, `--data-env NAME` (the variable that names `--share`, made absolute: `mojo_package`'s `test_data` is copied into that tree, which is the test's working directory here as under kcov).
 
 1. The test runs in `--share`, the tree of copies of the test source and the library's sources at the relative names the line tables use (the tree `cov_run` gives kcov), with exactly this
-   environment: `PATH=/usr/bin:/bin`, `LD_LIBRARY_PATH=<compiler>/lib`, the `--env` entries, `--data-env`'s variable, and `LLVM_PROFILE_FILE=<scratch>/prof/%p.profraw` (`%p`, the pid: a child the test starts writes
+   environment: `PATH=/usr/bin:/bin`, `LD_LIBRARY_PATH=<compiler>/lib` followed by each `--lib-dir` (made absolute), the `--env` entries, `--data-env`'s variable, and `LLVM_PROFILE_FILE=<scratch>/prof/%p.profraw` (`%p`, the pid: a child the test starts writes
    a profile of its own; setting it by `--env` is a usage error). Nothing of the tool's own environment reaches the test. The test must pass; when it fails, so does the action, with the
    test's output and `BRANCH COVERAGE RUN FAILED`.
 2. At least one `.profraw` was written there; otherwise `The test passed but wrote no .profraw` (the runtime was not linked, the variable did not reach the test, or the test left without
@@ -169,7 +200,7 @@ the count:
 | compiler-made | `+` | br | a String temporary's destructor before the String-lifetime rule read it |
 | compiler-made | `//`, `//=`, `%` | select | the selects of floor division and modulo. `%=` has shown none and is refused |
 | compiler-made | a subscript's `[` (after a name, `]` or `)`) | br on a raising call's error flag: the `i1` a `[tail] call i1 @...` at the branch's location returns, or field 0 of the `{ i1, ... }` one returns | `Dict.__getitem__`'s KeyError. Any other branch at `[` is refused (no user decision sits there). In a `try:` body the error check is a decision ([try](#try)) |
-| compiler-made | the `(` of a call off a `for` line's head: `name(`, or `name[...](` (the name before the `[`, which may be lines above; brackets in one-line string literals and comments are skipped; a `"""` or `'''` between the `[` and `]`, which can open a string running over lines, refuses the branch) | br; select on a raising call's error flag (field 0 of a `{ i1, ... }`) or on a value a br at the same location with the same weights tests | code that carries the call's location: a raising call's error check, and the code of standard-library functions declared `@always_inline("nodebug")` (no location of their own). Any other select at a call is refused. The error check of a call whose error goes to its caller (outside a `try:` body) is one; in a `try:` body it is a decision ([try](#try)), and any other br at the call is refused there |
+| compiler-made | the `(` of a call off a `for` line's head: `name(`, or `name[...](` (the name before the `[`, which may be lines above; brackets in one-line string literals and comments are skipped; a `"""` or `'''` between the `[` and `]`, which can open a string running over lines, refuses the branch) | br; select on a raising call's error flag (field 0 of a `{ i1, ... }`) or on a value a br at the same location with the same weights tests | code that carries the call's location: a raising call's error check, and the code of standard-library functions declared `@always_inline("nodebug")` (no location of their own). A select between the constants 0 and 1 is a Bool converted to an Int ([below](#bool-to-int)). Any other select at a call is refused. The error check of a call whose error goes to its caller (outside a `try:` body) is one; in a `try:` body it is a decision ([try](#try)), and any other br at the call is refused there |
 
 A branch at the `(` of a call to a function the library's own sources declare `@always_inline("nodebug")` is refused, whatever its shape: that function's code has no location of its own, so
 its decisions land on the call, where they cannot be told from the compiler's. A plain `@always_inline` keeps its locations (with `inlinedAt`), and its decisions are recorded where they are
@@ -228,15 +259,15 @@ Known shapes, with what each gives:
 - `if c: return True` then `return False`: Mojo folds it into `return c` (`ret i1`), so the `if` has no branch and no record, as the same function written `return c` would have none.
   Accepted. An `and`/`or` in such a condition is then never tested, and is its own two arms (above).
 - `<n>/<N>` numbers the decisions of one kind at one location in IR order. It cannot tell an `elif` (Mojo gives it the `if`'s location) from a second copy of one decision the optimizer made
-  inside one function (loop unrolling, jump threading). Such a copy gets its own `<n>` and its own counts, so the original's arms look less taken than they are: the error is a false "arm not
+  inside one function (jump threading, an optimizer's unrolling; the unrolled body of a `comptime for` is read from the source instead, [above](#unrolled-loops)). Such a copy gets its own `<n>` and its own counts, so the original's arms look less taken than they are: the error is a false "arm not
   covered", never a silent pass. If two copies of a function disagree on `<N>` the action fails (above).
 - A String's destructor or copy at a decision's token whose tested instruction sits at another location (a destroy reusing an earlier destroy's flags test) is recorded as a decision of that
   token (the rule above reads only the tested instruction's location there): a false "arm not covered" at worst, never a dropped decision.
 
-**What stays refused** (the classifier fails the action naming `file:line:col`; none is read as a pass): copies holding different numbers of decisions at a location (a `comptime for` whose
+**What stays refused** (the classifier fails the action naming `file:line:col`; none is read as a pass): copies holding different numbers of decisions at a location (but not those of a `comptime for` body, which are one decision, [unrolled loops](#unrolled-loops); a `comptime for` whose
 unrolled calls share one `inlinedAt`); a br at a call in a `try:` body on something else than the call's flag; a short-circuit and/or with no result phi (an `if` folded away when both arms
-return alike; a `debug_assert` condition; a non-`Bool` `and` whose result goes through memory); a select at a call on something else than a raising call's flag; a phi at an and/or that is no
-short-circuit one's (a reload of the left operand after String destructor code); copies computing a condition in different headers; zero branches parsed in a file with code on a decision line;
+return alike; a `debug_assert` condition; a non-`Bool` `and` whose result goes through memory); a select at a call on something else than a raising call's flag or a select between 0 and 1; a phi at an and/or that is no
+short-circuit one's (a reload of the left operand after String destructor code); copies computing a condition in different headers; zero branches parsed in a file with a branch-like instruction on a decision line (a decision line the build folded to straight-line code is 0/0);
 a `with` in measured code, whose branches (the `__exit__(err)` result that suppresses the error, and the context manager's state) no rule reads. The refusal of a library is a failed
 `:coverage`, not a figure: a package that hits one has the line figure from its `[reports]` and no branch figure until the classifier learns the shape, from evidence, in a test.
 
@@ -256,6 +287,30 @@ BRDA:5,5:br:0/1,0,0
 BRDA:5,5:br:0/1,1,1
 end_of_record
 ```
+
+### Bool to Int
+
+`Int(flag)`, `UInt8(flag)` and `String(Int(flag))` convert a Bool: Mojo writes the conversion as `select i1 %flag, iN 1, iN 0` (or `0, 1`) at the `(` of the call, and the select carries weights like any other.
+The source has no decision there, so a select at a call whose two values are the constants 0 and 1 is compiler-made: counted with the `call(` class, not written. A select at a call with any other values (a value
+that is not a constant, 2 and 0, 1 and 1) is refused as before; a ternary `1 if flag else 0` is a select at its `if` and stays a decision. The decision, if there is one, is where the Bool was computed
+(`Int(a < b)` has the `<`'s own code, and an `and` in it its own record).
+
+### Unrolled loops
+
+The body of a `comptime for` is unrolled by the compiler: one copy of each decision in it per iteration, all at the one source location, and a function generic in the trip count (`comptime for k in range(W)`)
+has a different number of copies in each instance. The decisions of such a body, found from the source (the line is indented under a `comptime for` line, or a `for` line after `@parameter`, of its own function),
+are **one record**, `<n>/<N>` = `0/1`: the iterations of every copy and instance are summed arm by arm. The choice is one aggregated pair of arms, not one pair per iteration: per-iteration records could not be
+matched across instances of other widths, and an iteration number is no source location. The pair is covered when some iteration, in some test, took each arm; it cannot say that every lane did. An `if`
+with an `elif` clause in the body keeps its records one per copy (its copies are told apart by their order, as an `if` chain's are), so instances of different trip counts are still refused there. A file
+whose brackets do not balance has no unrolled loops read.
+
+### Folded conditions
+
+A br or select on a condition the build decided is no decision of the run: the literal `true` or `false`, or the `i1` returned by a call of the standard library's target queries, a function named
+`std::sys::info::...` and specialised on the target of the module (`,value=#kgen.target<...>`: `CompilationTarget.is_x86()`, `is_linux()`, ...). Mojo folds `simd_width_of[DType.uint32]() == 16` into a
+constant but keeps the call of such a query, so `return CompilationTarget.is_x86() and CompilationTarget.is_linux()` has a br at the `and` on the call's result, one arm of which no run can take. Such a br or
+select is not written and not refused, at any token; it is counted on stderr (`N branch(es) or select(s) on a condition the build decided`). The `and`/`or` rules never see it, so the operand that remains is
+tested where it is used; an `if` that tests the whole condition is still a decision. Only a call named so is read: any other call's flag, or a query without the specialisation, is a decision as before.
 
 ### try
 
@@ -356,10 +411,12 @@ By behaviour, each run as a build action on the farm, and a defect each catches:
   one (an edit that changes nothing fails the case). It checks the exit status, the output file byte for byte or by line, the messages on stderr and that nothing is written to stdout.
   `case`, 1 to 9c on `fixtures/case.ll`: the golden output, the metadata order, a second test's counts, unknown tokens, file names, `--gen`, zero branches, a name no prefix covers, sources named by
   import name with `--src` (8d to 8g), malformed IR, copies, and/or shapes refused. `andor`, 9j and 9k: and/or results no test reads, error flags, three on one line. `files`, 9d to 9i: nodebug
-  callees, kinds, invokes, decision-free and twice-spelled files. `rules`, 11 to 11f on `fixtures/rules.ll`: the shape rules. `try`, 12 to 12c on `fixtures/try.ll`. `main`: bad usage (exit 2, the
+  callees, kinds, invokes, decision-free and twice-spelled files. `rules`, 11 to 11f on `fixtures/rules.ll`: the shape rules. `try`, 12 to 12c on `fixtures/try.ll`. `fold`, 13 to 15, on IR written in the test file: a Bool converted to an Int, an unrolled loop in instances of two widths (and a chain with an `elif`, still refused), and a condition the build decided (a target query, a literal; a runtime flag and an unspecialised query still decisions). `main`: bad usage (exit 2, the
   message and the usage line) and an output whose write fails (a file size limit in the child: exit 1, nothing written, no temporary file left).
 - **The tool.** `cov_branch_unit`: link (the exact lld and zig command lines and environments, each input missing or empty, a bitcode without the magic, an lld or zig that fails with the last
-  lines of its log, an output that is no ELF file or that holds a directory of the action), run (the test's working directory and exact environment, no profile, a profile of another magic,
+  lines of its log, an output that is no ELF file or that holds a directory of the action; with native libraries: the libraries after the object in the order given, `llvm-nm` run on the
+  object and on each library with the flags for an archive and for a shared object, a library that defines a symbol of the object refused by name, five symbols named and the rest counted, an
+  `llvm-nm` that fails or cannot start, each library missing or empty, and every allocation of the link failing in turn), run (the test's working directory and exact environment, each `--lib-dir` after the compiler's lib in order and made absolute, no profile, a profile of another magic,
   version or without the IR flag, a merge that fails, a show that is not an IR profile of a function), annotate (every refusal with its message and the order they are checked in: the bitcode,
   the binary's records against the profile's, lld's diagnostics, the dump) and the flags of each. The process tests run the shipped executable over stand-in programs.
 - **The records and the summary** (`rules/coverage/tools/branch_lcov_test.zig`): the format and each refusal, the sum by id across tests (an arm is hit when any test took it, `-` adds nothing, an
@@ -368,4 +425,8 @@ By behaviour, each run as a build action on the farm, and a defect each catches:
 - **On real Mojo** (`examples/mojo`): `partial`'s one `if` with one arm run gives `BRDA:5,5:br:0/1,0,0` and `BRDA:5,5:br:0/1,1,1` and the rows `branches ... 1/2 50%` (`:coverage_records`), `reexport`'s `if` and `for` give
   `select` and `br` records with their exact counts, `testdata`'s code with no decision gives `SF:` and `end_of_record` and `0/0`, the rows and the records agree file by file, and the floor of
   `partial` is held as a minimum for lines and for branches (`coverage_floors`: a figure above the coverage is red, for its reason, in `ci/negative.bzl`; one below it is green; a floor with no
-  `branches` figure is red; a `branches` figure for code with no decision is red; a `branches` figure the tests do not record is refused by `coverage_tools_refuse`). Which examples are instrumented, and that a package with a native library (`ws`, `sys_app`) has no branch target, is held by `ci/negative.bzl` (`BRANCH_PACKAGES`).
+  `branches` figure is red; a `branches` figure for code with no decision is red; a `branches` figure the tests do not record is refused by `coverage_tools_refuse`). `sys_app`, whose test links two static archives, gives `BRDA:18,5:select:0/1,0,1` and `BRDA:18,5:select:0/1,1,1` for the `if` of `clamped_answer`, whose test takes
+  both arms (rows `branches ... 2/2 100%`, a floor of `lines 100.00` and `branches 100.00` that holds); `ws`, whose test loads a shared object, gives `SF:` and `end_of_record` and `0/0` (its
+  library has no decision): the records and the rows agree for both. That every example, those two included, has the five branch targets of its test and that its `:coverage` waits for them
+  is held by `ci/negative.bzl` (`BRANCH_PACKAGES`); a unit's library missing from the instrumented link, and two archives in an order the linker would leave symbols undefined in, are must-fail
+  fixtures there (`CASES`), and `rules/mojo/tests` holds `cov_link_natives` by its messages.

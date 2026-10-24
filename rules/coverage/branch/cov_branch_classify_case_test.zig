@@ -215,22 +215,25 @@ test "6 no --gen: the generated source is measured" {
     try r.has("BRDA:3,5:br:0/1,0,9", "no --gen: its branch is not written");
 }
 
-// 7. Zero branches parsed in a measured file whose IR has code on an `if`
-// line is refused (the branches were not read); b.mojo, whose only code
-// left is on `return 3`, is not. Catches: a parser that silently reads no
-// branch.
+// 7. Zero branches parsed in a measured file whose IR has a branch-like
+// instruction on an `if` line is refused (the branches were not read);
+// b.mojo, whose only code left is on `return 3`, is not. Catches: a parser
+// that silently reads no branch.
 test "7 zero branches: refused for a.mojo, not for b.mojo" {
     var c = try h.Case.init("");
     defer c.deinit();
     var e = try h.Ir.of(c.a(), h.case_ll);
-    try e.drop(" br i1 ", .contains);
-    try e.drop(" = select i1 ", .contains);
+    // Every br and select is still in the IR but spelled as the parser does
+    // not read it, so no branch is parsed and the branch-like instructions
+    // remain on the decision lines.
+    try e.sub(" br i1 ", " br  i1 ");
+    try e.sub(" = select i1 ", " = select  i1 ");
     try e.drop("  switch ", .prefix);
     try e.drop("  ], ", .prefix);
     try e.drop("    i64 0, label ", .prefix);
     try e.drop("    i64 1, label ", .prefix);
     var kept = std.ArrayList([]const u8).empty;
-    for (e.lines.items) |l| if (!std.mem.endsWith(u8, l, "!dbg !50")) try kept.append(c.a(), l);
+    for (e.lines.items) |l| if (!std.mem.endsWith(u8, l, "!dbg !50") and std.mem.indexOf(u8, l, "!dbg !50,") == null) try kept.append(c.a(), l);
     e.lines = kept;
     const r = try c.refused("zero branches", "src/pkg/a.mojo: zero branches parsed, yet the IR has code on its decision line 3", try e.text());
     try r.silent("src/pkg/b.mojo");

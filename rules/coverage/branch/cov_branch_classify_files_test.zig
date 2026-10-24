@@ -49,21 +49,53 @@ test "9f an invoke in a measured file: refused" {
     _ = try c.refused("invoke", "src/pkg/a.mojo:3:5: an invoke in a measured file", try e.text());
 }
 
-// 9g. A measured file with zero branches parsed and code on a line whose
-// decision is an `and`, `or` or ternary `if` (not its first word) is
-// refused. Catches: a zero-branch check that reads only the first word.
+// 9g. A measured file with zero branches parsed and a branch-like
+// instruction on a line whose decision is an `and`, `or` or ternary `if`
+// (not its first word) is refused: here a conditional br the parser does
+// not read (two spaces after `br`). Catches: a zero-branch check that reads
+// only the first word.
 test "9g zero branches at an 'and' line: refused" {
     var c = try h.Case.init("");
     defer c.deinit();
     try c.source("e", "# made up\ndef pick(a: Bool, b: Bool) -> Bool:\n    return a and b\n");
     var e = try h.Ir.of(c.a(), h.case_ll);
-    try e.insertBefore("attributes #0", &.{ "define internal i1 @\"pkg::e::pick\"(i1 %0, i1 %1) #0 !dbg !141 {", "2:", "  %3 = and i1 %0, %1, !dbg !142", "  ret i1 %3, !dbg !142", "}", "" });
+    try e.insertBefore("attributes #0", &.{
+        "define internal i1 @\"pkg::e::pick\"(i1 %0, i1 %1) #0 !dbg !141 {", "2:",           "  %3 = and i1 %0, %1, !dbg !142",
+        "  br  i1 %3, label %4, label %5, !dbg !142",                       "4:",           "  ret i1 true, !dbg !142",
+        "5:",                                                                "  ret i1 false, !dbg !142", "}",
+        "",
+    });
     try e.append(&.{
         "!140 = !DIFile(filename: \"" ++ SRC ++ "/e.mojo\", directory: \"\")",
         "!141 = distinct !DISubprogram(name: \"pick\", scope: !140, file: !140, line: 2, type: !9, unit: !0)",
         "!142 = !DILocation(line: 3, column: 5, scope: !141)",
     });
     _ = try c.refused("zero branches, and", "src/pkg/e.mojo: zero branches parsed, yet the IR has code on its decision line 3", try e.text());
+}
+
+// 9g'. A file with zero branches overall and a decision-looking source line
+// (`... and ...`) whose IR holds code but no branch-like instruction (the
+// build folded `CompilationTarget.is_x86() and simd_width_of[...]() == 16`
+// to straight-line code) is 0/0: named with no record, not refused.
+// Catches: the zero-branch check refusing a line whose decision the build
+// decided ("zero branches parsed, yet the IR has code on its decision line").
+test "9g folded 'and' line, no branch-like instruction: SF with no record" {
+    var c = try h.Case.init("folded and");
+    defer c.deinit();
+    try c.source("e", "# made up\ndef wide() -> Bool:\n    return CompilationTarget.is_x86() and simd_width_of[DType.uint32]() == 16\n");
+    var e = try h.Ir.of(c.a(), h.case_ll);
+    try e.insertBefore("attributes #0", &.{ "define internal i1 @\"pkg::e::wide\"() #0 !dbg !141 {", "1:", "  %2 = icmp eq i64 4, 16, !dbg !142", "  %3 = and i1 true, %2, !dbg !142", "  ret i1 %3, !dbg !142", "}", "" });
+    try e.append(&.{
+        "!140 = !DIFile(filename: \"" ++ SRC ++ "/e.mojo\", directory: \"\")",
+        "!141 = distinct !DISubprogram(name: \"wide\", scope: !140, file: !140, line: 2, type: !9, unit: !0)",
+        "!142 = !DILocation(line: 3, column: 5, scope: !141)",
+    });
+    const r = try c.run(try e.text());
+    try r.exits(0);
+    var want = try h.Ir.of(c.a(), h.case_golden);
+    try want.append(&.{ "SF:src/pkg/e.mojo", "end_of_record" });
+    try r.golden(try want.text(), "folded and: e.mojo is not named with no record");
+    try r.lacksText("zero branches parsed", "folded and: the zero-branch check refused a line with no branch-like instruction");
 }
 
 // 9h. A measured file whose code the IR holds, with no decision in it, is
