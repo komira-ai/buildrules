@@ -37,6 +37,14 @@ MojoWorkspaceInfo = provider(fields = {
     "files": provider_field(dict),
 })
 
+# The native libraries a library unit links, which an adopted label hands to a dependent that still links through other rules: the unit's `natives` in the
+# graph's order (a library before every library it needs), and the file of each by soname. A static library a member builds (`native:<package>/<id>`), one a
+# registry package ships and a shared library the BUCK file names are all here; `sonames` is the order of the link line.
+MojoNativeArchiveInfo = provider(fields = {
+    "sonames": provider_field(list),
+    "archives": provider_field(dict),
+})
+
 # A compiled test or binary: the unit's output directory (the executable and lib/ with its native libraries).
 MojoExeInfo = provider(fields = {
     "id": provider_field(str),

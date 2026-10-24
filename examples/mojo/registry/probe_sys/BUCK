@@ -1,32 +1,23 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
-load("@buildrules//rules/mojo:pack.bzl", "mojo_conda")
+load("@buildrules//rules/mojo:pack.bzl", "mojo_conda_holds")
 load(":buildrules.mojo.bzl", "mojo_package")
 
 # The publisher's side of the registry stand-in: a `-sys` package (an empty Mojo module over a static C library) that needs the static library of
 # another package, base_sys (the workspace member below).
+#
+# The library is a member native (`[native.probe_sys]` in mopm.toml, `srcs = ["native/*.c"]`, `needs = ["libbase_sys.a"]`): the macro compiles the C file
+# with the pinned zig, which calls base_sys_value, defined by libbase_sys.a (the archive check requires a `needs` library to define what it leaves
+# undefined), archives it (`:native_probe_sys`), and makes `:conda`, the `.conda` a registry would serve for probe_sys, with `lib/libprobe_sys.a` in it
+# and the manifest of base_sys laid out beside. The `.conda`'s sha256 and size, and the sha256 of the archive, are in the consumer's lock
+# (examples/mojo/sys_app/mopm.lock).
 mojo_package(path = ".")
 
-# The native library, built by the pinned zig (rules/cxx); it calls base_sys_value, which libbase_sys.a defines.
-cxx_library(
-    name = "probe_c",
-    srcs = ["native/probe.c"],
-    compiler_flags = ["-O2"],
-    preferred_linkage = "static",
-    visibility = ["PUBLIC"],
-)
-
-# `mopm pack` of the package: the `.conda` a registry would serve for probe_sys, with `lib/libprobe_sys.a` in it. Its sha256 and size, and the sha256
-# of the archive, are in the consumer's lock (examples/mojo/sys_app/mopm.lock).
-mojo_conda(
-    name = "conda",
-    lib = ":lib",
-    manifest = "mopm.toml",
-    members = {"base_sys": "//examples/mojo/registry/probe_sys/base_sys:mopm.toml"},
-    mojo = "1.0.0",
-    mopm = "toolchains//:mopm",
-    natives = {"probe_sys": ":probe_c[static-pic]"},
+# The `.conda` holds the archive that was built: unpacked, `lib/libprobe_sys.a` is exactly the bytes of `:native_probe_sys`.
+mojo_conda_holds(
+    name = "conda_holds",
+    conda = ":conda",
+    natives = {"libprobe_sys.a": ":native_probe_sys"},
     package = "probe_sys",
-    version = "1.0.0",
     visibility = ["//ci:"],
 )
 

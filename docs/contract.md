@@ -461,12 +461,12 @@ not covered by this.
 
 ```toml
 [toolchain]
-mopm = "0.0.34"     # an exact release: a version of rules/mopm/pins.bzl, or one buildrules-pins.toml gives a URL, sha256 and size for
+mopm = "0.0.42"     # an exact release: a version of rules/mopm/pins.bzl, or one buildrules-pins.toml gives a URL, sha256 and size for
 mojo = "1.0.0"     # an exact release mopm pins a toolchain for; the graph is made for it
 ```
 
 **It is required**, like `rust-toolchain.toml`, and there is no implicit default: without it `mojo sync`, `mojo check` and the analysis of every
-package stop, name `mopm-toolchain.toml`, and print a minimal example (`[toolchain]`, `mopm = "0.0.34"`, `mojo = "1.0.0"`). Required was chosen because
+package stop, name `mopm-toolchain.toml`, and print a minimal example (`[toolchain]`, `mopm = "0.0.42"`, `mojo = "1.0.0"`). Required was chosen because
 the Rust side is, and one rule is easier to teach; the other choice, a default in `sync`, would pick a compiler for a repository that never named one.
 
 ### 12.3 The table: `buildrules.mojo.lock.bzl`, schema 1
@@ -520,7 +520,18 @@ every declared input, then executes `T/mojo_compile` with an empty environment).
 - `--natives`: the native libraries by soname. mopm checks each against the sha256 in the graph before it compiles anything. A static library (`lib<stem>.a`) of a registry package is
   not named in the BUCK file: it is the sub-target `:prebuilt_<package>[<soname>]` of the package's unpacked `.conda`, chosen from the graph (`kind` static, the package of the unit that ships it). Every other
   native is a target of `natives = {...}`, and one the lock provides may not be named there. mopm lists the libraries of a unit in link order (a library before every library it needs), `native_sonames` keeps
-  that order, and mopm links them in it; `--natives` itself is a flat directory. (A workspace member's `[native.<id>]` is not in mopm's graph yet. The `cnative` example's shared library is a `natives = {...}` entry.)
+  that order, and mopm links them in it; `--natives` itself is a flat directory. A static library a workspace member builds from its own C (`[native.<id>] kind = "static"` in its `mopm.toml`) is a
+  native unit of the graph (format 2; these rules read formats 1 and 2), `native:<package>/<id>`, and every unit that links it (the member's library, tests and binaries, and every dependent member's) lists it in `natives` with a `built` field
+  naming that unit and no `sha256`: it is a product of this build. It is not named in the BUCK file either. `mojo_package` of the member compiles the unit's `srcs` with the pinned zig into `:native_<id>_cxx`
+  (a `cxx_library`, at the platform's baseline CPU whatever ISA level the rest of the program is built for, optimised, with `-I` for each of the unit's `includes`, `cflags` and then the
+  flags of the OS) and writes `lib<id>.a` as `:native_<id>` (`native_archive`, rules/cxx/native.bzl); a dependent's units take the member's target. These two names are stable: a repository that lists
+  libraries by target can name them. The archive is held to what a library other people link must be by `archive_check` (rules/cxx/archive, a validation of the target, so every build that holds
+  the archive runs it): an archive of 64-bit ELF relocatable objects whose members have no time or owner and are in the order of their names, no `.debug_*` section and no byte of the directory it was built in
+  (`hermetic.zig`), no object that needs a glibc symbol version newer than the floor (`floor.zig`), and no undefined symbol that the final link would lack: every one is defined by the archive itself, by a library it
+  `needs`, by the C library at the floor or by the compiler runtime (`rules/cxx/archive/src/floor_symbols.txt`), and the first that is not is named. A package that builds natives also gets `:conda`, the package
+  as `mopm pack` writes it with each archive packed as `lib/lib<id>.a`, which a consumer's lock pins by sha256 (`mojo_conda_holds` unpacks it and requires each archive to be the bytes of the target). A graph in which
+  a `built` entry names a unit the graph does not have is refused by `buildrules mojo sync` and by `mojo_package`. Every library target (`:lib`, `:lib_ungated`) carries `MojoNativeArchiveInfo`, the unit's natives in
+  link order and the file of each, so a label that adopts the package hands the archives to a dependent that still links through other rules. (The `cnative` example's shared library is a `natives = {...}` entry.)
 - `--toolchain`: a directory assembled from `mojo_launch` (as `mojo_compile`), the wrapper (`wrapper`), the compiler closure (`compiler`), the zig (`zig`), `CLOSURE_SHA256`
   and `toolchain.cfg`. `mojo_launch` puts the wrapper's options (where the closure and the zig are) in front of mopm's arguments, inserts the ISA flags after `build`,
   and rewrites mopm's `--source-root` for `precompile` (below). It runs no compiler and owns no policy.
@@ -586,7 +597,7 @@ to the records of `:coverage[branches]` file by file). The classifier refuses wh
 
 ### 12.5 Versions: pinned mopm, the Mojo version
 
-`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.34` is the published mopm release (its linux-x86_64 tarball;
+`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.42` is the published mopm release (its linux-x86_64 tarball;
 the digest and size are the row's in `rules/mopm/pins.bzl`, the source of truth, which match the release's `SHA256SUMS`); a machine that mirrors the download points it at its copy with `url_map`.
 A version not in the table is refused by `mojo sync` (the message names `buildrules-pins.toml` and the table to add) unless `buildrules-pins.toml` has `[mopm."V"]` with `url`, `sha256`, `size`.
 The mopm binary is an input of every unit action: a mopm bump re-keys every unit on purpose. The Mojo version comes from the graph: mopm pins one (`1.0.0`) today, so no package here
@@ -701,10 +712,14 @@ generate `test_data` from it; until then the declaration is the BUCK file's, and
 
 The examples: `examples/mojo/ws` (`app` -> `util` -> `base`, three packages in a chain, plus the registry package `cnative` with a C library built by `rules/cxx`'s `c_shared`) and
 `examples/mojo/registry/cnative` (the publisher's side: its `.mojoc`, `mopm pack`, the library); `examples/mojo/sys_app` consumes two `-sys` packages (an empty Mojo module over a static C library) whose archives
-come out of their `.conda` files, with no `natives` in its BUCK file: `examples/mojo/registry/probe_sys` (which needs `base_sys`, a member below it) is the publisher's side, built by `rules/cxx` and `mopm pack`. The proofs and their `Commands:` lines are in the commit message of the branch `mojo`.
+come out of their `.conda` files, with no `natives` in its BUCK file: `examples/mojo/registry/probe_sys` (which needs `base_sys`, a member below it) is the publisher's side, whose libraries are member natives (`srcs` in each `[native.<id>]`), built and packed by `mojo_package` (`:conda`).
+`examples/mojo/member_native` is two members, `cshim_user` -> `cshim`: `cshim` has a C shim of its own (`[native.shim]`), its test calls it, and the test of `cshim_user` links the archive `cshim` builds, with no `natives`
+in either BUCK file; `cshim:conda` packs the archive and `cshim:conda_holds` requires the `.conda` to hold the bytes of `:native_shim`; `examples/mojo/copy_of_cshim:same_bytes` builds the same C at another path and requires the
+same archive bytes. The proofs and their `Commands:` lines are in the commit message of the branch `mojo`.
 
 Limits: linux x86-64 only; one Mojo version (mopm pins one); the coverage is line coverage of what the compiler emitted code for (a function no test reaches emits none, so the percentage is an
-upper bound); workspace members' natives are not in mopm's graph; `mopm unit test` and the supervisor, a published mopm release, and Arm are not covered.
+upper bound); a workspace member's native library is static (a `shared` one is refused by mopm); the archive's undefined-symbol check knows the C library only by `floor_symbols.txt`, so a call to a symbol
+that list lacks is refused until it is added there (`native_archive` takes `allow`, but a manifest has no field for it); `mopm unit test` and the supervisor, a published mopm release, and Arm are not covered.
 
 ## 13. npm packages: `npm_package(path = ".")` **[chosen]**
 

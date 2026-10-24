@@ -8,6 +8,7 @@ base_sys = { path = "base_sys", version = "1.0" }
 
 [native.probe_sys]
 kind = "static"
+srcs = ["native/*.c"]
 needs = ["libbase_sys.a"]
 
 [targets]

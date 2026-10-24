@@ -4,8 +4,8 @@ buildrules never builds mopm from source (docs/contract.md, section 12). It pins
 a mopm change reaches this repository by a pin bump after a release. `MOPM_DEFAULT` is the version a repository
 that has no `mopm-toolchain.toml` of its own gets.
 
-`0.0.34` is the published mopm release (https://github.com/komira-ai/mopm/releases/tag/v0.0.34), its linux-x86_64 tarball: the sha256 and size are
-those of the asset and of the release's `SHA256SUMS`, and the tarball unpacks into `mopm-0.0.34-linux-x86_64/{mopm,LICENSE}`. A machine that
+`0.0.42` is the published mopm release (https://github.com/komira-ai/mopm/releases/tag/v0.0.42), its linux-x86_64 tarball: the sha256 and size are
+those of the asset and of the release's `SHA256SUMS`, and the tarball unpacks into `mopm-0.0.42-linux-x86_64/{mopm,LICENSE}`. A machine that
 mirrors the download points it at its copy with `-c buildrules.url_map=<from-prefix>=<to-prefix>` (the sha256 is still checked, so a mirror
 cannot change the bytes).
 
@@ -14,15 +14,15 @@ A version not in this table is refused unless the user supplies its URL, sha256 
 `MOPM_VERSIONS`, and `mopm_toolchains()` declares one `toolchains//:mopm_<v>` for each.
 """
 
-MOPM_DEFAULT = "0.0.34"
+MOPM_DEFAULT = "0.0.42"
 
 MOPM_VERSIONS = {
-    "0.0.34": {
-        "url": "https://github.com/komira-ai/mopm/releases/download/v0.0.34/mopm-0.0.34-linux-x86_64.tar.gz",
-        "sha256": "632e489b8b33e392b6991d9db0485e63124994bbf24071d3f5f1230eefe3bafd",
-        "size": 1123062,
+    "0.0.42": {
+        "url": "https://github.com/komira-ai/mopm/releases/download/v0.0.42/mopm-0.0.42-linux-x86_64.tar.gz",
+        "sha256": "b239c8826b5e08861c4905894eb03e124c52080b29ba353401966799906c284a",
+        "size": 1190550,
         # The directory the tarball unpacks into; `mopm` is the executable in it.
-        "dir": "mopm-0.0.34-linux-x86_64",
+        "dir": "mopm-0.0.42-linux-x86_64",
     },
 }
 

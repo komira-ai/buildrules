@@ -1,0 +1,21 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/cxx:native.bzl", "native_same", "native_static")
+
+# The C sources of //examples/mojo/member_native/cshim at another path, built by the same rules: the two archives must be the same bytes. (An archive that
+# recorded the directory it was built in would differ, and a library with a sha256 pinned in a lock could not be built twice.)
+native_static(
+    name = "native_shim",
+    srcs = ["native/cshim.c"],
+    hdrs = ["native/cshim.h"],
+    includes = ["examples/mojo/copy_of_cshim/native"],
+    soname = "libshim.a",
+)
+
+native_same(
+    name = "same_bytes",
+    a = ":native_shim",
+    b = "//examples/mojo/member_native/cshim:native_shim",
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

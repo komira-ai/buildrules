@@ -9,6 +9,8 @@ control's own error. ci/negative_check.zig holds the wiring of this file to the 
 
 load("//examples/mojo/sys_app:buildrules.mojo.lock.bzl", SYS_APP_GRAPH = "GRAPH")
 load("//examples/mojo/ws:buildrules.mojo.lock.bzl", WS_GRAPH = "GRAPH")
+load("//examples/mojo/member_native:buildrules.mojo.lock.bzl", MEMBER_NATIVE_GRAPH = "GRAPH")
+load("//examples/mojo/member_native/cshim:buildrules.mojo.lock.bzl", CSHIM_GRAPH = "GRAPH")
 
 PLATFORM = "buildrules//platforms:linux_x86_64_v3"
 FIXTURE = "//ci/negative:v3_test_without_isa_property"
@@ -115,7 +117,7 @@ def coverage_floor_wiring_problems(ctx):
     return problems
 
 # A package whose tests run in the default layout has the five branch coverage actions of each test, and its `:coverage` waits for the last: also a package whose tests link native
-# libraries (`ws`: a shared object; `sys_app`: two static archives), because the instrumented link is given them as the ordinary link is (rules/mojo/defs.bzl,
+# libraries (`ws`: a shared object; `sys_app`: two static archives; `member_native` and its `cshim`: an archive a member builds), because the instrumented link is given them as the ordinary link is (rules/mojo/defs.bzl,
 # rules/coverage/branch/README.md). One whose tests run in the installed layout has none of them (the branch run has no installed layout), so its `coverage.txt` has no `branches` rows
 # and a floor may not hold a `branches` figure. (package, the stem of its test, whether it is instrumented)
 BRANCH_PACKAGES = [
@@ -136,12 +138,16 @@ BRANCH_PACKAGES = [
     ("//examples/mojo/ws", "test_app", True),
     ("//examples/mojo/sys_app", "test_sys_app", True),
     ("//examples/mojo/installed", "test_installed_layout", False),
+    ("//examples/mojo/member_native", "test_cshim_user", True),
+    ("//examples/mojo/member_native/cshim", "test_cshim", True),
 ]
 
 # The packages whose tests link native libraries, with their committed graphs: what `__pgo` is held to (`native_link_problems`).
 NATIVE_PACKAGES = [
     ("//examples/mojo/sys_app", "test_sys_app", SYS_APP_GRAPH),
     ("//examples/mojo/ws", "test_app", WS_GRAPH),
+    ("//examples/mojo/member_native", "test_cshim_user", MEMBER_NATIVE_GRAPH),
+    ("//examples/mojo/member_native/cshim", "test_cshim", CSHIM_GRAPH),
 ]
 
 def coverage_branch_wiring_problems(ctx):
@@ -305,6 +311,9 @@ PLANTED = [
     ("//ci/planted:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
     ("//ci/planted:lib_behind_a_failing_test", "//examples/hello:hello_lib", "this test fails by design"),
     ("//ci/planted:mojo_test_that_fails", None, "check marker: TEST FAILED: "),
+    ("//ci/planted:native_with_an_undefined_symbol", "//ci/planted:native_good", "undefined symbol: planted_missing_helper"),
+    ("//ci/planted:native_newer_than_the_floor", "//ci/planted:native_good", "undefined symbol: arc4random"),
+    ("//ci/planted:native_with_debug_info", "//ci/planted:native_good", "member debug_info.c.pic.o has 1 debug section(s), first .debug_planted"),
     # The data and the variables of a Mojo test (ci/mojo_data/BUCK): the stand-in test reads what is staged and says which of its expectations failed.
     # The control of each is the run that stages everything the probe expects.
     ("//ci/mojo_data:run_red_content", "//ci/mojo_data:run_green", "data_probe: greeting.txt holds other data"),

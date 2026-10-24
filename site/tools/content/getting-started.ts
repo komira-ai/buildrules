@@ -87,7 +87,7 @@ export const gettingStarted: Page = {
     h2('Using the Mojo rules'),
     p('A Mojo package is a mopm project: a `mopm.toml` and a `mopm.lock`, with a `BUCK` file that calls `mojo_package`. Write a `mopm-toolchain.toml` that names the mopm and Mojo versions, then:'),
     code('buildrules mojo sync\nbuck2 build //pkg:ci //pkg:coverage\nbuildrules mojo check', 'shell'),
-    p('mopm 0.0.34, the published release, is the mopm that buildrules pins; [pinning mopm](/rules/mojo/#pinning-mopm-today) says how to use it or your own.'),
+    p('mopm 0.0.42, the published release, is the mopm that buildrules pins; [pinning mopm](/rules/mojo/#pinning-mopm-today) says how to use it or your own.'),
     h2('If something is red'),
     ul(
       'An error that names a command (`buildrules sync`) is telling you the fix; run it.',

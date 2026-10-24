@@ -226,7 +226,7 @@ test "sync: without mopm-toolchain.toml, or with a floating version, nothing run
     try t.expect(kit.contains(r.err, "no mopm-toolchain.toml at or above pkgs/base"));
     try t.expect(kit.contains(r.err, "it is required, like rust-toolchain.toml"));
     try t.expect(kit.contains(r.err, "there is no default"));
-    try t.expect(kit.contains(r.err, "[toolchain]\nmopm = \"0.0.34\"\nmojo = \"1.0.0\"\n"));
+    try t.expect(kit.contains(r.err, "[toolchain]\nmopm = \"0.0.42\"\nmojo = \"1.0.0\"\n"));
     for ([_][]const u8{ "0.0", "latest", "^0.0.1" }) |v| {
         try h.put("mopm-toolchain.toml", try std.fmt.allocPrint(h.a(), "[toolchain]\nmopm = \"{s}\"\nmojo = \"1.0.0\"\n", .{v}));
         r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
@@ -600,7 +600,7 @@ test "check: without mopm-toolchain.toml the check fails and says what to write,
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "no mopm-toolchain.toml at or above pkgs/base"));
     try t.expect(kit.contains(r.err, "there is no default"));
-    try t.expect(kit.contains(r.err, "[toolchain]\nmopm = \"0.0.34\"\nmojo = \"1.0.0\"\n"));
+    try t.expect(kit.contains(r.err, "[toolchain]\nmopm = \"0.0.42\"\nmojo = \"1.0.0\"\n"));
     try t.expect(!kit.contains(r.out, "ok:"));
 }
 
@@ -608,7 +608,7 @@ test "the BUCK export of mopm-toolchain.toml fails the load, with the file and a
     const mc = @import("mojo_cmd.zig");
     try t.expect(kit.contains(mc.export_snippet, "if glob([\"mopm-toolchain.toml\"]) else fail("));
     try t.expect(kit.contains(mc.export_snippet, "mopm-toolchain.toml is required and there is no default. Create it, for example:"));
-    try t.expect(kit.contains(mc.export_snippet, "[toolchain]\\nmopm = '0.0.34'\\nmojo = '1.0.0'"));
+    try t.expect(kit.contains(mc.export_snippet, "[toolchain]\\nmopm = '0.0.42'\\nmojo = '1.0.0'"));
 }
 
 // ---- more of sync and check: arguments, discovery, failures of the programs it runs, path dependencies --------------------
@@ -719,7 +719,7 @@ test "sync: a graph mopm printed that is not a graph, or that cannot be embedded
     const cases = [_]struct { text: []const u8, needle: []const u8 }{
         .{ .text = "not json", .needle = "pkgs/base: the GRAPH_JSON block is not JSON" },
         .{ .text = "[]", .needle = "the unit graph is not a JSON object" },
-        .{ .text = "{\"unit_graph\": 2}", .needle = "unit_graph format is not 1" },
+        .{ .text = "{\"unit_graph\": 3}", .needle = "unit_graph format is not 1 or 2" },
         .{ .text = "{\"unit_graph\": 1, \"toolchain\": {}}", .needle = "no `units` array" },
     };
     for (cases) |c| {
@@ -732,6 +732,25 @@ test "sync: a graph mopm printed that is not a graph, or that cannot be embedded
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "mopm's graph holds ''' and cannot be embedded in a table"));
     try t.expect(!h.has("pkgs/base/buildrules.mojo.lock.bzl"));
+}
+
+test "sync: a native a member builds is written with the graph, and an entry built by a native unit the graph does not have is refused with a message that names it" {
+    const h = try fresh();
+    defer h.destroy();
+    const plain = "\"deps\": [],\n      \"natives\": [],";
+    const with_entry = "\"deps\": [],\n      \"natives\": [{\"id\": \"shim\", \"soname\": \"libshim.a\", \"package\": \"base\", \"kind\": \"static\", \"built\": \"native:base/shim\"}],";
+    const dangling = try std.mem.replaceOwned(u8, h.a(), fx.graph, plain, with_entry);
+    try t.expect(!std.mem.eql(u8, dangling, fx.graph));
+    const bad = syncWithGraph(h, dangling);
+    try t.expectEqual(@as(u8, 1), bad.code);
+    try t.expect(kit.contains(bad.err, "base@0.1.0#mojo1.0.0/lib links the native library libshim.a, built by native:base/shim, but the graph has no such native unit"));
+    try t.expect(!h.has("pkgs/base/buildrules.mojo.lock.bzl"));
+    // With the unit in the graph, the same entry is fine, and the graph is written as mopm printed it.
+    const unit = "\"units\": [\n    {\"id\": \"native:base/shim\", \"kind\": \"native\", \"package\": \"base\", \"soname\": \"libshim.a\"},";
+    const whole = try std.mem.replaceOwned(u8, h.a(), dangling, "\"units\": [", unit);
+    const ok = syncWithGraph(h, whole);
+    try t.expectEqual(@as(u8, 0), ok.code);
+    try t.expect(kit.contains(h.read("pkgs/base/buildrules.mojo.lock.bzl"), "{\"id\": \"native:base/shim\", \"kind\": \"native\""));
 }
 
 test "sync: a toolchain in a graph that a table may not carry is refused, and so is a missing mopm.lock" {
@@ -1054,9 +1073,9 @@ test "probe: the flag is used when the mopm's own help lists it, whatever releas
     }
 }
 
-/// The `plan` entry of the usage text that mopm 0.0.34 (the pinned release) prints for `--help`, copied from `usage` in its src/cli/main.zig at the
-/// tag v0.0.34: the line that names the flag, and the lines that describe it.
-const help_pinned_0_0_34 =
+/// The `plan` entry of the usage text that mopm 0.0.42 (the pinned release) prints for `--help`, copied from `usage` in its src/cli/main.zig at the
+/// tag v0.0.42: the line that names the flag, and the lines that describe it.
+const help_pinned_0_0_42 =
     "usage: mopm <command> [args]\n\nworking today:\n" ++
     "  plan --unit-graph --locked [--mojo <version>] [--workspace-root <dir>] [-o <file>]\n" ++
     "                          print the unit graph (spec/unit-graph.md) of\n" ++
@@ -1065,16 +1084,16 @@ const help_pinned_0_0_34 =
     "                          <dir>, which holds this directory and every\n" ++
     "                          path dependency\n";
 
-test "probe: the pinned 0.0.34 help lists the flag, so sync gives it the repository root and the table records that" {
+test "probe: the pinned 0.0.42 help lists the flag, so sync gives it the repository root and the table records that" {
     const h = try fresh();
     defer h.destroy();
-    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.34\"\nmojo = \"1.0.0\"\n");
-    help_out = help_pinned_0_0_34;
+    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.42\"\nmojo = \"1.0.0\"\n");
+    help_out = help_pinned_0_0_42;
     try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
     try t.expectEqual(@as(usize, 1), called("/fake/mopm --help"));
     try t.expectEqual(@as(usize, 1), called("--workspace-root"));
     const lock = h.read(lock_path);
-    try t.expect(kit.contains(lock, "MOPM = {\"version\": \"0.0.34\", \"origin\": \"builtin\", \"workspace_root\": True}\n"));
+    try t.expect(kit.contains(lock, "MOPM = {\"version\": \"0.0.42\", \"origin\": \"builtin\", \"workspace_root\": True}\n"));
 }
 
 test "probe: a mopm whose help does not list the flag is not given it, even at a release that would be expected to have it" {

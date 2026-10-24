@@ -17,7 +17,7 @@ A unit's output directory is the action's single output. A library's `.mojoc` is
 load("//rules:isa.bzl", "isa_satisfies")
 load("//rules/coverage/branch:llvm_branch.bzl", "CovBranchInfo", "RAW_PROFILE_VERSION")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
-load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoTestRunInfo", "MojoToolchainInfo")
+load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoTestRunInfo", "MojoToolchainInfo")
 load("//rules/core:test_runtime.bzl", "check_data_destinations")
 load(":test_data.bzl", "DATA_ENV", "LAYOUT_DEFAULT", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_env", "check_test_layout")
 
@@ -137,6 +137,7 @@ def _unit_impl(ctx):
         return _validated(ctx, [
             DefaultInfo(default_output = mojoc),
             MojoLibInfo(id = ctx.attrs.unit_id, mojoc = mojoc, closure = closure, ids = ids),
+            MojoNativeArchiveInfo(sonames = list(ctx.attrs.native_sonames), archives = natives),
         ])
     return _validated(ctx, [
         DefaultInfo(default_output = out.project(ctx.attrs.product), sub_targets = {"dir": [DefaultInfo(default_output = out)]}),
@@ -315,9 +316,12 @@ def _gated_lib_impl(ctx):
     )
     closure = dict(lib.closure)
     closure[ctx.attrs.package] = out
+    natives = ctx.attrs.lib.get(MojoNativeArchiveInfo) or MojoNativeArchiveInfo(sonames = [], archives = {})
     return _validated(ctx, [
         DefaultInfo(default_output = out),
         MojoLibInfo(id = lib.id, mojoc = out, closure = closure, ids = lib.ids),
+        # The libraries are not behind the tests: they are inputs of the library's own compile and of its tests, which `out` waits for.
+        MojoNativeArchiveInfo(sonames = natives.sonames, archives = natives.archives),
     ])
 
 # The library as the world sees it (`:lib`): the compiled library (`:lib_ungated`, which the package's own tests import) behind the

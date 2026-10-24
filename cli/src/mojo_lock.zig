@@ -2,7 +2,7 @@
 //! whether it is still the graph of the files on disk (docs/contract.md, section 12). Pure Starlark data:
 //!
 //!     SCHEMA = 1
-//!     MOPM = {"version": "0.0.34", "origin": "builtin"}      # and , "workspace_root": True for a mopm that was given --workspace-root (Starlark's True)
+//!     MOPM = {"version": "0.0.42", "origin": "builtin"}      # and , "workspace_root": True for a mopm that was given --workspace-root (Starlark's True)
 //!     MOJO = "1.0.0"
 //!     CLOSURE_SHA256 = "<mopm's hash of the toolchain closure, a second copy of the graph's>"
 //!     MANIFEST_SHA256 = {"mopm.toml": "<sha256>", ...}
@@ -137,12 +137,16 @@ pub fn manifestHash(l: Lock, path: []const u8) ?[]const u8 {
 
 pub const Src = struct { path: []const u8, sha256: []const u8 };
 
+/// An entry of a unit's `natives` that a workspace member builds: the library, and the id of the native unit that builds it.
+pub const Built = struct { soname: []const u8, unit: []const u8 };
+
 pub const Unit = struct {
     id: []const u8,
     package: []const u8,
     kind: []const u8,
     root: []const u8,
     srcs: []const Src,
+    built: []const Built = &.{},
 };
 
 pub const Graph = struct {
@@ -181,8 +185,8 @@ pub fn parseGraph(a: std.mem.Allocator, name: []const u8, text: []const u8, diag
         diag.add("{s}: the unit graph has no `unit_graph` format number", .{name});
         return error.Invalid;
     };
-    if (version != .integer or version.integer != 1) {
-        diag.add("{s}: unit_graph format is not 1 (this buildrules reads 1)", .{name});
+    if (version != .integer or (version.integer != 1 and version.integer != 2)) {
+        diag.add("{s}: unit_graph format is not 1 or 2 (this buildrules reads 1, and 2, which adds the native unit of a member's own library)", .{name});
         return error.Invalid;
     }
     const pkg = str(field(o, "package") orelse .null) orelse "";
@@ -224,14 +228,39 @@ pub fn parseGraph(a: std.mem.Allocator, name: []const u8, text: []const u8, diag
                 }
             }
         }
+        var built = std.ArrayList(Built).empty;
+        if (field(uo, "natives")) |nv| {
+            if (nv == .array) {
+                for (nv.array.items) |n| {
+                    if (n != .object) continue;
+                    const b = str(field(n.object, "built") orelse .null) orelse continue;
+                    if (b.len == 0) continue;
+                    built.append(a, .{ .soname = str(field(n.object, "soname") orelse .null) orelse "", .unit = b }) catch return error.Invalid;
+                }
+            }
+        }
         units.append(a, .{
             .id = str(field(uo, "id") orelse .null) orelse "",
             .package = str(field(uo, "package") orelse .null) orelse "",
             .kind = str(field(uo, "kind") orelse .null) orelse "",
             .root = str(field(uo, "root") orelse .null) orelse "",
             .srcs = srcs.toOwnedSlice(a) catch return error.Invalid,
+            .built = built.toOwnedSlice(a) catch return error.Invalid,
         }) catch return error.Invalid;
     }
+    // A native a member builds is a unit of the graph (`native:<package>/<id>`), and every entry that says `built` names one: a graph in which an entry
+    // names a unit that is not there cannot be linked, and the rules would only find that out when a test fails to link.
+    const before = diag.count();
+    for (units.items) |u| {
+        for (u.built) |b| {
+            var found = false;
+            for (units.items) |other| {
+                if (std.mem.eql(u8, other.id, b.unit)) found = true;
+            }
+            if (!found) diag.add("{s}: {s} links the native library {s}, built by {s}, but the graph has no such native unit", .{ name, u.id, b.soname, b.unit });
+        }
+    }
+    if (diag.count() != before) return error.Invalid;
     return .{ .package = pkg, .mojo = mojo, .closure_sha256 = closure, .toolchain = tc, .units = units.toOwnedSlice(a) catch return error.Invalid };
 }
 
