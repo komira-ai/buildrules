@@ -37,6 +37,7 @@ zig_test(
     name = "cov_branch_unit",
     exec_compatible_with = LINUX_X86_64,
     imports = _COV_BRANCH_SRCS,
+    deps = ["buildrules//rules/check:install_root"],
     src = "cov_branch.zig",
     zig = _ZIG,
 )
@@ -63,6 +64,7 @@ zig_exe(
     name = "cov_branch_exe",
     exec_compatible_with = LINUX_X86_64,
     imports = _COV_BRANCH_SRCS,
+    deps = ["buildrules//rules/check:install_root"],
     src = "cov_branch.zig",
     unit_tests = [":cov_branch_unit", _ZIG_VERSION],
     zig = _ZIG,

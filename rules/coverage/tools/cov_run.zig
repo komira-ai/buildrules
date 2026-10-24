@@ -226,13 +226,8 @@ pub fn stage(a: std.mem.Allocator, r: Args, share: []const u8, binary: []const u
     const s = try ir.make(a, parent);
     errdefer ir.remove(s);
     if (!r.installed) return .{ .tree = share, .binary = binary, .data = share, .scratch = s };
-    for ([_][]const u8{ "bin", "share" }) |reserved| {
-        std.fs.cwd().access(try std.fs.path.join(a, &.{ share, reserved }), .{}) catch continue;
-        return error.TreeHoldsLayoutName;
-    }
-    const installed = try ir.installBinary(a, s.root, binary);
-    try ir.copyTree(a, share, s.root);
-    if (r.data.len > 0) try ir.copyTree(a, r.data, s.share);
+    // The layout is `install_root`'s `installTree`, the one `cov_branch run` makes its installed run with.
+    const installed = try ir.installTree(a, s, share, binary, if (r.data.len > 0) r.data else null);
     return .{ .tree = s.root, .binary = installed, .data = s.share, .scratch = s };
 }
 

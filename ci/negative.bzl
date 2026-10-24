@@ -118,8 +118,8 @@ def coverage_floor_wiring_problems(ctx):
 
 # A package whose tests run in the default layout has the five branch coverage actions of each test, and its `:coverage` waits for the last: also a package whose tests link native
 # libraries (`ws`: a shared object; `sys_app`: two static archives; `member_native` and its `cshim`: an archive a member builds), because the instrumented link is given them as the ordinary link is (rules/mojo/defs.bzl,
-# rules/coverage/branch/README.md). One whose tests run in the installed layout has none of them (the branch run has no installed layout), so its `coverage.txt` has no `branches` rows
-# and a floor may not hold a `branches` figure. (package, the stem of its test, whether it is instrumented)
+# rules/coverage/branch/README.md). One whose tests run in the installed layout has them too (`installed`): its instrumented binary is run from the installed tree, so its `coverage.txt` has `branches` rows
+# and its floor holds a `branches` figure. (package, the stem of its test, whether it is instrumented)
 BRANCH_PACKAGES = [
     ("//examples/mojo/partial", "test_partial", True),
     ("//examples/mojo/reexport", "test_ops", True),
@@ -137,7 +137,7 @@ BRANCH_PACKAGES = [
     ("//examples/mojo/sibfake/diamond/bottom", "test_dia_bottom", True),
     ("//examples/mojo/ws", "test_app", True),
     ("//examples/mojo/sys_app", "test_sys_app", True),
-    ("//examples/mojo/installed", "test_installed_layout", False),
+    ("//examples/mojo/installed", "test_installed_layout", True),
     ("//examples/mojo/member_native", "test_cshim_user", True),
     ("//examples/mojo/member_native/cshim", "test_cshim", True),
 ]
