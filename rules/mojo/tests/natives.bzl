@@ -76,7 +76,7 @@ def native_includes_default_to_the_header_directories_below_the_package(refuse =
     still below the package (`native`, not `examples/x/native`); sorted, each directory once."""
     hdrs = [{"path": "examples/x/native/b.h"}, {"path": "examples/x/native/a.h"}, {"path": "examples/x/third/inc/c.h"}, {"path": "examples/x/top.h"}]
     got = native_include_dirs({"hdrs": hdrs}, "examples/x", True, refuse)
-    if got != ["", "native", "third/inc"]:
+    if got != [".", "native", "third/inc"]:
         refuse("the default of a rooted graph is not the header directories below the package: {}".format(got))
     unrooted = [{"path": "native/a.h"}, {"path": "native/b.h"}]
     got = native_include_dirs({"hdrs": unrooted}, "examples/x", False, refuse)
@@ -84,3 +84,7 @@ def native_includes_default_to_the_header_directories_below_the_package(refuse =
         refuse("the default of an unrooted graph is not the header directories: {}".format(got))
     if native_include_dirs({"hdrs": []}, "examples/x", True, refuse) != []:
         refuse("a unit with no header and no includes has no include directory")
+    # An empty `includes` list is unset, as mopm treats it.
+    got = native_include_dirs({"includes": [], "hdrs": [{"path": "examples/x/native/a.h"}]}, "examples/x", True, refuse)
+    if got != ["native"]:
+        refuse("an empty includes list does not fall back to the header directories: {}".format(got))

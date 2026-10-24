@@ -101,6 +101,9 @@ def test_data_targets():
     targets += [refuses(name = n, check = stage_test_data, args = [_R, TESTS, d, HELD], contains = c) for n, d, c in _STAGE]
     targets += [refuses(name = n, check = stage_package_test_data, args = [_R, _ROOTED_TESTS, _ROOTED_LIB, d, False], contains = c) for n, d, c in _ROOTED]
     targets += [accepts(name = n, check = stage_package_test_data, args = [_R, _ROOTED_TESTS, _ROOTED_LIB, d, False]) for n, d in _ROOTED_ACCEPTED]
+    # The installed layout stages the data apart from the sources: the graph's test path and a library source are accepted there, and the other rules hold.
+    targets.append(accepts(name = "installed_test_data_on_the_test_and_library_paths_is_accepted", check = stage_package_test_data, args = [_R, _ROOTED_TESTS, _ROOTED_LIB, {"*": {"examples/x/tests/test_a.mojo": "x", "pkg/__init__.mojo": "y"}}, True]))
+    targets.append(refuses(name = "installed_test_data_leaving_the_directory_is_refused", check = stage_package_test_data, args = [_R, _ROOTED_TESTS, _ROOTED_LIB, {"*": {"../escape.txt": "x"}}, True], contains = ["data destination \"../escape.txt\" holds an empty, `.` or `..` segment"]))
     targets += [refuses(name = n, check = check_test_env, args = [_R, e], contains = c) for n, e, c in _ENV]
     targets += [refuses(name = n, check = check_test_layout, args = [_R, l], contains = c) for n, l, c in _LAYOUT]
     targets += [refuses(name = n, check = check_installed_tree, args = [_R, s], contains = c) for n, s, c in _INSTALLED_TREE]

@@ -170,14 +170,15 @@ def graph_path_in_package(path, pkg_dir, rooted, refuse = fail):
 
 def native_include_dirs(u, pkg_dir, rooted, refuse = fail):
     """The include directories of a native unit, below the package's directory. mopm prints a unit's `includes` as the manifest wrote them (directories below
-    the member) in both graph bases, and when the manifest names none it prints the directories of the headers relative to the member (`addNatives` in
+    the member) in both graph bases, and when the manifest names none (or an empty list, `len > 0`) it prints the directories of the headers relative to the member (`addNatives` in
     mopm v0.0.42 `src/core/unit_graph.zig`, the `includes` binding: `n.includes` if given, else `dirsOf` of each header's path with `member_rel` cut off).
     So `includes` is used as printed, never rooted again; only the headers of the default carry the repository root when the graph is rooted, and are cut
     to the package first."""
-    if u.get("includes") != None:
+    if len(u.get("includes") or []) > 0:
         return u["includes"]
     hdrs = [graph_path_in_package(h["path"], pkg_dir, rooted, refuse) for h in u.get("hdrs", [])]
-    return sorted({h.rpartition("/")[0]: True for h in hdrs}.keys())
+    # A header at the member's directory is `.`, as `dirsOf` prints it.
+    return sorted({(h.rpartition("/")[0] or "."): True for h in hdrs}.keys())
 
 def stage_package_test_data(where, test_graph_of, lib_names, test_data, installed, refuse = fail):
     """The staged data of each test of a package, `{test source as the package names it: {staged path: label or file}}`. `test_graph_of` maps a test as the
@@ -188,7 +189,7 @@ def stage_package_test_data(where, test_graph_of, lib_names, test_data, installe
     held = {t: ([] if installed else [test_graph_of[t]] + sorted(lib_names)) for t in tests}
     return stage_test_data(where, tests, test_data, held, refuse)
 
-TOOLCHAIN_FILE ="mopm-toolchain.toml"
+TOOLCHAIN_FILE = "mopm-toolchain.toml"
 
 # mopm-toolchain.toml is required: no mopm and no Mojo is chosen for a package that does not name them.
 TOOLCHAIN_FILE_HELP = ("{} is required and there is no default. Create it at or above the package directory, for example:\n\n" +
