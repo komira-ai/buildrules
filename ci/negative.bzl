@@ -132,6 +132,7 @@ BRANCH_PACKAGES = [
     ("//examples/mojo/branch_shapes", "test_branch_shapes", True),
     ("//examples/mojo/uncompiled", "test_doubled", True),
     ("//examples/mojo/uncompiled_lean", "test_doubled", True),
+    ("//examples/mojo/uncompiled_gate", "test_entry", True),
     ("//examples/mojo/sibfake/chain/a", "test_chain_a", True),
     ("//examples/mojo/sibfake/chain/b", "test_chain_b", True),
     ("//examples/mojo/sibfake/chain/c", "test_chain_c", True),

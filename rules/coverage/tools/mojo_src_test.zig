@@ -322,6 +322,184 @@ test "a function declared with a tab after its keyword, or indented by a tab, is
     try t.expectEqual(@as(usize, 2), fns[0].line);
 }
 
+fn fnNamed(fns: []const M.Fn, name: []const u8) !M.Fn {
+    for (fns) |f| {
+        if (std.mem.eql(u8, f.name, name)) return f;
+    }
+    return error.NoSuchFunction;
+}
+
+fn expectBlocks(want: []const []const usize, got: []const []const usize) !void {
+    try t.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try t.expectEqualSlices(usize, w, g);
+}
+
+test "a function is always_inline only by a decorator line right above it" {
+    var ar = arena();
+    defer ar.deinit();
+    const fns = try M.declaredFunctions(ar.allocator(),
+        \\@always_inline
+        \\def inl(x: Int) -> Int:
+        \\    return x
+        \\
+        \\@always_inline("nodebug")
+        \\def inl_arg(x: Int) -> Int:
+        \\    return x
+        \\
+        \\@a
+        \\@always_inline
+        \\def stacked(x: Int) -> Int:
+        \\    return x
+        \\
+        \\def undecorated(x: Int) -> Int:
+        \\    return x
+        \\
+        \\@a
+        \\def other_decorator(x: Int) -> Int:
+        \\    return x
+        \\
+        \\@always_inline
+        \\
+        \\def blank_between(x: Int) -> Int:
+        \\    return x
+    );
+    for ([_][]const u8{ "inl", "inl_arg", "stacked" }) |n| try t.expectEqual(M.Kind.always_inline, (try fnNamed(fns, n)).kind);
+    for ([_][]const u8{ "undecorated", "other_decorator", "blank_between" }) |n| try t.expectEqual(M.Kind.plain, (try fnNamed(fns, n)).kind);
+}
+
+test "a comptime if / elif / else chain is one arm per branch, the gate line in the arm and not in its block" {
+    var ar = arena();
+    defer ar.deinit();
+    const fns = try M.declaredFunctions(ar.allocator(),
+        \\def chain(x: Int) -> Int:
+        \\    var y = x
+        \\    comptime if A:
+        \\        y = 1
+        \\    comptime elif B:
+        \\        y = 2
+        \\    comptime else:
+        \\        y = 3
+        \\    return y
+    );
+    const f = fns[0];
+    try t.expectEqual(M.Kind.comptime_if, f.kind);
+    try t.expectEqualSlices(usize, &.{ 3, 4, 5, 6, 7, 8 }, f.arms);
+    try expectBlocks(&.{ &.{4}, &.{6}, &.{8} }, f.arm_blocks);
+}
+
+test "a @parameter over a statement is an arm, and an elif / else after it continues the chain; over a def it is none" {
+    var ar = arena();
+    defer ar.deinit();
+    const fns = try M.declaredFunctions(ar.allocator(),
+        \\def pf(x: Int) -> Int:
+        \\    var y = 0
+        \\    @parameter
+        \\    if x > 0:
+        \\        y = 1
+        \\    elif x < 0:
+        \\        y = 2
+        \\    else:
+        \\        y = 3
+        \\    return y
+        \\
+        \\def loop(x: Int) -> Int:
+        \\    var s = 0
+        \\    @parameter
+        \\    for i in range(3):
+        \\        s += i
+        \\    return s
+        \\
+        \\def outer(x: Int) -> Int:
+        \\    @parameter
+        \\    def inner() -> Int:
+        \\        return x
+        \\    return inner()
+    );
+    const pf = try fnNamed(fns, "pf");
+    try t.expectEqual(M.Kind.comptime_if, pf.kind);
+    try t.expectEqualSlices(usize, &.{ 3, 4, 5, 6, 7, 8, 9 }, pf.arms);
+    try expectBlocks(&.{ &.{ 4, 5 }, &.{7}, &.{9} }, pf.arm_blocks);
+    const lp = try fnNamed(fns, "loop");
+    try t.expectEqual(M.Kind.comptime_if, lp.kind);
+    try t.expectEqualSlices(usize, &.{ 14, 15, 16 }, lp.arms);
+    try expectBlocks(&.{&.{ 15, 16 }}, lp.arm_blocks);
+    // A closure is a function of its own: the decorator over its `def` opens no arm of `outer`.
+    const outer = try fnNamed(fns, "outer");
+    try t.expectEqual(M.Kind.plain, outer.kind);
+    try t.expectEqual(@as(usize, 0), outer.arms.len);
+    try t.expectEqual(M.Kind.plain, (try fnNamed(fns, "inner")).kind);
+}
+
+test "an always_inline function with an arm stays always_inline, and nested arms are each listed once" {
+    var ar = arena();
+    defer ar.deinit();
+    const fns = try M.declaredFunctions(ar.allocator(),
+        \\@always_inline
+        \\def inl_arm(x: Int) -> Int:
+        \\    comptime if A:
+        \\        return 1
+        \\    return 0
+        \\
+        \\def nested(x: Int) -> Int:
+        \\    comptime if A:
+        \\        comptime if B:
+        \\            return 1
+        \\        return 2
+        \\    return 3
+    );
+    const a = try fnNamed(fns, "inl_arm");
+    try t.expectEqual(M.Kind.always_inline, a.kind);
+    try t.expectEqualSlices(usize, &.{ 3, 4 }, a.arms);
+    const n = try fnNamed(fns, "nested");
+    try t.expectEqual(M.Kind.comptime_if, n.kind);
+    try t.expectEqualSlices(usize, &.{ 8, 9, 10, 11 }, n.arms);
+    try expectBlocks(&.{ &.{ 9, 10, 11 }, &.{10} }, n.arm_blocks);
+}
+
+test "a comptime if inside a string, or a closure's arm, is no arm of the function around it" {
+    var ar = arena();
+    defer ar.deinit();
+    const fns = try M.declaredFunctions(ar.allocator(),
+        \\def text(x: Int) -> String:
+        \\    var s = """
+        \\    comptime if A:
+        \\    """
+        \\    return s
+        \\
+        \\def around(x: Int) -> Int:
+        \\    def inner() -> Int:
+        \\        comptime if A:
+        \\            return 1
+        \\        return 0
+        \\    return inner()
+    );
+    try t.expectEqual(M.Kind.plain, (try fnNamed(fns, "text")).kind);
+    try t.expectEqual(M.Kind.plain, (try fnNamed(fns, "around")).kind);
+    try t.expectEqual(M.Kind.comptime_if, (try fnNamed(fns, "inner")).kind);
+}
+
+test "unrecorded: a function with a record on one own line is compiled; a nested function's record is not its outer function's" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const text =
+        \\def outer(x: Int) -> Int:
+        \\    def inner() -> Int:
+        \\        return x
+        \\    return inner()
+        \\
+        \\def other(x: Int) -> Int:
+        \\    return x
+    ;
+    const fns = try M.declaredFunctions(a, text);
+    const rec = try set(a, &.{3});
+    const un = try M.unrecorded(a, fns, &rec);
+    // `inner` (2 to 3) has the record; `outer` (1 and 4) has none of its own; `other` has none.
+    try t.expectEqual(@as(usize, 2), un.len);
+    try t.expectEqualStrings("outer", un[0].name);
+    try t.expectEqualStrings("other", un[1].name);
+}
+
 test "the first line marks a generated source" {
     try t.expect(M.isGenerated("# @generated by the protobuf compiler\ndef f(): pass\n"));
     try t.expect(M.isGenerated("# @generated"));

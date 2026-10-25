@@ -1,9 +1,10 @@
 //! cov_summary: the line coverage of a package, from the normalized Cobertura reports of its tests (cov_normalize's output).
 //!
 //!   cov_summary --out <file> [--expect <repository path>]... [--src <repository path>=<file>]... [--blocks <blocks file>]...
-//!               [--branch-lcov <branch records>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] <report.xml>...
+//!               [--branch-lcov <branch records>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] [--uncompiled-report <file>] <report.xml>...
 //!
-//! `--src` gives the file behind an `--expect` path (Mojo only). The Mojo report omits a source with no executable line, so an expected source that
+//! `--src` gives the file behind an `--expect` path (Mojo only); a `--src` path that is no `--expect` path is another source of the package (a
+//! test), read for the calls that reach the code no test compiled and never counted. The Mojo report omits a source with no executable line, so an expected source that
 //! no report names but whose text has no statement beyond comments, docstrings and `import` lines (a re-export `__init__.mojo`) is listed as 0/0
 //! instead of refused; one with any other statement stays refused (`hasNoStatements`).
 //!
@@ -29,10 +30,20 @@
 //! is exactly `# @generated` (then the end of the line, a space or a tab) is machine-written: it is neither required in a report nor counted (its row, if a report names it, says
 //! `(not counted)`). `--uncompiled-lines <file>` writes those lines as a Cobertura report (hits 0), `--uncompiled-branches <file>` those arms
 //! as a branch record file, so a consumer that takes the reports and the branch records plus these two files counts what the summary did.
+//!
+//! Not all of those lines are counted. A function with no record of its own is also what a function looks like that the compiler inlined into its
+//! callers, and one whose code sits in a `comptime if` arm dropped on this target; only evidence that a test reached it tells those from an uncalled
+//! function (mojo_calls.zig: a hit line outside it that calls it, for an `@always_inline` function's lines and a compile-time arm's lines), or that
+//! every use of it is in an arm no report records (mojo_gate.zig: a platform-gated function, all of whose lines go). Those lines and the branch arms
+//! on them are in neither the figure nor the two files, and `--uncompiled-report <file>` lists them: `excluded <path> <lines> lines <arms> arms`
+//! per source, `excluded total ...`, `gated <path> <function> <def line> <lines> lines` per function, `gated total <n> functions <lines> lines
+//! <arms> arms`. Everything else is counted, as it is without that evidence.
 
 const std = @import("std");
 const branch_lcov = @import("branch_lcov.zig");
 const mojo_src = @import("mojo_src.zig");
+const mojo_calls = @import("mojo_calls.zig");
+const mojo_gate = @import("mojo_gate.zig");
 
 pub const FileCov = struct { path: []const u8, hit: usize, total: usize };
 
@@ -467,8 +478,17 @@ pub fn branchLines(a: std.mem.Allocator, sum: *const branch_lcov.Sum) !BranchLin
     return out;
 }
 
-/// What the sources hold that no test compiled, as the two files a consumer adds to the reports.
-pub const Uncompiled = struct { cobertura: []const u8, branches: []const u8 };
+/// What the sources hold that no test compiled, as the two files a consumer adds to the reports, and what was left out of them: `listing` is the text
+/// (`--uncompiled-report`), `excluded` the sources that had lines or arms left out by the call evidence (sorted by path), `gated` the platform-gated
+/// functions (by path, then line; `lines` is the number of their lines the report would have listed) and `gated_arms` the branch arms on their lines.
+pub const Uncompiled = struct {
+    cobertura: []const u8,
+    branches: []const u8,
+    listing: []const u8 = "",
+    excluded: []const Excluded = &.{},
+    gated: []const mojo_gate.Cand = &.{},
+    gated_arms: usize = 0,
+};
 
 fn xmlEscape(a: std.mem.Allocator, o: *std.ArrayList(u8), s: []const u8) !void {
     for (s) |c| switch (c) {
@@ -481,9 +501,32 @@ fn xmlEscape(a: std.mem.Allocator, o: *std.ArrayList(u8), s: []const u8) !void {
     };
 }
 
+/// What `addUncompiled` found for one expected source: the functions no test compiled, which of them are candidates for the platform gate, and the
+/// lines the call evidence leaves out (mojo_calls.zig).
+const Plan = struct {
+    path: []const u8,
+    ls: []const mojo_src.Line,
+    un: []const mojo_src.Fn,
+    by_evidence: mojo_src.LineSet,
+    /// For each of `un`, its index in the candidates given to the gate, or null when the evidence covers all its lines.
+    cand: []?usize,
+};
+
+fn setOf(a: std.mem.Allocator, lines: ?*const Lines, branch_lines: ?*const mojo_src.LineSet) !mojo_src.LineSet {
+    var s: mojo_src.LineSet = .empty;
+    if (lines) |l| for (l.keys()) |ln| try s.put(a, ln, {});
+    if (branch_lines) |bl| for (bl.keys()) |ln| try s.put(a, ln, {});
+    return s;
+}
+
 /// Adds to `files` (path -> line -> hit) the own lines, as not hit, of every function of each expected source (`srcs`) that no line of `files`
 /// and no branch record (`branches`) sits in; returns them as a Cobertura report, with the arms of their decision words as branch records
 /// (`with_branches`). A source `files` does not name is left alone: it is in no report, and `missing` refuses it.
+///
+/// Two kinds of those lines are left out and listed (`Uncompiled.listing`), the rest are counted: the lines of a function a test is seen to
+/// reach (mojo_calls.zig: an inlined function's lines, a compile-time arm's), and every line of a platform-gated function (mojo_gate.zig). The
+/// evidence is the hit lines of `files`, read before this adds anything, in the package's sources: `srcs` holds the expected sources and may hold
+/// more (the package's tests), which are read for calls and never counted.
 pub fn addUncompiled(
     a: std.mem.Allocator,
     files: *std.StringArrayHashMapUnmanaged(Lines),
@@ -493,33 +536,102 @@ pub fn addUncompiled(
     srcs: []const [2][]const u8,
     read: *const fn (std.mem.Allocator, []const u8) []const u8,
 ) !Uncompiled {
-    var xml = std.ArrayList(u8).empty;
-    var lcov = std.ArrayList(u8).empty;
-    try xml.appendSlice(a, "<?xml version=\"1.0\" ?>\n<coverage timestamp=\"0\">\n\t<packages>\n\t\t<package name=\"\">\n\t\t\t<classes>\n");
+    // The package's sources, and what each file's reports record (before anything is added to `files`).
+    var texts = std.ArrayList(mojo_calls.Source).empty;
+    var recorded: mojo_gate.Recorded = .empty;
+    var ev = mojo_calls.Evidence{};
+    for (srcs) |s| {
+        const text = read(a, s[1]);
+        try texts.append(a, .{ .path = s[0], .text = text });
+        const lines: ?*const Lines = files.getPtr(s[0]);
+        try recorded.put(a, s[0], try setOf(a, lines, branches.getPtr(s[0])));
+        if (lines) |l| {
+            var hit: mojo_src.LineSet = .empty;
+            for (l.keys(), l.values()) |ln, h| if (h) try hit.put(a, ln, {});
+            if (hit.count() != 0) try ev.add(a, s[0], text, &hit);
+        }
+    }
+    const dups = try mojo_calls.declaredTwice(a, texts.items);
+    // The functions no test compiled of each expected source named by a report; those the evidence does not cover whole are the gate's candidates.
+    var plans = std.ArrayList(Plan).empty;
+    var cands = std.ArrayList(mojo_gate.Cand).empty;
     for (expect) |e| {
         const file = srcOf(srcs, e) orelse continue;
-        const lines = files.getPtr(e) orelse continue;
-        var recorded: mojo_src.LineSet = .empty;
-        for (lines.keys()) |ln| try recorded.put(a, ln, {});
-        if (branches.getPtr(e)) |bl| {
-            for (bl.keys()) |ln| try recorded.put(a, ln, {});
+        if (!files.contains(e)) continue;
+        const text = read(a, file);
+        const ls = try mojo_src.lexSource(a, text);
+        const rec = recorded.get(e).?;
+        const un = try mojo_src.unrecorded(a, try mojo_src.declaredFunctions(a, text), &rec);
+        const by_ev = try mojo_calls.unreliableLines(a, text, e, &ev, &dups);
+        const idx = try a.alloc(?usize, un.len);
+        for (un, idx) |f, *slot| {
+            slot.* = null;
+            var evidenced = true;
+            for (f.lines) |ln| evidenced = evidenced and by_ev.contains(ln);
+            if (f.lines.len == 0 or evidenced) continue;
+            slot.* = cands.items.len;
+            try cands.append(a, .{ .path = e, .name = f.name, .line = f.line, .lines = f.lines.len });
         }
-        const u = try mojo_src.uncompiled(a, read(a, file), &recorded);
-        if (u.lines.len != 0) {
+        try plans.append(a, .{ .path = e, .ls = ls, .un = un, .by_evidence = by_ev, .cand = idx });
+    }
+    const gated = try mojo_gate.platformGated(a, texts.items, &recorded, cands.items);
+
+    var xml = std.ArrayList(u8).empty;
+    var lcov = std.ArrayList(u8).empty;
+    var left = std.ArrayList(Excluded).empty;
+    var gated_fns = std.ArrayList(mojo_gate.Cand).empty;
+    var gated_arms: usize = 0;
+    try xml.appendSlice(a, "<?xml version=\"1.0\" ?>\n<coverage timestamp=\"0\">\n\t<packages>\n\t\t<package name=\"\">\n\t\t\t<classes>\n");
+    for (plans.items) |p| {
+        // The lines of the functions the gate dropped, and every line and decision of the uncompiled functions.
+        var gated_lines: mojo_src.LineSet = .empty;
+        var all = std.ArrayList(usize).empty;
+        var decisions = std.ArrayList(mojo_src.Decision).empty;
+        for (p.un, p.cand) |f, slot| {
+            if (slot) |c| {
+                if (gated[c]) {
+                    try gated_fns.append(a, cands.items[c]);
+                    for (f.lines) |ln| try gated_lines.put(a, ln, {});
+                }
+            }
+            try all.appendSlice(a, f.lines);
+            try mojo_src.decisionsOn(a, p.ls, f.lines, &decisions);
+        }
+        std.mem.sort(usize, all.items, {}, std.sort.asc(usize));
+        mojo_src.sortDecisions(decisions.items);
+        var out = Excluded{ .path = p.path, .lines = 0, .arms = 0 };
+        var kept = std.ArrayList(usize).empty;
+        for (all.items) |ln| {
+            if (p.by_evidence.contains(ln)) {
+                out.lines += 1;
+            } else if (!gated_lines.contains(ln)) try kept.append(a, ln);
+        }
+        var kept_decisions = std.ArrayList(mojo_src.Decision).empty;
+        for (decisions.items) |d| {
+            if (!with_branches) continue;
+            if (p.by_evidence.contains(d.line)) {
+                out.arms += 2;
+            } else if (gated_lines.contains(d.line)) {
+                gated_arms += 2;
+            } else try kept_decisions.append(a, d);
+        }
+        if (out.lines != 0 or out.arms != 0) try left.append(a, out);
+        if (kept.items.len != 0) {
+            const lines = files.getPtr(p.path).?;
             try xml.appendSlice(a, "\t\t\t\t<class name=\"");
-            try xmlEscape(a, &xml, e);
+            try xmlEscape(a, &xml, p.path);
             try xml.appendSlice(a, "\" filename=\"");
-            try xmlEscape(a, &xml, e);
+            try xmlEscape(a, &xml, p.path);
             try xml.appendSlice(a, "\">\n\t\t\t\t\t<lines>\n");
-            for (u.lines) |ln| {
+            for (kept.items) |ln| {
                 try lines.put(a, ln, false);
                 try xml.print(a, "\t\t\t\t\t\t<line number=\"{d}\" hits=\"0\"/>\n", .{ln});
             }
             try xml.appendSlice(a, "\t\t\t\t\t</lines>\n\t\t\t\t</class>\n");
         }
-        if (with_branches and u.decisions.len != 0) {
-            try lcov.print(a, "SF:{s}\n", .{e});
-            for (u.decisions) |d| {
+        if (kept_decisions.items.len != 0) {
+            try lcov.print(a, "SF:{s}\n", .{p.path});
+            for (kept_decisions.items) |d| {
                 const kind = if (d.rhs) "rhs" else "br";
                 try lcov.print(a, "BRDA:{d},{d}:{s}:0/1,0,-\nBRDA:{d},{d}:{s}:0/1,1,-\n", .{ d.line, d.col, kind, d.line, d.col, kind });
             }
@@ -527,7 +639,49 @@ pub fn addUncompiled(
         }
     }
     try xml.appendSlice(a, "\t\t\t</classes>\n\t\t</package>\n\t</packages>\n</coverage>\n");
-    return .{ .cobertura = try xml.toOwnedSlice(a), .branches = try lcov.toOwnedSlice(a) };
+    return .{
+        .cobertura = try xml.toOwnedSlice(a),
+        .branches = try lcov.toOwnedSlice(a),
+        .listing = try listing(a, left.items, gated_fns.items, gated_arms),
+        .excluded = left.items,
+        .gated = gated_fns.items,
+        .gated_arms = gated_arms,
+    };
+}
+
+/// The lines and arms of one source that the call evidence left out of the numbers.
+pub const Excluded = struct { path: []const u8, lines: usize, arms: usize };
+
+/// The text of what was left out (`--uncompiled-report`): the files with lines or arms the call evidence left out, then their total; the platform-gated
+/// functions (every line of one is left out, and the arms on them), then their total. Sorted by path, then by line; always ends in the two totals.
+fn listing(a: std.mem.Allocator, left: []Excluded, gated: []mojo_gate.Cand, gated_arms: usize) ![]const u8 {
+    std.mem.sort(Excluded, left, {}, struct {
+        fn lt(_: void, x: Excluded, y: Excluded) bool {
+            return std.mem.lessThan(u8, x.path, y.path);
+        }
+    }.lt);
+    std.mem.sort(mojo_gate.Cand, gated, {}, struct {
+        fn lt(_: void, x: mojo_gate.Cand, y: mojo_gate.Cand) bool {
+            if (!std.mem.eql(u8, x.path, y.path)) return std.mem.lessThan(u8, x.path, y.path);
+            return x.line < y.line;
+        }
+    }.lt);
+    var o = std.ArrayList(u8).empty;
+    var lines: usize = 0;
+    var arms: usize = 0;
+    for (left) |l| {
+        try o.print(a, "excluded {s} {d} lines {d} arms\n", .{ l.path, l.lines, l.arms });
+        lines += l.lines;
+        arms += l.arms;
+    }
+    try o.print(a, "excluded total {d} lines {d} arms\n", .{ lines, arms });
+    var glines: usize = 0;
+    for (gated) |g| {
+        try o.print(a, "gated {s} {s} {d} {d} lines\n", .{ g.path, g.name, g.line, g.lines });
+        glines += g.lines;
+    }
+    try o.print(a, "gated total {d} functions {d} lines {d} arms\n", .{ gated.len, glines, gated_arms });
+    return o.toOwnedSlice(a);
 }
 
 pub const Found = struct { counted: []const []const u8, unc: Uncompiled };
@@ -573,6 +727,7 @@ pub fn main() !void {
     var srcs = std.ArrayList([2][]const u8).empty;
     var unc_lines_out: ?[]const u8 = null;
     var unc_branches_out: ?[]const u8 = null;
+    var unc_report_out: ?[]const u8 = null;
     var i: usize = 1;
     while (i < argv.len) : (i += 1) {
         if (std.mem.eql(u8, argv[i], "--out") and i + 1 < argv.len) {
@@ -597,13 +752,16 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, argv[i], "--uncompiled-branches") and i + 1 < argv.len) {
             i += 1;
             unc_branches_out = argv[i];
+        } else if (std.mem.eql(u8, argv[i], "--uncompiled-report") and i + 1 < argv.len) {
+            i += 1;
+            unc_report_out = argv[i];
         } else if (argv[i].len > 0 and argv[i][0] == '-') {
             die(2, "unknown option {s}", .{argv[i]});
         } else {
             try reports.append(a, argv[i]);
         }
     }
-    if (out_path == null or reports.items.len == 0) die(2, "usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... [--src <path>=<file>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] <report.xml>...", .{});
+    if (out_path == null or reports.items.len == 0) die(2, "usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... [--src <path>=<file>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] [--uncompiled-report <file>] <report.xml>...", .{});
     if (block_reports.items.len != 0 and branch_files.items.len != 0) die(2, "--blocks (Zig) and --branch-lcov (Mojo) are two kinds of branch figure: a package has one", .{});
     var files: std.StringArrayHashMapUnmanaged(Lines) = .empty;
     for (reports.items) |p| {
@@ -621,6 +779,7 @@ pub fn main() !void {
     const unc = found.unc;
     if (unc_lines_out) |p| std.fs.cwd().writeFile(.{ .sub_path = p, .data = unc.cobertura }) catch |e| die(1, "cannot write {s}: {s}", .{ p, @errorName(e) });
     if (unc_branches_out) |p| std.fs.cwd().writeFile(.{ .sub_path = p, .data = unc.branches }) catch |e| die(1, "cannot write {s}: {s}", .{ p, @errorName(e) });
+    if (unc_report_out) |p| std.fs.cwd().writeFile(.{ .sub_path = p, .data = unc.listing }) catch |e| die(1, "cannot write {s}: {s}", .{ p, @errorName(e) });
     const rows = try withEmptySources(a, try summarize(a, &files), counted, srcs.items, readSource);
     if (missing(rows, counted)) |m| die(1, "{s} is in no report: no test compiled it, or kcov could not open it", .{m});
     var text = try renderScoped(a, rows, counted, "", expect.items.len != 0);

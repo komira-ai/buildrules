@@ -291,7 +291,8 @@ genhtml take a block number there, and these files are not for them.
 The IR holds only the functions a test reaches, so these records name no branch of a function no test calls, and a figure from them alone would lose that function's arms when its last test is deleted.
 `cov_summary` adds them back from the source (`../tools/mojo_src.zig`; `../README.md`, "Code no test compiled"): for each function with no line record and no branch record, two arms of kind `br` for each decision word
 on its lines, never taken, and two of kind `rhs` for the right operand of an `and`/`or` that an `if`, `elif` or `while` tests, in one more record file (`uncompiled.branches.info`, part of `:coverage[branches]`). The source has no
-word for the branches the compiler makes of a raising call or a subscript, so the count of a function no test calls can be below the one it has when a test calls it.
+word for the branches the compiler makes of a raising call or a subscript, so the count of a function no test calls can be below the one it has when a test calls it. The arms on the lines that call
+evidence or the platform gate leave out (`../tools/mojo_calls.zig`, `mojo_gate.zig`) are not written.
 
 ```
 SF:examples/mojo/partial/src/partial/__init__.mojo

@@ -57,4 +57,20 @@ zig_test(
     visibility = ["//ci:"],
 )
 
+# What `:coverage` leaves out of the code no test compiled when it is not uncovered code (uncompiled_gate_test.zig): `uncompiled_gate` has a function used only in a
+# `comptime if False` arm (platform-gated: left out and listed), an inlined function a test reaches (the compiler's own record stands), and an inlined function and a
+# function nobody uses (counted).
+zig_test(
+    name = "uncompiled_gate",
+    exec_compatible_with = LINUX_X86_64,
+    src = "uncompiled_gate_test.zig",
+    data = {
+        "coverage.txt": "//examples/mojo/uncompiled_gate:coverage",
+        "uncompiled.cobertura.xml": "//examples/mojo/uncompiled_gate:coverage[reports_uncompiled]",
+        "uncompiled.excluded.txt": "//examples/mojo/uncompiled_gate:coverage[excluded_uncompiled]",
+    },
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["//ci:"],
+)
+
 scrub_files()

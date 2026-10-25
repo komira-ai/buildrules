@@ -72,6 +72,7 @@ scrub_test(
     "//examples/mojo/testdata:scrub_files",
     "//examples/mojo/uncompiled:scrub_files",
     "//examples/mojo/uncompiled_lean:scrub_files",
+    "//examples/mojo/uncompiled_gate:scrub_files",
     "//examples/mojo/installed:scrub_files",
     "//examples/mojo/registry/cnative:scrub_files",
     "//examples/mojo/registry/probe_sys/base_sys:scrub_files",

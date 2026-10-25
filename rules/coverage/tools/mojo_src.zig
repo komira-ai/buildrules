@@ -24,9 +24,14 @@
 //!   follows a line that is only `@parameter`. Each is two arms, neither taken; an `and` / `or` on a line that starts with `if`, `elif` or
 //!   `while` has a second two for its right operand (the compiler's `rhs` record, which an `if` that tests the result gives).
 //!
+//! * **Class and arms** (`Fn.kind`, `arms`, `arm_blocks`): a function is `always_inline` when a decorator line right above it starts with
+//!   `@always_inline`; its **arms** are the own lines (a nested function's left out) from a `comptime if` / `elif` / `else` line, or a `@parameter`
+//!   over a statement (over a `def` it is a closure, no arm), to the next code line indented no deeper, with an `elif` / `else` at the same indent
+//!   continuing the chain; a function with one that is not `always_inline` is `comptime_if`. mojo_calls.zig and mojo_gate.zig read them.
+//!
 //! What this cannot see (the figure is a heuristic, as covcheck's was): a `comptime if` arm the compiler dropped inside a function a test
-//! compiled; a function the compiler inlines into every caller, whose lines may carry no record of their own (counted as not compiled); the
-//! raising calls and subscripts that are branches in the IR but no word of the source.
+//! compiled; a function the compiler inlined into every caller, or one whose use is in a dropped arm, which looks like a function nobody calls unless
+//! mojo_calls.zig or mojo_gate.zig has the evidence; the raising calls and subscripts that are branches in the IR but no word of the source.
 
 const std = @import("std");
 const Alloc = std.mem.Allocator;
@@ -251,8 +256,23 @@ pub fn isGenerated(text: []const u8) bool {
     return std.mem.startsWith(u8, text, "# ") and std.mem.eql(u8, word[0..end], "@generated");
 }
 
+/// What a function is for the call evidence and the platform gate (the full-source checker's `kind`, decls.mojo:41-57, 101-127):
+/// `always_inline` when a decorator line right above it starts with `@always_inline`; else `comptime_if` when its own lines hold a compile-time
+/// arm; else `plain`.
+pub const Kind = enum { plain, always_inline, comptime_if };
+
 /// A function with a body: its name, its `def` line, its last line (1-based, inclusive) and its own executable lines.
-pub const Fn = struct { name: []const u8, line: usize, end: usize, lines: []usize };
+/// `arms` are the own lines inside a compile-time arm, gate line included, ascending; `arm_blocks` each arm's own lines after its gate line (the
+/// gate's condition runs whichever arm is compiled), one block per arm that has any (decls.mojo:113-118).
+pub const Fn = struct {
+    name: []const u8,
+    line: usize,
+    end: usize,
+    lines: []usize,
+    kind: Kind = .plain,
+    arms: []const usize = &.{},
+    arm_blocks: []const []const usize = &.{},
+};
 
 fn indentOf(text: []const u8) usize {
     var i: usize = 0;
@@ -367,8 +387,111 @@ pub fn declaredFunctions(a: Alloc, text: []const u8) ![]Fn {
             if (executable(ls[ln - 1]) and !nested(fns, k, ln)) try own.append(a, ln);
         }
         f.lines = try own.toOwnedSlice(a);
+        f.kind = if (decoratedInline(ls, f.line - 1)) .always_inline else .plain;
+        try computeArms(a, ls, f);
     }
     return fns;
+}
+
+/// Whether a decorator line right above the `def` at 0-based index `def_idx` starts with `@always_inline` (decls.mojo:291-297: the decorators
+/// are the run of code lines starting with `@` just above, outside strings).
+fn decoratedInline(ls: []const Line, def_idx: usize) bool {
+    var found = false;
+    var d = def_idx;
+    while (d > 0) {
+        d -= 1;
+        const c = codeOf(ls[d]);
+        if (!ls[d].code or ls[d].in_string or !std.mem.startsWith(u8, c, "@")) break;
+        if (std.mem.startsWith(u8, c, "@always_inline")) found = true;
+    }
+    return found;
+}
+
+/// Whether `code` is an `elif` or an `else` (the word, then not an identifier byte): a compile-time chain goes on (decls.mojo:371-384).
+fn continuesChain(code: []const u8) bool {
+    for ([_][]const u8{ "elif", "else" }) |w| {
+        if (std.mem.startsWith(u8, code, w)) {
+            if (code.len == w.len) return true;
+            const c = code[w.len];
+            if (!(std.ascii.isAlphanumeric(c) or c == '_')) return true;
+        }
+    }
+    return false;
+}
+
+/// Whether the line at 0-based index `at` opens a compile-time arm: a `comptime if` / `elif` / `else` line, or a `@parameter` over a statement
+/// (over a `def` it is a closure, no arm) (decls.mojo:387-406).
+fn opensArm(ls: []const Line, at: usize) bool {
+    if (!ls[at].code or ls[at].in_string) return false;
+    const c = codeOf(ls[at]);
+    for ([_][]const u8{ "comptime if", "comptime elif", "comptime else" }) |w| {
+        if (std.mem.startsWith(u8, c, w)) return true;
+    }
+    if (!std.mem.startsWith(u8, c, "@parameter")) return false;
+    var j = at + 1;
+    while (j < ls.len) : (j += 1) {
+        if (ls[j].code and !ls[j].in_string) {
+            if (std.mem.startsWith(u8, codeOf(ls[j]), "@")) continue;
+            return defNameAt(ls[j].text) == null;
+        }
+    }
+    return false;
+}
+
+/// The function's compile-time arms, from its own lines only (a nested function is a function of its own): a line that opens one runs the arm to the
+/// next code line indented no deeper, and an `elif` / `else` at the same indent continues the chain with a block of its own; for `@parameter` the arm is
+/// the statement the decorator opens and its body. A function with an arm is `comptime_if` unless it is `always_inline` (decls.mojo:314-368).
+fn computeArms(a: Alloc, ls: []const Line, f: *Fn) !void {
+    const n = ls.len;
+    var arms = std.ArrayList(usize).empty;
+    var blocks = std.ArrayList([]const usize).empty;
+    var gated = false;
+    for (f.lines) |gl| {
+        if (!opensArm(ls, gl - 1)) continue;
+        gated = true;
+        const ind = indentOf(ls[gl - 1].text);
+        var start = gl - 1; // the 0-based index of the first line of the arm
+        while (true) {
+            var j = start + 1;
+            if (std.mem.startsWith(u8, codeOf(ls[start]), "@parameter")) {
+                while (j < n and !(ls[j].code and !ls[j].in_string and !std.mem.startsWith(u8, codeOf(ls[j]), "@"))) j += 1;
+                j += 1;
+            }
+            var stop = n;
+            while (j < n) : (j += 1) {
+                if (ls[j].code and !ls[j].in_string and indentOf(ls[j].text) <= ind) {
+                    stop = j;
+                    break;
+                }
+            }
+            var blk = std.ArrayList(usize).empty;
+            var ln = start + 1;
+            while (ln <= stop) : (ln += 1) {
+                if (std.mem.indexOfScalar(usize, f.lines, ln) == null) continue;
+                try arms.append(a, ln);
+                if (ln > start + 1) try blk.append(a, ln);
+            }
+            if (blk.items.len > 0) try blocks.append(a, try blk.toOwnedSlice(a));
+            if (stop < n and ls[stop].code and !ls[stop].in_string and indentOf(ls[stop].text) == ind and continuesChain(codeOf(ls[stop]))) {
+                start = stop;
+                continue;
+            }
+            break;
+        }
+    }
+    if (gated and f.kind == .plain) f.kind = .comptime_if;
+    // Each arm line once, in order (nested arms overlap).
+    std.mem.sort(usize, arms.items, {}, std.sort.asc(usize));
+    var w: usize = 0;
+    for (arms.items, 0..) |v, i| {
+        if (i == 0 or v != arms.items[w - 1]) {
+            arms.items[w] = v;
+            w += 1;
+        }
+    }
+    arms.shrinkRetainingCapacity(w);
+    f.arms = try arms.toOwnedSlice(a);
+    f.arm_blocks = try blocks.toOwnedSlice(a);
 }
 
 /// A line set, for the lines a report gives a record.
@@ -381,37 +504,55 @@ pub const Uncompiled = struct { lines: []usize, decisions: []Decision };
 /// branch records count apart from the `and` / `or` itself (rules/coverage/branch/README.md, "And, or").
 pub const Decision = struct { line: usize, col: usize, rhs: bool = false };
 
-pub fn uncompiled(a: Alloc, text: []const u8, recorded: *const LineSet) !Uncompiled {
-    const ls = try lexSource(a, text);
-    const fns = try declaredFunctions(a, text);
-    var lines = std.ArrayList(usize).empty;
-    var decisions = std.ArrayList(Decision).empty;
+/// The functions of `fns` none of whose own lines (a nested function's left out) is in `recorded`: the ones no test compiled.
+pub fn unrecorded(a: Alloc, fns: []const Fn, recorded: *const LineSet) ![]Fn {
+    var out = std.ArrayList(Fn).empty;
     for (fns, 0..) |f, k| {
         var has_record = false;
         var ln = f.line;
         while (ln <= f.end and !has_record) : (ln += 1) {
             has_record = recorded.contains(ln) and !nested(fns, k, ln);
         }
-        if (has_record) continue;
-        for (f.lines) |own| {
-            try lines.append(a, own);
-            const l = ls[own - 1];
-            if (std.mem.eql(u8, l.first, "comptime") or std.mem.eql(u8, l.first, "alias")) continue;
-            if (own >= 2 and std.mem.eql(u8, codeOf(ls[own - 2]), "@parameter")) continue;
-            const tested = std.mem.eql(u8, l.first, "if") or std.mem.eql(u8, l.first, "elif") or std.mem.eql(u8, l.first, "while");
-            for (l.words) |w| {
-                try decisions.append(a, .{ .line = own, .col = w.col });
-                if (w.logical and tested) try decisions.append(a, .{ .line = own, .col = w.col, .rhs = true });
-            }
+        if (!has_record) try out.append(a, f);
+    }
+    return out.toOwnedSlice(a);
+}
+
+/// Appends to `out` the decisions on `lines` (1-based lines of `ls`).
+pub fn decisionsOn(a: Alloc, ls: []const Line, lines: []const usize, out: *std.ArrayList(Decision)) !void {
+    for (lines) |own| {
+        const l = ls[own - 1];
+        if (std.mem.eql(u8, l.first, "comptime") or std.mem.eql(u8, l.first, "alias")) continue;
+        if (own >= 2 and std.mem.eql(u8, codeOf(ls[own - 2]), "@parameter")) continue;
+        const tested = std.mem.eql(u8, l.first, "if") or std.mem.eql(u8, l.first, "elif") or std.mem.eql(u8, l.first, "while");
+        for (l.words) |w| {
+            try out.append(a, .{ .line = own, .col = w.col });
+            if (w.logical and tested) try out.append(a, .{ .line = own, .col = w.col, .rhs = true });
         }
     }
-    std.mem.sort(usize, lines.items, {}, std.sort.asc(usize));
-    std.mem.sort(Decision, decisions.items, {}, struct {
+}
+
+/// Decisions in line, column order, a decision before its right operand.
+pub fn sortDecisions(items: []Decision) void {
+    std.mem.sort(Decision, items, {}, struct {
         fn lt(_: void, x: Decision, y: Decision) bool {
             if (x.line != y.line) return x.line < y.line;
             if (x.col != y.col) return x.col < y.col;
             return !x.rhs and y.rhs;
         }
     }.lt);
+}
+
+pub fn uncompiled(a: Alloc, text: []const u8, recorded: *const LineSet) !Uncompiled {
+    const ls = try lexSource(a, text);
+    const un = try unrecorded(a, try declaredFunctions(a, text), recorded);
+    var lines = std.ArrayList(usize).empty;
+    var decisions = std.ArrayList(Decision).empty;
+    for (un) |f| {
+        try lines.appendSlice(a, f.lines);
+        try decisionsOn(a, ls, f.lines, &decisions);
+    }
+    std.mem.sort(usize, lines.items, {}, std.sort.asc(usize));
+    sortDecisions(decisions.items);
     return .{ .lines = try lines.toOwnedSlice(a), .decisions = try decisions.toOwnedSlice(a) };
 }

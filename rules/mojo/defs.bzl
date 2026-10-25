@@ -15,7 +15,8 @@ One line per package. The targets come from the package's unit graph, which `bui
                 branch arms, with the lines and decision words of every function no test compiled counted as found and not hit (rules/coverage/tools/mojo_src.zig);
                 `:coverage[reports]` is the per-line records of every test (kcov's Cobertura XML in repository paths) and one more file for the code no test compiled,
                 `:coverage[branches]` the branch records (lcov `BRDA` lines in repository paths) and one more for it (`[reports_of_tests]`, `[reports_uncompiled]`,
-                `[branches_of_tests]` and `[branches_uncompiled]` are the parts). The instrumented link of a test gets the test's native libraries as its ordinary link does.
+                `[branches_of_tests]` and `[branches_uncompiled]` are the parts); `:coverage[excluded_uncompiled]` lists what the call evidence and the
+                platform gate left out of those lines (rules/coverage/tools/mojo_calls.zig, mojo_gate.zig). The instrumented link of a test gets the test's native libraries as its ordinary link does.
                 A package whose tests run in the installed layout (`test_layout = "installed"`) has them too: the instrumented binary is run from the installed tree, as the kcov run is.
     :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green while `:coverage` is at least that floor (`lines NN.NN`, and
                 `branches NN.NN` when `coverage.txt` has branch rows; below it: "coverage fell"; at or above it passes, and above it prints "you may raise the
@@ -726,14 +727,22 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             visibility = visibility,
         )
 
-    # Line coverage of the package from its tests' reports. Fails when a source of the library is in no report.
+    # Line coverage of the package from its tests' reports. Fails when a source of the library is in no report. The summary reads the library's sources,
+    # and the tests' as well: a line of a test that a test hit and that calls a library function is the evidence that the function was reached, however
+    # little of it the compiler left (rules/coverage/tools/mojo_calls.zig). The tests are not `expect`ed, so nothing of them is counted.
+    cov_srcs = {}
+    if own_lib and covs:
+        for s in own_lib["srcs"]:
+            cov_srcs[_join(here_repo, in_package(own_lib["root"]), s["path"][len(own_lib["root"]) + 1:])] = _join(project, in_package(s["path"]))
+        for ts in test_sources:
+            cov_srcs[_join(here_repo, ts)] = _join(project, ts)
     mojo_cov_summary_rule(
         name = name_once("coverage"),
         branches = branches,
         check = ":check",
         expect = [_join(here_repo, in_package(own_lib["root"]), s["path"][len(own_lib["root"]) + 1:]) for s in own_lib["srcs"]] if own_lib and covs else [],
         reports = covs,
-        srcs = {_join(here_repo, in_package(own_lib["root"]), s["path"][len(own_lib["root"]) + 1:]): _join(project, in_package(s["path"])) for s in own_lib["srcs"]} if own_lib and covs else {},
+        srcs = cov_srcs,
         visibility = visibility,
     )
     # `:conda`, the package as a registry would serve it, for a package that builds native libraries of its own: `mopm pack` of the gated `:lib`, with each
