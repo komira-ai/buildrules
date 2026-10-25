@@ -120,7 +120,7 @@ pub fn stage(a: std.mem.Allocator, args: Args) !void {
     try work.makePath(args.toolchains);
 }
 
-/// The value of `mopm` in the `[toolchain]` table of a mopm-toolchain.toml (`mopm = "0.0.42"`, either quote, a trailing comment allowed), or null.
+/// The value of `mopm` in the `[toolchain]` table of a mopm-toolchain.toml (`mopm = "0.0.48"`, either quote, a trailing comment allowed), or null.
 pub fn mopmVersionOf(text: []const u8) ?[]const u8 {
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |raw| {

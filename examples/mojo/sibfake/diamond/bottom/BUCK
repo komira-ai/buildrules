@@ -6,13 +6,15 @@ load(":buildrules.mojo.bzl", "mojo_package")
 mojo_package(path = ".", conda = True)
 
 # `:conda` is `mopm pack` of this package with the manifests of its sibling members staged at their repository paths (rules/mojo/pack.bzl). It holds this
-# package only, and records each sibling as an ordinary versioned dependency: the sibling is not in it, and no path is.
+# package only, and records each sibling as an ordinary versioned dependency: the sibling is not in it, and no path is. This leaf has no sibling, but its
+# mopm.toml names two `[native-dependencies]` to load (lz4 and zlib), and mopm 0.0.43 and later (mopm#216) record each as a conda dependency after the compiler,
+# under conda's package name and sorted by it; `depends` is that list, exactly, so a pack that drops them is red.
 mojo_conda_holds(
     name = "conda_holds",
     conda = ":conda",
     package = "dia_bottom",
     sole = True,
-    depends = [],
+    depends = ["libzlib", "lz4-c >=1.9.3"],
     visibility = ["//ci:"],
 )
 

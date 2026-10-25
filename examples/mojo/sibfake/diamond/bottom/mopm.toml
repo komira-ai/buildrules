@@ -3,6 +3,11 @@ name = "dia_bottom"
 version = "0.1.0"
 mojo = ["1.0.0"]
 
+# System libraries the package opens itself at run time: `mopm pack` records each as a conda dependency (lz4 is conda's lz4-c, zlib its libzlib).
+[native-dependencies]
+lz4 = { version = ">=1.9.3", mode = "load" }
+zlib = { mode = "load" }
+
 [targets]
 lib = { path = "src/dia_bottom" }
 tests = ["tests"]
