@@ -574,7 +574,7 @@ the rules of covcheck, the full-source checker this replaced: its lexer's execut
 two more for its right operand, as the compiler's records give; a line that starts with `comptime` or `alias`, or follows `@parameter`, decides nothing at run time). A function with a record on any one of its own
 lines is the compiler's alone, so its lines are the compiler's. The source is a heuristic where the compiler's records are exact: a function the compiler inlines into every caller can have no record of its own and reads as
 uncompiled; the compiler gives a function fewer lines than the source has (a `return` folded into a select has none), so deleting a test can raise the line denominator, and lowers it only if the compiler recorded a line the lexer does not count as code (none seen); and the
-compiler's raising calls and subscripts are branches the source has no word for, so the source's count of a function's arms can be below the compiler's. A source whose first line is a comment naming `@generated`
+compiler's raising calls and subscripts are branches the source has no word for, so the source's count of a function's arms can be below the compiler's. A source whose first line starts with `# @generated` (then the end of the line, a space or a tab)
 is machine-written: no report of it is asked for and nothing of it is counted (a report that names it lists the row `(not counted)`).
 
 **What `:coverage` gives a consumer.** Three outputs of one target, built from the same reports and records:

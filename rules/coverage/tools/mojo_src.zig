@@ -242,13 +242,13 @@ pub fn executableLines(a: Alloc, text: []const u8) ![]usize {
     return out.toOwnedSlice(a);
 }
 
-/// Whether the first line of `text` is a comment naming `@generated`: the source is machine-written, and nothing of it is counted.
-pub fn isGenerated(text_in: []const u8) bool {
-    var text = text_in;
-    if (std.mem.startsWith(u8, text, "\xEF\xBB\xBF")) text = text[3..];
-    const nl = std.mem.indexOfScalar(u8, text, '\n') orelse text.len;
-    const first = std.mem.trimLeft(u8, text[0..nl], " \t");
-    return std.mem.startsWith(u8, first, "#") and std.mem.indexOf(u8, first, "@generated") != null;
+/// Whether `text` begins with the marker `# @generated` (exactly, from byte 0) followed by the end of the line, a space, a tab or a CR:
+/// the source is machine-written, and nothing of it is counted. A leading blank, `#@generated` or a comment that names the word later
+/// does not mark a file, so a hand-written source cannot leave the denominator by accident.
+pub fn isGenerated(text: []const u8) bool {
+    const word = text[@min(2, text.len)..];
+    const end = std.mem.indexOfAny(u8, word, " \t\r\n") orelse word.len;
+    return std.mem.startsWith(u8, text, "# ") and std.mem.eql(u8, word[0..end], "@generated");
 }
 
 /// A function with a body: its name, its `def` line, its last line (1-based, inclusive) and its own executable lines.

@@ -26,7 +26,7 @@
 //! source of each expected file too and counts what the reports lack (mojo_src.zig has the rules): the own lines of every function none of whose
 //! lines has a record are found and not hit, and so are the two arms of every decision word (`if`, `elif`, `while`, `for`, `and`, `or`) on them
 //! when branch records are given. So a test that is deleted can take hits away and leaves the denominator where it was. A source whose first line
-//! is a comment naming `@generated` is machine-written: it is neither required in a report nor counted (its row, if a report names it, says
+//! is exactly `# @generated` (then the end of the line, a space or a tab) is machine-written: it is neither required in a report nor counted (its row, if a report names it, says
 //! `(not counted)`). `--uncompiled-lines <file>` writes those lines as a Cobertura report (hits 0), `--uncompiled-branches <file>` those arms
 //! as a branch record file, so a consumer that takes the reports and the branch records plus these two files counts what the summary did.
 
