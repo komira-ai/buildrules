@@ -64,7 +64,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx)
+    return problems + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + test_defines_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
@@ -93,6 +93,7 @@ COVERAGE_FLOOR_PACKAGES = [
     ("//examples/mojo/partial", True),
     ("//examples/mojo/reexport", True),
     ("//examples/mojo/testdata", True),
+    ("//examples/mojo/test_defines", False),
     ("//examples/mojo/branch_shapes", True),
     ("//examples/mojo/reexport_unused", False),
     ("//examples/mojo/copy_of_base", False),
@@ -127,6 +128,7 @@ BRANCH_PACKAGES = [
     ("//examples/mojo/ws/util", "test_util", True),
     ("//examples/mojo/ws/util/base", "test_base", True),
     ("//examples/mojo/testdata", "test_data_files", True),
+    ("//examples/mojo/test_defines", "test_defines_on", True),
     ("//examples/mojo/branch_shapes", "test_branch_shapes", True),
     ("//examples/mojo/sibfake/chain/a", "test_chain_a", True),
     ("//examples/mojo/sibfake/chain/b", "test_chain_b", True),
@@ -199,6 +201,42 @@ def native_link_problems(ctx):
             problems.append("{}: the link action passes --native {} in this order, the graph's order is {}".format(label, emitted, want))
         if not want:
             problems.append("{}: the graph's test links no native library, so there is nothing to hold here".format(label))
+    return problems
+
+# `mojo_package(test_defines = ...)` (rules/mojo/test_data.bzl, docs/contract.md section 12.9): the defines are compiler arguments of the three builds of each test (its run,
+# its kcov run and the bitcode of its branch run, so all three are the program that passed) and of nothing else. examples/mojo/test_defines gives three; its tests assert
+# they are on and that its library, built without them, does not see them. Held here: the arguments are on those three, in the order of the names, and are not on the library
+# of the package or on the tests of a package that gave none.
+TEST_DEFINES_PACKAGE = "//examples/mojo/test_defines"
+TEST_DEFINES_STEM = "test_defines_on"
+TEST_DEFINES_ARGS = ["-D", "BR_TEST_FLAG=true", "-D", "BR_TEST_LEVEL=3", "-D", "BR_TEST_NAME=probe"]
+TEST_DEFINES_ABSENT = ["//examples/mojo/test_defines:lib_ungated", "//examples/mojo/partial:lib_ungated", "//examples/mojo/partial:test_partial__bin", "//examples/mojo/partial:test_partial__cov_bin", "//examples/mojo/partial:test_partial__bc", "//examples/mojo/ws:bin_app_main", "//examples/mojo/ws/util:lib_ungated", "//examples/mojo/ws/util/base:lib_ungated"]
+
+# A package that gives defines and also has a binary and members it depends on (`ws`): its tests carry the defines, so the absences above are not vacuous there.
+TEST_DEFINES_WS_TEST = "//examples/mojo/ws:test_app__bin"
+TEST_DEFINES_WS_ARGS = ["-D", "BR_WS_FLAG=true"]
+
+def _build_args(ctx, label):
+    node = ctx.configured_targets(label, target_platform = GATE_PLATFORM)
+    return list(node.attrs_eager().build_args.value())
+
+def test_defines_problems(ctx):
+    """Every way `test_defines` is not the arguments of the test builds and only of them: a list of strings, empty when it is."""
+    problems = []
+    n = len(TEST_DEFINES_ARGS)
+    for step in ["__bin", "__cov_bin", "__bc"]:
+        label = "{}:{}{}".format(TEST_DEFINES_PACKAGE, TEST_DEFINES_STEM, step)
+        got = _build_args(ctx, label)
+        if not [i for i in range(len(got) - n + 1) if got[i:i + n] == TEST_DEFINES_ARGS]:
+            problems.append("{}: build_args is {}, it must hold {} in this order: the test is not built with the defines the package gives it".format(label, got, TEST_DEFINES_ARGS))
+    got = _build_args(ctx, TEST_DEFINES_WS_TEST)
+    k = len(TEST_DEFINES_WS_ARGS)
+    if not [i for i in range(len(got) - k + 1) if got[i:i + k] == TEST_DEFINES_WS_ARGS]:
+        problems.append("{}: build_args is {}, it must hold {}: the package's binary is checked for absence next to a test that has them".format(TEST_DEFINES_WS_TEST, got, TEST_DEFINES_WS_ARGS))
+    for label in TEST_DEFINES_ABSENT:
+        got = _build_args(ctx, label)
+        if "-D" in got:
+            problems.append("{}: build_args is {}: a define reached a build that is not a test of a package that gives some".format(label, got))
     return problems
 
 def _built_with_why(ctx, label):
