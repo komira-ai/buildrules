@@ -270,7 +270,7 @@ test "cov_summary: a source no report names is refused, and so is a report that 
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        try proc.expectRefusal("no arguments", try summaryRun(a, &tmp, null, &.{}), 2, &.{"usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... [--src <path>=<file>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] <report.xml>..."});
+        try proc.expectRefusal("no arguments", try summaryRun(a, &tmp, null, &.{}), 2, &.{"usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... [--src <path>=<file>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] [--uncompiled-report <file>] <report.xml>..."});
         try proc.expectRefusal("an unknown option", try summaryRun(a, &tmp, REPORT, &.{ "--bogus", "report.xml" }), 2, &.{"cov_summary: unknown option --bogus"});
     }
 }
@@ -371,8 +371,11 @@ test "cov_summary: the functions no test compiled are found and not hit, and wri
         "--branch-lcov",      "one.info",
         "--uncompiled-lines", "u.xml",
         "--uncompiled-branches", "u.info",
+        "--uncompiled-report", "u.txt",
         "report.xml",
     }));
+    // `g` is nobody's: nothing is left out, and the listing says so.
+    try std.testing.expectEqualStrings("excluded total 0 lines 0 arms\ngated total 0 functions 0 lines 0 arms\n", try tmp.dir.readFileAlloc(a, "u.txt", 1 << 16));
     try std.testing.expectEqualStrings("rules/pkg/a.mojo 2/6 33%\ntotal 2/6 33%\nbranches rules/pkg/a.mojo 0/2 0%\nbranches total 0/2 0%\n", try tmp.dir.readFileAlloc(a, "coverage.txt", 1 << 16));
     const xml = try tmp.dir.readFileAlloc(a, "u.xml", 1 << 16);
     for ([_][]const u8{ "4", "5", "6", "7" }) |n| {
@@ -384,6 +387,74 @@ test "cov_summary: the functions no test compiled are found and not hit, and wri
     try tmp.dir.deleteFile("coverage.txt");
     try proc.expectOk("lines only", try summaryRun(a, &tmp, MOJO_REPORT, &.{ "--expect", "rules/pkg/a.mojo", "--src", "rules/pkg/a.mojo=a.mojo", "report.xml" }));
     try std.testing.expectEqualStrings("rules/pkg/a.mojo 2/6 33%\ntotal 2/6 33%\n", try tmp.dir.readFileAlloc(a, "coverage.txt", 1 << 16));
+}
+
+// The calls that tell the code no test compiled from uncovered code, as the process: `inl` is inlined and a hit line of the library calls it; `via_test` is inlined and
+// only a hit line of a test source (given with --src, not expected) calls it; `h` is used only in the dropped arm of `f`. All three are left out, and listed; `f` is
+// the compiler's. `never` is `@always_inline` too and nothing calls it: it is counted.
+const CALLS_REPORT =
+    \\<coverage>
+    \\<class name="a" filename="rules/pkg/a.mojo">
+    \\<line number="1" hits="1"/>
+    \\<line number="4" hits="1"/>
+    \\</class>
+    \\<class name="t" filename="rules/pkg/t_test.mojo">
+    \\<line number="2" hits="1"/>
+    \\</class>
+    \\</coverage>
+    \\
+;
+
+const CALLS_SRC =
+    \\def f(x: Int) -> Int:
+    \\    comptime if D:
+    \\        return h(x)
+    \\    return inl(x)
+    \\
+    \\@always_inline
+    \\def inl(x: Int) -> Int:
+    \\    return x
+    \\
+    \\def h(x: Int) -> Int:
+    \\    return x
+    \\
+    \\@always_inline
+    \\def via_test(x: Int) -> Int:
+    \\    return x
+    \\
+    \\@always_inline
+    \\def never(x: Int) -> Int:
+    \\    return x
+    \\
+;
+
+test "cov_summary: a test source given with --src is read for calls, not counted, and what is left out is listed" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "a.mojo", .data = CALLS_SRC });
+    try tmp.dir.writeFile(.{ .sub_path = "t.mojo", .data = "from pkg.a import via_test\nx = via_test(1)\n" });
+    try proc.expectOk("calls", try summaryRun(a, &tmp, CALLS_REPORT, &.{
+        "--expect",              "rules/pkg/a.mojo",
+        "--src",                 "rules/pkg/a.mojo=a.mojo",
+        "--src",                 "rules/pkg/t_test.mojo=t.mojo",
+        "--uncompiled-lines",    "u.xml",
+        "--uncompiled-report",   "u.txt",
+        "report.xml",
+    }));
+    // Of the library: the compiler's 2 lines, hit, and `never`'s 2 lines, found and not hit. The test's line is listed and not counted.
+    try std.testing.expectEqualStrings("rules/pkg/a.mojo 2/4 50%\nrules/pkg/t_test.mojo 1/1 100% (not counted)\ntotal 2/4 50%\n", try tmp.dir.readFileAlloc(a, "coverage.txt", 1 << 16));
+    try std.testing.expectEqualStrings(
+        "excluded rules/pkg/a.mojo 4 lines 0 arms\nexcluded total 4 lines 0 arms\ngated rules/pkg/a.mojo h 10 2 lines\ngated total 1 functions 2 lines 0 arms\n",
+        try tmp.dir.readFileAlloc(a, "u.txt", 1 << 16),
+    );
+    const xml = try tmp.dir.readFileAlloc(a, "u.xml", 1 << 16);
+    try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, xml, "<line "));
+    for ([_][]const u8{ "18", "19" }) |n| {
+        try std.testing.expect(std.mem.indexOf(u8, xml, try std.fmt.allocPrint(a, "<line number=\"{s}\" hits=\"0\"/>", .{n})) != null);
+    }
 }
 
 test "cov_summary: a source marked @generated is not asked for and not counted" {

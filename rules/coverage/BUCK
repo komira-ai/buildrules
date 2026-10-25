@@ -249,7 +249,7 @@ zig_exe(
 zig_test(
     name = "cov_summary_unit",
     exec_compatible_with = LINUX_X86_64,
-    imports = ["tools/cov_summary.zig", "tools/branch_lcov.zig", "tools/mojo_src.zig"],
+    imports = ["tools/cov_summary.zig", "tools/branch_lcov.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig"],
     src = "tools/cov_summary_test.zig",
     busybox = _BB,
     zig = _ZIG,
@@ -264,11 +264,38 @@ zig_test(
     zig = _ZIG,
 )
 
+# The call evidence that leaves an inlined function's lines and a compile-time arm's lines out of the code no test compiled (mojo_calls.zig).
+zig_test(
+    name = "mojo_calls_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/mojo_calls.zig", "tools/mojo_src.zig"],
+    src = "tools/mojo_calls_test.zig",
+    zig = _ZIG,
+)
+
+# The platform gate: functions whose every use is in a compile-time arm no report records (mojo_gate.zig).
+zig_test(
+    name = "mojo_gate_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/mojo_gate.zig", "tools/mojo_calls.zig", "tools/mojo_src.zig"],
+    src = "tools/mojo_gate_test.zig",
+    zig = _ZIG,
+)
+
+# The inputs and figures of the full-source checker's own tests for the same rules, held to cov_summary's report of the code no test compiled.
+zig_test(
+    name = "uncompiled_fixtures_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/cov_summary.zig", "tools/branch_lcov.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig"],
+    src = "tools/uncompiled_fixtures_test.zig",
+    zig = _ZIG,
+)
+
 # The branch records of a Mojo package's tests, read and summed by id (cov_summary --branch-lcov), and the listing cov_summary builds from them.
 zig_test(
     name = "branch_lcov_unit",
     exec_compatible_with = LINUX_X86_64,
-    imports = ["tools/branch_lcov.zig", "tools/cov_summary.zig", "tools/mojo_src.zig"],
+    imports = ["tools/branch_lcov.zig", "tools/cov_summary.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig"],
     src = "tools/branch_lcov_test.zig",
     zig = _ZIG,
 )
@@ -276,9 +303,9 @@ zig_test(
 zig_exe(
     name = "cov_summary",
     exec_compatible_with = LINUX_X86_64,
-    imports = ["tools/branch_lcov.zig", "tools/mojo_src.zig"],
+    imports = ["tools/branch_lcov.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig"],
     src = "tools/cov_summary.zig",
-    unit_tests = [":cov_summary_unit", ":branch_lcov_unit", ":mojo_src_unit", _ZIG_VERSION],
+    unit_tests = [":cov_summary_unit", ":branch_lcov_unit", ":mojo_src_unit", ":mojo_calls_unit", ":mojo_gate_unit", ":uncompiled_fixtures_unit", _ZIG_VERSION],
     busybox = _BB,
     zig = _ZIG,
     visibility = ["PUBLIC"],
@@ -387,6 +414,9 @@ zig_coverage(
         ":cov_summary_unit",
         ":branch_lcov_unit",
         ":mojo_src_unit",
+        ":mojo_calls_unit",
+        ":mojo_gate_unit",
+        ":uncompiled_fixtures_unit",
         ":kcov_build_unit",
         ":zig_cover_unit",
         ":cov_floor_unit",
@@ -400,6 +430,8 @@ zig_coverage(
         "cov_summary.zig",
         "branch_lcov.zig",
         "mojo_src.zig",
+        "mojo_calls.zig",
+        "mojo_gate.zig",
         "kcov_build.zig",
         "zig_cover.zig",
         "cov_floor.zig",

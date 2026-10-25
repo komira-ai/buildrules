@@ -689,7 +689,8 @@ def _cov_summary_impl(ctx):
     for e in ctx.attrs.expect:
         cmd.add("--expect", e)
     # The source behind each expected path, so a source the report omits for having no executable line (a re-export `__init__.mojo`) can be told
-    # from one the report missed (cov_summary.zig, hasNoStatements).
+    # from one the report missed (cov_summary.zig, hasNoStatements). The package's tests are given too, under their repository paths: their hit
+    # lines are the calls that tell an inlined function from one nobody calls (mojo_calls.zig); they are not in `expect`, so nothing of them is counted.
     for path, src in ctx.attrs.srcs.items():
         cmd.add("--src", cmd_args(path, src, delimiter = "="))
     for b in ctx.attrs.branches:
@@ -703,6 +704,11 @@ def _cov_summary_impl(ctx):
     if ctx.attrs.branches:
         uncompiled_branches = ctx.actions.declare_output("uncompiled.branches.info")
         cmd.add("--uncompiled-branches", uncompiled_branches.as_output())
+
+    # What was left out of those lines, and why: the lines of a function a test is seen to reach (an inlined function's, a compile-time arm's) and the
+    # functions every use of which is in an arm no report records (rules/coverage/tools/mojo_calls.zig, mojo_gate.zig).
+    excluded = ctx.actions.declare_output("uncompiled.excluded.txt")
+    cmd.add("--uncompiled-report", excluded.as_output())
     for r in ctx.attrs.reports:
         cmd.add(_file(r))
     ctx.actions.run(cmd, category = "mojo_cov_summary", identifier = ctx.label.name)
@@ -714,6 +720,7 @@ def _cov_summary_impl(ctx):
     # `reports_of_tests` and `reports_uncompiled` (`branches_of_tests`, `branches_uncompiled`) are the two parts, for a consumer that wants them apart.
     tests = [_file(r) for r in ctx.attrs.reports]
     sub = {
+        "excluded_uncompiled": [DefaultInfo(default_output = excluded)],
         "reports": [DefaultInfo(default_outputs = tests + [uncompiled])],
         "reports_of_tests": [DefaultInfo(default_outputs = tests)],
         "reports_uncompiled": [DefaultInfo(default_output = uncompiled)],

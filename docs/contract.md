@@ -572,10 +572,27 @@ lose that function's lines and branches from its denominator the moment its last
 the rules of covcheck, the full-source checker this replaced: its lexer's executable lines and its declaration reader's functions): every function of a source whose own lines have no record, in a line report or a branch record file, is
 **uncompiled**, and its own executable lines count as found and not hit, as do two arms for each decision word on them (`if`, `elif`, `while`, `for`, `and`, `or`; an `and`/`or` that an `if`, `elif` or `while` tests has
 two more for its right operand, as the compiler's records give; a line that starts with `comptime` or `alias`, or follows `@parameter`, decides nothing at run time). A function with a record on any one of its own
-lines is the compiler's alone, so its lines are the compiler's. The source is a heuristic where the compiler's records are exact: a function the compiler inlines into every caller can have no record of its own and reads as
-uncompiled; the compiler gives a function fewer lines than the source has (a `return` folded into a select has none), so deleting a test can raise the line denominator, and lowers it only if the compiler recorded a line the lexer does not count as code (none seen); and the
+lines is the compiler's alone, so its lines are the compiler's. The source is a heuristic where the compiler's records are exact: the compiler gives a function fewer lines than the source has (a `return` folded into a select has none), so deleting a test can raise the line denominator, and lowers it only if the compiler recorded a line the lexer does not count as code (none seen); and the
 compiler's raising calls and subscripts are branches the source has no word for, so the source's count of a function's arms can be below the compiler's. A source whose first line starts with `# @generated` (then the end of the line, a space or a tab)
 is machine-written: no report of it is asked for and nothing of it is counted (a report that names it lists the row `(not counted)`).
+
+Two things look like an uncompiled function and are not uncovered code: a function the compiler **inlined** into every caller (it has no record of its own, and a test calls it), and a function whose code, or
+whose every use, is in a `comptime if` arm **dropped for this target** (an AVX-512 path on a machine without AVX-512). Only evidence that a test reached the function tells them from a function nobody calls, and
+a line is left out of the figures only with it (the rules of the full-source checker's uncompiled report, `rules/coverage/tools/mojo_calls.zig` and `mojo_gate.zig`, each cited there to its source):
+
+1. **Call evidence.** An `@always_inline` function's own lines, or the lines inside the `comptime if` / `elif` / `else` and `@parameter` arms of a function, are left out only when a line **outside** the function that
+   calls it was **hit** in a test's report. A call is an identifier followed by `(` or `[` in the code of the line (a comment, a string and a declaration are no call): `f(` for a free function, `x.f(` or `T(x).f(` for
+   a method. A method is reached only by a call that names its type (`T.f(`, `T(x).f(`); a free function by a call in its own file or in a file that imports its name or its module; a name the package declares more than once, by
+   none. The calls are those of the package's own library and tests (`cov_summary --src` of a test path, never counted). An inlined function nobody calls is counted, and so is one whose only caller was not hit.
+2. **Per arm, not per function.** The lines outside the arms of a function with compile-time arms are counted; only the arm lines (the gate line included) go. A nested closure is a function of its own: its class and its
+   arms are its own, and neither reclassifies the function around it.
+3. **Platform-gated functions.** A function with at least one use all of whose uses are *dropped* is not counted, all its lines, and is listed. A use is any occurrence of its name as an identifier in the package's sources (a
+   call, a value, `mod.f`, an alias's name; not a comment, string, import line or its own declaration), a function declared more than once is never gated, and a use inside the function itself does not count. A use is dropped
+   when it is inside a compile-time arm, of a function with a record, and **no line of that arm** has one (the gate line is not in the arm: its condition runs whichever arm is compiled), or inside another gated function
+   (computed to a fixpoint). Any other use is live. A function with no use counts; functions that only call each other from a dropped arm count (the fixpoint starts from nothing gated).
+4. **The report says what it left out.** `:coverage[excluded_uncompiled]` is `uncompiled.excluded.txt`: `excluded <path> <lines> lines <arms> arms` for each source that lost lines or arms to call evidence, `excluded total
+   <lines> lines <arms> arms`, `gated <path> <function> <def line> <lines> lines` for each gated function, and `gated total <n> functions <lines> lines <arms> arms`. The lines and arms it lists are in neither `coverage.txt` nor
+   `uncompiled.cobertura.xml` / `uncompiled.branches.info`; only the evidence moves a line out, and none of it moves a figure down.
 
 **What `:coverage` gives a consumer.** Three outputs of one target, built from the same reports and records:
 
@@ -597,6 +614,8 @@ is machine-written: no report of it is asked for and nothing of it is counted (a
   shape `covcheck` reads with `--branch-lcov` (the block field is not a number, so upstream lcov tools cannot read it). Present only when the tests are instrumented. One file more than the tests': `uncompiled.branches.info`,
   the same shape, `BRDA:<line>,<col>:br:0/1,<arm>,-` (kind `rhs` for a right operand) for the arms of the decision words of the functions no test compiled. `:coverage[branches_of_tests]` is the tests' files alone,
   `:coverage[branches_uncompiled]` the one file.
+
+`:coverage[excluded_uncompiled]` is a fourth file, for a reader rather than a consumer: `uncompiled.excluded.txt`, what the call evidence and the platform gate left out of the figures (above).
 
 A consumer selects them by sub-target, and the build report (or `--show-full-output`) names one path per test:
 
