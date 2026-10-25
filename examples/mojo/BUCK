@@ -10,7 +10,8 @@ export_file(
 )
 
 # What `:coverage` gives a consumer, held to the real outputs of five packages (coverage_records_test.zig): the count per file and the records
-# it was counted from (`:coverage[reports]`, the per-line records; `:coverage[branches]`, the branch records) agree file by file. The branch records
+# it was counted from (`:coverage[reports_of_tests]`, the per-line records of the tests; `:coverage[branches_of_tests]`, their branch records; these packages call
+# every function of their libraries, so the code no test compiled adds nothing to them, see `uncompiled` below) agree file by file. The branch records
 # and rows of `testdata` and of the two packages whose tests link native libraries (`sys_app`: static archives, `ws`: a shared object) are held too. Needs the Mojo
 # toolchain, so //ci:mojo builds it.
 zig_test(
@@ -19,19 +20,40 @@ zig_test(
     src = "coverage_records_test.zig",
     data = {
         "reexport/coverage.txt": "//examples/mojo/reexport:coverage",
-        "reexport/reports.cobertura.xml": "//examples/mojo/reexport:coverage[reports]",
-        "reexport/branches.info": "//examples/mojo/reexport:coverage[branches]",
+        "reexport/reports.cobertura.xml": "//examples/mojo/reexport:coverage[reports_of_tests]",
+        "reexport/branches.info": "//examples/mojo/reexport:coverage[branches_of_tests]",
         "partial/coverage.txt": "//examples/mojo/partial:coverage",
-        "partial/reports.cobertura.xml": "//examples/mojo/partial:coverage[reports]",
-        "partial/branches.info": "//examples/mojo/partial:coverage[branches]",
+        "partial/reports.cobertura.xml": "//examples/mojo/partial:coverage[reports_of_tests]",
+        "partial/branches.info": "//examples/mojo/partial:coverage[branches_of_tests]",
         "sys_app/coverage.txt": "//examples/mojo/sys_app:coverage",
-        "sys_app/branches.info": "//examples/mojo/sys_app:coverage[branches]",
+        "sys_app/branches.info": "//examples/mojo/sys_app:coverage[branches_of_tests]",
         "ws/coverage.txt": "//examples/mojo/ws:coverage",
-        "ws/branches.info": "//examples/mojo/ws:coverage[branches]",
+        "ws/branches.info": "//examples/mojo/ws:coverage[branches_of_tests]",
         "testdata/coverage.txt": "//examples/mojo/testdata:coverage",
         "testdata/branches.info": "//examples/mojo/testdata:test_data_files__info",
     },
     zig ="buildrules//rules/pins:zig_next",
+    visibility = ["//ci:"],
+)
+
+# What `:coverage` does with code no test compiled (uncompiled_test.zig): `uncompiled` has a function no test calls and a source marked `@generated`; `uncompiled_lean`
+# is the same library with one test deleted. The function nobody calls is found and not hit, the deleted test takes hits away and no branch arm out of the
+# denominator, the generated source is not counted, and the extra files of `:coverage[reports]` and `:coverage[branches]` hold the difference.
+zig_test(
+    name = "uncompiled",
+    exec_compatible_with = LINUX_X86_64,
+    src = "uncompiled_test.zig",
+    data = {
+        "full/coverage.txt": "//examples/mojo/uncompiled:coverage",
+        "full/uncompiled.cobertura.xml": "//examples/mojo/uncompiled:coverage[reports_uncompiled]",
+        "full/uncompiled.branches.info": "//examples/mojo/uncompiled:coverage[branches_uncompiled]",
+        "lean/coverage.txt": "//examples/mojo/uncompiled_lean:coverage",
+        "lean/reports_of_tests.xml": "//examples/mojo/uncompiled_lean:coverage[reports_of_tests]",
+        "lean/branches_of_tests.info": "//examples/mojo/uncompiled_lean:coverage[branches_of_tests]",
+        "lean/uncompiled.cobertura.xml": "//examples/mojo/uncompiled_lean:coverage[reports_uncompiled]",
+        "lean/uncompiled.branches.info": "//examples/mojo/uncompiled_lean:coverage[branches_uncompiled]",
+    },
+    zig = "buildrules//rules/pins:zig_next",
     visibility = ["//ci:"],
 )
 

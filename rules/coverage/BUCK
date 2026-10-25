@@ -249,9 +249,18 @@ zig_exe(
 zig_test(
     name = "cov_summary_unit",
     exec_compatible_with = LINUX_X86_64,
-    imports = ["tools/cov_summary.zig", "tools/branch_lcov.zig"],
+    imports = ["tools/cov_summary.zig", "tools/branch_lcov.zig", "tools/mojo_src.zig"],
     src = "tools/cov_summary_test.zig",
     busybox = _BB,
+    zig = _ZIG,
+)
+
+# What a Mojo source says about the code no test compiled (cov_summary): its executable lines, its functions, its decision words.
+zig_test(
+    name = "mojo_src_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/mojo_src.zig"],
+    src = "tools/mojo_src_test.zig",
     zig = _ZIG,
 )
 
@@ -259,7 +268,7 @@ zig_test(
 zig_test(
     name = "branch_lcov_unit",
     exec_compatible_with = LINUX_X86_64,
-    imports = ["tools/branch_lcov.zig", "tools/cov_summary.zig"],
+    imports = ["tools/branch_lcov.zig", "tools/cov_summary.zig", "tools/mojo_src.zig"],
     src = "tools/branch_lcov_test.zig",
     zig = _ZIG,
 )
@@ -267,9 +276,9 @@ zig_test(
 zig_exe(
     name = "cov_summary",
     exec_compatible_with = LINUX_X86_64,
-    imports = ["tools/branch_lcov.zig"],
+    imports = ["tools/branch_lcov.zig", "tools/mojo_src.zig"],
     src = "tools/cov_summary.zig",
-    unit_tests = [":cov_summary_unit", ":branch_lcov_unit", _ZIG_VERSION],
+    unit_tests = [":cov_summary_unit", ":branch_lcov_unit", ":mojo_src_unit", _ZIG_VERSION],
     busybox = _BB,
     zig = _ZIG,
     visibility = ["PUBLIC"],
@@ -377,6 +386,7 @@ zig_coverage(
         ":cov_run_unit",
         ":cov_summary_unit",
         ":branch_lcov_unit",
+        ":mojo_src_unit",
         ":kcov_build_unit",
         ":zig_cover_unit",
         ":cov_floor_unit",
@@ -389,6 +399,7 @@ zig_coverage(
         "cov_run.zig",
         "cov_summary.zig",
         "branch_lcov.zig",
+        "mojo_src.zig",
         "kcov_build.zig",
         "zig_cover.zig",
         "cov_floor.zig",

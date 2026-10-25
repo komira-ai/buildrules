@@ -418,7 +418,7 @@ Each package is a mopm project: its own `mopm.toml`, `mopm.lock` and graph (`mop
 | `:bin_<name>`, `:build` | the `[targets] bins` of `mopm.toml`; `:build` is the library and the binaries |
 | `:<stem>__cov_bin`, `:<stem>__cov` | the same test as a debug build, and its run under kcov: a Cobertura report in repository paths |
 | `:<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info` | the same test as LLVM bitcode, instrumented and linked, run for its profile (in the working directory and with the `test_data` and `test_env` its other runs have, 12.9), the profile applied to the bitcode, and the library's branches in that IR classified: the branch records (12.4). A test that links native libraries has them too: its instrumented link is given the same libraries in the same order |
-| `:coverage` | the package's line and branch coverage from those reports and records (`coverage.txt`); red if a source of the library is in no report. `:coverage[reports]` is the reports themselves, the per-line records, and `:coverage[branches]` the branch records (12.4) |
+| `:coverage` | the package's line and branch coverage from those reports and records (`coverage.txt`); red if a source of the library is in no report. `:coverage[reports]` is the reports themselves, the per-line records (the tests' and one for the code no test compiled), and `:coverage[branches]` the branch records (12.4) |
 | `:coverage_floor` | only if `coverage_floor.txt` is beside the BUCK file: green while `coverage.txt` is at least that floor (12.4) |
 | `:ci` | `:build` and `:test` |
 | `:table` | the committed graph is what the pinned mopm's `plan --unit-graph --locked` prints for the package and its path dependencies now, byte for byte, the dependencies held by identity only (an action; not part of `:ci`, but of `//ci:all` for every example). `:workspace` is the files it reads: the package's and its dependencies', flat, each at its path from the repository root |
@@ -567,6 +567,16 @@ order: a library before every library it needs) and their targets, the very wiri
 found at run time through `<stem>__pgo[libs]` (`cov_branch run --lib-dir`). A library the unit links that the target is not given, one it is given that the unit does not link, and a graph order in which an
 archive stands after one that needs it are refused when the target is analysed; a library that defines a symbol the instrumented object defines too fails the link (README of `rules/coverage/branch`).
 
+**What no test compiled.** Mojo compiles only the functions a test reaches, so a function no test calls has no line in kcov's report and no branch in the IR, and a count made from those alone would
+lose that function's lines and branches from its denominator the moment its last test was deleted, and read higher for it. `:coverage` reads the library's sources as well (`rules/coverage/tools/mojo_src.zig`,
+the rules of covcheck, the full-source checker this replaced: its lexer's executable lines and its declaration reader's functions): every function of a source whose own lines have no record, in a line report or a branch record file, is
+**uncompiled**, and its own executable lines count as found and not hit, as do two arms for each decision word on them (`if`, `elif`, `while`, `for`, `and`, `or`; an `and`/`or` that an `if`, `elif` or `while` tests has
+two more for its right operand, as the compiler's records give; a line that starts with `comptime` or `alias`, or follows `@parameter`, decides nothing at run time). A function with a record on any one of its own
+lines is the compiler's alone, so its lines are the compiler's. The source is a heuristic where the compiler's records are exact: a function the compiler inlines into every caller can have no record of its own and reads as
+uncompiled; the compiler gives a function fewer lines than the source has (a `return` folded into a select has none), so deleting a test can raise the line denominator, and lowers it only if the compiler recorded a line the lexer does not count as code (none seen); and the
+compiler's raising calls and subscripts are branches the source has no word for, so the source's count of a function's arms can be below the compiler's. A source whose first line starts with `# @generated` (then the end of the line, a space or a tab)
+is machine-written: no report of it is asked for and nothing of it is counted (a report that names it lists the row `(not counted)`).
+
 **What `:coverage` gives a consumer.** Three outputs of one target, built from the same reports and records:
 
 - `:coverage` (its default output, `coverage.txt`): one row per file, `<path> <hit>/<total> <n>%`, the rows of a test's own sources marked `(not counted)`, then `total <hit>/<total> <n>%`
@@ -577,12 +587,16 @@ archive stands after one that needs it are refused when the target is analysed; 
   one `<package name="">`, one `<class name="P" filename="P">` per file that has a record, bytewise sorted, and in it one `<line number="N" hits="H"/>` per line the compiler emitted code for, sorted by
   number, `H` being 1 when the test ran the line and 0 when not. `P` is the repository path (relative to the root of the cell that holds the package; never absolute, never under `buck-out`). A line
   kcov gave branch data keeps it, `branch="true" condition-coverage="NN% (k/n)"`. A file with no executable line has no class, so it is the `0/0` row of `coverage.txt` and absent from the
-  records, the same fact twice. This is the shape `covcheck` reads with `--cobertura` (one file per test binary; a path in several files is merged by summing).
+  records, the same fact twice. This is the shape `covcheck` reads with `--cobertura` (one file per test binary; a path in several files is merged by summing). One file more than the tests': `uncompiled.cobertura.xml`,
+  the same shape, with a `<line number="N" hits="0"/>` for each line of the functions no test compiled (above), so the reports together hold the lines `coverage.txt` counted. `:coverage[reports_of_tests]` is the
+  tests' files alone, `:coverage[reports_uncompiled]` the one file.
 - `:coverage[branches]`: the branch records the `branches` rows were counted from, one lcov file per test (`<stem>__info.info`): per library source the IR holds code of, `SF:<repository path>`, then
   `BRDA:<line>,<col>:<kind>:<n>/<N>,<arm>,<count>` per arm of each decision, then `end_of_record`. `<kind>` is `br`, `select`, `switch`, `try` or `rhs`; `<n>/<N>` is which decision of that kind, of how many, at that line
   and column in one copy of the code (Mojo gives an `if` and its `elif`s one location); the arms are numbered from 0 in LLVM's weight order (true first; a `try` decision's are returned and raised); `-` is a decision
   that never ran, an arm counted and not taken, never written as 0. A source with code and no decision is `SF:` and `end_of_record` alone; a test that ran none of the library writes an empty file. This is the
-  shape `covcheck` reads with `--branch-lcov` (the block field is not a number, so upstream lcov tools cannot read it). Present only when the tests are instrumented.
+  shape `covcheck` reads with `--branch-lcov` (the block field is not a number, so upstream lcov tools cannot read it). Present only when the tests are instrumented. One file more than the tests': `uncompiled.branches.info`,
+  the same shape, `BRDA:<line>,<col>:br:0/1,<arm>,-` (kind `rhs` for a right operand) for the arms of the decision words of the functions no test compiled. `:coverage[branches_of_tests]` is the tests' files alone,
+  `:coverage[branches_uncompiled]` the one file.
 
 A consumer selects them by sub-target, and the build report (or `--show-full-output`) names one path per test:
 
@@ -593,7 +607,7 @@ buck2 build //pkg:coverage[branches] --show-full-output
 ```
 
 *Branch records.* kcov writes no `branch` attribute for a Mojo executable, so `:coverage[reports]` holds no branch data (`examples/mojo/coverage_records_test.zig` holds that, and holds the `branches` rows of `coverage.txt`
-to the records of `:coverage[branches]` file by file). The classifier refuses what it has no evidence for, naming `file:line:col`; the shapes that stay refused are in `rules/coverage/branch/README.md`.
+to the records of `:coverage[branches_of_tests]` file by file; `examples/mojo/uncompiled_test.zig` holds the uncompiled files, and that deleting a test lowers the figures). The classifier refuses what it has no evidence for, naming `file:line:col`; the shapes that stay refused are in `rules/coverage/branch/README.md`.
 
 *The floor.* A package with a `coverage_floor.txt` beside its BUCK file (the file every other package's floor is, `rules/coverage/README.md`) gets `:coverage_floor`: `lines NN.NN`, the line total of
 `coverage.txt` rounded down to a hundredth, and `branches NN.NN`, the `branches total` likewise. Each figure is a minimum: lower than the floor fails with `coverage fell`, equal passes, and higher passes and prints
