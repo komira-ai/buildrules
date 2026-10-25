@@ -42,6 +42,12 @@ Test data and variables. A test that reads files (goldens, fixtures, a pinned th
 its run and in its coverage run and is named by `BUILDRULES_TEST_DATA`; the files and the variables are inputs of both actions, so a change to
 either runs the test again.
 
+Test defines. A test whose behaviour is chosen at compile time (a build flag read by `is_defined` or `get_defined_int` in the code under test) names the
+defines in `test_defines = {"NAME": value}` (a string, a bool or an int; rules/mojo/test_data.bzl, docs/contract.md section 12.9): each becomes `-D NAME=value` on the
+build of every test of the package, in its run, its coverage run and the bitcode of its branch run, so all of them measure the program that passed. They are not
+applied to the library (`:lib` and `:lib_ungated` are the `.mojoc` that a dependent imports and are built as mopm's graph says, with no defines), to a binary or to a
+dependent; the library's code still reads them in a test build, because the build that imports a `.mojoc` compiles its declarations again (a module-level `comptime` gate included); mopm's unit graph has no defines, so they are arguments of the action and not part of the committed table. `ASSERT` is the profile's and is refused.
+
 Test scratch and layout. Every test run and every coverage run gets a fresh, empty, private `TMPDIR` and `TEST_TMPDIR` and `HOME` (absolute, one set per
 test, removed after it); the names are the runner's, and `test_env` refuses them. `test_layout = "installed"` runs each test from a fresh root of its own
 instead: the binary at `<root>/bin/<exe>` (a copy, so `/proc/self/exe` is there), the `test_data` under `<root>/share` (keys stay relative to `share/`) and
@@ -65,7 +71,7 @@ load(":pack.bzl", "mojo_conda")
 load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
 load(":check.bzl", "mojo_check_rule", "mojo_table_rule", "mojo_workspace_rule")
-load(":test_data.bzl", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_env", "check_test_layout", "stage_test_data")
+load(":test_data.bzl", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_defines", "check_test_env", "check_test_layout", "stage_test_data")
 load(":unit.bzl", "mojo_cov_branch_annotate_rule", "mojo_cov_branch_classify_rule", "mojo_cov_branch_run_rule", "mojo_cov_pgo_rule", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_gated_lib_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
 
 SCHEMA = 1
@@ -278,7 +284,7 @@ def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
         visibility = visibility,
     )
 
-def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, test_layout = "default", conda = False, visibility = ["PUBLIC"]):
+def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, test_defines = {}, test_layout = "default", conda = False, visibility = ["PUBLIC"]):
     if table == None:
         fail("mojo_package needs its table: load mojo_package from the buildrules.mojo.bzl next to mopm.toml (`buildrules mojo sync` writes it)")
     _check_table(table)
@@ -547,6 +553,12 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     test_sources = sorted(test_graph_of.keys())
     check_test_env(here, test_env)
     check_test_layout(here, test_layout)
+
+    # The compile-time defines of the tests (`-D NAME=value`), given to the three builds of each test (the run, the kcov run and the bitcode of the branch run) so
+    # that all of them are the program the run is, and to nothing else: the library, a binary and a dependent member are built without them (a library's
+    # `.mojoc` is the same bytes for every dependent, whatever its tests were built with). mopm's unit graph has no defines (its profile is `opt`, `assert`
+    # and `debug`), so they are arguments of the unit action like the ISA flags, and not part of the graph or of its keys.
+    define_args = check_test_defines(here, test_defines)
     installed = test_layout == LAYOUT_INSTALLED
 
     # In the installed layout the data is staged under `<root>/share`, apart from the sources the coverage run's root holds beside it, so no staged path can
@@ -588,7 +600,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         elif kind == "test":
             out0 = u["outputs"][0]
             stem = out0[:-len(".pass")] if out0.endswith(".pass") else out0
-            mojo_unit_rule(name = name_once(stem + "__bin"), build_args = build_args, **common(uid, "test", stem))
+            mojo_unit_rule(name = name_once(stem + "__bin"), build_args = build_args + define_args, **common(uid, "test", stem))
             mojo_test_run_rule(
                 name = name_once(stem),
                 bin = ":" + stem + "__bin",
@@ -607,7 +619,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             # the release unit (docs/contract.md, section 12).
             mojo_unit_rule(
                 name = name_once(stem + "__cov_bin"),
-                build_args = build_args,
+                build_args = build_args + define_args,
                 zig_override = "toolchains//:mojo_{}_cov_link".format(vname(mojo)),
                 **common(uid, "test", stem, _COVERAGE_PROFILE)
             )
@@ -646,7 +658,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 # The test as bitcode (`mojo build --emit llvm-bitcode`), compiled as the coverage build is; then the five actions.
                 mojo_unit_rule(
                     name = name_once(stem + "__bc"),
-                    build_args = build_args + _BITCODE_ARGS,
+                    build_args = build_args + define_args + _BITCODE_ARGS,
                     **common(uid, "test", stem, _BITCODE_PROFILE)
                 )
                 # The instrumented link gets the test's native libraries as its ordinary link does (the graph's order and the same targets).

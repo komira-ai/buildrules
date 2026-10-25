@@ -679,6 +679,7 @@ mojo_package(
         "tests/test_tool.mojo": {"bin/tool": "//tools:tool"},               # one test, named as the graph names its source; its entries are added to `*`
     },
     test_env = {"MODE": "strict"},                                          # every test of the package: {NAME: value}
+    test_defines = {"TRACE": True, "LEVEL": 3},                             # compile-time defines of every test build: -D TRACE=true -D LEVEL=3
 )
 ```
 
@@ -690,6 +691,11 @@ mojo_package(
 - **The test run and the coverage run.** `:<stem>` (and `buck2 test`, whose command is the same start without a marker) runs `check marker|run --private-scratch --env BUILDRULES_TEST_DATA=<dir> --abs BUILDRULES_TEST_DATA
   --cwd-env BUILDRULES_TEST_DATA`, then one `--env NAME=VALUE` per `test_env` entry. `:<stem>__cov` stages the same files into the tree that is kcov's working directory (`cov_run --private-scratch --data-env BUILDRULES_TEST_DATA
   --env NAME=VALUE`): that tree also holds the test's source and the library's sources under the names the line tables use, so the test sees the same files plus those.
+- **Compile-time defines.** A test whose code is chosen at compile time (a flag read with `is_defined`, `get_defined_int` or `get_defined_string`) cannot get it from `test_env`, which is a run-time variable. `test_defines = {"NAME": value}`
+  gives the build of every test `-D NAME=value`: a string, a bool (`true` or `false`) or an int, in the order of the names. The three builds of a test get them, so each is the program that ran: `:<stem>__bin` (the run), `:<stem>__cov_bin` (the kcov run) and `:<stem>__bc` (the
+  bitcode of the branch run, whose instrumented link and run follow from it). Nothing else does: `:lib_ungated` and `:lib` are the `.mojoc` that every dependent imports and are built as mopm's graph says, a binary (`[targets] bins`) and a dependent member are built without them. The library's own `.mojoc` is compiled without them, but a `.mojoc` holds the library as IR that the importing build compiles again, so the library's code reads the test's defines: a module-level `comptime` gate
+  (`comptime TRACE: Bool = is_defined["TRACE"]()`), a plain function and a generic function of the library all see them in a test build (`examples/mojo/test_defines` asserts each, measured on the pinned Mojo). mopm's unit graph (spec/unit-graph.md of mopm 0.0.42) has no defines: a unit's `profile` is `opt`, `assert` and `debug`, the build passes `-D ASSERT=<assert>`, and the `key` hashes the unit as printed, so the defines are not in the graph, in
+  the committed table or in `:table`. They are arguments of the unit action, as the ISA flags are (`build_arg=` lines of its toolchain file, put right after `build`), and the action's key moves with them: a changed define builds and runs the test again, an unchanged one is a cache hit.
 - **Scratch the runner owns.** Every test run and every coverage run, in either layout, gets `TMPDIR`, `TEST_TMPDIR` and `HOME` of its own: absolute paths of directories that exist, are empty when the test starts, and are
   writable. `TMPDIR` and `TEST_TMPDIR` are the same directory, `HOME` another. They are made fresh for each run (the directory is `buildrules_test.<random>`, in `BUCK_SCRATCH_PATH`, else `TMPDIR`, else `/tmp`, with no
   link in its path), so two tests never share them, and the whole directory is removed when the run ends. The three names are the runner's: `test_env` refuses them, and nothing a build or an earlier run left in the process's
@@ -714,7 +720,8 @@ mojo_package(
 - **Refused at load** (rules/mojo/test_data.bzl, each an analysis test in rules/mojo/tests): a key that is no test of the package (a mistyped path stages nothing); a staged path that is empty, absolute, ends in `/`, or holds `.`, `..` or an empty
   segment (it would leave the directory); a staged path that is also the directory of another, or that is staged twice for one test (by `*` and by the test); a staged path that is, or is inside, a path the coverage tree holds (the test's
   source, a library source) or holds one; a staged value that is not a string; a variable name that is not a shell name or that the runner sets (`PATH`, `LD_LIBRARY_PATH`, `LD_PRELOAD`, `DYLD_*`, `TMPDIR`, `TEST_TMPDIR`, `HOME`, `PWD`,
-  `BUILDRULES_TEST_DATA`, `BUILDRULES_UNIT_NONCE`, `BUCK_SCRATCH_PATH`); a `test_env` value that is not a string; a `test_layout` that is neither `default` nor `installed`; with the installed layout, a source of the test or of the
+  `BUILDRULES_TEST_DATA`, `BUILDRULES_UNIT_NONCE`, `BUCK_SCRATCH_PATH`); a `test_env` value that is not a string; a `test_defines` that is not a dict, a name that is not an identifier or is `ASSERT` (the profile's), and a value that is not a string, a bool or an int, or
+  is empty or holds a space, a control character or a non-ASCII character (a value is one line of the toolchain file and one argument of the compiler); a `test_layout` that is neither `default` nor `installed`; with the installed layout, a source of the test or of the
   library in `bin/` or `share/`. `mojo_test_run_rule` and `mojo_cov_run_rule` (`data`, `test_env`, `test_layout`) repeat the checks on their own arguments.
 - **Proof.** `ci/mojo_data` runs a stand-in test (a program that reads the staged file by a relative path, checks the working directory against `BUILDRULES_TEST_DATA`, checks a variable, and starts a staged program) with the
   Mojo test run rule, without a compiler: green when everything is staged, and red, for its reason, with other content, another variable value, no program, and a program without the executable bit (`ci/negative.bzl`, `PLANTED`).
@@ -724,6 +731,9 @@ mojo_package(
   thing for the layout: a library that finds its own files from `/proc/self/exe` (`executable_path`, `install_root`, `share_dir`) with tests that run in `test_layout = "installed"`, in `:ci` and in `:coverage`; two of its tests
   (`test_scratch_a`, `test_scratch_b`) check that their `TMPDIR`, `TEST_TMPDIR` and `HOME` are set, absolute, empty and writable. That two runs get different directories is held by the cases of `check` (rules/check/runspec_test.zig, and
   check_exe_test.zig on the built executable), which start the program twice and compare.
+  `examples/mojo/test_defines` is the real thing for the defines: a bool, an int and a string define, and tests that assert each is on in the test's build, that a name nobody gave is not, that the library's code (a module-level `comptime` gate, a function, a generic function) reads the define of the test build that imports it;
+  in `:ci` and in `:coverage`, so the kcov run and the branch run were built with the same defines or its tests would fail there. `//ci:negative.bxl` holds the wiring (the arguments are on the three test builds and on no library or other package's test) and `//rules/mojo/tests:test_data` the
+  arguments and each refusal.
 
 Not in `mopm.toml`: the unit graph is mopm's, and a test's data is how a build system gives a test its files, not what a package is. When mopm's graph carries a package's test files (a `[tests]` table of globs), `buildrules mojo sync` could
 generate `test_data` from it; until then the declaration is the BUCK file's, and nothing in mopm changes.

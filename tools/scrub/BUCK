@@ -68,6 +68,7 @@ scrub_test(
     "//examples/mojo/partial:scrub_files",
     "//examples/mojo/reexport:scrub_files",
     "//examples/mojo/reexport_unused:scrub_files",
+    "//examples/mojo/test_defines:scrub_files",
     "//examples/mojo/testdata:scrub_files",
     "//examples/mojo/uncompiled:scrub_files",
     "//examples/mojo/uncompiled_lean:scrub_files",

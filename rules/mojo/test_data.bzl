@@ -7,9 +7,10 @@
             "tests/test_tool.mojo": {"bin/tool": "//tools:tool", "golden/out.txt": "golden/out.txt"},   # one test
         },
         test_env = {"MODE": "strict"},                                                       # every test of the package
+        test_defines = {"TRACE": True, "LEVEL": 3},                                          # `-D TRACE=true -D LEVEL=3` on every test build
     )
 
-Both are pure functions of the arguments, so every refusal is an analysis test (rules/mojo/tests/BUCK) and a refusal stops the load of the package:
+All three are pure functions of the arguments, so every refusal is an analysis test (rules/mojo/tests/BUCK) and a refusal stops the load of the package:
 `refuse` is `fail` in a build, a recorder in a test (rules/rust/refusal.bzl).
 """
 
@@ -62,6 +63,49 @@ def check_test_env(where, env, refuse = fail):
             continue
         if type(env[name]) != "string":
             refuse("{}: test_env {} must be a string, not {}".format(where, name, type(env[name])))
+
+# The defines `test_defines` may not set: the unit's profile passes `-D ASSERT=<level>` to every test and binary build (mopm unit build), so a second one
+# would be two values for one name.
+OWN_DEFINES = ["ASSERT"]
+
+def check_test_defines(where, defines, refuse = fail):
+    """`test_defines` is `{NAME: value}`, the compile-time defines of the package's test builds (`mojo build -D NAME=value`). Returns the compiler
+    arguments, `["-D", "A=1", "-D", "B=true", ...]` in the order of the names, and `[]` after a refusal.
+
+    A name is an identifier (letters, digits and `_`, not starting with a digit) that the profile does not set (OWN_DEFINES). A value is a string, a bool
+    (`true` or `false`) or an int, written as the compiler reads it; a string is one or more printable characters with no space, because the value travels
+    as one line of the toolchain file and one argument of the compiler (a space or a line break would end it or start another key)."""
+    if type(defines) != "dict":
+        refuse("{}: test_defines must be a dict {{NAME: value}}, not {}".format(where, type(defines)))
+        return []
+    args = []
+    bad = False
+    for name in sorted(defines.keys()):
+        value = defines[name]
+        if type(name) != "string" or not regex_match("^[A-Za-z_][A-Za-z0-9_]*$", name):
+            refuse("{}: test_defines name {} is not a define name (letters, digits and `_`, not starting with a digit)".format(where, repr(name)))
+            bad = True
+            continue
+        if name in OWN_DEFINES:
+            refuse("{}: test_defines sets {}, which the unit's profile sets itself (profile-owned: {})".format(where, name, ", ".join(OWN_DEFINES)))
+            bad = True
+            continue
+        if type(value) == "bool":
+            text = "true" if value else "false"
+        elif type(value) == "int":
+            text = str(value)
+        elif type(value) == "string":
+            text = value
+        else:
+            refuse("{}: test_defines {} must be a string, a bool or an int, not {}".format(where, name, type(value)))
+            bad = True
+            continue
+        if not regex_match("^[!-~]+$", text):
+            refuse("{}: test_defines {} is {}: a value is one or more printable characters with no space or line break".format(where, name, repr(text)))
+            bad = True
+            continue
+        args += ["-D", "{}={}".format(name, text)]
+    return [] if bad else args
 
 def _overlaps(dest, held):
     """`dest` is `held`, inside it or holds it (a file cannot be a directory)."""

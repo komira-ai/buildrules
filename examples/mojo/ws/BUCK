@@ -6,6 +6,9 @@ load(":buildrules.mojo.bzl", "mojo_package")
 mojo_package(
     path = ".",
     natives = {"libcnative.so.1": "//examples/mojo/registry/cnative:libcnative"},
+    # Compile-time defines for the tests of app only: this package also has a binary (`:bin_app_main`) and members app depends on, which are built without them
+    # (//ci:negative.bxl holds that: ci/negative.bzl, TEST_DEFINES_ABSENT). No source reads the define; it is an argument of the test builds.
+    test_defines = {"BR_WS_FLAG": True},
 )
 
 scrub_files()
