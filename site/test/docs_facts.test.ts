@@ -131,7 +131,7 @@ describe('pins stated in the pages are the pins in the sources', () => {
       ['Node.js', /\bNode(?:\.js)?\b/g, [(/"version": "([\d.]+)"/.exec(node) as RegExpExecArray)[1]]],
       ['busybox', /\bbusybox\b/g, [(/busybox[^]*?([\d.]+)-x86_64-linux-musl/.exec(pins) as RegExpExecArray)[1]]],
       ['kcov', /\bkcov\b/g, []],
-      ['mopm', /\bmopm\b/g, ['0.0.42', '0.0.2']], // 0.0.2 is the page's example of a version that is not pinned
+      ['mopm', /\bmopm\b/g, ['0.0.48', '0.0.2']], // 0.0.2 is the page's example of a version that is not pinned
     ];
     let seen = 0;
     for (const [who, t] of ALL) {
@@ -512,8 +512,8 @@ describe('the mopm pin, in both states', () => {
     }
   });
   test('the pin the pages name is the pin in the table', () => {
-    expect(pins).toContain('MOPM_DEFAULT = "0.0.42"');
-    expect(howText).toContain('mopm = "0.0.42"');
+    expect(pins).toContain('MOPM_DEFAULT = "0.0.48"');
+    expect(howText).toContain('mopm = "0.0.48"');
     expect(howText).toContain('[mopm."0.0.2"]');
     expect(pins).not.toContain('"0.0.2": {'); // so the page's example of a version buildrules does not pin is still one
   });

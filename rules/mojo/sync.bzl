@@ -9,7 +9,7 @@ mopm, offline (mopm plans from `mopm.lock`). The action's output holds the files
         packages = ["examples/mojo/sibfake/chain/a"],  # directories from the repository root; default: this package
         workspaces = [":workspace"],                   # the package's :workspace (mojo_package makes it), and any other package that is staged
         files = ["//examples/mojo:mopm-toolchain.toml"],  # the other files the sync reads: the toolchain file, a buildrules-pins.toml
-        mopm = "0.0.42",                               # the version mopm-toolchain.toml names: the sync refuses a file that names another
+        mopm = "0.0.48",                               # the version mopm-toolchain.toml names: the sync refuses a file that names another
         committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
     )
 
@@ -133,7 +133,7 @@ _mojo_sync = rule(
 
 def mojo_sync(name, workspaces, files, mopm, packages = None, committed = [], toolchains = "toolchains", visibility = ["PUBLIC"]):
     """`name`: `buck2 run` it to write the files a sync writes into the working tree; `name_check` (with `committed`): red unless the committed files are those.
-    `mopm`: the mopm version the packages' mopm-toolchain.toml names (`"0.0.42"`); it is built as `toolchains//:mopm_<v>`."""
+    `mopm`: the mopm version the packages' mopm-toolchain.toml names (`"0.0.48"`); it is built as `toolchains//:mopm_<v>`."""
     common = dict(
         exec_compatible_with = LINUX_X86_64,
         files = files,

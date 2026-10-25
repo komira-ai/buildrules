@@ -461,12 +461,12 @@ not covered by this.
 
 ```toml
 [toolchain]
-mopm = "0.0.42"     # an exact release: a version of rules/mopm/pins.bzl, or one buildrules-pins.toml gives a URL, sha256 and size for
+mopm = "0.0.48"     # an exact release: a version of rules/mopm/pins.bzl, or one buildrules-pins.toml gives a URL, sha256 and size for
 mojo = "1.0.0"     # an exact release mopm pins a toolchain for; the graph is made for it
 ```
 
 **It is required**, like `rust-toolchain.toml`, and there is no implicit default: without it `mojo sync`, `mojo check` and the analysis of every
-package stop, name `mopm-toolchain.toml`, and print a minimal example (`[toolchain]`, `mopm = "0.0.42"`, `mojo = "1.0.0"`). Required was chosen because
+package stop, name `mopm-toolchain.toml`, and print a minimal example (`[toolchain]`, `mopm = "0.0.48"`, `mojo = "1.0.0"`). Required was chosen because
 the Rust side is, and one rule is easier to teach; the other choice, a default in `sync`, would pick a compiler for a repository that never named one.
 
 ### 12.3 The table: `buildrules.mojo.lock.bzl`, schema 1
@@ -616,7 +616,7 @@ to the records of `:coverage[branches_of_tests]` file by file; `examples/mojo/un
 
 ### 12.5 Versions: pinned mopm, the Mojo version
 
-`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.42` is the published mopm release (its linux-x86_64 tarball;
+`rules/mopm/pins.bzl` is a table like Rust's: `MOPM_VERSIONS` (url, sha256, size, unpack directory) and `MOPM_DEFAULT`. `0.0.48` is the published mopm release (its linux-x86_64 tarball;
 the digest and size are the row's in `rules/mopm/pins.bzl`, the source of truth, which match the release's `SHA256SUMS`); a machine that mirrors the download points it at its copy with `url_map`.
 A version not in the table is refused by `mojo sync` (the message names `buildrules-pins.toml` and the table to add) unless `buildrules-pins.toml` has `[mopm."V"]` with `url`, `sha256`, `size`.
 The mopm binary is an input of every unit action: a mopm bump re-keys every unit on purpose. The Mojo version comes from the graph: mopm pins one (`1.0.0`) today, so no package here
@@ -694,7 +694,7 @@ mojo_package(
 - **Compile-time defines.** A test whose code is chosen at compile time (a flag read with `is_defined`, `get_defined_int` or `get_defined_string`) cannot get it from `test_env`, which is a run-time variable. `test_defines = {"NAME": value}`
   gives the build of every test `-D NAME=value`: a string, a bool (`true` or `false`) or an int, in the order of the names. The three builds of a test get them, so each is the program that ran: `:<stem>__bin` (the run), `:<stem>__cov_bin` (the kcov run) and `:<stem>__bc` (the
   bitcode of the branch run, whose instrumented link and run follow from it). Nothing else does: `:lib_ungated` and `:lib` are the `.mojoc` that every dependent imports and are built as mopm's graph says, a binary (`[targets] bins`) and a dependent member are built without them. The library's own `.mojoc` is compiled without them, but a `.mojoc` holds the library as IR that the importing build compiles again, so the library's code reads the test's defines: a module-level `comptime` gate
-  (`comptime TRACE: Bool = is_defined["TRACE"]()`), a plain function and a generic function of the library all see them in a test build (`examples/mojo/test_defines` asserts each, measured on the pinned Mojo). mopm's unit graph (spec/unit-graph.md of mopm 0.0.42) has no defines: a unit's `profile` is `opt`, `assert` and `debug`, the build passes `-D ASSERT=<assert>`, and the `key` hashes the unit as printed, so the defines are not in the graph, in
+  (`comptime TRACE: Bool = is_defined["TRACE"]()`), a plain function and a generic function of the library all see them in a test build (`examples/mojo/test_defines` asserts each, measured on the pinned Mojo). mopm's unit graph (spec/unit-graph.md of mopm 0.0.48) has no defines: a unit's `profile` is `opt`, `assert` and `debug`, the build passes `-D ASSERT=<assert>`, and the `key` hashes the unit as printed, so the defines are not in the graph, in
   the committed table or in `:table`. They are arguments of the unit action, as the ISA flags are (`build_arg=` lines of its toolchain file, put right after `build`), and the action's key moves with them: a changed define builds and runs the test again, an unchanged one is a cache hit.
 - **Scratch the runner owns.** Every test run and every coverage run, in either layout, gets `TMPDIR`, `TEST_TMPDIR` and `HOME` of its own: absolute paths of directories that exist, are empty when the test starts, and are
   writable. `TMPDIR` and `TEST_TMPDIR` are the same directory, `HOME` another. They are made fresh for each run (the directory is `buildrules_test.<random>`, in `BUCK_SCRATCH_PATH`, else `TMPDIR`, else `/tmp`, with no
@@ -763,7 +763,7 @@ mojo_sync(
     name = "sync",
     workspaces = [":workspace"],                      # the package's :workspace (12.1), and the :workspace of any other package synced with it
     files = ["//dir:mopm-toolchain.toml"],            # the other files the sync reads: the toolchain file, a buildrules-pins.toml
-    mopm = "0.0.42",                                  # the version mopm-toolchain.toml names; built as toolchains//:mopm_0_0_42
+    mopm = "0.0.48",                                  # the version mopm-toolchain.toml names; built as toolchains//:mopm_0_0_48
     committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
 )
 ```

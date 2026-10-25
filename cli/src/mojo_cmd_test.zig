@@ -226,7 +226,7 @@ test "sync: without mopm-toolchain.toml, or with a floating version, nothing run
     try t.expect(kit.contains(r.err, "no mopm-toolchain.toml at or above pkgs/base"));
     try t.expect(kit.contains(r.err, "it is required, like rust-toolchain.toml"));
     try t.expect(kit.contains(r.err, "there is no default"));
-    try t.expect(kit.contains(r.err, "[toolchain]\nmopm = \"0.0.42\"\nmojo = \"1.0.0\"\n"));
+    try t.expect(kit.contains(r.err, "[toolchain]\nmopm = \"0.0.48\"\nmojo = \"1.0.0\"\n"));
     for ([_][]const u8{ "0.0", "latest", "^0.0.1" }) |v| {
         try h.put("mopm-toolchain.toml", try std.fmt.allocPrint(h.a(), "[toolchain]\nmopm = \"{s}\"\nmojo = \"1.0.0\"\n", .{v}));
         r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
@@ -600,7 +600,7 @@ test "check: without mopm-toolchain.toml the check fails and says what to write,
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "no mopm-toolchain.toml at or above pkgs/base"));
     try t.expect(kit.contains(r.err, "there is no default"));
-    try t.expect(kit.contains(r.err, "[toolchain]\nmopm = \"0.0.42\"\nmojo = \"1.0.0\"\n"));
+    try t.expect(kit.contains(r.err, "[toolchain]\nmopm = \"0.0.48\"\nmojo = \"1.0.0\"\n"));
     try t.expect(!kit.contains(r.out, "ok:"));
 }
 
@@ -608,7 +608,7 @@ test "the BUCK export of mopm-toolchain.toml fails the load, with the file and a
     const mc = @import("mojo_cmd.zig");
     try t.expect(kit.contains(mc.export_snippet, "if glob([\"mopm-toolchain.toml\"]) else fail("));
     try t.expect(kit.contains(mc.export_snippet, "mopm-toolchain.toml is required and there is no default. Create it, for example:"));
-    try t.expect(kit.contains(mc.export_snippet, "[toolchain]\\nmopm = '0.0.42'\\nmojo = '1.0.0'"));
+    try t.expect(kit.contains(mc.export_snippet, "[toolchain]\\nmopm = '0.0.48'\\nmojo = '1.0.0'"));
 }
 
 // ---- more of sync and check: arguments, discovery, failures of the programs it runs, path dependencies --------------------
@@ -1073,9 +1073,9 @@ test "probe: the flag is used when the mopm's own help lists it, whatever releas
     }
 }
 
-/// The `plan` entry of the usage text that mopm 0.0.42 (the pinned release) prints for `--help`, copied from `usage` in its src/cli/main.zig at the
-/// tag v0.0.42: the line that names the flag, and the lines that describe it.
-const help_pinned_0_0_42 =
+/// The `plan` entry of the usage text that mopm 0.0.48 (the pinned release) prints for `--help`, copied from `usage` in its src/cli/main.zig at the
+/// tag v0.0.48: the line that names the flag, and the lines that describe it.
+const help_pinned_0_0_48 =
     "usage: mopm <command> [args]\n\nworking today:\n" ++
     "  plan --unit-graph --locked [--mojo <version>] [--workspace-root <dir>] [-o <file>]\n" ++
     "                          print the unit graph (spec/unit-graph.md) of\n" ++
@@ -1084,16 +1084,16 @@ const help_pinned_0_0_42 =
     "                          <dir>, which holds this directory and every\n" ++
     "                          path dependency\n";
 
-test "probe: the pinned 0.0.42 help lists the flag, so sync gives it the repository root and the table records that" {
+test "probe: the pinned 0.0.48 help lists the flag, so sync gives it the repository root and the table records that" {
     const h = try fresh();
     defer h.destroy();
-    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.42\"\nmojo = \"1.0.0\"\n");
-    help_out = help_pinned_0_0_42;
+    try h.put("mopm-toolchain.toml", "[toolchain]\nmopm = \"0.0.48\"\nmojo = \"1.0.0\"\n");
+    help_out = help_pinned_0_0_48;
     try t.expectEqual(@as(u8, 0), h.run(&.{ "mojo", "sync", "--buck2", "./buck2" }).code);
     try t.expectEqual(@as(usize, 1), called("/fake/mopm --help"));
     try t.expectEqual(@as(usize, 1), called("--workspace-root"));
     const lock = h.read(lock_path);
-    try t.expect(kit.contains(lock, "MOPM = {\"version\": \"0.0.42\", \"origin\": \"builtin\", \"workspace_root\": True}\n"));
+    try t.expect(kit.contains(lock, "MOPM = {\"version\": \"0.0.48\", \"origin\": \"builtin\", \"workspace_root\": True}\n"));
 }
 
 test "probe: a mopm whose help does not list the flag is not given it, even at a release that would be expected to have it" {

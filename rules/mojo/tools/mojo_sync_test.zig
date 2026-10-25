@@ -4,7 +4,7 @@ const std = @import("std");
 const S = @import("mojo_sync.zig");
 const t = std.testing;
 
-const stage_flags = [_][]const u8{ "stage", "--src", "s", "--work", "w", "--out", "o", "--buildrules", "b", "--mopm", "m", "--mopm-version", "0.0.42" };
+const stage_flags = [_][]const u8{ "stage", "--src", "s", "--work", "w", "--out", "o", "--buildrules", "b", "--mopm", "m", "--mopm-version", "0.0.48" };
 
 fn withPackages(a: std.mem.Allocator, extra: []const []const u8) ![]const []const u8 {
     return std.mem.concat(a, []const u8, &.{ &stage_flags, extra });
@@ -49,8 +49,8 @@ test "flags: stage needs every tool and one package; package paths are cleaned; 
 }
 
 test "mopm version of a toolchain file: either quote, comments, spacing; nothing for a file that pins none" {
-    try t.expectEqualStrings("0.0.42", S.mopmVersionOf("[toolchain]\nmopm = \"0.0.42\"\nmojo = \"1.0.0\"\n").?);
-    try t.expectEqualStrings("0.0.42", S.mopmVersionOf("[toolchain]\n  mopm='0.0.42'  # pinned\n").?);
+    try t.expectEqualStrings("0.0.48", S.mopmVersionOf("[toolchain]\nmopm = \"0.0.48\"\nmojo = \"1.0.0\"\n").?);
+    try t.expectEqualStrings("0.0.48", S.mopmVersionOf("[toolchain]\n  mopm='0.0.48'  # pinned\n").?);
     try t.expectEqualStrings("0.0.25", S.mopmVersionOf("# mopm = \"9\"\n[toolchain]\nmojo = \"1.0.0\"\nmopm   =   \"0.0.25\"\r\n").?);
     try t.expect(S.mopmVersionOf("[toolchain]\nmojo = \"1.0.0\"\n") == null);
     try t.expect(S.mopmVersionOf("mopm_extra = \"1\"\n") == null);
@@ -92,20 +92,20 @@ test "mopm guard: the toolchain file is found at or above the package, and a pac
     try tmp.dir.makePath("ex/mojo/chain/a");
     try tmp.dir.makePath("other/b");
     try tmp.dir.makePath("elsewhere/c");
-    try tmp.dir.writeFile(.{ .sub_path = "ex/mojo/mopm-toolchain.toml", .data = "[toolchain]\nmopm = \"0.0.42\"\n" });
+    try tmp.dir.writeFile(.{ .sub_path = "ex/mojo/mopm-toolchain.toml", .data = "[toolchain]\nmopm = \"0.0.48\"\n" });
     try tmp.dir.writeFile(.{ .sub_path = "other/mopm-toolchain.toml", .data = "[toolchain]\nmopm = \"0.0.25\"\n" });
     try tmp.dir.writeFile(.{ .sub_path = "mopm-toolchain.toml", .data = "[toolchain]\nmojo = \"1.0.0\"\n" });
     const dir = tmp.dir;
-    try t.expectEqualStrings("0.0.42", (try S.pinnedMopm(a, dir, "ex/mojo/chain/a")).?);
+    try t.expectEqualStrings("0.0.48", (try S.pinnedMopm(a, dir, "ex/mojo/chain/a")).?);
     try t.expectEqualStrings("0.0.25", (try S.pinnedMopm(a, dir, "other/b")).?);
     // the nearest file wins even when it pins no mopm; the root file here pins none
     try t.expect((try S.pinnedMopm(a, dir, "elsewhere/c")) == null);
 
-    try t.expect((try S.toolchainMismatch(a, dir, &.{ "ex/mojo/chain/a", "elsewhere/c" }, "0.0.42")) == null);
-    const why = (try S.toolchainMismatch(a, dir, &.{ "ex/mojo/chain/a", "other/b" }, "0.0.42")).?;
+    try t.expect((try S.toolchainMismatch(a, dir, &.{ "ex/mojo/chain/a", "elsewhere/c" }, "0.0.48")) == null);
+    const why = (try S.toolchainMismatch(a, dir, &.{ "ex/mojo/chain/a", "other/b" }, "0.0.48")).?;
     try t.expect(std.mem.indexOf(u8, why, "other/b") != null);
     try t.expect(std.mem.indexOf(u8, why, "0.0.25") != null);
-    try t.expect(std.mem.indexOf(u8, why, "0.0.42") != null);
+    try t.expect(std.mem.indexOf(u8, why, "0.0.48") != null);
     try t.expect(std.mem.indexOf(u8, why, "ex/mojo") == null);
 }
 
@@ -198,11 +198,11 @@ test "first difference: a text that differs only after a long shared prefix is f
     var common = std.ArrayList(u8).empty;
     for (0..300) |i| try common.appendSlice(a, try std.fmt.allocPrint(a, "line {d:0>4} of a lock file, identical here\n", .{i}));
     const have = try std.mem.concat(a, u8, &.{ common.items, "pin = \"0.0.41\"\ntail\n" });
-    const want = try std.mem.concat(a, u8, &.{ common.items, "pin = \"0.0.42\"\ntail\n" });
+    const want = try std.mem.concat(a, u8, &.{ common.items, "pin = \"0.0.48\"\ntail\n" });
     const d = S.firstDifference(have, want).?;
     try t.expectEqual(@as(usize, 301), d.no);
     try t.expectEqualStrings("pin = \"0.0.41\"", d.have);
-    try t.expectEqualStrings("pin = \"0.0.42\"", d.want);
+    try t.expectEqualStrings("pin = \"0.0.48\"", d.want);
     // the difference is the very last byte of a long text
     const last = S.firstDifference(try std.mem.concat(a, u8, &.{ common.items, "x" }), try std.mem.concat(a, u8, &.{ common.items, "y" })).?;
     try t.expectEqual(@as(usize, 301), last.no);

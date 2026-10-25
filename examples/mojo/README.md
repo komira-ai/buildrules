@@ -7,7 +7,7 @@
       base_sys/            the other `-sys` package, a workspace member of probe_sys
     sys_app/               imports probe_sys from the registry stand-in: both static archives come out of the `.conda` files, with no `natives` in its BUCK file; its test takes both arms of a decision in the library, so the package has branch records of its own through the native link and a `coverage_floor.txt` of `lines 100.00` and `branches 100.00`
     sibfake/chain/         a -> b -> c: every dependency is a sibling directory (`{ path = "../b" }`), not a directory below its user. `a` names only `b`; its `mopm.lock` records `c` too, and its table holds `b` and `c` by identity
-    sibfake/diamond/       top -> (left, right) -> bottom: `bottom` is one unit of `top`'s graph with two dependents
+    sibfake/diamond/       top -> (left, right) -> bottom: `bottom` is one unit of `top`'s graph with two dependents, and names two `[native-dependencies]` with `mode = "load"` (lz4, zlib): its `.conda` records them as `libzlib` and `lz4-c >=1.9.3` (`:conda_holds`, mopm 0.0.43 and later)
                            Every package of both has a `:conda` (`mojo_package(conda = True)`: `mopm pack` with the sibling manifests staged at their repository paths) and a `:conda_holds`, which requires the `.conda` to hold the package alone and to record each sibling as a versioned dependency (`{ path = "../b", version = "0.1" }` in the manifest)
                            Each table is mopm's own output for `plan --unit-graph --locked --workspace-root <the repository root>` (`"workspace_root": True`; the paths of the graph start at the repository root, and a
                            test unit's id names its file from there), held to it by `:table`, which is in //ci:mojo_tables. The path dependencies are held by identity only; a leaf's table also holds the `key` of its units
@@ -53,4 +53,4 @@ a lock that disagrees with a `.conda` fails the download's check, and one that d
 
 The URL in the lock is a placeholder channel; a machine that has the file points the download at it in the `.buckconfig.local` of the cell that declares it, for example
 `[buildrules] url_map = https://conda.mopm.dev/=http://mirror.invalid/channel/` in the root `.buckconfig.local` (the sha256 is still checked). The mopm tarball
-(`rules/mopm/pins.bzl`, the published mopm 0.0.42) is a download of the `toolchains` cell from its release URL and needs no mirror.
+(`rules/mopm/pins.bzl`, the published mopm 0.0.48) is a download of the `toolchains` cell from its release URL and needs no mirror.

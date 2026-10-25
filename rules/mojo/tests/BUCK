@@ -10,7 +10,7 @@ load("//rules/mojo:sync.bzl", "sync_packages", "sync_stage_tree")
 load(":sync.bzl", "packages_are_normalized", "stage_holds_the_workspaces_and_the_other_files_once")
 load(":test_data_targets.bzl", "test_data_targets")
 
-_NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.42\"", "mojo = \"1.0.0\""]
+_NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.48\"", "mojo = \"1.0.0\""]
 
 # A table whose recorded files do not include the toolchain file (made by hand, or before the file was required): refused.
 _r1, _f1 = recording()

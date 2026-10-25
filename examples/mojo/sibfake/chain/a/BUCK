@@ -19,13 +19,13 @@ mojo_conda_holds(
 )
 
 # `buildrules mojo sync` as a farm action (rules/mojo/sync.bzl): the package and its siblings b and c are staged at their repository paths (`:workspace`), the pinned
-# mopm 0.0.42 plans offline from mopm.lock, and the output holds the two files a sync writes here (and the toolchain tables). `:sync_check` is red unless the committed
+# mopm 0.0.48 plans offline from mopm.lock, and the output holds the two files a sync writes here (and the toolchain tables). `:sync_check` is red unless the committed
 # files are those; `buck2 run //examples/mojo/sibfake/chain/a:sync` writes them into the working tree.
 mojo_sync(
     name = "sync",
     committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
     files = ["//examples/mojo:mopm-toolchain.toml"],
-    mopm = "0.0.42",
+    mopm = "0.0.48",
     visibility = ["//ci:"],
     workspaces = [":workspace"],
 )

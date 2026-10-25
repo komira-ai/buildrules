@@ -179,7 +179,7 @@ def graph_path_in_package(path, pkg_dir, rooted, refuse = fail):
 def native_include_dirs(u, pkg_dir, rooted, refuse = fail):
     """The include directories of a native unit, below the package's directory. mopm prints a unit's `includes` as the manifest wrote them (directories below
     the member) in both graph bases, and when the manifest names none (or an empty list, `len > 0`) it prints the directories of the headers relative to the member (`addNatives` in
-    mopm v0.0.42 `src/core/unit_graph.zig`, the `includes` binding: `n.includes` if given, else `dirsOf` of each header's path with `member_rel` cut off).
+    mopm v0.0.48 `src/core/unit_graph.zig`, the `includes` binding: `n.includes` if given, else `dirsOf` of each header's path with `member_rel` cut off).
     So `includes` is used as printed, never rooted again; only the headers of the default carry the repository root when the graph is rooted, and are cut
     to the package first."""
     if len(u.get("includes") or []) > 0:
@@ -201,7 +201,7 @@ TOOLCHAIN_FILE = "mopm-toolchain.toml"
 
 # mopm-toolchain.toml is required: no mopm and no Mojo is chosen for a package that does not name them.
 TOOLCHAIN_FILE_HELP = ("{} is required and there is no default. Create it at or above the package directory, for example:\n\n" +
-                       "[toolchain]\nmopm = \"0.0.42\"\nmojo = \"1.0.0\"\n\n(an exact release each), then run `buildrules mojo sync`.").format(TOOLCHAIN_FILE)
+                       "[toolchain]\nmopm = \"0.0.48\"\nmojo = \"1.0.0\"\n\n(an exact release each), then run `buildrules mojo sync`.").format(TOOLCHAIN_FILE)
 
 def check_toolchain_file_recorded(t, refuse = fail):
     """A table made without mopm-toolchain.toml (or by hand) is refused: the file is what chooses mopm and Mojo. `refuse` is `fail` in a
