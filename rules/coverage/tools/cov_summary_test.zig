@@ -292,3 +292,187 @@ test "withEmptySources: a package of alias-only files is listed 0/0 and a file w
     const out2 = try S.withEmptySources(a, rows, &mixed, &msrcs, readAliasOnly);
     try t.expectEqualStrings("p/src/code.mojo", S.missing(out2, &mixed).?);
 }
+
+// ---- what no test compiled: the own lines and decision words of functions the reports lack ---------------------------------------------
+
+const lib_src =
+    \\def used(x: Int) -> Int:
+    \\    return x
+    \\
+    \\def other(x: Int) -> Int:
+    \\    if x > 0 and x < 3:
+    \\        return 1
+    \\    return 0
+    \\
+    \\def never(x: Int) -> Int:
+    \\    return x
+;
+const gen_src =
+    \\# @generated
+    \\def g() -> Int:
+    \\    return 1
+;
+
+fn readLib(_: std.mem.Allocator, p: []const u8) []const u8 {
+    if (std.mem.eql(u8, p, "gen")) return gen_src;
+    return lib_src;
+}
+
+const rep_used = "<class name=\"p/a.mojo\" filename=\"p/a.mojo\">\n<lines>\n<line number=\"1\" hits=\"1\"/>\n<line number=\"2\" hits=\"1\"/>\n</lines>\n</class>\n";
+const rep_other = "<class name=\"p/a.mojo\" filename=\"p/a.mojo\">\n<lines>\n<line number=\"4\" hits=\"1\"/>\n<line number=\"5\" hits=\"1\"/>\n<line number=\"6\" hits=\"0\"/>\n<line number=\"7\" hits=\"1\"/>\n</lines>\n</class>\n";
+const rep_gen = "<class name=\"p/g.mojo\" filename=\"p/g.mojo\">\n<lines>\n<line number=\"2\" hits=\"1\"/>\n<line number=\"3\" hits=\"0\"/>\n</lines>\n</class>\n";
+const br_used = "SF:p/a.mojo\nend_of_record\n";
+// The records the compiler gives `if x > 0 and x < 3:`: the `if`, the `and`, and the right operand of the `and` that the `if` tests.
+const br_other = "SF:p/a.mojo\nBRDA:5,5:select:0/1,0,1\nBRDA:5,5:select:0/1,1,1\nBRDA:5,14:rhs:0/1,0,1\nBRDA:5,14:rhs:0/1,1,-\nBRDA:5,14:select:0/1,0,1\nBRDA:5,14:select:0/1,1,1\nend_of_record\n";
+
+const Flow = struct { lines: []const u8, branches: []const u8, unc: S.Uncompiled, missing: ?[]const u8 };
+
+/// cov_summary's main after the reading of its inputs, for report texts, branch record texts, the expected sources and their texts.
+fn flow(a: std.mem.Allocator, reports: []const []const u8, brs: []const []const u8, expect: []const []const u8, srcs: []const [2][]const u8) !Flow {
+    var files: std.StringArrayHashMapUnmanaged(std.AutoArrayHashMapUnmanaged(usize, bool)) = .empty;
+    for (reports) |r| try S.addReport(a, &files, r);
+    const origins = try a.alloc([]const u8, brs.len);
+    for (origins) |*o| o.* = "branches.info";
+    var diag = branch_lcov.Diag{};
+    const found = try S.countUncompiled(a, &files, origins, brs, expect, srcs, readLib, &diag);
+    const rows = try S.withEmptySources(a, try S.summarize(a, &files), found.counted, srcs, readLib);
+    const lines = try S.renderScoped(a, rows, found.counted, "", expect.len != 0);
+    var branches: []const u8 = "";
+    if (brs.len != 0) {
+        const all_origins = try std.mem.concat(a, []const u8, &.{ origins, &.{"uncompiled"} });
+        const all_texts = try std.mem.concat(a, []const u8, &.{ brs, &.{found.unc.branches} });
+        branches = switch (try S.branchListingScoped(a, all_origins, all_texts, rows, found.counted, expect.len != 0)) {
+            .text => |x| x,
+            .refused => |m| m,
+        };
+    }
+    return .{ .lines = lines, .branches = branches, .unc = found.unc, .missing = S.missing(rows, found.counted) };
+}
+
+const branch_lcov = @import("branch_lcov.zig");
+const lib_srcs = [_][2][]const u8{.{ "p/a.mojo", "lib" }};
+const lib_expect = [_][]const u8{"p/a.mojo"};
+
+test "uncompiled: with every test the figure counts a function nobody calls as found and not hit" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const f = try flow(a, &.{ rep_used, rep_other }, &.{ br_used, br_other }, &lib_expect, &lib_srcs);
+    // 1, 2, 4 to 7 are recorded (5 hit); `never` (9, 10) is found and not hit.
+    try t.expectEqualStrings("p/a.mojo 5/8 62%\ntotal 5/8 62%\n", f.lines);
+    // The six arms of `other` are the records'; `never` holds no decision.
+    try t.expectEqualStrings("branches p/a.mojo 5/6 83%\nbranches total 5/6 83%\n", f.branches);
+    try t.expect(f.missing == null);
+}
+
+test "uncompiled: deleting a test keeps the denominator and takes the hits, lines and branches" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // The test of `other` is gone: its function is no longer compiled. 8 lines were found before and are found now; 5 hit, now 2.
+    const f = try flow(a, &.{rep_used}, &.{br_used}, &lib_expect, &lib_srcs);
+    try t.expectEqualStrings("p/a.mojo 2/8 25%\ntotal 2/8 25%\n", f.lines);
+    // The `if`, the `and` and its right operand of `other` are three decisions of two arms, none taken: the 6 arms there were are 6 arms now.
+    try t.expectEqualStrings("branches p/a.mojo 0/6 0%\nbranches total 0/6 0%\n", f.branches);
+}
+
+test "uncompiled: a branch record on a line of a function makes it compiled, whatever the line reports say" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // `other` is inlined: no line record of its own, branch records at its decisions. Its lines are not counted twice nor as uncompiled.
+    const f = try flow(a, &.{rep_used}, &.{br_other}, &lib_expect, &lib_srcs);
+    try t.expectEqualStrings("p/a.mojo 2/4 50%\ntotal 2/4 50%\n", f.lines);
+    try t.expectEqualStrings("branches p/a.mojo 5/6 83%\nbranches total 5/6 83%\n", f.branches);
+}
+
+test "uncompiled: without branch records only the lines are added" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const f = try flow(a, &.{rep_used}, &.{}, &lib_expect, &lib_srcs);
+    try t.expectEqualStrings("p/a.mojo 2/8 25%\ntotal 2/8 25%\n", f.lines);
+    try t.expectEqualStrings("", f.branches);
+    try t.expectEqual(@as(usize, 0), f.unc.branches.len);
+}
+
+test "uncompiled: the lines are also a Cobertura report, so the reports plus it count what the summary counted" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const f = try flow(a, &.{rep_used}, &.{br_used}, &lib_expect, &lib_srcs);
+    var files: std.StringArrayHashMapUnmanaged(std.AutoArrayHashMapUnmanaged(usize, bool)) = .empty;
+    try S.addReport(a, &files, rep_used);
+    try S.addReport(a, &files, f.unc.cobertura);
+    try t.expectEqualStrings("p/a.mojo 2/8 25%\ntotal 2/8 25%\n", try S.render(a, try S.summarize(a, &files), &lib_expect));
+    // The branch records are a file the branch reader takes: the six arms, each as never reached.
+    var sum = branch_lcov.Sum{};
+    var diag = branch_lcov.Diag{};
+    try sum.add(a, &diag, f.unc.branches, "uncompiled");
+    const counts = try sum.counts(a);
+    try t.expectEqual(@as(usize, 1), counts.len);
+    try t.expectEqual(@as(usize, 6), counts[0].total);
+    try t.expectEqual(@as(usize, 0), counts[0].hit);
+}
+
+test "uncompiled: a path that needs escaping is written escaped, and a source no report names is left alone" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var files: std.StringArrayHashMapUnmanaged(std.AutoArrayHashMapUnmanaged(usize, bool)) = .empty;
+    try S.addReport(a, &files, "<class name=\"p/a&b.mojo\" filename=\"p/a&b.mojo\">\n<line number=\"1\" hits=\"1\"/>\n</class>\n");
+    const srcs = [_][2][]const u8{ .{ "p/a&b.mojo", "lib" }, .{ "p/b.mojo", "lib" } };
+    const blines: S.BranchLines = .empty;
+    const unc = try S.addUncompiled(a, &files, &blines, false, &.{ "p/a&b.mojo", "p/b.mojo" }, &srcs, readLib);
+    try t.expect(std.mem.indexOf(u8, unc.cobertura, "filename=\"p/a&amp;b.mojo\"") != null);
+    // every character XML reserves, and a source with no entry in `srcs` (nothing to read: left alone)
+    const odd = [_][2][]const u8{.{ "p/<\"'>&.mojo", "lib" }};
+    var files2: std.StringArrayHashMapUnmanaged(std.AutoArrayHashMapUnmanaged(usize, bool)) = .empty;
+    const put = try files2.getOrPut(a, "p/<\"'>&.mojo");
+    put.value_ptr.* = .empty;
+    try put.value_ptr.put(a, 1, true);
+    const unc2 = try S.addUncompiled(a, &files2, &blines, false, &.{ "p/<\"'>&.mojo", "q" }, &odd, readLib);
+    try t.expect(std.mem.indexOf(u8, unc2.cobertura, "filename=\"p/&lt;&quot;&apos;&gt;&amp;.mojo\"") != null);
+    try t.expect(std.mem.indexOf(u8, unc.cobertura, "p/b.mojo") == null);
+    try t.expect(!files.contains("p/b.mojo"));
+    // `used` is recorded by line 1; `other` and `never` are the uncompiled lines 4 to 7, 9, 10.
+    try t.expectEqual(@as(usize, 7), files.get("p/a&b.mojo").?.count());
+}
+
+test "generated: a source marked @generated is neither required in a report nor counted" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const srcs = [_][2][]const u8{ .{ "p/a.mojo", "lib" }, .{ "p/g.mojo", "gen" } };
+    const expect = [_][]const u8{ "p/a.mojo", "p/g.mojo" };
+    // No report names the generated source: nothing is missing, and its lines are not in the figure.
+    const none = try flow(a, &.{rep_used}, &.{}, &expect, &srcs);
+    try t.expect(none.missing == null);
+    try t.expectEqualStrings("p/a.mojo 2/8 25%\ntotal 2/8 25%\n", none.lines);
+    // A report that names it lists it and leaves it out of the total, with its uncompiled functions.
+    const named = try flow(a, &.{ rep_used, rep_gen }, &.{}, &expect, &srcs);
+    try t.expectEqualStrings("p/a.mojo 2/8 25%\np/g.mojo 1/2 50% (not counted)\ntotal 2/8 25%\n", named.lines);
+    // A source not marked is still refused when no report names it.
+    const plain = [_][2][]const u8{ .{ "p/a.mojo", "lib" }, .{ "p/g.mojo", "lib" } };
+    try t.expectEqualStrings("p/g.mojo", (try flow(a, &.{rep_used}, &.{}, &expect, &plain)).missing.?);
+}
+
+test "generated: a package whose sources are all generated counts nothing, whatever its reports name" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const srcs = [_][2][]const u8{.{ "p/g.mojo", "gen" }};
+    const f = try flow(a, &.{rep_gen}, &.{br_used}, &.{"p/g.mojo"}, &srcs);
+    try t.expectEqualStrings("p/g.mojo 1/2 50% (not counted)\ntotal 0/0 0%\n", f.lines);
+    try t.expect(std.mem.endsWith(u8, f.branches, "branches total 0/0 0%\n"));
+}
+
+test "countUncompiled: a branch record file that cannot be used is refused with its reason" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var files: std.StringArrayHashMapUnmanaged(std.AutoArrayHashMapUnmanaged(usize, bool)) = .empty;
+    var diag = branch_lcov.Diag{};
+    try t.expectError(error.Refused, S.countUncompiled(a, &files, &.{"bad.info"}, &.{"BRDA:1\n"}, &lib_expect, &lib_srcs, readLib, &diag));
+    try t.expect(std.mem.startsWith(u8, diag.msg, "bad.info:1:"));
+}

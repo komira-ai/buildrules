@@ -1,0 +1,21 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:sync.bzl", "mojo_sync")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A library with a function no test calls (`never_called`) and a source marked `@generated` (`gen.mojo`) that nothing imports. Mojo compiles only what a test
+# reaches, so the coverage report has no line for `never_called`; `:coverage` counts its lines, and the decision words on them, as found and not hit (rules/coverage/
+# tools/mojo_src.zig), and leaves `gen.mojo` out. ../uncompiled_lean is the same library with one test deleted: the same lines and branches are found there, and fewer
+# are hit (../uncompiled_test.zig).
+mojo_package(path = ".")
+
+# `buildrules mojo sync` as a farm action (rules/mojo/sync.bzl): `buck2 run //examples/mojo/uncompiled:sync` writes the two files a sync writes.
+mojo_sync(
+    name = "sync",
+    committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
+    files = ["//examples/mojo:mopm-toolchain.toml"],
+    mopm = "0.0.42",
+    visibility = ["//ci:"],
+    workspaces = [":workspace"],
+)
+
+scrub_files()

@@ -1,7 +1,7 @@
 //! cov_summary: the line coverage of a package, from the normalized Cobertura reports of its tests (cov_normalize's output).
 //!
 //!   cov_summary --out <file> [--expect <repository path>]... [--src <repository path>=<file>]... [--blocks <blocks file>]...
-//!               [--branch-lcov <branch records>]... <report.xml>...
+//!               [--branch-lcov <branch records>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] <report.xml>...
 //!
 //! `--src` gives the file behind an `--expect` path (Mojo only). The Mojo report omits a source with no executable line, so an expected source that
 //! no report names but whose text has no statement beyond comments, docstrings and `import` lines (a re-export `__init__.mojo`) is listed as 0/0
@@ -20,11 +20,19 @@
 //! A line counts as hit when any report records it with hits above 0. The output lists every file the reports name with its hit and
 //! recorded lines, then the total. `--expect` names the package's own sources: the tool fails (exit 1, nothing written) when one is not in any
 //! report, because kcov drops a file it cannot open without an error and a package whose library no test compiled must not read as
-//! covered. What is recorded is what the compiler emitted code for: a function no test reaches emits no lines, so the percentage is an
-//! upper bound (a coverage checker may list such functions; this tool does not).
+//! covered.
+//!
+//! What is recorded is what the compiler emitted code for, and a function no test reaches emits none. With `--src` (Mojo) the tool reads the
+//! source of each expected file too and counts what the reports lack (mojo_src.zig has the rules): the own lines of every function none of whose
+//! lines has a record are found and not hit, and so are the two arms of every decision word (`if`, `elif`, `while`, `for`, `and`, `or`) on them
+//! when branch records are given. So a test that is deleted can take hits away and leaves the denominator where it was. A source whose first line
+//! is a comment naming `@generated` is machine-written: it is neither required in a report nor counted (its row, if a report names it, says
+//! `(not counted)`). `--uncompiled-lines <file>` writes those lines as a Cobertura report (hits 0), `--uncompiled-branches <file>` those arms
+//! as a branch record file, so a consumer that takes the reports and the branch records plus these two files counts what the summary did.
 
 const std = @import("std");
 const branch_lcov = @import("branch_lcov.zig");
+const mojo_src = @import("mojo_src.zig");
 
 pub const FileCov = struct { path: []const u8, hit: usize, total: usize };
 
@@ -145,6 +153,11 @@ pub fn branchRows(a: std.mem.Allocator, counts: []const branch_lcov.Count, lines
 pub const Branch = union(enum) { text: []const u8, refused: []const u8 };
 
 pub fn branchListing(a: std.mem.Allocator, origins: []const []const u8, texts: []const []const u8, lines: []const FileCov, expect: []const []const u8) !Branch {
+    return branchListingScoped(a, origins, texts, lines, expect, expect.len != 0);
+}
+
+/// `branchListing`, `scoped` saying whether `expect` limits the total (see `renderScoped`).
+pub fn branchListingScoped(a: std.mem.Allocator, origins: []const []const u8, texts: []const []const u8, lines: []const FileCov, expect: []const []const u8, scoped: bool) !Branch {
     var sum = branch_lcov.Sum{};
     var diag = branch_lcov.Diag{};
     for (origins, texts) |o, t| {
@@ -155,7 +168,7 @@ pub fn branchListing(a: std.mem.Allocator, origins: []const []const u8, texts: [
     }
     switch (try branchRows(a, try sum.counts(a), lines, expect)) {
         .lacking => |m| return .{ .refused = try std.fmt.allocPrint(a, "{s} is in no branch record: its tests ran no code of it, or the classifier found none", .{m}) },
-        .rows => |brows| return .{ .text = try renderWith(a, brows, expect, "branches ") },
+        .rows => |brows| return .{ .text = try renderScoped(a, brows, expect, "branches ", scoped) },
     }
 }
 
@@ -190,11 +203,17 @@ pub fn render(a: std.mem.Allocator, rows: []const FileCov, expect: []const []con
 
 /// `render`, every row starting with `prefix` (the branch listing's is `branches `).
 pub fn renderWith(a: std.mem.Allocator, rows: []const FileCov, expect: []const []const u8, prefix: []const u8) ![]u8 {
+    return renderScoped(a, rows, expect, prefix, expect.len != 0);
+}
+
+/// `renderWith`, with `scoped` saying whether `expect` limits the total (an empty `expect` limits it to nothing when every expected source was
+/// left out as generated).
+pub fn renderScoped(a: std.mem.Allocator, rows: []const FileCov, expect: []const []const u8, prefix: []const u8, scoped: bool) ![]u8 {
     var o = std.ArrayList(u8).empty;
     var hit: usize = 0;
     var total: usize = 0;
     for (rows) |r| {
-        const counted = expect.len == 0 or isExpected(expect, r.path);
+        const counted = !scoped or isExpected(expect, r.path);
         try o.print(a, "{s}{s} {d}/{d} {d}%{s}\n", .{ prefix, r.path, r.hit, r.total, pct(r.hit, r.total), if (counted) "" else " (not counted)" });
         if (counted) {
             hit += r.hit;
@@ -410,6 +429,129 @@ pub fn withEmptySources(a: std.mem.Allocator, rows: []const FileCov, expect: []c
     return out.toOwnedSlice(a);
 }
 
+fn srcOf(srcs: []const [2][]const u8, path: []const u8) ?[]const u8 {
+    for (srcs) |s| {
+        if (std.mem.eql(u8, s[0], path)) return s[1];
+    }
+    return null;
+}
+
+/// `expect` without the sources whose first line marks them `@generated` (`srcs`: expected path, then the file to read).
+pub fn withoutGenerated(a: std.mem.Allocator, expect: []const []const u8, srcs: []const [2][]const u8, read: *const fn (std.mem.Allocator, []const u8) []const u8) ![]const []const u8 {
+    var out = std.ArrayList([]const u8).empty;
+    for (expect) |e| {
+        if (srcOf(srcs, e)) |file| {
+            if (mojo_src.isGenerated(read(a, file))) continue;
+        }
+        try out.append(a, e);
+    }
+    return out.toOwnedSlice(a);
+}
+
+/// Path -> the lines some branch record sits on.
+pub const BranchLines = std.StringArrayHashMapUnmanaged(mojo_src.LineSet);
+
+/// The lines of each file that carry a branch record of `sum`.
+pub fn branchLines(a: std.mem.Allocator, sum: *const branch_lcov.Sum) !BranchLines {
+    var out: BranchLines = .empty;
+    var it = sum.files.iterator();
+    while (it.next()) |f| {
+        const gop = try out.getOrPut(a, f.key_ptr.*);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        for (f.value_ptr.keys()) |key| {
+            const comma = std.mem.indexOfScalar(u8, key, ',') orelse continue;
+            const line = std.fmt.parseInt(usize, key[0..comma], 10) catch continue;
+            try gop.value_ptr.put(a, line, {});
+        }
+    }
+    return out;
+}
+
+/// What the sources hold that no test compiled, as the two files a consumer adds to the reports.
+pub const Uncompiled = struct { cobertura: []const u8, branches: []const u8 };
+
+fn xmlEscape(a: std.mem.Allocator, o: *std.ArrayList(u8), s: []const u8) !void {
+    for (s) |c| switch (c) {
+        '&' => try o.appendSlice(a, "&amp;"),
+        '<' => try o.appendSlice(a, "&lt;"),
+        '>' => try o.appendSlice(a, "&gt;"),
+        '"' => try o.appendSlice(a, "&quot;"),
+        '\'' => try o.appendSlice(a, "&apos;"),
+        else => try o.append(a, c),
+    };
+}
+
+/// Adds to `files` (path -> line -> hit) the own lines, as not hit, of every function of each expected source (`srcs`) that no line of `files`
+/// and no branch record (`branches`) sits in; returns them as a Cobertura report, with the arms of their decision words as branch records
+/// (`with_branches`). A source `files` does not name is left alone: it is in no report, and `missing` refuses it.
+pub fn addUncompiled(
+    a: std.mem.Allocator,
+    files: *std.StringArrayHashMapUnmanaged(Lines),
+    branches: *const BranchLines,
+    with_branches: bool,
+    expect: []const []const u8,
+    srcs: []const [2][]const u8,
+    read: *const fn (std.mem.Allocator, []const u8) []const u8,
+) !Uncompiled {
+    var xml = std.ArrayList(u8).empty;
+    var lcov = std.ArrayList(u8).empty;
+    try xml.appendSlice(a, "<?xml version=\"1.0\" ?>\n<coverage timestamp=\"0\">\n\t<packages>\n\t\t<package name=\"\">\n\t\t\t<classes>\n");
+    for (expect) |e| {
+        const file = srcOf(srcs, e) orelse continue;
+        const lines = files.getPtr(e) orelse continue;
+        var recorded: mojo_src.LineSet = .empty;
+        for (lines.keys()) |ln| try recorded.put(a, ln, {});
+        if (branches.getPtr(e)) |bl| {
+            for (bl.keys()) |ln| try recorded.put(a, ln, {});
+        }
+        const u = try mojo_src.uncompiled(a, read(a, file), &recorded);
+        if (u.lines.len != 0) {
+            try xml.appendSlice(a, "\t\t\t\t<class name=\"");
+            try xmlEscape(a, &xml, e);
+            try xml.appendSlice(a, "\" filename=\"");
+            try xmlEscape(a, &xml, e);
+            try xml.appendSlice(a, "\">\n\t\t\t\t\t<lines>\n");
+            for (u.lines) |ln| {
+                try lines.put(a, ln, false);
+                try xml.print(a, "\t\t\t\t\t\t<line number=\"{d}\" hits=\"0\"/>\n", .{ln});
+            }
+            try xml.appendSlice(a, "\t\t\t\t\t</lines>\n\t\t\t\t</class>\n");
+        }
+        if (with_branches and u.decisions.len != 0) {
+            try lcov.print(a, "SF:{s}\n", .{e});
+            for (u.decisions) |d| {
+                const kind = if (d.rhs) "rhs" else "br";
+                try lcov.print(a, "BRDA:{d},{d}:{s}:0/1,0,-\nBRDA:{d},{d}:{s}:0/1,1,-\n", .{ d.line, d.col, kind, d.line, d.col, kind });
+            }
+            try lcov.appendSlice(a, "end_of_record\n");
+        }
+    }
+    try xml.appendSlice(a, "\t\t\t</classes>\n\t\t</package>\n\t</packages>\n</coverage>\n");
+    return .{ .cobertura = try xml.toOwnedSlice(a), .branches = try lcov.toOwnedSlice(a) };
+}
+
+pub const Found = struct { counted: []const []const u8, unc: Uncompiled };
+
+/// The step of a Mojo summary that follows the reading of the line reports (`files`): the branch records are read first (a function with a
+/// branch record on one of its lines was compiled, whatever the line reports say), then the sources left out as generated, then what no test
+/// compiled is added to `files`. `error.Refused` is a branch record file that cannot be used (`diag`).
+pub fn countUncompiled(
+    a: std.mem.Allocator,
+    files: *std.StringArrayHashMapUnmanaged(Lines),
+    branch_origins: []const []const u8,
+    branch_texts: []const []const u8,
+    expect: []const []const u8,
+    srcs: []const [2][]const u8,
+    read: *const fn (std.mem.Allocator, []const u8) []const u8,
+    diag: *branch_lcov.Diag,
+) branch_lcov.Error!Found {
+    var sum = branch_lcov.Sum{};
+    for (branch_origins, branch_texts) |o, t| try sum.add(a, diag, t, o);
+    const blines = try branchLines(a, &sum);
+    const counted = try withoutGenerated(a, expect, srcs, read);
+    return .{ .counted = counted, .unc = try addUncompiled(a, files, &blines, branch_origins.len != 0, counted, srcs, read) };
+}
+
 fn readSource(a: std.mem.Allocator, p: []const u8) []const u8 {
     return std.fs.cwd().readFileAlloc(a, p, 64 << 20) catch |e| die(1, "cannot read {s}: {s}", .{ p, @errorName(e) });
 }
@@ -429,6 +571,8 @@ pub fn main() !void {
     var block_reports = std.ArrayList([]const u8).empty;
     var branch_files = std.ArrayList([]const u8).empty;
     var srcs = std.ArrayList([2][]const u8).empty;
+    var unc_lines_out: ?[]const u8 = null;
+    var unc_branches_out: ?[]const u8 = null;
     var i: usize = 1;
     while (i < argv.len) : (i += 1) {
         if (std.mem.eql(u8, argv[i], "--out") and i + 1 < argv.len) {
@@ -447,22 +591,39 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, argv[i], "--branch-lcov") and i + 1 < argv.len) {
             i += 1;
             try branch_files.append(a, argv[i]);
+        } else if (std.mem.eql(u8, argv[i], "--uncompiled-lines") and i + 1 < argv.len) {
+            i += 1;
+            unc_lines_out = argv[i];
+        } else if (std.mem.eql(u8, argv[i], "--uncompiled-branches") and i + 1 < argv.len) {
+            i += 1;
+            unc_branches_out = argv[i];
         } else if (argv[i].len > 0 and argv[i][0] == '-') {
             die(2, "unknown option {s}", .{argv[i]});
         } else {
             try reports.append(a, argv[i]);
         }
     }
-    if (out_path == null or reports.items.len == 0) die(2, "usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... <report.xml>...", .{});
+    if (out_path == null or reports.items.len == 0) die(2, "usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... [--src <path>=<file>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] <report.xml>...", .{});
     if (block_reports.items.len != 0 and branch_files.items.len != 0) die(2, "--blocks (Zig) and --branch-lcov (Mojo) are two kinds of branch figure: a package has one", .{});
     var files: std.StringArrayHashMapUnmanaged(Lines) = .empty;
     for (reports.items) |p| {
         const text = std.fs.cwd().readFileAlloc(a, p, 64 << 20) catch |e| die(1, "cannot read {s}: {s}", .{ p, @errorName(e) });
         addReport(a, &files, text) catch die(1, "{s} is not a normalized Cobertura report", .{p});
     }
-    const rows = try withEmptySources(a, try summarize(a, &files), expect.items, srcs.items, readSource);
-    if (missing(rows, expect.items)) |m| die(1, "{s} is in no report: no test compiled it, or kcov could not open it", .{m});
-    var text = try render(a, rows, expect.items);
+    const branch_texts = try a.alloc([]const u8, branch_files.items.len);
+    for (branch_files.items, branch_texts) |p, *t| t.* = readSource(a, p);
+    var diag = branch_lcov.Diag{};
+    const found = countUncompiled(a, &files, branch_files.items, branch_texts, expect.items, srcs.items, readSource, &diag) catch |e| switch (e) {
+        error.Refused => die(1, "{s}", .{diag.msg}),
+        error.OutOfMemory => return e,
+    };
+    const counted = found.counted;
+    const unc = found.unc;
+    if (unc_lines_out) |p| std.fs.cwd().writeFile(.{ .sub_path = p, .data = unc.cobertura }) catch |e| die(1, "cannot write {s}: {s}", .{ p, @errorName(e) });
+    if (unc_branches_out) |p| std.fs.cwd().writeFile(.{ .sub_path = p, .data = unc.branches }) catch |e| die(1, "cannot write {s}: {s}", .{ p, @errorName(e) });
+    const rows = try withEmptySources(a, try summarize(a, &files), counted, srcs.items, readSource);
+    if (missing(rows, counted)) |m| die(1, "{s} is in no report: no test compiled it, or kcov could not open it", .{m});
+    var text = try renderScoped(a, rows, counted, "", expect.items.len != 0);
     if (block_reports.items.len != 0) {
         var blocks: std.StringArrayHashMapUnmanaged(BlockPositions) = .empty;
         for (block_reports.items) |p| {
@@ -470,13 +631,14 @@ pub fn main() !void {
             addBlocks(a, &blocks, btext) catch die(1, "{s} is not a block report", .{p});
         }
         const brows = try summarizeBlocks(a, &blocks);
-        if (missing(brows, expect.items)) |m| die(1, "{s} is in no block report: no test compiled it with block counters", .{m});
-        text = try std.mem.concat(a, u8, &.{ text, try renderWith(a, brows, expect.items, "branches ") });
+        if (missing(brows, counted)) |m| die(1, "{s} is in no block report: no test compiled it with block counters", .{m});
+        text = try std.mem.concat(a, u8, &.{ text, try renderScoped(a, brows, counted, "branches ", expect.items.len != 0) });
     }
     if (branch_files.items.len != 0) {
-        const texts = try a.alloc([]const u8, branch_files.items.len);
-        for (branch_files.items, texts) |p, *t| t.* = readSource(a, p);
-        switch (try branchListing(a, branch_files.items, texts, rows, expect.items)) {
+        // The arms of the decisions no test compiled are one more record file; they join the rest before any count.
+        const origins = try std.mem.concat(a, []const u8, &.{ branch_files.items, &.{"uncompiled"} });
+        const texts = try std.mem.concat(a, []const u8, &.{ branch_texts, &.{unc.branches} });
+        switch (try branchListingScoped(a, origins, texts, rows, counted, expect.items.len != 0)) {
             .refused => |m| die(1, "{s}", .{m}),
             .text => |t| text = try std.mem.concat(a, u8, &.{ text, t }),
         }

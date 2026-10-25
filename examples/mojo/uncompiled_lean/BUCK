@@ -1,0 +1,19 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:sync.bzl", "mojo_sync")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# ../uncompiled with the test of `clamped` deleted (`tests/test_clamped.mojo`): the same functions, one test. `clamped` was compiled there and is not here, so the
+# compiler's own records of it are gone; `:coverage` finds the same lines here as there, and the branches the source has, and hits fewer (../uncompiled_test.zig).
+mojo_package(path = ".")
+
+# `buildrules mojo sync` as a farm action (rules/mojo/sync.bzl): `buck2 run //examples/mojo/uncompiled_lean:sync` writes the two files a sync writes.
+mojo_sync(
+    name = "sync",
+    committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
+    files = ["//examples/mojo:mopm-toolchain.toml"],
+    mopm = "0.0.42",
+    visibility = ["//ci:"],
+    workspaces = [":workspace"],
+)
+
+scrub_files()

@@ -128,6 +128,8 @@ BRANCH_PACKAGES = [
     ("//examples/mojo/ws/util/base", "test_base", True),
     ("//examples/mojo/testdata", "test_data_files", True),
     ("//examples/mojo/branch_shapes", "test_branch_shapes", True),
+    ("//examples/mojo/uncompiled", "test_doubled", True),
+    ("//examples/mojo/uncompiled_lean", "test_doubled", True),
     ("//examples/mojo/sibfake/chain/a", "test_chain_a", True),
     ("//examples/mojo/sibfake/chain/b", "test_chain_b", True),
     ("//examples/mojo/sibfake/chain/c", "test_chain_c", True),

@@ -9,7 +9,7 @@ the line tables and rewrites the action's directories out of them, run under kco
 | `:debug_relocate`, `:cov_zig` | the `real/zig`-fronting link directory of a coverage build (`cov_link`, one per Mojo version, in `toolchains//:mojo_<v>_cov_link`) | `cov_link` tools |
 | `:cov_normalize` | a kcov report in repository paths, with bytes that do not depend on the run | same |
 | `:cov_run` | runs one test binary under kcov in a tree of copies of its sources, then `cov_normalize` | new: the part a mopm unit needs; `--env NAME=VALUE` and `--data-env NAME` give the test its variables and the tree it runs in as its staged-data directory (docs/contract.md section 12.9) |
-| `:cov_summary` | the package's lines hit and recorded, from the reports; fails when a source of the library is in none | new |
+| `:cov_summary` | the package's lines hit and recorded, from the reports and (Mojo) the sources of the functions no test compiled; fails when a source of the library is in none | new; `tools/mojo_src.zig` reads the sources |
 
 Every tool is built behind its unit tests; the process cases of `cov_zig`, `debug_relocate` and `cov_normalize` are `zig_test`s that run the executable
 and are validations of the public target.
@@ -26,11 +26,19 @@ branches of the library's sources in the annotated IR are classified (`branch/RE
 | output | what |
 |---|---|
 | `:coverage` | `coverage.txt`: `<path> <hit>/<total> <n>%` per file, then `total`; a source with no executable line is `0/0`; red if a source of the library is in no report. Then, in the same form with `branches ` in front of each row, the arms of the decisions of each source that some test took, and `branches total` (also for a package whose tests link native libraries: the instrumented link is given them) |
-| `:coverage[reports]` | the per-line records the file was counted from: one Cobertura XML per test, `<line number hits>` per recorded line under a `<class filename>` in repository paths, branch attributes as kcov wrote them (none for Mojo) |
-| `:coverage[branches]` | the branch records the `branches` rows were counted from: one lcov file per test, `SF:` repository path, `BRDA:<line>,<col>:<kind>:<n>/<N>,<arm>,<count or ->` per arm of each decision (format and rules: `branch/README.md`) |
+| `:coverage[reports]` | the per-line records the file was counted from: one Cobertura XML per test, `<line number hits>` per recorded line under a `<class filename>` in repository paths, branch attributes as kcov wrote them (none for Mojo); and `uncompiled.cobertura.xml`, the lines no test compiled (below) with hits 0. `[reports_of_tests]` and `[reports_uncompiled]` are the two parts |
+| `:coverage[branches]` | the branch records the `branches` rows were counted from: one lcov file per test, `SF:` repository path, `BRDA:<line>,<col>:<kind>:<n>/<N>,<arm>,<count or ->` per arm of each decision (format and rules: `branch/README.md`); and `uncompiled.branches.info`, the arms of the decision words of the code no test compiled, all `-`. `[branches_of_tests]` and `[branches_uncompiled]` are the two parts |
 | `:coverage_floor` | present only with a `coverage_floor.txt` beside the BUCK file; the check below |
 
-`covcheck` takes the files of `:coverage[reports]` as `--cobertura` inputs and those of `:coverage[branches]` as `--branch-lcov` inputs, one per test: `buck2 build //pkg:coverage[reports] //pkg:coverage[branches] --show-full-output` prints their paths.
+`covcheck` takes the files of `:coverage[reports]` as `--cobertura` inputs and those of `:coverage[branches]` as `--branch-lcov` inputs, one per test and the one of the code no test compiled: `buck2 build //pkg:coverage[reports] //pkg:coverage[branches] --show-full-output` prints their paths.
+
+**Code no test compiled (Mojo).** Mojo compiles only the functions a test reaches, so a function no test calls has no line in kcov's report and no branch in the IR. Counted from the reports alone, deleting
+the last test of a function took its lines out of the denominator and the figure rose. `cov_summary --src` reads the library's sources (`tools/mojo_src.zig`, with the rules of covcheck, the full-source checker this replaced: its lexer's executable
+lines, its declaration reader's functions) and counts, for every function none of whose own lines is in a line report or on a branch record, its executable lines as found and not hit, and two branch arms
+per decision word (`if`, `elif`, `while`, `for`, `and`, `or`) on them, plus two for the right operand of an `and`/`or` that an `if`, `elif` or `while` tests (the compiler's `rhs` records); `comptime` and `alias` lines and the line after
+`@parameter` decide nothing at run time. A function with a record on any one of its own lines keeps the compiler's lines and arms. This is a heuristic where the compiler's records are exact: a function inlined into every caller can read as uncompiled; a compiled
+function can have fewer lines than its source (a folded `return`); the raising calls and subscripts the compiler counts as branches have no word in the source. A source whose first line is a comment naming `@generated` is not asked for in a report
+and not counted. The lines and arms are written as `uncompiled.cobertura.xml` and `uncompiled.branches.info` (`--uncompiled-lines`, `--uncompiled-branches`) and are part of `:coverage[reports]` and `:coverage[branches]`, so a consumer that takes those counts what the summary did.
 
 The floor is the file every package here uses (`coverage_floor.txt` next to the BUCK file, checked by `cov_floor`; a package with Zig tests names it in `zig_coverage`, a Node package in `jest_coverage_floor`),
 so a Mojo package follows the Zig and Node ones and not an attribute: the figure sits in a file a reviewer sees change, the check is the one `cov_floor` already has, and no file means no check. A Mojo
@@ -72,7 +80,7 @@ are left out (a passing test never runs the error exit of its assertions). zig 0
 What both figures leave out:
 
 - **Code the compiler emitted none for.** Zig analyses what is referenced, so a function no test reaches has no lines and no blocks, and the percentage is an
-  upper bound. `expect` names a package's own sources; a file in it that no test compiled fails the summary (`... is in no report`), and the files a package
+  upper bound (for Mojo the sources are read for the functions no test compiled, above; for Zig they are not). `expect` names a package's own sources; a file in it that no test compiled fails the summary (`... is in no report`), and the files a package
   leaves out of `expect` (an entry point no test imports, a file of constants) say why in its BUCK file. One exception, for Mojo: its report omits a source
   with no executable line, so `mojo_package` also gives `cov_summary` the text of each source (`--src <expected path>=<file>`), and an expected source that no
   report names but that holds nothing beyond comments, docstrings, `import` / `from ... import` statements (a re-export `__init__.mojo`) and top-level alias

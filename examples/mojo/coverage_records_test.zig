@@ -1,6 +1,7 @@
 //! What `:coverage` of a mojo_package gives a consumer (docs/contract.md, section 12.4): `coverage.txt`, the count per file (lines, then branches),
-//! `:coverage[reports]`, the line records it was counted from (one kcov Cobertura file per test), and `:coverage[branches]`, the branch records (one
-//! lcov file per test, the classifier's output). All are the zig_test's `data` (under BUILDRULES_TEST_WORK), the real outputs of example packages
+//! `:coverage[reports_of_tests]`, the line records it was counted from (one kcov Cobertura file per test), and `:coverage[branches_of_tests]`, the branch records
+//! (one lcov file per test, the classifier's output). The libraries here call all their functions, so the code no test compiled adds nothing to their counts
+//! (uncompiled_test.zig holds that part). All are the zig_test's `data` (under BUILDRULES_TEST_WORK), the real outputs of example packages
 //! (`reexport`, `partial` and `testdata` for lines and branches, `sys_app` and `ws`, whose tests link native libraries, for branches):
 //! `reexport` (its `__init__.mojo` only re-exports and `aliases.mojo` only declares aliases, so the line report omits both; `ops.mojo` has two decisions),
 //! `partial` (a test that takes one arm of a function, so a line is recorded and does not run, and one branch arm never runs) and `testdata` (code and no

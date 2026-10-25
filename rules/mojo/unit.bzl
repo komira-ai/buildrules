@@ -694,16 +694,35 @@ def _cov_summary_impl(ctx):
         cmd.add("--src", cmd_args(path, src, delimiter = "="))
     for b in ctx.attrs.branches:
         cmd.add("--branch-lcov", _file(b))
+
+    # What no test compiled: the lines of the functions no report records, and (with branch records) the arms of their decision words. The
+    # summary counts them as found and not hit, and writes them as one more report and one more branch record file (rules/coverage/tools/mojo_src.zig).
+    uncompiled = ctx.actions.declare_output("uncompiled.cobertura.xml")
+    cmd.add("--uncompiled-lines", uncompiled.as_output())
+    uncompiled_branches = None
+    if ctx.attrs.branches:
+        uncompiled_branches = ctx.actions.declare_output("uncompiled.branches.info")
+        cmd.add("--uncompiled-branches", uncompiled_branches.as_output())
     for r in ctx.attrs.reports:
         cmd.add(_file(r))
     ctx.actions.run(cmd, category = "mojo_cov_summary", identifier = ctx.label.name)
 
-    # `:coverage[reports]`: the per-line records the summary was made from, one kcov Cobertura file per test (docs/contract.md, section 12.4).
-    # They are the very files the summary action read, so a consumer that takes them gets what `coverage.txt` counted. `:coverage[branches]`
-    # likewise: the branch records, one lcov file per test, the very files the `branches` rows were counted from (`covcheck --branch-lcov`).
-    sub = {"reports": [DefaultInfo(default_outputs = [_file(r) for r in ctx.attrs.reports])]}
+    # `:coverage[reports]`: the per-line records the summary was made from, one kcov Cobertura file per test and the lines no test compiled as
+    # one more (docs/contract.md, section 12.4). They are the very files the summary action read or wrote, so a consumer that takes them gets what
+    # `coverage.txt` counted. `:coverage[branches]` likewise: the branch records, one lcov file per test and the arms of the decision words no
+    # test compiled as one more, the very files the `branches` rows were counted from (`covcheck --branch-lcov`).
+    # `reports_of_tests` and `reports_uncompiled` (`branches_of_tests`, `branches_uncompiled`) are the two parts, for a consumer that wants them apart.
+    tests = [_file(r) for r in ctx.attrs.reports]
+    sub = {
+        "reports": [DefaultInfo(default_outputs = tests + [uncompiled])],
+        "reports_of_tests": [DefaultInfo(default_outputs = tests)],
+        "reports_uncompiled": [DefaultInfo(default_output = uncompiled)],
+    }
     if ctx.attrs.branches:
-        sub["branches"] = [DefaultInfo(default_outputs = [_file(b) for b in ctx.attrs.branches])]
+        btests = [_file(b) for b in ctx.attrs.branches]
+        sub["branches"] = [DefaultInfo(default_outputs = btests + [uncompiled_branches])]
+        sub["branches_of_tests"] = [DefaultInfo(default_outputs = btests)]
+        sub["branches_uncompiled"] = [DefaultInfo(default_output = uncompiled_branches)]
     return _validated(ctx, [DefaultInfo(default_output = out, sub_targets = sub)])
 
 # The package's line coverage from its tests' reports, and its branch coverage from their branch records; fails when one of its own sources

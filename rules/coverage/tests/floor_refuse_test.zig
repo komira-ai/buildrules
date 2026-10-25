@@ -270,7 +270,7 @@ test "cov_summary: a source no report names is refused, and so is a report that 
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        try proc.expectRefusal("no arguments", try summaryRun(a, &tmp, null, &.{}), 2, &.{"usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... <report.xml>..."});
+        try proc.expectRefusal("no arguments", try summaryRun(a, &tmp, null, &.{}), 2, &.{"usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... [--src <path>=<file>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] <report.xml>..."});
         try proc.expectRefusal("an unknown option", try summaryRun(a, &tmp, REPORT, &.{ "--bogus", "report.xml" }), 2, &.{"cov_summary: unknown option --bogus"});
     }
 }
@@ -332,4 +332,83 @@ test "cov_summary: branch records are summed over the tests, listed after the li
         try tmp.dir.writeFile(.{ .sub_path = "one.info", .data = RECORDS_ONE });
         try proc.expectRefusal("both kinds of branch figure", try summaryRun(a, &tmp, REPORT, &.{ "--blocks", "blocks", "--branch-lcov", "one.info", "report.xml" }), 2, &.{"cov_summary: --blocks (Zig) and --branch-lcov (Mojo) are two kinds of branch figure: a package has one"});
     }
+}
+
+// The code no test compiled (--src with --uncompiled-lines / --uncompiled-branches), as the process the public target hands out: the report names `f` and no
+// test compiled `g`, so `g`'s lines and the arms of its `if` are found and not hit, written as the two files a consumer adds to the reports.
+const MOJO_REPORT =
+    \\<coverage>
+    \\<class name="a" filename="rules/pkg/a.mojo">
+    \\<line number="1" hits="1"/>
+    \\<line number="2" hits="1"/>
+    \\</class>
+    \\</coverage>
+    \\
+;
+
+const MOJO_SRC =
+    \\def f(x: Int) -> Int:
+    \\    return x
+    \\
+    \\def g(x: Int) -> Int:
+    \\    if x > 0:
+    \\        return 1
+    \\    return 0
+    \\
+;
+
+test "cov_summary: the functions no test compiled are found and not hit, and written as the extra files" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "a.mojo", .data = MOJO_SRC });
+    try tmp.dir.writeFile(.{ .sub_path = "one.info", .data = "SF:rules/pkg/a.mojo\nend_of_record\n" });
+    try proc.expectOk("lines and branches", try summaryRun(a, &tmp, MOJO_REPORT, &.{
+        "--expect",           "rules/pkg/a.mojo",
+        "--src",              "rules/pkg/a.mojo=a.mojo",
+        "--branch-lcov",      "one.info",
+        "--uncompiled-lines", "u.xml",
+        "--uncompiled-branches", "u.info",
+        "report.xml",
+    }));
+    try std.testing.expectEqualStrings("rules/pkg/a.mojo 2/6 33%\ntotal 2/6 33%\nbranches rules/pkg/a.mojo 0/2 0%\nbranches total 0/2 0%\n", try tmp.dir.readFileAlloc(a, "coverage.txt", 1 << 16));
+    const xml = try tmp.dir.readFileAlloc(a, "u.xml", 1 << 16);
+    for ([_][]const u8{ "4", "5", "6", "7" }) |n| {
+        try std.testing.expect(std.mem.indexOf(u8, xml, try std.fmt.allocPrint(a, "<line number=\"{s}\" hits=\"0\"/>", .{n})) != null);
+    }
+    try std.testing.expectEqual(@as(usize, 4), std.mem.count(u8, xml, "<line "));
+    try std.testing.expectEqualStrings("SF:rules/pkg/a.mojo\nBRDA:5,5:br:0/1,0,-\nBRDA:5,5:br:0/1,1,-\nend_of_record\n", try tmp.dir.readFileAlloc(a, "u.info", 1 << 16));
+    // Without branch records the lines alone are added, and the branch file is not written.
+    try tmp.dir.deleteFile("coverage.txt");
+    try proc.expectOk("lines only", try summaryRun(a, &tmp, MOJO_REPORT, &.{ "--expect", "rules/pkg/a.mojo", "--src", "rules/pkg/a.mojo=a.mojo", "report.xml" }));
+    try std.testing.expectEqualStrings("rules/pkg/a.mojo 2/6 33%\ntotal 2/6 33%\n", try tmp.dir.readFileAlloc(a, "coverage.txt", 1 << 16));
+}
+
+test "cov_summary: a source marked @generated is not asked for and not counted" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "a.mojo", .data = MOJO_SRC });
+    try tmp.dir.writeFile(.{ .sub_path = "gen.mojo", .data = "# @generated\ndef h() -> Int:\n    return 1\n" });
+    try proc.expectOk("a generated source no report names", try summaryRun(a, &tmp, MOJO_REPORT, &.{
+        "--expect", "rules/pkg/a.mojo",
+        "--expect", "rules/pkg/gen.mojo",
+        "--src",    "rules/pkg/a.mojo=a.mojo",
+        "--src",    "rules/pkg/gen.mojo=gen.mojo",
+        "report.xml",
+    }));
+    try std.testing.expectEqualStrings("rules/pkg/a.mojo 2/6 33%\ntotal 2/6 33%\n", try tmp.dir.readFileAlloc(a, "coverage.txt", 1 << 16));
+    // the same source without the marker is a source in no report
+    try tmp.dir.writeFile(.{ .sub_path = "gen.mojo", .data = "def h() -> Int:\n    return 1\n" });
+    try proc.expectRefusal("the same source, not marked", try summaryRun(a, &tmp, MOJO_REPORT, &.{
+        "--expect", "rules/pkg/a.mojo",
+        "--expect", "rules/pkg/gen.mojo",
+        "--src",    "rules/pkg/a.mojo=a.mojo",
+        "--src",    "rules/pkg/gen.mojo=gen.mojo",
+        "report.xml",
+    }), 1, &.{"cov_summary: rules/pkg/gen.mojo is in no report: no test compiled it, or kcov could not open it"});
 }

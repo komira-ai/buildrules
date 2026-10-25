@@ -12,8 +12,10 @@ One line per package. The targets come from the package's unit graph, which `bui
     :build      the library and the binaries of `[targets] bins`
     :coverage   every test again as a debug build run under kcov, one Cobertura report per test file, and as LLVM bitcode instrumented for branch counts
                 (`<stem>__bc`, `__pgo`, `__profdata`, `__ir`, `__info`: rules/coverage/branch/README.md); `coverage.txt` is the per-file count of lines, then of
-                branch arms; `:coverage[reports]` is the per-line records of every test (kcov's Cobertura XML in repository paths) and `:coverage[branches]` the
-                branch records (lcov `BRDA` lines in repository paths). The instrumented link of a test gets the test's native libraries as its ordinary link does.
+                branch arms, with the lines and decision words of every function no test compiled counted as found and not hit (rules/coverage/tools/mojo_src.zig);
+                `:coverage[reports]` is the per-line records of every test (kcov's Cobertura XML in repository paths) and one more file for the code no test compiled,
+                `:coverage[branches]` the branch records (lcov `BRDA` lines in repository paths) and one more for it (`[reports_of_tests]`, `[reports_uncompiled]`,
+                `[branches_of_tests]` and `[branches_uncompiled]` are the parts). The instrumented link of a test gets the test's native libraries as its ordinary link does.
                 A package whose tests run in the installed layout (`test_layout = "installed"`) has them too: the instrumented binary is run from the installed tree, as the kcov run is.
     :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green while `:coverage` is at least that floor (`lines NN.NN`, and
                 `branches NN.NN` when `coverage.txt` has branch rows; below it: "coverage fell"; at or above it passes, and above it prints "you may raise the
