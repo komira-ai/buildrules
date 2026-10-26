@@ -149,6 +149,9 @@ pub fn buildEnv(alloc: std.mem.Allocator, inherited: []const []const u8, run: []
     try fixed.append(alloc, try std.fmt.allocPrint(alloc, "PATH={s}/bin", .{run}));
     try fixed.append(alloc, try std.fmt.allocPrint(alloc, "LD_LIBRARY_PATH={s}", .{lib}));
     if (sys.is_darwin) try fixed.append(alloc, try std.fmt.allocPrint(alloc, "DYLD_LIBRARY_PATH={s}", .{lib}));
+    // A library the test opens by its bare name (dlopen("liblz4.dylib")) sits under the host package prefix on macOS; dyld's default fallback directories
+    // are listed after it because setting the variable replaces them.
+    if (sys.is_darwin) try fixed.append(alloc, "DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib:/usr/lib");
     try fixed.append(alloc, try std.fmt.allocPrint(alloc, "TMPDIR={s}/tmp", .{run}));
     try fixed.append(alloc, try std.fmt.allocPrint(alloc, "TEST_TMPDIR={s}/tmp", .{run}));
     try fixed.append(alloc, try std.fmt.allocPrint(alloc, "HOME={s}/home", .{run}));

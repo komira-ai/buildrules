@@ -224,6 +224,8 @@ test "G7 environment: the runner's five variables, the action's others, and each
     // G12: on macOS dyld reads DYLD_LIBRARY_PATH, set to the same directory.
     // Variant (macOS): drop it from the environment the gate builds.
     try std.testing.expectEqual(sys.is_darwin, hasLine(out, try std.fmt.allocPrint(e.a, "DYLD_LIBRARY_PATH={s}/rt/lib", .{e.real})));
+    // A library opened by its bare name is found under the host package prefix on macOS only; a Linux test sees no DYLD_* variable.
+    try std.testing.expectEqual(sys.is_darwin, hasLine(out, "DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib:/usr/lib"));
     for ([_][]const u8{ "GATE_INHERITED=yes", "SPACED=a b=c", "EMPTY=", "TWICE=2" }) |l| try std.testing.expect(hasLine(out, l));
     for ([_][]const u8{ "PATH=/nowhere", "HOME=/nohome", "TMPDIR=/notmp", "TWICE=1" }) |l| try std.testing.expect(!hasLine(out, l));
 }

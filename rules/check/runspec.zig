@@ -8,6 +8,8 @@
 //!   4. --tmpdir: TMPDIR is the action's scratch path (BUCK_SCRATCH_PATH of the process's environment) made absolute; without one TMPDIR is
 //!      kept, and is /tmp if it is empty or not set;
 //!   5. --ld-library-path DIR: LD_LIBRARY_PATH (DYLD_LIBRARY_PATH on macOS, whose loader reads no other) is DIR made absolute (it replaces, it does not append);
+//!      on macOS DYLD_FALLBACK_LIBRARY_PATH is also set, to `/opt/homebrew/lib:/usr/local/lib:/usr/lib`, so a library the program opens by its bare name
+//!      (`dlopen("liblz4.dylib")`) is found where the host installs it, as the Linux loader finds `liblz4.so.1` in the system directories;
 //!   6. each --abs NAME and --abs-prefix PREFIX: a variable that is set to a relative path is made absolute against the working directory
 //!      (every variable whose name starts with PREFIX, for --abs-prefix);
 //!   7. each --mkdir-env NAME: the directory NAME names is made, with its parents.
@@ -282,6 +284,20 @@ pub fn libraryPathVar(os: std.Target.Os.Tag) []const u8 {
     return if (os == .macos) "DYLD_LIBRARY_PATH" else "LD_LIBRARY_PATH";
 }
 
+/// The directories dyld searches for a library opened by its bare name (`dlopen("liblz4.dylib")`) after DYLD_LIBRARY_PATH and the current directory, as
+/// DYLD_FALLBACK_LIBRARY_PATH; null where the loader needs none. On Linux the loader finds such a library (`liblz4.so.1`) in the system directories of the
+/// worker; on macOS the system directories hold no lz4, and a library the host installs lives under the package manager's prefix (`/opt/homebrew/lib` on Apple
+/// silicon). Setting the variable replaces dyld's default (`$HOME/lib:/usr/local/lib:/usr/lib`), so the default directories are listed after the prefix.
+pub fn fallbackLibraryDirs(os: std.Target.Os.Tag) ?[]const u8 {
+    return if (os == .macos) "/opt/homebrew/lib:/usr/local/lib:/usr/lib" else null;
+}
+
+/// Step 5 for a program of `os`: the library path variable holds `dir` (absolute), and on macOS the fallback directories are set as well.
+pub fn setLibraryEnv(env: *std.process.EnvMap, os: std.Target.Os.Tag, dir: []const u8) Oom!void {
+    try putEnv(env, libraryPathVar(os), dir);
+    if (fallbackLibraryDirs(os)) |dirs| try putEnv(env, "DYLD_FALLBACK_LIBRARY_PATH", dirs);
+}
+
 /// The steps after the scratch directory: --dir, --tmpdir, --ld-library-path, the absolute variables, --mkdir-env, the working directory and
 /// the program. Returns 0, or the status to end with.
 fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom!u8 {
@@ -316,7 +332,7 @@ fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom
         try putEnv(&p.env, "TEST_TMPDIR", s.tmp);
         try putEnv(&p.env, "HOME", s.home);
     }
-    if (spec.ld_library_path) |dir| try putEnv(&p.env, libraryPathVar(builtin.os.tag), try common.absolute(a, here, dir));
+    if (spec.ld_library_path) |dir| try setLibraryEnv(&p.env, builtin.os.tag, try common.absolute(a, here, dir));
     for (spec.abs) |name| try makeAbsolute(a, &p.env, here, name);
     for (spec.abs_prefix) |prefix| {
         var names = common.Strings{ .a = a };

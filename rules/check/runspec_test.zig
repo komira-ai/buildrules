@@ -560,3 +560,39 @@ test "the library path variable is the one the loader of the operating system re
     try t.expectEqualStrings("DYLD_LIBRARY_PATH", rs.libraryPathVar(.macos));
     try t.expectEqualStrings("LD_LIBRARY_PATH", rs.libraryPathVar(.linux));
 }
+
+// Defect caught: a macOS test that opens a native library by its bare name (`dlopen("liblz4.dylib")`) stops at "dlopen failed" because the library sits under
+// the host's package prefix, which dyld does not search; or the Linux environment gaining DYLD_* variables, or losing LD_LIBRARY_PATH.
+test "the macOS environment of a run names the directories of the native libraries; the Linux one is the library path alone" {
+    var mac = std.process.EnvMap.init(t.allocator);
+    defer mac.deinit();
+    try rs.setLibraryEnv(&mac, .macos, "/rt/lib");
+    try t.expectEqualStrings("/rt/lib", mac.get("DYLD_LIBRARY_PATH").?);
+    try t.expect(mac.get("LD_LIBRARY_PATH") == null);
+    const fallback = mac.get("DYLD_FALLBACK_LIBRARY_PATH").?;
+    try t.expect(std.mem.indexOf(u8, fallback, "/opt/homebrew/lib") != null);
+    // dyld's own default directories stay searched: setting the variable replaces them.
+    try t.expect(std.mem.indexOf(u8, fallback, "/usr/local/lib") != null and std.mem.indexOf(u8, fallback, "/usr/lib") != null);
+
+    var linux = std.process.EnvMap.init(t.allocator);
+    defer linux.deinit();
+    try rs.setLibraryEnv(&linux, .linux, "/rt/lib");
+    try t.expectEqualStrings("/rt/lib", linux.get("LD_LIBRARY_PATH").?);
+    try t.expectEqual(@as(u32, 1), linux.count());
+}
+
+test "setLibraryEnv: an allocation that fails ends it with out of memory, at either variable, and a run that meets no failure sets both" {
+    var i: usize = 0;
+    while (i < 40) : (i += 1) {
+        var failing = t.FailingAllocator.init(t.allocator, .{ .fail_index = i });
+        var env = std.process.EnvMap.init(failing.allocator());
+        defer env.deinit();
+        rs.setLibraryEnv(&env, .macos, "/rt/lib") catch |err| {
+            try t.expectEqual(error.OutOfMemory, err);
+            continue;
+        };
+        try t.expect(env.get("DYLD_LIBRARY_PATH") != null and env.get("DYLD_FALLBACK_LIBRARY_PATH") != null);
+        return;
+    }
+    return error.TestUnexpectedResult;
+}
