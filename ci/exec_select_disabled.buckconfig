@@ -6,3 +6,5 @@
   linux_x86_64_properties = OSFamily=Linux,ISA=x86-64,pool=analysis-only
   linux_aarch64_properties = OSFamily=Linux,ISA=aarch64,pool=analysis-only
   macos_aarch64_properties = OSFamily=macOS,ISA=aarch64,pool=analysis-only
+  darwin_macos_hosts = 27.0-0123456789abcdef
+  macos_library_dirs = /opt/example/lib

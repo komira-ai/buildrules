@@ -7,7 +7,9 @@
 //!   3. each --dir NAME=SUB: NAME is the absolute path of SUB in the scratch directory (`.` is the scratch directory), made;
 //!   4. --tmpdir: TMPDIR is the action's scratch path (BUCK_SCRATCH_PATH of the process's environment) made absolute; without one TMPDIR is
 //!      kept, and is /tmp if it is empty or not set;
-//!   5. --ld-library-path DIR: LD_LIBRARY_PATH is DIR made absolute (it replaces, it does not append);
+//!   5. --ld-library-path DIR: LD_LIBRARY_PATH (DYLD_LIBRARY_PATH on macOS, whose loader reads no other) is DIR made absolute (it replaces, it does not append);
+//!      --macos-library-dirs DIRS (colon separated, absolute): on macOS DYLD_FALLBACK_LIBRARY_PATH is DIRS followed by `/usr/local/lib:/usr/lib`, so a library the
+//!      program opens by its bare name (`dlopen("liblz4.dylib")`) is found in them; without the option, or on another system, the variable is not set;
 //!   6. each --abs NAME and --abs-prefix PREFIX: a variable that is set to a relative path is made absolute against the working directory
 //!      (every variable whose name starts with PREFIX, for --abs-prefix);
 //!   7. each --mkdir-env NAME: the directory NAME names is made, with its parents.
@@ -23,6 +25,7 @@
 //! process has no scratch path, `.buildrules_NAME` in the working directory. It is emptied before the run and removed after it.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const common = @import("common.zig");
 const Io = common.Io;
 const Alloc = common.Alloc;
@@ -38,6 +41,7 @@ pub const Spec = struct {
     tmpdir: bool = false,
     scratch: ?[]const u8 = null,
     ld_library_path: ?[]const u8 = null,
+    macos_library_dirs: ?[]const u8 = null,
     cwd: ?[]const u8 = null,
     cwd_env: ?[]const u8 = null,
     sets: []const []const u8 = &.{},
@@ -72,6 +76,7 @@ const Options = enum {
     @"--tmpdir",
     @"--scratch",
     @"--ld-library-path",
+    @"--macos-library-dirs",
     @"--cwd",
     @"--cwd-env",
     @"--env",
@@ -97,7 +102,7 @@ const Options = enum {
 fn belongs(opt: Options) u8 {
     return switch (opt) {
         .@"--refuse" => R,
-        .@"--clear-env", .@"--tmpdir", .@"--scratch", .@"--ld-library-path", .@"--cwd", .@"--cwd-env", .@"--env", .@"--dir", .@"--abs", .@"--abs-prefix", .@"--mkdir-env", .@"--private-scratch", .@"--installed", .@"--install-share", .@"--share-env" => R | M | E,
+        .@"--clear-env", .@"--tmpdir", .@"--scratch", .@"--ld-library-path", .@"--macos-library-dirs", .@"--cwd", .@"--cwd-env", .@"--env", .@"--dir", .@"--abs", .@"--abs-prefix", .@"--mkdir-env", .@"--private-scratch", .@"--installed", .@"--install-share", .@"--share-env" => R | M | E,
         .@"--out" => M | E,
         .@"--capture", .@"--stamp", .@"--stamp-log" => M,
         .@"--want", .@"--prefix", .@"--name" => E,
@@ -148,6 +153,7 @@ pub fn parse(io: Io, sub: []const u8, kind: Kind, args: []const []const u8) Oom!
             .@"--tmpdir" => spec.tmpdir = true,
             .@"--scratch" => spec.scratch = value,
             .@"--ld-library-path" => spec.ld_library_path = value,
+            .@"--macos-library-dirs" => spec.macos_library_dirs = value,
             .@"--cwd" => spec.cwd = value,
             .@"--cwd-env" => spec.cwd_env = value,
             .@"--env" => try sets.add(value),
@@ -275,6 +281,33 @@ pub fn prepare(io: Io, sub: []const u8, spec: Spec) Oom!Preparation {
     return .{ .ready = prepared };
 }
 
+/// The variable the loader of `os` reads for the directories to search first: dyld reads DYLD_LIBRARY_PATH and ignores LD_LIBRARY_PATH, so a macOS program
+/// that names its runtime as `@rpath/lib....dylib` is not found through the Linux spelling.
+pub fn libraryPathVar(os: std.Target.Os.Tag) []const u8 {
+    return if (os == .macos) "DYLD_LIBRARY_PATH" else "LD_LIBRARY_PATH";
+}
+
+/// The directories dyld's own default for DYLD_FALLBACK_LIBRARY_PATH lists after the consumer's: `$HOME/lib` is left out because a hermetic action has no home
+/// worth searching (HOME is the run's empty directory).
+pub const dyld_default_dirs = "/usr/local/lib:/usr/lib";
+
+/// DYLD_FALLBACK_LIBRARY_PATH for a program of `os`: the consumer's directories `dirs` followed by `dyld_default_dirs` (setting the variable replaces dyld's
+/// default, so the defaults are listed again); null on every system but macOS, and when no directory is given (dyld's own default then applies).
+pub fn fallbackLibraryPath(a: Alloc, os: std.Target.Os.Tag, dirs: ?[]const u8) Oom!?[]const u8 {
+    const d = dirs orelse return null;
+    if (os != .macos or d.len == 0) return null;
+    return try std.fmt.allocPrint(a, "{s}:{s}", .{ d, dyld_default_dirs });
+}
+
+/// Step 5 for a program of `os`: the library path variable holds `dir` (absolute), and on macOS, given `macos_dirs`, so does DYLD_FALLBACK_LIBRARY_PATH.
+pub fn setLibraryEnv(a: Alloc, env: *std.process.EnvMap, os: std.Target.Os.Tag, dir: []const u8, macos_dirs: ?[]const u8) Oom!void {
+    try putEnv(env, libraryPathVar(os), dir);
+    if (try fallbackLibraryPath(a, os, macos_dirs)) |v| {
+        defer a.free(v);
+        try putEnv(env, "DYLD_FALLBACK_LIBRARY_PATH", v);
+    }
+}
+
 /// The steps after the scratch directory: --dir, --tmpdir, --ld-library-path, the absolute variables, --mkdir-env, the working directory and
 /// the program. Returns 0, or the status to end with.
 fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom!u8 {
@@ -309,7 +342,7 @@ fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom
         try putEnv(&p.env, "TEST_TMPDIR", s.tmp);
         try putEnv(&p.env, "HOME", s.home);
     }
-    if (spec.ld_library_path) |dir| try putEnv(&p.env, "LD_LIBRARY_PATH", try common.absolute(a, here, dir));
+    if (spec.ld_library_path) |dir| try setLibraryEnv(a, &p.env, builtin.os.tag, try common.absolute(a, here, dir), spec.macos_library_dirs);
     for (spec.abs) |name| try makeAbsolute(a, &p.env, here, name);
     for (spec.abs_prefix) |prefix| {
         var names = common.Strings{ .a = a };

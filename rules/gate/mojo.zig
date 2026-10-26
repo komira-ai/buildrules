@@ -4,7 +4,7 @@
 //!
 //!   gate mojo --busybox B --runtime-lib DIR --label L --test ROOT/bin/NAME --marker M
 //!             [--mem-cap-mib N] [--deadline-s L --runner-timeout-s T]
-//!             [--limit-s N --limit-report coverage]
+//!             [--limit-s N --limit-report coverage] [--macos-library-dirs DIR[:DIR]...]
 //!             [--env NAME=VALUE]... [--arg VALUE]...
 //!
 //! On exit 0 of the test: `PASS <label>\n` to the marker, nothing printed,
@@ -40,6 +40,7 @@ pub const Args = struct {
     runner_timeout_s: ?[]const u8 = null,
     limit_s: ?u64 = null,
     limit_report: ?[]const u8 = null,
+    macos_library_dirs: ?[]const u8 = null,
     env: std.ArrayList([]const u8) = undefined,
     args: std.ArrayList([]const u8) = undefined,
 };
@@ -54,8 +55,8 @@ pub fn parse(alloc: std.mem.Allocator, argv: []const []const u8, a: *Args) ?u8 {
     a.env = std.ArrayList([]const u8).empty;
     a.args = std.ArrayList([]const u8).empty;
     var i: usize = 0;
-    var have = [_]bool{false} ** 10;
-    const names = [_][]const u8{ "--busybox", "--runtime-lib", "--label", "--test", "--marker", "--mem-cap-mib", "--deadline-s", "--runner-timeout-s", "--limit-s", "--limit-report" };
+    var have = [_]bool{false} ** 11;
+    const names = [_][]const u8{ "--busybox", "--runtime-lib", "--label", "--test", "--marker", "--mem-cap-mib", "--deadline-s", "--runner-timeout-s", "--limit-s", "--limit-report", "--macos-library-dirs" };
     while (i < argv.len) : (i += 2) {
         const flag = argv[i];
         if (std.mem.eql(u8, flag, "--env")) {
@@ -101,6 +102,7 @@ pub fn parse(alloc: std.mem.Allocator, argv: []const []const u8, a: *Args) ?u8 {
                 return 2;
             },
             9 => a.limit_report = v,
+            10 => a.macos_library_dirs = v,
             else => unreachable,
         }
     }
@@ -144,11 +146,21 @@ fn envName(kv: []const u8) []const u8 {
 /// The test's environment (G7): the action's, with PATH, LD_LIBRARY_PATH
 /// (and on macOS DYLD_LIBRARY_PATH), TMPDIR, TEST_TMPDIR, HOME and PWD set
 /// by the runner, then each --env in order (a later one of a name wins).
-pub fn buildEnv(alloc: std.mem.Allocator, inherited: []const []const u8, run: []const u8, lib: []const u8, cwd: []const u8, extra: []const []const u8) ![]const []const u8 {
+/// On macOS (`darwin`), given `macos_dirs` (the consumer's directories, colon
+/// separated), DYLD_FALLBACK_LIBRARY_PATH is those followed by
+/// `/usr/local/lib:/usr/lib`, dyld's defaults (setting the variable replaces
+/// them; `$HOME/lib` is left out, the run's HOME is empty); without
+/// `macos_dirs`, or off macOS, the variable is not set.
+pub fn buildEnv(alloc: std.mem.Allocator, inherited: []const []const u8, run: []const u8, lib: []const u8, cwd: []const u8, extra: []const []const u8, darwin: bool, macos_dirs: ?[]const u8) ![]const []const u8 {
     var fixed = std.ArrayList([]const u8).empty;
     try fixed.append(alloc, try std.fmt.allocPrint(alloc, "PATH={s}/bin", .{run}));
     try fixed.append(alloc, try std.fmt.allocPrint(alloc, "LD_LIBRARY_PATH={s}", .{lib}));
-    if (sys.is_darwin) try fixed.append(alloc, try std.fmt.allocPrint(alloc, "DYLD_LIBRARY_PATH={s}", .{lib}));
+    if (darwin) try fixed.append(alloc, try std.fmt.allocPrint(alloc, "DYLD_LIBRARY_PATH={s}", .{lib}));
+    if (darwin) {
+        if (macos_dirs) |d| {
+            if (d.len > 0) try fixed.append(alloc, try std.fmt.allocPrint(alloc, "DYLD_FALLBACK_LIBRARY_PATH={s}:/usr/local/lib:/usr/lib", .{d}));
+        }
+    }
     try fixed.append(alloc, try std.fmt.allocPrint(alloc, "TMPDIR={s}/tmp", .{run}));
     try fixed.append(alloc, try std.fmt.allocPrint(alloc, "TEST_TMPDIR={s}/tmp", .{run}));
     try fixed.append(alloc, try std.fmt.allocPrint(alloc, "HOME={s}/home", .{run}));
@@ -219,7 +231,7 @@ fn runParsed(alloc: std.mem.Allocator, a: *Args) !u8 {
 
     const share = try std.fmt.allocPrint(alloc, "{s}/share", .{root});
     const cwd = if (isDir(share)) share else try std.fmt.allocPrint(alloc, "{s}/share", .{run});
-    const env = try buildEnv(alloc, try inheritedEnv(alloc), run, lib, cwd, a.env.items);
+    const env = try buildEnv(alloc, try inheritedEnv(alloc), run, lib, cwd, a.env.items, sys.is_darwin, a.macos_library_dirs);
     const log = try std.fmt.allocPrint(alloc, "{s}/log", .{run});
     const log_fd = try util.createLog(log);
 

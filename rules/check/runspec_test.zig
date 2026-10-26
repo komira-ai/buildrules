@@ -38,6 +38,7 @@ test "parse: every option of `run` lands in its field, and what follows `--` is 
         "--clear-env",    "--tmpdir",
         "--scratch",      "scr",
         "--ld-library-path", "lib",
+        "--macos-library-dirs", "/opt/a:/opt/b",
         "--cwd",          "work",
         "--cwd-env",      "WORKDIR",
         "--env",          "A=1",
@@ -55,6 +56,7 @@ test "parse: every option of `run` lands in its field, and what follows `--` is 
     try t.expect(s.clear_env and s.tmpdir);
     try t.expectEqualStrings("scr", s.scratch.?);
     try t.expectEqualStrings("lib", s.ld_library_path.?);
+    try t.expectEqualStrings("/opt/a:/opt/b", s.macos_library_dirs.?);
     try t.expectEqualStrings("work", s.cwd.?);
     try t.expectEqualStrings("WORKDIR", s.cwd_env.?);
     try t.expectEqual(@as(usize, 2), s.sets.len);
@@ -552,4 +554,65 @@ test "statusOf: the exit status, 128 and the signal for a signal, 255 otherwise"
     try t.expectEqual(@as(u8, 139), common.statusOf(.{ .Signal = 11 }));
     try t.expectEqual(@as(u8, 255), common.statusOf(.{ .Stopped = 19 }));
     try t.expectEqual(@as(u8, 255), common.statusOf(.{ .Unknown = 1 }));
+}
+
+// Defect caught: the directory of a macOS program's runtime libraries put in LD_LIBRARY_PATH, which dyld does not read (the program stops at its first
+// `@rpath/....dylib`), or DYLD_LIBRARY_PATH put in a Linux program's environment.
+test "the library path variable is the one the loader of the operating system reads" {
+    try t.expectEqualStrings("DYLD_LIBRARY_PATH", rs.libraryPathVar(.macos));
+    try t.expectEqualStrings("LD_LIBRARY_PATH", rs.libraryPathVar(.linux));
+}
+
+// Defect caught: a macOS test given no library directories getting DYLD_FALLBACK_LIBRARY_PATH anyway (a machine layout baked into the rules, and dyld's own
+// default replaced); the consumer's directories lost, or put after the defaults, or the defaults dropped (so the system libraries stop being found); the Linux
+// environment gaining a DYLD_* variable or losing LD_LIBRARY_PATH, whether or not directories are given.
+test "the macOS environment of a run: no fallback variable without directories, the directories then dyld's defaults with them; Linux the library path alone" {
+    const a = t.allocator;
+    var bare = std.process.EnvMap.init(a);
+    defer bare.deinit();
+    try rs.setLibraryEnv(a, &bare, .macos, "/rt/lib", null);
+    try t.expectEqualStrings("/rt/lib", bare.get("DYLD_LIBRARY_PATH").?);
+    try t.expect(bare.get("LD_LIBRARY_PATH") == null);
+    try t.expect(bare.get("DYLD_FALLBACK_LIBRARY_PATH") == null);
+    try t.expectEqual(@as(u32, 1), bare.count());
+
+    var empty = std.process.EnvMap.init(a);
+    defer empty.deinit();
+    try rs.setLibraryEnv(a, &empty, .macos, "/rt/lib", "");
+    try t.expect(empty.get("DYLD_FALLBACK_LIBRARY_PATH") == null);
+
+    var one = std.process.EnvMap.init(a);
+    defer one.deinit();
+    try rs.setLibraryEnv(a, &one, .macos, "/rt/lib", "/opt/x/lib");
+    try t.expectEqualStrings("/rt/lib", one.get("DYLD_LIBRARY_PATH").?);
+    try t.expectEqualStrings("/opt/x/lib:/usr/local/lib:/usr/lib", one.get("DYLD_FALLBACK_LIBRARY_PATH").?);
+
+    var two = std.process.EnvMap.init(a);
+    defer two.deinit();
+    try rs.setLibraryEnv(a, &two, .macos, "/rt/lib", "/opt/x/lib:/opt/y/lib");
+    try t.expectEqualStrings("/opt/x/lib:/opt/y/lib:/usr/local/lib:/usr/lib", two.get("DYLD_FALLBACK_LIBRARY_PATH").?);
+
+    for ([_]?[]const u8{ null, "/opt/x/lib" }) |dirs| {
+        var linux = std.process.EnvMap.init(a);
+        defer linux.deinit();
+        try rs.setLibraryEnv(a, &linux, .linux, "/rt/lib", dirs);
+        try t.expectEqualStrings("/rt/lib", linux.get("LD_LIBRARY_PATH").?);
+        try t.expectEqual(@as(u32, 1), linux.count());
+    }
+}
+
+test "setLibraryEnv: an allocation that fails ends it with out of memory, at either variable, and a run that meets no failure sets both" {
+    var i: usize = 0;
+    while (i < 40) : (i += 1) {
+        var failing = t.FailingAllocator.init(t.allocator, .{ .fail_index = i });
+        var env = std.process.EnvMap.init(failing.allocator());
+        defer env.deinit();
+        rs.setLibraryEnv(failing.allocator(), &env, .macos, "/rt/lib", "/opt/x/lib") catch |err| {
+            try t.expectEqual(error.OutOfMemory, err);
+            continue;
+        };
+        try t.expect(env.get("DYLD_LIBRARY_PATH") != null and env.get("DYLD_FALLBACK_LIBRARY_PATH") != null);
+        return;
+    }
+    return error.TestUnexpectedResult;
 }

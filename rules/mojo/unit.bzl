@@ -18,12 +18,22 @@ load("//rules:isa.bzl", "isa_satisfies")
 load("//rules/coverage/branch:llvm_branch.bzl", "CovBranchInfo", "RAW_PROFILE_VERSION")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
 load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoTestRunInfo", "MojoToolchainInfo")
-load("//rules/core:test_runtime.bzl", "check_data_destinations")
+load("//rules/core:test_runtime.bzl", "check_data_destinations", "macos_library_dirs")
 load(":test_data.bzl", "DATA_ENV", "LAYOUT_DEFAULT", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_env", "check_test_layout")
 
 # `-c buildrules.unit_nonce=N` changes every unit action's key without changing any input the compiler sees: the compile
 # really re-executes, so two builds can be compared byte for byte.
 _NONCE = read_config("buildrules", "unit_nonce", "")
+
+# The macOS workers' host identities (`[buildrules_re] darwin_macos_hosts`, space separated: what `mojo_compile host-identity` prints on each worker). A macOS
+# compile is given them (toolchain.cfg, so they are part of its action key) and refuses a worker that is not one of them. Read from the root cell, where the execution
+# platforms are configured.
+_MACOS_HOSTS = sorted([h for h in read_root_config("buildrules_re", "darwin_macos_hosts", "").split(" ") if h])
+
+# The directories a macOS test run adds to dyld's search for a library it opens by its bare name (`[buildrules_re] macos_library_dirs`, separated by ':' or spaces;
+# docs/contract.md). Empty when the key is absent. Only a macOS test run is given them (`--macos-library-dirs`, so they are part of that action's key); a Linux
+# run's command is the same with or without the key.
+_MACOS_LIBRARY_DIRS = macos_library_dirs(read_root_config("buildrules_re", "macos_library_dirs", ""))
 
 def _file(dep):
     return dep[DefaultInfo].default_outputs[0]
@@ -89,7 +99,17 @@ def _unit_impl(ctx):
         natives[soname] = _file(ctx.attrs.natives[soname])
 
     # The toolchain directory mopm is given. mojo_compile (mojo_launch.zig) tells the wrapper where the closure and the zig are.
-    cfg = "wrapper=wrapper\ncompiler=compiler\nzig=zig\ncc_target={}\n".format(tc.cc_target)
+    macos = "-macos" in tc.cc_target
+    if macos:
+        # The macOS wrapper links with the host's C driver: no zig, and the deployment target is the version after `-macos.` of the triple.
+        if not ctx.attrs.macos_hosts:
+            fail(("{}: no macOS host identity. Set `[buildrules_re] darwin_macos_hosts` of the root cell to what `mojo_compile host-identity` prints on each macOS " +
+                  "worker (separated by spaces).").format(ctx.label))
+        cfg = "wrapper=wrapper\ncompiler=compiler\ndeployment_target={}\n".format(tc.cc_target.rsplit("-macos.", 1)[-1])
+        for h in ctx.attrs.macos_hosts:
+            cfg += "macos_host={}\n".format(h)
+    else:
+        cfg = "wrapper=wrapper\ncompiler=compiler\nzig=zig\ncc_target={}\n".format(tc.cc_target)
     for a in ctx.attrs.build_args:
         cfg += "build_arg={}\n".format(a)
     zig = _file(ctx.attrs.zig_override) if ctx.attrs.zig_override else tc.zig
@@ -172,7 +192,10 @@ mojo_unit_rule = rule(
         "srcs": attrs.list(attrs.source(), default = []),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         "unit_id": attrs.string(),
-        "wrapper": attrs.exec_dep(default = "buildrules//rules/mojo:mojo_compile"),
+        # The compile wrapper of the host that runs the unit: mojo_compile on Linux, mojo_compile_macos on macOS.
+        "wrapper": attrs.exec_dep(default = "buildrules//rules/mojo:mojo_compile_host"),
+        # The host identities a macOS compile may run on (see _MACOS_HOSTS).
+        "macos_hosts": attrs.list(attrs.string(), default = _MACOS_HOSTS),
         # Another zig directory for the link (a coverage build's cov_link keeps debug info and relocates paths).
         "zig_override": attrs.option(attrs.exec_dep(), default = None),
     },
@@ -260,6 +283,8 @@ def _test_run_impl(ctx):
     libs = cmd_args(compiler, "/lib", delimiter = "")
     data_dir = _data_dir(ctx)
     start = _start_options(ctx, data_dir)
+    if _MACOS_LIBRARY_DIRS and "-macos" in ctx.attrs.toolchain[MojoToolchainInfo].cc_target:
+        start = ["--macos-library-dirs", _MACOS_LIBRARY_DIRS] + start
     marker = ctx.actions.declare_output(ctx.label.name + ".passed")
     ctx.actions.run(
         cmd_args(check, "marker", "--out", marker.as_output(), "--ld-library-path", libs, start, "--", info.exe, hidden = [info.dir]),

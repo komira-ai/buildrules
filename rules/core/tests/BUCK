@@ -4,7 +4,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # each is beside it, so a check that refuses everything is red too.
 load("//rules/core:pinned_file.bzl", "check_pinned")
 load("//rules/core:rerun.bzl", "parse_rerun")
-load("//rules/core:test_runtime.bzl", "check_data_destinations", "env_args")
+load("//rules/core:test_runtime.bzl", "check_data_destinations", "env_args", "macos_library_dirs")
 load("//rules/core:url_map.bzl", "map_url")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/rust:refusal.bzl", "accepts", "refuses")
@@ -31,6 +31,28 @@ _ALL.append(refuses("pinned_file_with_a_short_hash_is_refused", check_pinned, [_
 _ALL.append(refuses("pinned_file_with_an_upper_case_hash_is_refused", check_pinned, [_WHO, _SHA.upper(), 3], ["`sha256` must be 64 lower-case hex digits"]))
 
 _ALL.append(refuses("pinned_file_with_a_hash_that_is_not_hex_is_refused", check_pinned, [_WHO, "z" * 64, 3], ["`sha256` must be 64 lower-case hex digits"]))
+
+# ---- [buildrules_re] macos_library_dirs: absolute directories, ':' or white space between them ---------------------------------------------------------
+
+_ALL.append(accepts("macos_library_dirs_absolute_are_accepted", macos_library_dirs, ["/opt/x/lib:/opt/y/lib /opt/z/lib"]))
+
+_ALL.append(accepts("macos_library_dirs_absent_is_accepted", macos_library_dirs, [""]))
+
+_ALL.append(refuses("macos_library_dirs_relative_is_refused", macos_library_dirs, ["/opt/x/lib lib"], ["macos_library_dirs: \"lib\" is not an absolute directory"]))
+
+# The value passed to the runners: ':' between the directories, in the order given, whatever separated them in the key; nothing for an absent key.
+[
+    fail("macos_library_dirs({}) is {}, not {}".format(repr(raw), repr(macos_library_dirs(raw)), repr(want)))
+    for raw, want in [
+        ("", ""),
+        ("  ", ""),
+        ("/a", "/a"),
+        ("/a /b", "/a:/b"),
+        ("/a:/b", "/a:/b"),
+        (" /a::/b  /c ", "/a:/b:/c"),
+    ]
+    if macos_library_dirs(raw) != want
+]
 
 # ---- [buildrules] rerun -----------------------------------------------------------------------------------------------------------------------------
 
