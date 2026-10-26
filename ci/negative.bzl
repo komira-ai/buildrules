@@ -9,7 +9,7 @@ control's own error. ci/negative_check.zig holds the wiring of this file to the 
 
 load("//examples/mojo/sys_app:buildrules.mojo.lock.bzl", SYS_APP_GRAPH = "GRAPH")
 load("//examples/mojo/ws:buildrules.mojo.lock.bzl", WS_GRAPH = "GRAPH")
-load(":subdirs.bzl", "subdir_problems", UNSUPPORTED_SUBDIR_PLATFORM = "UNSUPPORTED")
+load(":subdirs.bzl", "subdir_problems", UNSUPPORTED_SUBDIR_PLATFORM = "UNSUPPORTED", UNSUPPORTED_SUBDIR_PLATFORMS = "UNSUPPORTED_PLATFORMS")
 load("//examples/mojo/member_native:buildrules.mojo.lock.bzl", MEMBER_NATIVE_GRAPH = "GRAPH")
 load("//examples/mojo/member_native/cshim:buildrules.mojo.lock.bzl", CSHIM_GRAPH = "GRAPH")
 
@@ -41,6 +41,10 @@ CASES = [
     # (ci/subdirs.bzl holds the platforms that are built from the graph of their subdir).
     ("//examples/mojo/subdirs:lib", UNSUPPORTED_SUBDIR_PLATFORM, "has no unit graph for this target platform. It holds graphs for linux-64, linux-aarch64, osx-arm64"),
     ("//examples/mojo/subdirs:conda", UNSUPPORTED_SUBDIR_PLATFORM, "has no unit graph for this target platform"),
+] + [
+    ("//examples/mojo/subdirs:lib", platform, "has no unit graph for this target platform. It holds graphs for linux-64, linux-aarch64, osx-arm64")
+    for platform in UNSUPPORTED_SUBDIR_PLATFORMS
+    if platform != UNSUPPORTED_SUBDIR_PLATFORM
 ]
 
 def _analyse(ctx, label, platform = PLATFORM):

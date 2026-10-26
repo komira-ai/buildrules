@@ -9,6 +9,9 @@ of each subdir and what it was built from is read off the configured targets, no
   - the whole library analyses on the platform (the toolchain of the subdir is declared and its closure rules analyse);
   - a platform with no graph (macOS on Intel) is refused, and the message names the graphs the package has (ci/negative.bzl CASES holds that).
 
+A platform states its OS and CPU in this package's constraint values, in the prelude's (what a repository that does not know buildrules has: ci/platforms) or in both,
+and each is built from the graph of its subdir; a platform that states neither is refused like macOS on Intel (ci/negative.bzl CASES).
+
 `subdir_problems` is a part of ci/negative.bxl, which the public CI runs as a part of ci/completeness.bxl.
 """
 
@@ -24,12 +27,20 @@ PLATFORMS = [
     ("buildrules//platforms:linux_x86_64_v3", "linux-64", "x86_64-linux-gnu.2.34", "mojo_1_0_0"),
     ("buildrules//platforms:linux_aarch64", "linux-aarch64", "aarch64-linux-gnu.2.34", "mojo_1_0_0_linux_aarch64"),
     ("buildrules//platforms:macos_aarch64", "osx-arm64", "aarch64-macos.11.0", "mojo_1_0_0_osx_arm64"),
+    ("//ci/platforms:prelude_linux_x86_64", "linux-64", "x86_64-linux-gnu.2.34", "mojo_1_0_0"),
+    ("//ci/platforms:prelude_linux_aarch64", "linux-aarch64", "aarch64-linux-gnu.2.34", "mojo_1_0_0_linux_aarch64"),
+    ("//ci/platforms:prelude_macos_aarch64", "osx-arm64", "aarch64-macos.11.0", "mojo_1_0_0_osx_arm64"),
+    ("//ci/platforms:both_linux_x86_64", "linux-64", "x86_64-linux-gnu.2.34", "mojo_1_0_0"),
+    ("//ci/platforms:both_linux_aarch64", "linux-aarch64", "aarch64-linux-gnu.2.34", "mojo_1_0_0_linux_aarch64"),
+    ("//ci/platforms:both_macos_aarch64", "osx-arm64", "aarch64-macos.11.0", "mojo_1_0_0_osx_arm64"),
 ]
 
-LINUX_AARCH64_PLATFORM = "buildrules//platforms:linux_aarch64"
+# The platforms of linux aarch64, whatever vocabulary: incompatible while the linux arm64 switch is off.
+LINUX_AARCH64_PLATFORMS = ["buildrules//platforms:linux_aarch64", "//ci/platforms:prelude_linux_aarch64", "//ci/platforms:both_linux_aarch64"]
 
-# The platform that matches no subdir, and what the refusal must say.
+# The platforms that match no subdir, and what the refusal must say: macOS on Intel (this package's values and the prelude's), and a platform that states no OS and CPU.
 UNSUPPORTED = "buildrules//platforms:macos_x86_64"
+UNSUPPORTED_PLATFORMS = [UNSUPPORTED, "//ci/platforms:prelude_macos_x86_64", "//ci/platforms:neither"]
 
 def _attrs(ctx, label, platform):
     node = ctx.configured_targets(label, target_platform = platform)
@@ -49,7 +60,7 @@ def subdir_problems(ctx):
         lib = _attrs(ctx, PACKAGE + ":lib_ungated", platform)
         if lib == None:
             # Incompatible: the only platform that may be is linux aarch64, while `[buildrules_re] linux_arm64_enabled` is off. It is reported, never counted as held.
-            if platform != LINUX_AARCH64_PLATFORM:
+            if platform not in LINUX_AARCH64_PLATFORMS:
                 problems.append("{}: the library is incompatible with the platform, which only linux aarch64 is while the linux arm64 switch is off".format(who))
             else:
                 ctx.output.print("{}: {} (the graph, toolchain and .conda directory of {} are not checked)".format(who, LINUX_ARM64_SKIPPED, subdir))
