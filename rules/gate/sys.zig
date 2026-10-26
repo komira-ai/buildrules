@@ -62,6 +62,13 @@ pub fn waitpid(pid: pid_t, nohang: bool) ?u8 {
     }
 }
 
+/// Whether `fd` has data or has ended (a pidfd: its process has exited), without waiting.
+pub fn readable(fd: fd_t) bool {
+    var fds = [1]posix.pollfd{.{ .fd = fd, .events = posix.POLL.IN, .revents = 0 }};
+    const n = posix.poll(&fds, 0) catch return false;
+    return n > 0 and fds[0].revents & (posix.POLL.IN | posix.POLL.HUP) != 0;
+}
+
 /// Linux only: the status of `pid` once it has exited, WITHOUT reaping it
 /// (waitid WEXITED | WNOWAIT | WNOHANG): it stays a zombie, so neither its
 /// pid nor its process group id can be reused until waitpid reaps it. Null

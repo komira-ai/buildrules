@@ -36,6 +36,8 @@ pub const Platform = struct {
     exec: ExecFn = realExec,
     kill: *const fn (pid: sys.pid_t, sig: u8) void = sys.kill,
     now_ms: *const fn () ?u64 = sys.monotonicMs,
+    /// C's status when it has exited and its parent can see it (Linux; a test replaces it with one that shows nothing).
+    exited_now: *const fn (pid: sys.pid_t) ?u8 = sys.exitedNoReap,
     /// The wait between two looks for survivors of a coverage run's kill
     /// (`survivor_poll_ms`); a test replaces it with a clock that advances.
     sleep_ms: *const fn (ms: u64) void = sys.sleepMs,
@@ -153,12 +155,15 @@ fn closeOwn(extra: []const sys.fd_t) void {
     for (extra) |fd| if (fd >= 0) posix.close(fd);
 }
 
-const Child = struct {
+pub const Child = struct {
     c: sys.pid_t,
     q: sys.pid_t,
     tether_w: sys.fd_t,
     pidfd: ?sys.fd_t,
     reaped: ?u8 = null,
+    /// The pidfd says C is gone but its exit is not reported to us yet (a tracer holds it back): not polled, so the
+    /// loop waits on its signals and its limit as usual and looks again at the next turn.
+    gone_unreported: bool = false,
 };
 
 fn spawn(spec: Spec) !Child {
@@ -224,9 +229,18 @@ fn spawn(spec: Spec) !Child {
 }
 
 /// C's status if it has exited (not reaped on Linux).
-fn exited(ch: *Child) ?u8 {
+pub fn exited(ch: *Child) ?u8 {
     if (ch.reaped) |s| return s;
-    if (sys.is_linux) return sys.exitedNoReap(ch.c);
+    if (sys.is_linux) {
+        if (plat.exited_now(ch.c)) |st| {
+            ch.gone_unreported = false;
+            return st;
+        }
+        // A pidfd that is readable while the exit is not shown: never wait for it here (the limit, the signals and
+        // the kill of the group must stay live; the tracer may hold C until the group is gone).
+        ch.gone_unreported = if (ch.pidfd) |fd| sys.readable(fd) else false;
+        return null;
+    }
     ch.reaped = sys.waitpid(ch.c, true);
     return ch.reaped;
 }
@@ -237,7 +251,7 @@ fn waitEvent(ch: *Child, ms: i32) void {
         .{ .fd = sig_pipe[0], .events = posix.POLL.IN, .revents = 0 },
         .{ .fd = ch.pidfd orelse -1, .events = posix.POLL.IN, .revents = 0 },
     };
-    const n: usize = if (ch.pidfd != null) 2 else 1;
+    const n: usize = if (ch.pidfd != null and !ch.gone_unreported) 2 else 1;
     _ = posix.poll(fds[0..n], ms) catch {};
 }
 
