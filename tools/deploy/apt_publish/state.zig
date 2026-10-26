@@ -117,6 +117,13 @@ pub fn poolKey(a: Allocator, pool_dir: []const u8, file: []const u8) ![]u8 {
     return std.fmt.allocPrint(a, "{s}{s}/{s}", .{ key_root, pool_dir, file });
 }
 
+/// The `--date` the index is built with (epoch seconds, as text): the flag when it was given, else `now`. The clock is a parameter
+/// (the command line passes `std.time.timestamp()`), so the default is tested with a fixed instant.
+pub fn dateArg(a: Allocator, flag: ?[]const u8, now: i64) ![]const u8 {
+    if (flag) |d| return d;
+    return std.fmt.allocPrint(a, "{d}", .{now});
+}
+
 pub const Entry = struct { path: []const u8, etag: []const u8 };
 
 pub fn renderEtags(a: Allocator, entries: []const Entry) ![]u8 {
@@ -194,6 +201,15 @@ test "poolKey: below the product's pool directory only" {
     for ([_][]const u8{ "", ".hidden.deb", "a/b.deb", "../x.deb", "x.txt" }) |f| {
         try t.expectError(error.BadFileName, poolKey(a, "pool/buildrules", f));
     }
+}
+
+test "dateArg: the flag wins over the clock, an absent flag is the clock's instant as epoch seconds" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings("1790000000", try dateArg(a, "1790000000", 42));
+    try t.expectEqualStrings("42", try dateArg(a, null, 42));
+    try t.expectEqualStrings("1790000123", try dateArg(a, null, 1790000123));
 }
 
 test "the etag file round-trips, an absent object is a dash, and a bad line is refused" {
