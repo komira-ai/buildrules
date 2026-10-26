@@ -27,8 +27,12 @@ const Env = struct {
     }
 
     fn run(e: *Env, harness: []const u8, timeout: []const u8) !kit.Result {
+        return e.runWith(harness, timeout, null);
+    }
+
+    fn runWith(e: *Env, harness: []const u8, timeout: []const u8, setup: ?*const fn () void) !kit.Result {
         const bin = try std.fmt.allocPrint(e.a, "h/{s}", .{harness});
-        return kit.runGate(e.a, e.dir, try e.argv(e.bb, "passed", bin, timeout), .{ .timeout_ms = 30_000 });
+        return kit.runGate(e.a, e.dir, try e.argv(e.bb, "passed", bin, timeout), .{ .setup = setup });
     }
 
     /// `gate rust` over the harness `test_bin`, the applet tool `tool` and the marker `marker_path`.
@@ -124,8 +128,13 @@ test "R4-R6 refusals: empty list, a failing list, a failing run, ignored tests, 
     }
 }
 
+fn alarmSetup() void {
+    kit.useReadyClock(1000);
+}
+
 // R7. Mutant: check NO VERDICT after the status check (137 and 142 would
-// read GATED TEST FAILED).
+// read GATED TEST FAILED), or never send the alarm at the limit (the clock
+// guard ends the run, status 251).
 test "R7 NO VERDICT: SIGKILL (137) in either run, and the timeout's SIGALRM (142)" {
     const e = try Env.init();
     defer e.deinit();
@@ -136,10 +145,11 @@ test "R7 NO VERDICT: SIGKILL (137) in either run, and the timeout's SIGALRM (142
     const r2 = try e.run("rust_killed", "30");
     try std.testing.expectEqual(@as(u8, 137), r2.status);
     try std.testing.expect(contains(r2.err, "NO VERDICT: the tests of //r:t was killed by SIGKILL (exit 137).\n"));
-    const r3 = try e.run("rust_hangs", "01");
+    // The harness hangs; the clock reads 0 until it has said it is running
+    // (the listing run before it never does), then 1000, the limit "01".
+    const r3 = try e.runWith("rust_hangs", "01", alarmSetup);
     try std.testing.expectEqual(@as(u8, 142), r3.status);
     try std.testing.expectEqualStrings(rule ++ "NO VERDICT: the tests of //r:t timed out after 01s (exit 142).\n  A hang is not the test's failure; find what it waits on, or raise `test_timeout_s`.\n", r3.err);
-    try std.testing.expect(r3.ms < 5000);
     try std.testing.expect(!kit.exists(e.marker()));
 }
 

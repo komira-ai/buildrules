@@ -36,6 +36,9 @@ pub const Platform = struct {
     exec: ExecFn = realExec,
     kill: *const fn (pid: sys.pid_t, sig: u8) void = sys.kill,
     now_ms: *const fn () ?u64 = sys.monotonicMs,
+    /// The wait between two looks for survivors of a coverage run's kill
+    /// (`survivor_poll_ms`); a test replaces it with a clock that advances.
+    sleep_ms: *const fn (ms: u64) void = sys.sleepMs,
     read_table: *const fn (alloc: std.mem.Allocator) ?proctab.Table = proctab.read,
     group_members: *const fn (alloc: std.mem.Allocator, pgid: i32) ?[]proctab.Member = proctab.groupMembers,
     self_seen: *const fn () [2]i64 = proctab.selfSeen,
@@ -272,11 +275,13 @@ fn finish(ch: *Child) void {
 }
 
 /// The time to wait for a killed group to be gone from /proc.
-const survivor_wait_ms = 10_000;
+pub const survivor_wait_ms = 10_000;
+/// The wait between two looks for survivors.
+pub const survivor_poll_ms = 1_000;
 /// D4's wait for C after the tree kill.
-const deadline_grace_ms = 10_000;
+pub const deadline_grace_ms = 10_000;
 /// S4's wait between SIGTERM and SIGKILL.
-const term_grace_ms = 2_000;
+pub const term_grace_ms = 2_000;
 
 pub fn run(alloc: std.mem.Allocator, spec: Spec) !Outcome {
     try installSignals();
@@ -386,13 +391,13 @@ pub fn run(alloc: std.mem.Allocator, spec: Spec) !Outcome {
         if (seen[0] != self or seen[1] != self) {
             out.blind = seen;
         } else {
-            const deadline = (sys.monotonicMs() orelse 0) + survivor_wait_ms;
+            const deadline = (plat.now_ms() orelse 0) + survivor_wait_ms;
             while (true) {
                 const left: []const proctab.Member = plat.group_members(alloc, ch.c) orelse &.{};
                 out.survivors = left;
                 if (left.len == 0) break;
-                if ((sys.monotonicMs() orelse deadline) >= deadline) break;
-                sys.sleepMs(1000);
+                if ((plat.now_ms() orelse deadline) >= deadline) break;
+                plat.sleep_ms(survivor_poll_ms);
             }
         }
     }

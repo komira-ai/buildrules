@@ -6,19 +6,36 @@
 //! is then a child of the test binary that runs a behaviour picked by its
 //! program name (the path's last component) and its arguments, with the
 //! argv and environment the gate built for it. No shell stand-in is used.
+//!
+//! No test waits for a time to pass or measures one. What a test would have
+//! slept for is an event instead:
+//!   * the fixture reports readiness (a pid written, a "ready" byte) on a
+//!     pipe, and whoever must act after it (a signal, a clock that jumps)
+//!     blocks on that pipe;
+//!   * the fixture's "held" behaviours block on a second pipe until the
+//!     supervisor has taken a set number of readings (`release_at`,
+//!     `pace_per_tick`), so a run lasts as many supervisor ticks as the test
+//!     needs and no wall-clock time;
+//!   * time-dependent decisions (a limit, a grace period, the wait for
+//!     survivors) read a manual clock (`useClock`) that only moves when the
+//!     test's script says so or a fake sleep advances it;
+//!   * a process that must be gone is waited for through its pidfd.
 
 const std = @import("std");
 const posix = std.posix;
 const sys = @import("sys.zig");
 const gate = @import("gate.zig");
 const supervise = @import("supervise.zig");
+const proctab = @import("proctab.zig");
 const proctab_darwin = if (sys.is_darwin) @import("proctab_darwin.zig") else struct {};
 
 pub const Result = struct {
     status: u8,
     out: []const u8,
     err: []const u8,
-    ms: u64,
+    /// A file that exists when a process the fixture left in the gate's
+    /// session came back from its hold (see `expectKilled`).
+    survivors_file: []const u8,
 };
 
 pub const Opts = struct {
@@ -26,10 +43,23 @@ pub const Opts = struct {
     setup: ?*const fn () void = null,
     /// H's environment; null keeps the test binary's.
     env: ?[]const []const u8 = null,
-    /// Sent to H this many ms after it starts.
-    signal: ?struct { sig: u8, after_ms: u64 } = null,
-    timeout_ms: u64 = 60_000,
+    /// Sent to H once the fixture has reported readiness this many times
+    /// (a pid written to a report file counts once).
+    /// `tether_pids`: for a signal that the gate cannot act on (SIGKILL), the
+    /// report file whose first pid is the supervised process: the other child
+    /// of H is the tether, and the run is not over until the tether has
+    /// exited, as it kills the session only after the gate is gone.
+    signal: ?struct { sig: u8, after_ready: usize, tether_pids: ?[]const u8 = null } = null,
 };
+
+// The channels between the test, H and the fixture. runGate makes them before
+// it forks, so H and everything below it inherit the descriptors and the
+// fixture finds them here.
+var ready_r: sys.fd_t = -1;
+var ready_w: sys.fd_t = -1;
+var hold_r: sys.fd_t = -1;
+var hold_w: sys.fd_t = -1;
+var survivors_file: []const u8 = "";
 
 /// A fresh directory under $TMPDIR.
 pub fn tempDir(alloc: std.mem.Allocator) ![]const u8 {
@@ -74,7 +104,21 @@ pub fn runGate(alloc: std.mem.Allocator, cwd: []const u8, argv: []const []const 
     const io = try tempDir(alloc);
     const out_path = try std.fmt.allocPrint(alloc, "{s}/out", .{io});
     const err_path = try std.fmt.allocPrint(alloc, "{s}/err", .{io});
-    const start = sys.monotonicMs().?;
+    const survivors_path = try std.fmt.allocPrint(alloc, "{s}/survivors", .{io});
+    survivors_file = survivors_path;
+    const ready = try posix.pipe();
+    const hold_pipe = try posix.pipe();
+    ready_r = ready[0];
+    ready_w = ready[1];
+    hold_r = hold_pipe[0];
+    hold_w = hold_pipe[1];
+    defer {
+        ready_r = -1;
+        ready_w = -1;
+        hold_r = -1;
+        hold_w = -1;
+        survivors_file = "";
+    }
     const h = try posix.fork();
     if (h == 0) {
         posix.chdir(cwd) catch posix.exit(250);
@@ -95,34 +139,259 @@ pub fn runGate(alloc: std.mem.Allocator, cwd: []const u8, argv: []const []const 
         if (opts.setup) |f| f();
         posix.exit(gate.entry(a, argv));
     }
-    var signalled = false;
-    var status: u8 = 0;
-    while (true) {
-        if (sys.waitpid(h, true)) |s| {
-            status = s;
-            break;
+    // The test keeps the read end of the readiness pipe only; the write ends
+    // belong to H and the fixture, so that end of file means none is left.
+    posix.close(ready[1]);
+    posix.close(hold_pipe[0]);
+    defer posix.close(hold_pipe[1]);
+    defer posix.close(ready[0]);
+    var tether: ?i32 = null;
+    if (opts.signal) |sg| {
+        if (awaitReady(sg.after_ready)) {
+            if (sg.tether_pids) |file| tether = try tetherOf(alloc, h, file);
+            sys.kill(h, sg.sig);
         }
-        const now = sys.monotonicMs().?;
-        if (opts.signal) |sg| {
-            if (!signalled and now - start >= sg.after_ms) {
-                sys.kill(h, sg.sig);
-                signalled = true;
-            }
-        }
-        if (now - start > opts.timeout_ms) {
-            sys.kill(h, posix.SIG.KILL);
-            _ = sys.waitpid(h, false);
-            std.debug.print("runGate: the gate did not finish within {d} ms: {s}\n", .{ opts.timeout_ms, std.mem.join(std.heap.page_allocator, " ", argv) catch "" });
-            return error.Timeout;
-        }
-        sys.sleepMs(5);
     }
+    const status = sys.waitpid(h, false) orelse return error.NoStatus;
+    if (tether) |q| try waitExit(q);
+    // The gate is gone and everything it started should be: release every
+    // process still held. One that comes back from its wait has survived the
+    // gate's kill, and says so in the survivors file; a killed one cannot.
+    sys.writeAll(hold_pipe[1], "rrrrrrrrrrrrrrrr");
     return .{
         .status = status,
         .out = try readFile(alloc, out_path),
         .err = try readFile(alloc, err_path),
-        .ms = sys.monotonicMs().? - start,
+        .survivors_file = survivors_path,
     };
+}
+
+/// The child of `h` that is not the supervised process (the first pid in
+/// `file`): the tether; null when there is none.
+fn tetherOf(alloc: std.mem.Allocator, h: i32, file: []const u8) !?i32 {
+    const c = (try pidsFrom(alloc, file, 1))[0];
+    const t = proctab.read(alloc) orelse return error.NoTable;
+    for (t.procs) |p| {
+        if (p.ppid == h and p.pid != c) return p.pid;
+    }
+    return null;
+}
+
+/// Fails when a process of the run that `pids` names came back from its hold
+/// after the gate was done: it was not killed. It waits for the pids to exit
+/// first; they are released when the run ends, so one that was never killed
+/// exits too and is reported, instead of being waited for for ever.
+pub fn expectKilled(r: Result, pids: []const i32) !void {
+    try waitGone(pids);
+    try std.testing.expect(!exists(r.survivors_file));
+}
+
+/// Blocks until `n` readiness bytes have been read from the run's readiness
+/// pipe; false when every writer is gone first.
+fn awaitReady(n: usize) bool {
+    var left = n;
+    var b: [64]u8 = undefined;
+    while (left > 0) {
+        const got = posix.read(ready_r, b[0..@min(left, b.len)]) catch return false;
+        if (got == 0) return false;
+        left -= got;
+    }
+    return true;
+}
+
+/// Whether a readiness byte is waiting (it is not read).
+fn readyNow() bool {
+    var fds = [1]posix.pollfd{.{ .fd = ready_r, .events = posix.POLL.IN, .revents = 0 }};
+    return (posix.poll(&fds, 0) catch 0) > 0;
+}
+
+fn signalReady() void {
+    if (ready_w >= 0) sys.writeAll(ready_w, "r");
+}
+
+/// Blocks until the supervisor releases the process (`release_at`,
+/// `pace_per_tick`), or for ever where there is no channel: only a kill ends
+/// it then.
+fn holdWait() void {
+    var b: [1]u8 = undefined;
+    while (true) {
+        if (hold_r < 0) {
+            _ = posix.poll(&[0]posix.pollfd{}, -1) catch {};
+            continue;
+        }
+        _ = posix.read(hold_r, &b) catch return;
+        return;
+    }
+}
+
+/// A process that was to be killed and was not: it came back from its hold
+/// (the run is over and `runGate` released it) and says so.
+fn markSurvived() void {
+    const f = std.fs.cwd().createFile(survivors_file, .{}) catch return;
+    f.close();
+}
+
+// ---- the manual clock and the events that stand in for waiting -------------
+
+/// The readings `manualClock` returns, one per call; after the last it keeps
+/// returning the last (moved on by `manualSleep`).
+var clock_script: []const u64 = &.{};
+/// Readiness bytes to wait for before the second reading (the first is the
+/// start of the run, taken before the fixture exists).
+var clock_wait: usize = 0;
+var clock_at: usize = 0;
+var clock_now: u64 = 0;
+var clock_reads: u32 = 0;
+/// A run that reads the clock more often than this is looping on a clock that
+/// does not move: it ends the gate with status 251, which fails the test, in
+/// place of a wait for ever. (A reading is one supervisor tick; a correct run
+/// needs a handful.)
+const clock_guard = 300;
+/// The supervisor's N-th reading (clock or process table) releases one
+/// "held" process; 0: none. A test sets it in `setup`; the default release
+/// is for a run that should end by itself, and a defect that keeps it from
+/// ending then shows as a wrong status, not a hang.
+pub var release_at: u32 = 0;
+/// Every reading releases this many bytes: a paced hog touches one MiB per
+/// byte.
+pub var pace_per_tick: u32 = 0;
+var ticks: u32 = 0;
+
+/// One reading of the supervisor, for a hook that is not `countingTable`
+/// (`release_at`, `pace_per_tick`).
+pub fn tick() void {
+    ticks += 1;
+    if (hold_w < 0) return;
+    var i: u32 = 0;
+    while (i < pace_per_tick) : (i += 1) sys.writeAll(hold_w, "p");
+    if (release_at != 0 and ticks == release_at) sys.writeAll(hold_w, "r");
+}
+
+fn guardReads() void {
+    clock_reads += 1;
+    if (clock_reads > clock_guard) {
+        sys.writeAll(2, "testkit: the clock was read over and over without the run ending\n");
+        posix.exit(251);
+    }
+}
+
+/// For `setup`: the supervisor's clock reads `script` (milliseconds), one
+/// element per reading, and stays at the last. `wait_ready` readiness bytes
+/// are awaited before the second reading, so the clock cannot pass a limit
+/// before the fixture is where the test needs it. `supervise.plat.sleep_ms`
+/// moves the clock instead of waiting.
+pub fn useClock(script: []const u64, wait_ready: usize) void {
+    clock_script = script;
+    clock_wait = wait_ready;
+    clock_at = 0;
+    clock_now = 0;
+    clock_reads = 0;
+    ticks = 0;
+    supervise.plat.now_ms = manualClock;
+    supervise.plat.sleep_ms = manualSleep;
+}
+
+fn manualClock() ?u64 {
+    guardReads();
+    tick();
+    if (clock_at == 1 and clock_wait > 0) {
+        _ = awaitReady(clock_wait);
+        clock_wait = 0;
+    }
+    if (clock_at < clock_script.len) {
+        clock_now = clock_script[clock_at];
+        clock_at += 1;
+    }
+    return clock_now;
+}
+
+/// A sleep that takes no time: the clock moves on by `ms` and the sleep is
+/// written to stderr, for the test to read back.
+fn manualSleep(ms: u64) void {
+    clock_now += ms;
+    var buf: [64]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, "slept {d} ms\n", .{ms}) catch return;
+    sys.writeAll(2, s);
+}
+
+var clock_jump: u64 = 0;
+var clock_jumped = false;
+
+/// For `setup`: a clock that reads 0 until the fixture has reported
+/// readiness and `jump` after, whatever the number of runs before: for a
+/// gate that runs a listing first and the limited run second.
+pub fn useReadyClock(jump: u64) void {
+    clock_jump = jump;
+    clock_jumped = false;
+    clock_reads = 0;
+    supervise.plat.now_ms = readyClock;
+}
+
+fn readyClock() ?u64 {
+    guardReads();
+    if (!clock_jumped and readyNow()) clock_jumped = true;
+    return if (clock_jumped) clock_jump else 0;
+}
+
+/// `supervise.plat.read_table` for a test that counts the supervisor's
+/// readings (`release_at`, `pace_per_tick`) and otherwise reads the real
+/// table.
+pub fn countingTable(alloc: std.mem.Allocator) ?proctab.Table {
+    const t = proctab.read(alloc);
+    tick();
+    return t;
+}
+
+/// Blocks (in a hook, in H) until the fixture has reported readiness `n`
+/// times.
+pub fn waitReady(n: usize) void {
+    _ = awaitReady(n);
+}
+
+/// What `loggingKill` writes for a signal, a group or one process, and the
+/// reading of the manual clock.
+pub fn killLine(alloc: std.mem.Allocator, sig: u8, group: bool, clock: u64) ![]const u8 {
+    return std.fmt.allocPrint(alloc, kill_fmt, .{ sig, if (group) "a group" else "a process", clock });
+}
+
+const kill_fmt = "kill: signal {d} to {s} at clock {d}\n";
+
+/// `supervise.plat.kill` that writes every kill to stderr with the reading
+/// of the manual clock it happened at (`killLine`), then kills.
+pub fn loggingKill(pid: sys.pid_t, sig: u8) void {
+    var buf: [128]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, kill_fmt, .{ sig, if (pid < 0) "a group" else "a process", clock_now }) catch "";
+    sys.writeAll(2, s);
+    sys.kill(pid, sig);
+}
+
+/// `loggingKill` that returns from a group SIGKILL only once every live
+/// member of the group has exited, as the kernel's delivery is not instant:
+/// what the survivor scan looks at is then the kill's effect, not a race with
+/// it. A group that is not killed has nothing to wait for.
+pub fn settlingKill(pid: sys.pid_t, sig: u8) void {
+    if (pid >= 0 or sig != posix.SIG.KILL) return loggingKill(pid, sig);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const members: []const proctab.Member = proctab.groupMembers(arena.allocator(), -pid) orelse &.{};
+    loggingKill(pid, sig);
+    for (members) |m| waitExit(m.pid) catch {};
+}
+
+/// Blocks until `pid` has exited (a zombie counts), through its pidfd: the
+/// kernel makes it readable at the exit. Linux only.
+pub fn waitExit(pid: i32) !void {
+    if (!sys.is_linux) return error.SkipZigTest;
+    const rc = std.os.linux.pidfd_open(pid, 0);
+    switch (std.os.linux.E.init(rc)) {
+        .SUCCESS => {},
+        .SRCH => return,
+        else => return error.NoPidfd,
+    }
+    const fd: posix.fd_t = @intCast(rc);
+    defer posix.close(fd);
+    var fds = [1]posix.pollfd{.{ .fd = fd, .events = posix.POLL.IN, .revents = 0 }};
+    while ((posix.poll(&fds, -1) catch 0) == 0) {}
 }
 
 /// A `setup` for `runGate`: removes the directory the gate runs in, so that the
@@ -162,7 +431,7 @@ pub fn runInlineWith(alloc: std.mem.Allocator, gate_alloc: std.mem.Allocator, cw
     try posix.dup2(saved_out, 1);
     try posix.dup2(saved_err, 2);
     try posix.fchdir(was_here);
-    return .{ .status = status, .out = try readFile(alloc, out_path), .err = try readFile(alloc, err_path), .ms = 0 };
+    return .{ .status = status, .out = try readFile(alloc, out_path), .err = try readFile(alloc, err_path), .survivors_file = "" };
 }
 
 /// Whether `pid` is alive and not a zombie (a zombie has exited).
@@ -179,34 +448,26 @@ pub fn alive(pid: i32) bool {
     return b[close + 2] != 'Z' and b[close + 2] != 'X';
 }
 
-/// Waits up to `ms` for every pid to be gone; true when they are.
-pub fn goneWithin(pids: []const i32, ms: u64) bool {
-    const end = sys.monotonicMs().? + ms;
-    while (true) {
-        var any = false;
-        for (pids) |p| {
-            if (alive(p)) any = true;
-        }
-        if (!any) return true;
-        if (sys.monotonicMs().? >= end) return false;
-        sys.sleepMs(20);
-    }
+/// Blocks until every pid has exited, then checks that none is alive (a
+/// zombie has exited). It waits for the exit itself (`waitExit`), however
+/// long the gate's kill takes to arrive; a kill that never arrives is a hang
+/// that the build action's own limit ends.
+pub fn waitGone(pids: []const i32) !void {
+    for (pids) |p| try waitExit(p);
+    for (pids) |p| try std.testing.expect(!alive(p));
 }
 
-/// Reads the pids a fixture wrote (one per line) to `path`, waiting up to
-/// 5 s for the file to hold `n` of them.
+/// Reads the pids a fixture wrote (one per line) to `path`. The fixture has
+/// written them before it reports readiness, so a run that waited for the
+/// readiness (a signal, the clock) or ended has them all; fewer than `n` is
+/// an error, not a wait.
 pub fn pidsFrom(alloc: std.mem.Allocator, path: []const u8, n: usize) ![]i32 {
-    const end = sys.monotonicMs().? + 5000;
-    while (true) {
-        if (std.fs.cwd().readFileAlloc(alloc, path, 4096)) |text| {
-            var out = std.ArrayList(i32).empty;
-            var it = std.mem.tokenizeScalar(u8, text, '\n');
-            while (it.next()) |t| try out.append(alloc, try std.fmt.parseInt(i32, t, 10));
-            if (out.items.len >= n) return out.items;
-        } else |_| {}
-        if (sys.monotonicMs().? >= end) return error.NoPids;
-        sys.sleepMs(10);
-    }
+    const text = std.fs.cwd().readFileAlloc(alloc, path, 4096) catch return error.NoPids;
+    var out = std.ArrayList(i32).empty;
+    var it = std.mem.tokenizeScalar(u8, text, '\n');
+    while (it.next()) |t| try out.append(alloc, try std.fmt.parseInt(i32, t, 10));
+    if (out.items.len < n) return error.NoPids;
+    return out.items;
 }
 
 // ---- the fixture ------------------------------------------------------------
@@ -229,37 +490,42 @@ fn appendPid(path: []const u8, pid: i32) void {
     var buf: [32]u8 = undefined;
     const s = std.fmt.bufPrint(&buf, "{d}\n", .{pid}) catch return;
     f.writeAll(s) catch return;
+    signalReady();
 }
 
 /// Says it starts (while it is still small, so the line is in the log
-/// whenever the cap kills it mid-touch), touches `mib` MiB, pausing
-/// `pause_ms` after each MiB (0: none), says it holds them, and sleeps.
-fn hold(mib: u64, secs: u64, pause_ms: u64) noreturn {
+/// whenever the cap kills it mid-touch), touches `mib` MiB, waiting after
+/// each MiB for one byte of `pace_per_tick` when `paced`, says it holds them,
+/// and holds them until it is released or killed.
+fn hold(mib: u64, paced: bool, survivor: bool) noreturn {
     say("hog touches {d} MiB\n", .{mib});
     const mem = std.heap.page_allocator.alloc(u8, mib << 20) catch posix.exit(99);
     var i: usize = 0;
     while (i < mem.len) : (i += 4096) {
         mem[i] = 1;
-        if (pause_ms > 0 and (i + 4096) % (1 << 20) == 0) sys.sleepMs(pause_ms);
+        if (paced and (i + 4096) % (1 << 20) == 0) holdWait();
     }
     say("hog holds {d} MiB\n", .{mib});
-    sys.sleepMs(secs * 1000);
+    holdWait();
+    if (survivor) markSurvived();
     posix.exit(0);
 }
 
 /// The supervised "test". Program names (the path's last component):
 ///   exit N             exits N
 ///   signal N           kills itself with signal N
-///   sleep S [N]        sleeps S s, exits N
-///   hog MiB [S] [P]    says "hog touches MiB", touches MiB of memory (pausing
-///                      P ms after each MiB, 0), says "hog holds MiB", holds
-///                      them for S s (60), exits 0
-///   daemon FILE KIND   forks a child (KIND: sleep or hog) that stays in the
+///   held [N]           stays until released (`release_at`) or killed, exits N
+///   hog MiB [PACED]    says "hog touches MiB", touches MiB of memory (PACED
+///                      1: one MiB per released byte, `pace_per_tick`), says
+///                      "hog holds MiB", holds them until released or killed,
+///                      exits 0
+///   daemon FILE KIND   forks a child (KIND: held or hog) that stays in the
 ///                      group, writes its pid to FILE, and exits 0 at once
-///   spawnwait FILE     forks a 100 s sleeper, writes its pid, waits for it
-///   treehog P C [S]    forks a child that holds C MiB for S s (5), then holds
-///                      P MiB itself and waits for the child, exits 0 (the
-///                      fork comes first, so neither counts the other's pages)
+///   spawnwait FILE     forks a child that stays until killed, writes its pid
+///                      and its own, and waits for it
+///   treehog P C        forks a child that holds C MiB, then holds P MiB
+///                      itself and waits for the child, exits 0 (the fork
+///                      comes first, so neither counts the other's pages)
 ///   env [N]            prints its environment, exits N (default 3)
 ///   args               prints `[arg]` per argument (argv[0] too), exits 3
 ///   where              prints its cwd and the bytes on stdin, exits 3
@@ -290,18 +556,19 @@ fn behave(a: std.mem.Allocator, name: []const u8, args: []const []const u8, env:
         posix.raise(@intCast(num(arg(args, 1), 9))) catch {};
         posix.exit(99);
     }
-    if (std.mem.eql(u8, name, "sleep")) {
-        sys.sleepMs(num(arg(args, 1), 1) * 1000);
-        posix.exit(@intCast(num(arg(args, 2), 0)));
+    if (std.mem.eql(u8, name, "held")) {
+        holdWait();
+        posix.exit(@intCast(num(arg(args, 1), 0)));
     }
-    if (std.mem.eql(u8, name, "hog")) hold(num(arg(args, 1), 64), num(arg(args, 2), 60), num(arg(args, 3), 0));
+    if (std.mem.eql(u8, name, "hog")) hold(num(arg(args, 1), 64), num(arg(args, 2), 0) != 0, false);
     if (std.mem.eql(u8, name, "daemon")) {
         const file = arg(args, 1) orelse posix.exit(99);
-        const kind = arg(args, 2) orelse "sleep";
+        const kind = arg(args, 2) orelse "held";
         const pid = posix.fork() catch posix.exit(99);
         if (pid == 0) {
-            if (std.mem.eql(u8, kind, "hog")) hold(64, 60, 0);
-            sys.sleepMs(100_000);
+            if (std.mem.eql(u8, kind, "hog")) hold(64, false, true);
+            holdWait();
+            markSurvived();
             posix.exit(0);
         }
         appendPid(file, pid);
@@ -311,7 +578,8 @@ fn behave(a: std.mem.Allocator, name: []const u8, args: []const []const u8, env:
         const file = arg(args, 1) orelse posix.exit(99);
         const pid = posix.fork() catch posix.exit(99);
         if (pid == 0) {
-            sys.sleepMs(100_000);
+            holdWait();
+            markSurvived();
             posix.exit(0);
         }
         appendPid(file, sys.getpid());
@@ -320,9 +588,8 @@ fn behave(a: std.mem.Allocator, name: []const u8, args: []const []const u8, env:
         posix.exit(0);
     }
     if (std.mem.eql(u8, name, "treehog")) {
-        const secs = num(arg(args, 3), 5);
         const pid = posix.fork() catch posix.exit(99);
-        if (pid == 0) hold(num(arg(args, 2), 24), secs, 0);
+        if (pid == 0) hold(num(arg(args, 2), 24), false, false);
         const mem = std.heap.page_allocator.alloc(u8, num(arg(args, 1), 16) << 20) catch posix.exit(99);
         var k: usize = 0;
         while (k < mem.len) : (k += 4096) mem[k] = 1;
@@ -442,7 +709,8 @@ fn rustFake(name: []const u8, args: []const []const u8, env: []const []const u8)
             say("a: test\n", .{});
             posix.exit(0);
         }
-        sys.sleepMs(100_000);
+        signalReady();
+        holdWait();
         posix.exit(0);
     }
     if (eq(u8, name, "rust_env")) {
