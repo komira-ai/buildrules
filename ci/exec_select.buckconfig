@@ -2,6 +2,7 @@
 # configures targets, nothing runs. A farm's real values live in its own .buckconfig.local, never here.
 [buildrules_re]
   mode = remote
+  linux_arm64_enabled = true
   linux_x86_64_properties = OSFamily=Linux,ISA=x86-64,pool=analysis-only
   linux_aarch64_properties = OSFamily=Linux,ISA=aarch64,pool=analysis-only
   macos_aarch64_properties = OSFamily=macOS,ISA=aarch64,pool=analysis-only

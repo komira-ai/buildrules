@@ -8,7 +8,7 @@ load(":natives.bzl", "BUILT", "BUILT_UNIT", "PREBUILT", "UNIT", "USER", "built_n
 load(":siblings.bzl", "graph_paths_below_the_package", "nested_member_keeps_its_target", "sibling_is_named_by_its_directory", "sibling_with_a_path_up_is_named_by_its_directory", "workspace_is_flat_at_repository_paths")
 load("//rules/mojo:sync.bzl", "sync_packages", "sync_stage_tree")
 load(":sync.bzl", "packages_are_normalized", "stage_holds_the_workspaces_and_the_other_files_once")
-load(":subdirs.bzl", "LINUX_64", "LINUX_AARCH64", "OSX_ARM64", "a_table_with_graphs_per_subdir_is_read_as_it_is", "a_table_without_graphs_per_subdir_has_the_linux_64_graph_alone", "graph_with_a_unit_more", "graph_with_other_dependencies", "same_units_in_every_graph", "the_graph_of_a_single_subdir_gives_the_value_itself", "toolchain_rows_are_told_by_their_key")
+load(":subdirs.bzl", "LINUX_64", "LINUX_AARCH64", "OSX_ARM64", "a_table_with_graphs_per_subdir_is_read_as_it_is", "a_table_with_graphs_per_subdir_refuses_the_platforms_it_has_none_for", "a_table_with_the_linux_64_graph_alone_is_refused_on_arm_only", "a_table_without_graphs_per_subdir_has_the_linux_64_graph_alone", "graph_with_a_unit_more", "graph_with_other_dependencies", "same_units_in_every_graph", "the_graph_of_a_single_subdir_gives_the_value_itself", "toolchain_rows_are_told_by_their_key")
 load("//rules/mojo:subdirs.bzl", "table_graphs")
 load(":test_data_targets.bzl", "test_data_targets")
 
@@ -334,6 +334,14 @@ refusal_test(name = "table_with_graphs_per_subdir_is_read_as_it_is", refusals = 
 _r22, _f22 = recording()
 the_graph_of_a_single_subdir_gives_the_value_itself(_f22)
 refusal_test(name = "single_graph_leaves_every_attribute_a_plain_value", refusals = _r22, none = True, visibility = ["PUBLIC"])
+
+_r22a, _f22a = recording()
+a_table_with_the_linux_64_graph_alone_is_refused_on_arm_only(_f22a)
+refusal_test(name = "linux_64_graph_alone_is_refused_on_arm_only", refusals = _r22a, none = True, visibility = ["PUBLIC"])
+
+_r22b, _f22b = recording()
+a_table_with_graphs_per_subdir_refuses_the_platforms_it_has_none_for(_f22b)
+refusal_test(name = "several_graphs_refuse_the_platforms_they_have_none_for", refusals = _r22b, none = True, visibility = ["PUBLIC"])
 
 _r23, _f23 = recording()
 toolchain_rows_are_told_by_their_key(_f23)

@@ -108,6 +108,8 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:table_without_graphs_per_subdir_is_the_linux_64_graph",
     "//rules/mojo/tests:table_with_graphs_per_subdir_is_read_as_it_is",
     "//rules/mojo/tests:single_graph_leaves_every_attribute_a_plain_value",
+    "//rules/mojo/tests:linux_64_graph_alone_is_refused_on_arm_only",
+    "//rules/mojo/tests:several_graphs_refuse_the_platforms_they_have_none_for",
     "//rules/mojo/tests:toolchain_rows_are_told_by_their_key",
     "//rules/mojo/tests:graphs_that_differ_only_in_toolchain_are_accepted",
     "//rules/mojo/tests:graph_of_a_subdir_mopm_does_not_plan_for_is_refused",

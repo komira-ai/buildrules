@@ -52,6 +52,12 @@ platform(
 constraint_setting(name = "implementation", visibility = ["PUBLIC"])
 constraint_value(name = "not_implemented", constraint_setting = ":implementation", visibility = ["PUBLIC"])
 
+# Linux arm64 tests are off until Linux arm64 farm hardware is racked (`[buildrules_re] linux_arm64_enabled`, rules/platforms.bzl). While it is off every Mojo target
+# requires this value on a linux aarch64 target platform. No platform has it, so such a target is incompatible: `buck2 build --skip-incompatible-targets` lists it as
+# skipped, naming this constraint ("skipped: waiting on linux-arm64 hardware"), and builds nothing for it.
+constraint_setting(name = "linux_arm64_hardware", visibility = ["PUBLIC"])
+constraint_value(name = "skipped_waiting_on_linux_arm64_hardware", constraint_setting = ":linux_arm64_hardware", visibility = ["PUBLIC"])
+
 # ---- ISA levels (rules/isa.bzl) -----------------------------------------------------------------
 # `isa_level` is a TARGET constraint. No value = no flag (today's action keys). A target platform adds one value;
 # `linux_x86_64_v3` is linux_x86_64 plus `isa_x86_64_v3`. The cpu value of each platform is its level's family, so an x86 level never meets an aarch64 cpu.

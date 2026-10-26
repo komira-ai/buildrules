@@ -11,14 +11,34 @@ was given is read off the configured targets (`buck.execution_platform` of a nod
   absent      neither key is set (the farm and the public CI have no such workers): linux x86_64 is as it is with the keys set, and a package built for an Arm
               platform is refused by `:check` (so by every target of the package) with a message that names the missing key.
 
+The linux arm64 switch (`[buildrules_re] linux_arm64_enabled`, rules/platforms.bzl) is off by default, so a state says which way it is, and the four states are:
+
+  absent          switch off (the default), no keys: linux aarch64 is skipped (below); macOS arm64 is refused naming its key. What the public CI runs.
+  absent_enabled  switch on, no keys: both Arm platforms are refused naming their key.
+  configured      switch on, both keys set (ci/exec_select.buckconfig): as the first paragraph.
+  disabled        switch off, both keys set (ci/exec_select_disabled.buckconfig): linux aarch64 is skipped and its platform is NOT registered although its key is set;
+                  macOS arm64 is placed and equipped as in `configured`.
+
+Skipped (linux aarch64 with the switch off): every Mojo target of the package is incompatible with the platform (`configured_targets` of an incompatible target
+is `None`; `buck2 build --skip-incompatible-targets` lists it as skipped, naming `//platforms:skipped_waiting_on_linux_arm64_hardware`). The check requires that
+for every kind of target the package declares, that the constraint is the reason (the `target_compatible_with` of the target, unconfigured), and that the
+execution platforms registered are exactly those the state implies (analysis of `//platforms/exec:exec`). It reports "skipped: waiting on linux-arm64 hardware"
+and never counts the platform as held.
+
 `exec_problems(ctx, state)` is a list of strings, empty when all is as it must be. ci/exec_select.bxl runs it for the state it is given, and the
 public CI runs both (ci/README or .github/workflows/ci.yml).
 """
 
+load("//rules:platforms.bzl", "LINUX_ARM64_SKIPPED")
+
 PACKAGE = "//examples/mojo/subdirs"
 
-# A package whose mopm (0.0.48) is pinned for linux x86_64 only.
-OLD_MOPM_PACKAGE = "//examples/mojo/uncompiled"
+# A package whose lock holds the graph of linux-64 alone: built as before for linux x86_64, refused on an Arm platform.
+LINUX_64_ONLY_PACKAGE = "//examples/mojo/uncompiled"
+
+# The mopm (0.0.48) that is pinned for linux x86_64 only. Analysed on the target platform it resolves for the host that platform is (`by_host`), as it does when a compile
+# on that host runs it. (A package that names it, examples/mojo/uncompiled, has a table with the graph of linux-64 alone, which an Arm platform refuses first.)
+OLD_MOPM = "toolchains//:mopm_0_0_48"
 
 X86_PLATFORMS = ["buildrules//platforms:linux_x86_64", "buildrules//platforms:linux_x86_64_v3"]
 X86_EXEC = "buildrules//platforms:linux_x86_64"
@@ -114,8 +134,11 @@ def _host_problems(ctx, platform, exec, test_exec, want_zig, want_mopm, want_che
     return problems
 
 def _refused(ctx, label, platform):
-    """The failure of analysing `label` on `platform`, or None."""
-    r = ctx.lazy.analysis(ctx.configured_targets(label, target_platform = platform)).catch().resolve()
+    """The failure of analysing `label` on `platform`, or None. A target incompatible with the platform is not analysed: see `_skipped`."""
+    node = ctx.configured_targets(label, target_platform = platform)
+    if node == None:
+        return "{} is incompatible with {}".format(label, platform)
+    r = ctx.lazy.analysis(node).catch().resolve()
     return None if r.is_ok() else str(r.unwrap_err())
 
 def _names_key(why, key):
@@ -123,7 +146,9 @@ def _names_key(why, key):
 
 def host_refusal_ok(ctx, label, platform):
     """For a check of ci/subdirs.bzl that a package analyses on `platform`: None when it does, or when it is refused for lack of workers of the platform's kind and
-    says which key (the state `absent` below); else the failure."""
+    says which key (the state `absent_enabled` below); else the failure. An incompatible target (the linux arm64 switch is off) is accepted: it is the caller's to report."""
+    if ctx.configured_targets(label, target_platform = platform) == None:
+        return None
     why = _refused(ctx, label, platform)
     if why == None:
         return None
@@ -132,31 +157,87 @@ def host_refusal_ok(ctx, label, platform):
             return None
     return why
 
+# Every kind of target `mojo_package` declares that a package of examples/mojo/subdirs has, and the sync pair: all are incompatible while the switch is off.
+_SKIPPED_TARGETS = ["build", "check", "ci", "conda", "coverage", "lib", "lib_ungated", "sync", "sync_check", "table", "test", "test_tripled", "test_tripled__bin", "test_tripled__cov", "workspace"]
+
+SKIP_CONSTRAINT = "buildrules//platforms:skipped_waiting_on_linux_arm64_hardware"
+
+def _skipped_problems(ctx, platform):
+    """Every Mojo target of the package is incompatible with `platform`, for the constraint of the linux arm64 switch, and none is analysed or built."""
+    problems = []
+    for name in _SKIPPED_TARGETS:
+        label = PACKAGE + ":" + name
+        if ctx.configured_targets(label, target_platform = platform) != None:
+            problems.append("{} is compatible with {} although the linux arm64 switch is off: it would be built, not skipped".format(label, platform))
+        want = [t for t in ctx.uquery().eval(label)]
+        if len(want) != 1:
+            problems.append("{}: expected one target".format(label))
+        elif SKIP_CONSTRAINT not in str(want[0].get_attr("target_compatible_with")):
+            problems.append("{} does not require {}, so it is not incompatible for the reason the switch gives".format(label, SKIP_CONSTRAINT))
+    return problems
+
+def _registered(ctx):
+    """The execution platforms this configuration registers (`//platforms/exec:exec`), as labels."""
+    node = ctx.configured_targets("//platforms/exec:exec", target_platform = X86_EXEC)
+    reg = ctx.analysis(node).providers()[ExecutionPlatformRegistrationInfo]
+    return [str(p.label) for p in reg.platforms]
+
 def exec_problems(ctx, state):
     problems = []
-    if state not in ("configured", "absent"):
-        return ["ci/exec_select: the state is {}, not `configured` or `absent`".format(repr(state))]
-    # Linux x86_64: the same placement and tools in both states.
+    if state not in ("configured", "absent", "absent_enabled", "disabled"):
+        return ["ci/exec_select: the state is {}, not `configured`, `absent`, `absent_enabled` or `disabled`".format(repr(state))]
+    arm64_on = state in ("configured", "absent_enabled")
+    keys = state in ("configured", "disabled")
+    # What each Arm platform is in this state: placed (its workers are registered), refused (no key), or skipped (the linux arm64 switch is off).
+    registered = _registered(ctx)
+    for platform, key, exec, zig, mopm, check in HOSTS:
+        is_linux = platform == "buildrules//platforms:linux_aarch64"
+        if is_linux and not arm64_on:
+            how = "skipped"
+        elif keys:
+            how = "placed"
+        else:
+            how = "refused"
+        if (how == "placed") != (exec in registered):
+            problems.append("the execution platform {} is {} in state `{}`: it is registered exactly when its key is set and (for linux aarch64) the switch is on".format(exec, "registered" if exec in registered else "not registered", state))
+        if how == "skipped":
+            problems += _skipped_problems(ctx, platform)
+            ctx.output.print("{}: {}".format(platform, LINUX_ARM64_SKIPPED))
+    # Linux x86_64: the same placement and tools in every state.
     for platform in X86_PLATFORMS:
         problems += _host_problems(ctx, platform, X86_EXEC, X86_TEST_EXEC.get(platform, X86_EXEC), "x86_64-linux-musl", "mopm-0.0.73.tar.gz", "check")
         for label in [PACKAGE + ":lib_ungated", PACKAGE + ":test_tripled", PACKAGE + ":conda"]:
             why = _refused(ctx, label, platform)
             if why:
                 problems.append("{} does not analyse on {}: {}".format(label, platform, why))
+    for platform in X86_PLATFORMS:
+        why = _refused(ctx, LINUX_64_ONLY_PACKAGE + ":lib_ungated", platform)
+        if why:
+            problems.append("{} (the lock holds linux-64 only) does not analyse on {}: {}".format(LINUX_64_ONLY_PACKAGE, platform, why))
     for platform, key, exec, zig, mopm, check in HOSTS:
-        if state == "configured":
+        if platform == "buildrules//platforms:linux_aarch64" and not arm64_on:
+            continue
+        if keys:
+            # The table of the package holds the graph of linux-64 alone: an Arm platform refuses it, saying what to do (the toolchain of linux-64 is x86_64). With no worker
+            # key the refusal for the missing key comes first, which the other branch holds.
+            # (Its `:check`, which every target of the package waits for: the mopm the package names has no tarball for an Arm host either, and that refusal is held below.)
+            only = _refused(ctx, LINUX_64_ONLY_PACKAGE + ":check", platform)
+            if only == None:
+                problems.append("{} (the lock holds linux-64 only) analysed on the Arm platform {}".format(LINUX_64_ONLY_PACKAGE, platform))
+            elif "holds a unit graph for linux-64 only" not in only or "`buildrules mojo sync` with a mopm that records" not in only:
+                problems.append("{} on {} is refused, but not for holding the graph of linux-64 only, with the fix: {}".format(LINUX_64_ONLY_PACKAGE, platform, only))
             problems += _host_problems(ctx, platform, exec, exec, zig, mopm, check)
             for label in [PACKAGE + ":lib_ungated", PACKAGE + ":lib", PACKAGE + ":test_tripled", PACKAGE + ":conda"]:
                 why = _refused(ctx, label, platform)
                 if why:
                     problems.append("{} does not analyse on {} with `{}` set: {}".format(label, platform, key, why))
             # A mopm with no tarball pinned for the host is refused, and the refusal names the version and the host.
-            old = _refused(ctx, OLD_MOPM_PACKAGE + ":lib_ungated", platform)
+            old = _refused(ctx, OLD_MOPM, platform)
             host = mopm
             if old == None:
-                problems.append("{} analysed on {}, but the mopm it names (0.0.48) has no tarball pinned for {}".format(OLD_MOPM_PACKAGE, platform, host))
+                problems.append("{} analysed on {}, but the mopm (0.0.48) has no tarball pinned for {}".format(OLD_MOPM, platform, host))
             elif "mopm 0.0.48 has no tarball pinned for {}".format(host) not in old:
-                problems.append("{} on {} is refused, but not for the mopm that has no pin for {}: {}".format(OLD_MOPM_PACKAGE, platform, host, old))
+                problems.append("{} on {} is refused, but not for the mopm that has no pin for {}: {}".format(OLD_MOPM, platform, host, old))
         else:
             for label in [PACKAGE + ":check", PACKAGE + ":lib_ungated", PACKAGE + ":lib", PACKAGE + ":test_tripled", PACKAGE + ":conda"]:
                 why = _refused(ctx, label, platform)

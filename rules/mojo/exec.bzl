@@ -18,7 +18,7 @@ x86_64 for such a platform, and `unsupported_exec()`, which `:check` is given, m
 """
 
 load("//rules:isa.bzl", "ISA_LEVELS", "isa_exec", "test_levels")
-load("//rules:platforms.bzl", "exec_platform_missing", "exec_platform_ready")
+load("//rules:platforms.bzl", "exec_platform_missing", "exec_platform_ready", "linux_arm64_gate")
 load("//rules/core:platform.bzl", "LINUX_AARCH64", "LINUX_X86_64", "MACOS_AARCH64", "by_host")
 
 def unit_exec():
@@ -50,3 +50,11 @@ def test_exec():
 def unsupported_exec(who):
     """What `:check` is given as `exec_missing`: empty on a target platform whose host has an execution platform, else the refusal that names the key."""
     return by_host("", exec_platform_missing("linux-aarch64", who), exec_platform_missing("macos-aarch64", who))
+
+def gated(rule_fn):
+    """`rule_fn` as every Mojo target of a package is declared: with the linux arm64 switch's `target_compatible_with` (rules/platforms.bzl, `linux_arm64_gate`)."""
+    def declare(**kwargs):
+        if "target_compatible_with" in kwargs:
+            fail("{}: target_compatible_with is set by the Mojo rules (the linux arm64 switch)".format(kwargs.get("name")))
+        rule_fn(target_compatible_with = linux_arm64_gate(), **kwargs)
+    return declare

@@ -3,8 +3,11 @@
 #   buck2 bxl -c buildrules_re.mode=local //ci:exec_select.bxl:check -- --state absent
 #   buck2 bxl --config-file ci/exec_select.buckconfig //ci:exec_select.bxl:check -- --state configured   (a machine with a farm: local mode refuses property sets)
 #
-# `absent`: no worker property set for linux aarch64 or macOS arm64 is configured. `configured`: ci/exec_select.buckconfig sets both to placeholders (analysis only:
-# nothing is sent to any endpoint, and the file holds no endpoint).
+#   buck2 bxl --config-file ci/exec_select_disabled.buckconfig //ci:exec_select.bxl:check -- --state disabled
+#   buck2 bxl -c buildrules_re.mode=local -c buildrules_re.linux_arm64_enabled=true //ci:exec_select.bxl:check -- --state absent_enabled
+#
+# The states are in ci/exec_select.bzl: the linux arm64 switch (`[buildrules_re] linux_arm64_enabled`, off by default) and whether the worker property sets of linux aarch64
+# and macOS arm64 are set. The files hold placeholders (analysis only: nothing is sent to any endpoint, and no file holds an endpoint).
 
 load("@buildrules//ci:exec_select.bzl", "exec_problems")
 
@@ -12,11 +15,11 @@ def _impl(ctx):
     problems = exec_problems(ctx, ctx.cli_args.state)
     if problems:
         fail("ci/exec_select ({}): {} problem(s):\n  ".format(ctx.cli_args.state, len(problems)) + "\n  ".join(problems))
-    ctx.output.print("ok ({}): the Mojo actions of examples/mojo/subdirs are placed and equipped for the host of their target platform".format(ctx.cli_args.state))
+    ctx.output.print("ok ({}): the Mojo actions of examples/mojo/subdirs are placed and equipped for the host of their target platform; a platform printed above as skipped is not held".format(ctx.cli_args.state))
 
 check = bxl_main(
     impl = _impl,
     cli_args = {
-        "state": cli_args.enum(["absent", "configured"]),
+        "state": cli_args.enum(["absent", "absent_enabled", "configured", "disabled"]),
     },
 )

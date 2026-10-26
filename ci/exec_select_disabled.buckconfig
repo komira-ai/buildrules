@@ -1,0 +1,8 @@
+# Placeholders for ci/exec_select.bxl:check --state disabled: both Arm worker property sets are set, and the linux arm64 switch is off (the default, written out). The
+# linux aarch64 platform must then NOT be registered and its Mojo targets are skipped; macOS arm64 is as in ci/exec_select.buckconfig. Analysis only, no endpoint.
+[buildrules_re]
+  mode = remote
+  linux_arm64_enabled = false
+  linux_x86_64_properties = OSFamily=Linux,ISA=x86-64,pool=analysis-only
+  linux_aarch64_properties = OSFamily=Linux,ISA=aarch64,pool=analysis-only
+  macos_aarch64_properties = OSFamily=macOS,ISA=aarch64,pool=analysis-only

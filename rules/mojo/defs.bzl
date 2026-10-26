@@ -64,7 +64,7 @@ toolchain) and the test runs as the platform's `exec_compatible_with`, so the fa
 """
 
 load("//rules:isa.bzl", "ISA_LEVELS", "isa_select", "required_isa", "test_exec_compatible_with")
-load(":exec.bzl", "test_exec", "unit_exec", "unsupported_exec")
+load(":exec.bzl", "gated", "test_exec", "unit_exec", "unsupported_exec")
 load("//rules/core:pinned_file.bzl", "pinned_file")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/core:url_map.bzl", "mapped_url")
@@ -73,9 +73,38 @@ load(":pack.bzl", "mojo_conda")
 load(":subdirs.bzl", "BASE_SUBDIR", "by_subdir", "check_same_units", "subdir_suffix", "table_graphs", "unsupported_platform")
 load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
-load(":check.bzl", "mojo_check_rule", "mojo_table_rule", "mojo_workspace_rule")
+load(":check.bzl", _check = "mojo_check_rule", _table = "mojo_table_rule", _workspace = "mojo_workspace_rule")
 load(":test_data.bzl", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_defines", "check_test_env", "check_test_layout", "stage_test_data")
-load(":unit.bzl", "mojo_cov_branch_annotate_rule", "mojo_cov_branch_classify_rule", "mojo_cov_branch_run_rule", "mojo_cov_pgo_rule", "mojo_cov_run_rule", "mojo_cov_summary_rule", "mojo_gated_lib_rule", "mojo_group", "mojo_prebuilt_rule", "mojo_test_run_rule", "mojo_unit_rule")
+load(
+    ":unit.bzl",
+    _cov_branch_annotate = "mojo_cov_branch_annotate_rule",
+    _cov_branch_classify = "mojo_cov_branch_classify_rule",
+    _cov_branch_run = "mojo_cov_branch_run_rule",
+    _cov_pgo = "mojo_cov_pgo_rule",
+    _cov_run = "mojo_cov_run_rule",
+    _cov_summary = "mojo_cov_summary_rule",
+    _gated_lib = "mojo_gated_lib_rule",
+    _group = "mojo_group",
+    _prebuilt = "mojo_prebuilt_rule",
+    _test_run = "mojo_test_run_rule",
+    _unit = "mojo_unit_rule",
+)
+
+# Every target a package declares is gated by the linux arm64 switch (rules/platforms.bzl, `linux_arm64_gate`): incompatible on linux aarch64 while it is off.
+mojo_check_rule = gated(_check)
+mojo_table_rule = gated(_table)
+mojo_workspace_rule = gated(_workspace)
+mojo_cov_branch_annotate_rule = gated(_cov_branch_annotate)
+mojo_cov_branch_classify_rule = gated(_cov_branch_classify)
+mojo_cov_branch_run_rule = gated(_cov_branch_run)
+mojo_cov_pgo_rule = gated(_cov_pgo)
+mojo_cov_run_rule = gated(_cov_run)
+mojo_cov_summary_rule = gated(_cov_summary)
+mojo_gated_lib_rule = gated(_gated_lib)
+mojo_group = gated(_group)
+mojo_prebuilt_rule = gated(_prebuilt)
+mojo_test_run_rule = gated(_test_run)
+mojo_unit_rule = gated(_unit)
 
 SCHEMA = 1
 

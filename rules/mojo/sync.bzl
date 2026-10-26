@@ -29,6 +29,7 @@ directory are not outputs: a repository that lacks the export runs `buildrules m
 
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/mopm:pins.bzl", "vname")
+load("//rules:platforms.bzl", "linux_arm64_gate")
 load(":check.bzl", "repo_path")
 load(":providers.bzl", "MojoWorkspaceInfo")
 
@@ -141,6 +142,7 @@ def mojo_sync(name, workspaces, files, mopm, packages = None, committed = [], to
         mopm = "toolchains//:mopm_" + vname(mopm),
         mopm_version = mopm,
         packages = sync_packages(packages if packages != None else [native.package_name()]),
+        target_compatible_with = linux_arm64_gate(),
         toolchains = toolchains,
         visibility = visibility,
         workspaces = workspaces,

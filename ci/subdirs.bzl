@@ -13,6 +13,7 @@ of each subdir and what it was built from is read off the configured targets, no
 """
 
 load("//examples/mojo/subdirs:buildrules.mojo.lock.bzl", "GRAPHS")
+load("//rules:platforms.bzl", "LINUX_ARM64_SKIPPED")
 load(":exec_select.bzl", "host_refusal_ok")
 
 PACKAGE = "//examples/mojo/subdirs"
@@ -25,11 +26,15 @@ PLATFORMS = [
     ("buildrules//platforms:macos_aarch64", "osx-arm64", "aarch64-macos.11.0", "mojo_1_0_0_osx_arm64"),
 ]
 
+LINUX_AARCH64_PLATFORM = "buildrules//platforms:linux_aarch64"
+
 # The platform that matches no subdir, and what the refusal must say.
 UNSUPPORTED = "buildrules//platforms:macos_x86_64"
 
 def _attrs(ctx, label, platform):
     node = ctx.configured_targets(label, target_platform = platform)
+    if node == None:
+        return None  # incompatible: the linux arm64 switch is off (rules/platforms.bzl)
     # Not `resolved_attrs_eager`: it analyses the dependencies, which a platform whose host has no workers refuses (ci/exec_select.bzl).
     return node.attrs_eager()
 
@@ -42,6 +47,13 @@ def subdir_problems(ctx):
             problems.append("{}: the lock of the package has no graph for {}".format(who, subdir))
             continue
         lib = _attrs(ctx, PACKAGE + ":lib_ungated", platform)
+        if lib == None:
+            # Incompatible: the only platform that may be is linux aarch64, while `[buildrules_re] linux_arm64_enabled` is off. It is reported, never counted as held.
+            if platform != LINUX_AARCH64_PLATFORM:
+                problems.append("{}: the library is incompatible with the platform, which only linux aarch64 is while the linux arm64 switch is off".format(who))
+            else:
+                ctx.output.print("{}: {} (the graph, toolchain and .conda directory of {} are not checked)".format(who, LINUX_ARM64_SKIPPED, subdir))
+            continue
         graph = json.decode(lib.graph.value())
         tc = graph["toolchain"]
         if tc["subdir"] != subdir:

@@ -25,6 +25,9 @@ compile cannot target another platform than the one it runs on. A farm that has 
       [buildrules_re] linux_aarch64_properties   workers that run linux aarch64 actions   (execution platform `//platforms:linux_aarch64`)
       [buildrules_re] macos_aarch64_properties   workers that run macOS arm64 actions     (execution platform `//platforms:macos_aarch64`)
 
+The linux aarch64 platform is registered only while `[buildrules_re] linux_arm64_enabled = true` (default false: linux arm64 farm hardware is not racked); while it is
+off the key is ignored and every Mojo target configured for linux aarch64 is incompatible, "skipped: waiting on linux-arm64 hardware" (`linux_arm64_gate`).
+
 A key that is absent registers no platform of that kind and no value of it is ever committed. A Mojo package built for such a platform then fails analysis
 and names the key (`:check`, rules/mojo/exec.bzl).
 A repo whose platforms/BUCK does not call buildrules_execution_platforms must register `buildrules//platforms:linux_aarch64` and `macos_aarch64` itself, each with the
@@ -55,9 +58,42 @@ EXTRA_HOST_KEYS = {
     "macos-aarch64": "macos_aarch64_properties",
 }
 
+# THE SWITCH. linux arm64 tests are off until Linux arm64 farm hardware is racked. Re-enabling is one line, in the root cell's .buckconfig.local (or .buckconfig):
+#
+#     [buildrules_re]
+#       linux_arm64_enabled = true
+#
+# It is a config key, not a constant, so a repo that uses buildrules flips it in its own file, and ci/exec_select.bxl can hold both states. Absent = off.
+# What it covers is exactly linux aarch64: the platform `linux_aarch64` registers (below), and the Mojo targets configured for linux aarch64, which are incompatible
+# (`linux_arm64_gate`). macOS arm64 is not covered.
+LINUX_ARM64_SKIPPED = "skipped: waiting on linux-arm64 hardware"
+
+# The constraint value no platform has: a target that requires it is incompatible, and Buck2 names it when it lists the skipped targets (platforms/BUCK).
+_LINUX_ARM64_WAITING = "buildrules//platforms:skipped_waiting_on_linux_arm64_hardware"
+
+def linux_arm64_enabled():
+    """True when `[buildrules_re] linux_arm64_enabled` is `true`. Absent or `false`: off (linux arm64 farm hardware is not racked yet). Anything else is refused."""
+    v = read_config("buildrules_re", "linux_arm64_enabled", "false").strip().lower()
+    if v not in ("true", "false"):
+        fail("`[buildrules_re] linux_arm64_enabled` is `{}`: it is `true` or `false` (absent = false).".format(v))
+    return v == "true"
+
+def linux_arm64_gate():
+    """`target_compatible_with` of every Mojo target: empty when the switch is on (the targets are as they were). Off: on a linux aarch64 target platform the
+    target requires a constraint no platform has, so it is incompatible, `--skip-incompatible-targets` lists it as skipped, and it is never built (no empty success)."""
+    if linux_arm64_enabled():
+        return []
+    return select({
+        "buildrules//platforms:is_linux_aarch64": [_LINUX_ARM64_WAITING],
+        "DEFAULT": [],
+    })
+
 def exec_platform_ready(host):
     """True when an execution platform of `host` (`linux-aarch64`, `macos-aarch64`) is registered by this configuration: its key is set (remote mode) or the
-    machine running buck2 is of that kind (local mode). Read when a package is loaded, from the cell of the BUCK file: the root cell's .buckconfig.local."""
+    machine running buck2 is of that kind (local mode). Read when a package is loaded, from the cell of the BUCK file: the root cell's .buckconfig.local.
+    linux-aarch64 is never ready while `linux_arm64_enabled` is off."""
+    if host == "linux-aarch64" and not linux_arm64_enabled():
+        return False
     if _mode() == "local":
         return host_name() == host
     return bool(read_config("buildrules_re", EXTRA_HOST_KEYS[host], "").strip())
@@ -67,6 +103,8 @@ def exec_platform_missing(host, who):
     if exec_platform_ready(host):
         return ""
     key = EXTRA_HOST_KEYS[host]
+    if host == "linux-aarch64" and not linux_arm64_enabled():
+        return "{}: {} (`[buildrules_re] linux_arm64_enabled` is not `true`; no linux aarch64 execution platform is registered).".format(who, LINUX_ARM64_SKIPPED)
     if _mode() == "local":
         return ("{}: this target platform is {}, and `[buildrules_re] mode = local` runs actions on this machine only, which is {}. " +
                 "Configure a farm with workers of that kind and set `[buildrules_re] {}` in .buckconfig.local (docs/contract.md, section 14).").format(who, host, host_name(), key)
@@ -193,7 +231,7 @@ def buildrules_execution_platforms(name, linux_x86_64, isa_platforms = {}, host_
             isa_platforms = {}
     else:
         for host, key in sorted(EXTRA_HOST_KEYS.items()):
-            if not read_config("buildrules_re", key, "").strip():
+            if not exec_platform_ready(host):
                 continue
             if host not in host_platforms:
                 fail("`[buildrules_re] {}` is set but this platforms/BUCK names no platform for {}: pass host_platforms = {{\"{}\": ...}}.".format(key, host, host))
