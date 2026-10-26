@@ -38,6 +38,50 @@ zig_exe(
     visibility = ["PUBLIC"],
 )
 
+# The same wrapper for macOS arm64 (tools/mojo_compile_macos.zig, the macOS main over the modules of the Linux one), built on a Linux worker for the macOS
+# triple: the `wrapper` of a unit that runs on a macOS worker (rules/mojo/unit.bzl). tools/mojo_compile.zig is the Linux wrapper and refuses to be built for
+# another operating system. The unit tests run on Linux (the pure modules, the libproc layouts); the compile itself runs on the macOS workers.
+_MOJO_COMPILE_MACOS_SRCS = [
+    "tools/cc_shim.zig",
+    "tools/compile_args.zig",
+    "tools/host_identity.zig",
+    "tools/modular_cfg.zig",
+    "tools/mojo_compile.zig",
+    "tools/proc_tree.zig",
+    "tools/proc_tree_macos.zig",
+]
+
+zig_test(
+    name = "mojo_compile_macos_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = _MOJO_COMPILE_MACOS_SRCS,
+    src = "tools/mojo_compile_macos.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+zig_exe(
+    name = "mojo_compile_macos",
+    target = "aarch64-macos",
+    exec_compatible_with = LINUX_X86_64,
+    imports = _MOJO_COMPILE_MACOS_SRCS,
+    src = "tools/mojo_compile_macos.zig",
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    unit_tests = [":mojo_compile_macos_unit", "buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
+)
+
+# The wrapper of the host that runs the compile: what a unit is given as `wrapper`.
+alias(
+    name = "mojo_compile_host",
+    actual = select({
+        "buildrules//platforms:is_macos_aarch64": ":mojo_compile_macos",
+        "DEFAULT": ":mojo_compile",
+    }),
+    visibility = ["PUBLIC"],
+)
+
 # conda_unpack (a newer copy than rules/zig's: zstd windows, CLOSURE_MANIFEST): unpacks the compiler closure.
 zig_exe(
     name = "conda_unpack",

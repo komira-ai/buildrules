@@ -7,7 +7,7 @@
 //!   3. each --dir NAME=SUB: NAME is the absolute path of SUB in the scratch directory (`.` is the scratch directory), made;
 //!   4. --tmpdir: TMPDIR is the action's scratch path (BUCK_SCRATCH_PATH of the process's environment) made absolute; without one TMPDIR is
 //!      kept, and is /tmp if it is empty or not set;
-//!   5. --ld-library-path DIR: LD_LIBRARY_PATH is DIR made absolute (it replaces, it does not append);
+//!   5. --ld-library-path DIR: LD_LIBRARY_PATH (DYLD_LIBRARY_PATH on macOS, whose loader reads no other) is DIR made absolute (it replaces, it does not append);
 //!   6. each --abs NAME and --abs-prefix PREFIX: a variable that is set to a relative path is made absolute against the working directory
 //!      (every variable whose name starts with PREFIX, for --abs-prefix);
 //!   7. each --mkdir-env NAME: the directory NAME names is made, with its parents.
@@ -23,6 +23,7 @@
 //! process has no scratch path, `.buildrules_NAME` in the working directory. It is emptied before the run and removed after it.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const common = @import("common.zig");
 const Io = common.Io;
 const Alloc = common.Alloc;
@@ -275,6 +276,12 @@ pub fn prepare(io: Io, sub: []const u8, spec: Spec) Oom!Preparation {
     return .{ .ready = prepared };
 }
 
+/// The variable the loader of `os` reads for the directories to search first: dyld reads DYLD_LIBRARY_PATH and ignores LD_LIBRARY_PATH, so a macOS program
+/// that names its runtime as `@rpath/lib....dylib` is not found through the Linux spelling.
+pub fn libraryPathVar(os: std.Target.Os.Tag) []const u8 {
+    return if (os == .macos) "DYLD_LIBRARY_PATH" else "LD_LIBRARY_PATH";
+}
+
 /// The steps after the scratch directory: --dir, --tmpdir, --ld-library-path, the absolute variables, --mkdir-env, the working directory and
 /// the program. Returns 0, or the status to end with.
 fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom!u8 {
@@ -309,7 +316,7 @@ fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom
         try putEnv(&p.env, "TEST_TMPDIR", s.tmp);
         try putEnv(&p.env, "HOME", s.home);
     }
-    if (spec.ld_library_path) |dir| try putEnv(&p.env, "LD_LIBRARY_PATH", try common.absolute(a, here, dir));
+    if (spec.ld_library_path) |dir| try putEnv(&p.env, libraryPathVar(builtin.os.tag), try common.absolute(a, here, dir));
     for (spec.abs) |name| try makeAbsolute(a, &p.env, here, name);
     for (spec.abs_prefix) |prefix| {
         var names = common.Strings{ .a = a };

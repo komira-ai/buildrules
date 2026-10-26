@@ -553,3 +553,10 @@ test "statusOf: the exit status, 128 and the signal for a signal, 255 otherwise"
     try t.expectEqual(@as(u8, 255), common.statusOf(.{ .Stopped = 19 }));
     try t.expectEqual(@as(u8, 255), common.statusOf(.{ .Unknown = 1 }));
 }
+
+// Defect caught: the directory of a macOS program's runtime libraries put in LD_LIBRARY_PATH, which dyld does not read (the program stops at its first
+// `@rpath/....dylib`), or DYLD_LIBRARY_PATH put in a Linux program's environment.
+test "the library path variable is the one the loader of the operating system reads" {
+    try t.expectEqualStrings("DYLD_LIBRARY_PATH", rs.libraryPathVar(.macos));
+    try t.expectEqualStrings("LD_LIBRARY_PATH", rs.libraryPathVar(.linux));
+}

@@ -101,3 +101,46 @@ test "precompile: the package is found among options, -o and -I <dir> values, an
     try t.expect(L.precompilePackage(&.{ "--", "precompile", "/s/src/p" }) == null);
     try t.expect(L.precompilePackage(&.{ "--source-root=/s/src", "--" }) == null);
 }
+
+const macos_cfg_text =
+    \\wrapper=wrapper
+    \\compiler=compiler
+    \\deployment_target=11.0
+    \\macos_host=27.0-0123456789abcdef
+    \\macos_host=26.5-fedcba9876543210
+    \\
+;
+
+// Defect caught: a macOS toolchain given the Linux wrapper's options (--zig, --cc-target), which the macOS wrapper refuses, or the host list cut to its
+// first entry (a compile on the second worker would be refused).
+test "argv: a macOS toolchain gives the wrapper its deployment target and every host, and no zig and no cc target" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    const c = try L.parseCfg(a, macos_cfg_text, &why);
+    try t.expectEqual(@as(usize, 2), c.macos_hosts.len);
+    const argv = try L.buildArgv(a, "/tc", c, &.{ "--source-root=/s/src", "--", "precompile", "-I/s/deps/x", "/s/src/p", "-o", "/o/p.mojoc" });
+    try t.expectEqualStrings("/tc/wrapper", argv[0]);
+    try t.expectEqualStrings("--compiler=/tc/compiler", argv[1]);
+    try t.expectEqualStrings("--deployment-target=11.0", argv[2]);
+    try t.expectEqualStrings("--macos-host=27.0-0123456789abcdef", argv[3]);
+    try t.expectEqualStrings("--macos-host=26.5-fedcba9876543210", argv[4]);
+    try t.expectEqualStrings("--watchdog-idle-secs=300", argv[5]);
+    for (argv) |arg| {
+        try t.expect(!std.mem.startsWith(u8, arg, "--zig="));
+        try t.expect(!std.mem.startsWith(u8, arg, "--cc-target="));
+    }
+}
+
+test "cfg: a macOS toolchain with no host, or with the Linux keys beside its own, is refused with the reason" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    var why: []const u8 = "";
+    try t.expectError(error.Missing, L.parseCfg(arena.allocator(), "wrapper=w\ncompiler=c\ndeployment_target=11.0\n", &why));
+    try t.expectEqualStrings("macos_host is not set: a macOS compile names the hosts it may run on", why);
+    try t.expectError(error.Missing, L.parseCfg(arena.allocator(), "wrapper=w\ncompiler=c\nmacos_host=1-2\n", &why));
+    try t.expectEqualStrings("deployment_target is not set", why);
+    try t.expectError(error.BadLine, L.parseCfg(arena.allocator(), "wrapper=w\ncompiler=c\nzig=z\ncc_target=t\ndeployment_target=11.0\nmacos_host=1-2\n", &why));
+    try t.expectEqualStrings("a macOS toolchain (deployment_target, macos_host) names no zig and no cc_target", why);
+}

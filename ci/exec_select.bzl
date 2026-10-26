@@ -73,14 +73,23 @@ def _package_nodes(ctx, package, platform):
 def _tools_problems(ctx, who, node, want_zig, want_mopm, want_exec):
     """The tools a compile of `node` runs: the zig target of the launcher and the wrapper, the tarball of mopm, and the closure of its toolchain."""
     problems = []
-    for name in ["mojo_launch", "mojo_compile"]:
-        found = _deps(node, lambda n: n == name)
+    # The wrapper is the host's: a macOS worker runs mojo_compile_macos, the Linux wrapper (system calls of Linux) would die on its first fork there.
+    wrapper = "mojo_compile_macos" if want_zig == "aarch64-macos" else "mojo_compile"
+    # The unit's `wrapper` is the alias mojo_compile_host, which resolves to the wrapper of the host that runs the unit.
+    hosted = [w for a in _deps(node, lambda n: n == "mojo_compile_host") for w in a.deps()]
+    for name in ["mojo_launch", wrapper]:
+        found = _deps(node, lambda n: n == name) + [w for w in hosted if w.label.name == name]
         if len(found) != 1:
             problems.append("{}: expected one dependency {}, found {}".format(who, name, len(found)))
             continue
         got = found[0].resolved_attrs_eager(ctx).target
         if got != want_zig:
             problems.append("{}: {} is built for {}, not {}".format(who, name, got, want_zig))
+    other = "mojo_compile" if wrapper == "mojo_compile_macos" else "mojo_compile_macos"
+    if _deps(node, lambda n: n == other) or [w for w in hosted if w.label.name == other]:
+        problems.append("{}: the unit depends on {}, the wrapper of another operating system".format(who, other))
+    if wrapper == "mojo_compile_macos" and not node.resolved_attrs_eager(ctx).macos_hosts:
+        problems.append("{}: a macOS compile names no host it may run on".format(who))
     mopm = _deps(node, lambda n: n.startswith("mopm_"))
     if len(mopm) != 1:
         problems.append("{}: expected one mopm, found {}".format(who, len(mopm)))

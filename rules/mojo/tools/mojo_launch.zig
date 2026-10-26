@@ -19,6 +19,14 @@
 //!     watchdog_sample_secs=30
 //!     build_arg=--target-cpu          (repeatable: placed right after `build`, i.e. the ISA flags of a test)
 //!     build_arg=x86-64-v3
+//!
+//! A toolchain for macOS (the wrapper is mojo_compile_macos.zig) has no zig and no cc_target: it names the deployment target and the host
+//! identities a compile may run on instead, and the file is refused if it names both kinds of key.
+//!
+//!     wrapper=wrapper
+//!     compiler=compiler
+//!     deployment_target=11.0
+//!     macos_host=27.0-0123456789abcdef   (repeatable, at least one)
 
 const std = @import("std");
 
@@ -27,6 +35,8 @@ pub const Cfg = struct {
     compiler: []const u8 = "",
     zig: []const u8 = "",
     cc_target: []const u8 = "",
+    deployment_target: []const u8 = "",
+    macos_hosts: []const []const u8 = &.{},
     watchdog_idle_secs: []const u8 = "300",
     watchdog_sample_secs: []const u8 = "30",
     build_args: []const []const u8 = &.{},
@@ -37,6 +47,7 @@ pub const CfgError = error{ BadLine, UnknownKey, Missing, OutOfMemory };
 pub fn parseCfg(a: std.mem.Allocator, text: []const u8, why: *[]const u8) CfgError!Cfg {
     var cfg = Cfg{};
     var build_args = std.ArrayList([]const u8).empty;
+    var macos_hosts = std.ArrayList([]const u8).empty;
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
@@ -55,6 +66,10 @@ pub fn parseCfg(a: std.mem.Allocator, text: []const u8, why: *[]const u8) CfgErr
             cfg.zig = val;
         } else if (std.mem.eql(u8, key, "cc_target")) {
             cfg.cc_target = val;
+        } else if (std.mem.eql(u8, key, "deployment_target")) {
+            cfg.deployment_target = val;
+        } else if (std.mem.eql(u8, key, "macos_host")) {
+            try macos_hosts.append(a, val);
         } else if (std.mem.eql(u8, key, "watchdog_idle_secs")) {
             cfg.watchdog_idle_secs = val;
         } else if (std.mem.eql(u8, key, "watchdog_sample_secs")) {
@@ -66,11 +81,24 @@ pub fn parseCfg(a: std.mem.Allocator, text: []const u8, why: *[]const u8) CfgErr
             return error.UnknownKey;
         }
     }
-    inline for (.{ "wrapper", "compiler", "zig", "cc_target" }) |k| {
-        if (@field(cfg, k).len == 0) {
-            why.* = try std.fmt.allocPrint(a, "{s} is not set", .{k});
-            return error.Missing;
+    cfg.macos_hosts = try macos_hosts.toOwnedSlice(a);
+    const macos = cfg.deployment_target.len != 0 or cfg.macos_hosts.len != 0;
+    if (macos and (cfg.zig.len != 0 or cfg.cc_target.len != 0)) {
+        why.* = "a macOS toolchain (deployment_target, macos_host) names no zig and no cc_target";
+        return error.BadLine;
+    }
+    const required: []const []const u8 = if (macos) &.{ "wrapper", "compiler", "deployment_target" } else &.{ "wrapper", "compiler", "zig", "cc_target" };
+    inline for (.{ "wrapper", "compiler", "zig", "cc_target", "deployment_target" }) |k| {
+        for (required) |r| {
+            if (std.mem.eql(u8, r, k) and @field(cfg, k).len == 0) {
+                why.* = try std.fmt.allocPrint(a, "{s} is not set", .{k});
+                return error.Missing;
+            }
         }
+    }
+    if (macos and cfg.macos_hosts.len == 0) {
+        why.* = "macos_host is not set: a macOS compile names the hosts it may run on";
+        return error.Missing;
     }
     cfg.build_args = try build_args.toOwnedSlice(a);
     return cfg;
@@ -82,8 +110,14 @@ pub fn buildArgv(a: std.mem.Allocator, dir: []const u8, cfg: Cfg, args: []const 
     var out = std.ArrayList([]const u8).empty;
     try out.append(a, try std.fs.path.join(a, &.{ dir, cfg.wrapper }));
     try out.append(a, try std.fmt.allocPrint(a, "--compiler={s}", .{try std.fs.path.join(a, &.{ dir, cfg.compiler })}));
-    try out.append(a, try std.fmt.allocPrint(a, "--zig={s}", .{try std.fs.path.join(a, &.{ dir, cfg.zig })}));
-    try out.append(a, try std.fmt.allocPrint(a, "--cc-target={s}", .{cfg.cc_target}));
+    if (cfg.deployment_target.len != 0) {
+        // The macOS wrapper links with the host's C driver: no zig, no cc target.
+        try out.append(a, try std.fmt.allocPrint(a, "--deployment-target={s}", .{cfg.deployment_target}));
+        for (cfg.macos_hosts) |h| try out.append(a, try std.fmt.allocPrint(a, "--macos-host={s}", .{h}));
+    } else {
+        try out.append(a, try std.fmt.allocPrint(a, "--zig={s}", .{try std.fs.path.join(a, &.{ dir, cfg.zig })}));
+        try out.append(a, try std.fmt.allocPrint(a, "--cc-target={s}", .{cfg.cc_target}));
+    }
     try out.append(a, try std.fmt.allocPrint(a, "--watchdog-idle-secs={s}", .{cfg.watchdog_idle_secs}));
     try out.append(a, try std.fmt.allocPrint(a, "--watchdog-sample-secs={s}", .{cfg.watchdog_sample_secs}));
     // mopm gives `precompile` the staged `src/` directory as the source root and the package inside it as the package. The

@@ -72,6 +72,7 @@ const compile_args = @import("compile_args.zig");
 const cc_shim = @import("cc_shim.zig");
 const modular_cfg = @import("modular_cfg.zig");
 const proc_tree = @import("proc_tree.zig");
+const builtin = @import("builtin");
 
 test {
     _ = @import("compile_args.zig");
@@ -107,6 +108,10 @@ pub fn oom() noreturn {
 }
 
 pub fn main() void {
+    // This program runs Linux system calls directly (std.os.linux) and reads /proc. Built for another operating system it compiles and
+    // then makes calls that system does not have (on macOS: SIGSYS in the first fork), so it is not built for one: the macOS wrapper is
+    // mojo_compile_macos.zig, which imports the helpers of this file that are `pub`.
+    if (builtin.os.tag != .linux) @compileError("mojo_compile.zig is the Linux compile wrapper; macOS uses mojo_compile_macos.zig");
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const arena = arena_state.allocator();
     const argv = std.process.argsAlloc(arena) catch oom();
