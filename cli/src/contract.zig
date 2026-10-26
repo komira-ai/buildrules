@@ -46,21 +46,34 @@ pub const buckconfig_alias_section = "repositories";
 pub const buckconfig_toolchains_key = "toolchains";
 pub const mojo_defs_label = "@buildrules//rules/mojo:defs.bzl";
 
-pub const mojo_bzl_text =
-    "# Written by `buildrules mojo sync`. Do not edit: `buildrules check` fails when this differs from what sync writes.\n" ++
-    "# Binds the generated table (" ++ mojo_lock_file ++ ") to the macro of " ++ mojo_defs_label ++ ".\n" ++
-    "load(\"" ++ mojo_defs_label ++ "\", _mojo_package = \"mojo_package\")\n" ++
-    "load(\":" ++ mojo_lock_file ++ "\", \"CLOSURE_SHA256\", \"GRAPH\", \"MANIFEST_SHA256\", \"MOJO\", \"MOPM\", \"SCHEMA\")\n\n" ++
-    "TABLE = {\n" ++
-    "    \"CLOSURE_SHA256\": CLOSURE_SHA256,\n" ++
-    "    \"GRAPH\": GRAPH,\n" ++
-    "    \"MANIFEST_SHA256\": MANIFEST_SHA256,\n" ++
-    "    \"MOJO\": MOJO,\n" ++
-    "    \"MOPM\": MOPM,\n" ++
-    "    \"SCHEMA\": SCHEMA,\n" ++
-    "}\n\n" ++
-    "def mojo_package(path = \".\", **kwargs):\n" ++
-    "    _mojo_package(path = path, table = TABLE, **kwargs)\n";
+/// The glue of a table that holds the graph of linux-64 alone (what every table was before graphs per subdir): unchanged byte for byte.
+pub const mojo_bzl_text = mojoBzl(false);
+
+/// The glue of a table that also holds the graphs of the other subdirs (`GRAPHS`, rules/mojo/subdirs.bzl).
+pub const mojo_bzl_text_graphs = mojoBzl(true);
+
+/// The glue `sync` writes for a table: `with_graphs` when the table has `GRAPHS`.
+pub fn mojoBzlFor(with_graphs: bool) []const u8 {
+    return if (with_graphs) mojo_bzl_text_graphs else mojo_bzl_text;
+}
+
+fn mojoBzl(comptime with_graphs: bool) []const u8 {
+    return "# Written by `buildrules mojo sync`. Do not edit: `buildrules check` fails when this differs from what sync writes.\n" ++
+        "# Binds the generated table (" ++ mojo_lock_file ++ ") to the macro of " ++ mojo_defs_label ++ ".\n" ++
+        "load(\"" ++ mojo_defs_label ++ "\", _mojo_package = \"mojo_package\")\n" ++
+        "load(\":" ++ mojo_lock_file ++ "\", \"CLOSURE_SHA256\", \"GRAPH\", " ++ (if (with_graphs) "\"GRAPHS\", " else "") ++ "\"MANIFEST_SHA256\", \"MOJO\", \"MOPM\", \"SCHEMA\")\n\n" ++
+        "TABLE = {\n" ++
+        "    \"CLOSURE_SHA256\": CLOSURE_SHA256,\n" ++
+        "    \"GRAPH\": GRAPH,\n" ++
+        (if (with_graphs) "    \"GRAPHS\": GRAPHS,\n" else "") ++
+        "    \"MANIFEST_SHA256\": MANIFEST_SHA256,\n" ++
+        "    \"MOJO\": MOJO,\n" ++
+        "    \"MOPM\": MOPM,\n" ++
+        "    \"SCHEMA\": SCHEMA,\n" ++
+        "}\n\n" ++
+        "def mojo_package(path = \".\", **kwargs):\n" ++
+        "    _mojo_package(path = path, table = TABLE, **kwargs)\n";
+}
 
 /// The public load path of the macros.
 pub const defs_label = "@buildrules//rules/rust:defs.bzl";

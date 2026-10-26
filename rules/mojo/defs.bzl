@@ -69,6 +69,7 @@ load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/cxx:native.bzl", "native_static")
 load(":pack.bzl", "mojo_conda")
+load(":subdirs.bzl", "BASE_SUBDIR", "by_subdir", "check_same_units", "subdir_suffix", "table_graphs", "unsupported_platform")
 load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
 load(":check.bzl", "mojo_check_rule", "mojo_table_rule", "mojo_workspace_rule")
@@ -227,6 +228,15 @@ def _check_table(t):
         fail("the table says Mojo {} but its unit graph is for Mojo {}: run `buildrules mojo sync`".format(t["MOJO"], g["mojo"]))
     if g["toolchain"]["closure_sha256"] != t["CLOSURE_SHA256"]:
         fail("the table records toolchain closure {} but its unit graph pins {}: the file was edited by hand; run `buildrules mojo sync`".format(t["CLOSURE_SHA256"], g["toolchain"]["closure_sha256"]))
+    graphs = table_graphs(t)
+    check_same_units(graphs)
+    for sd, x in sorted(graphs.items()):
+        if x["unit_graph"] not in (1, 2):
+            fail("the committed unit graph of {} is format {}; these rules read formats 1 and 2".format(sd, x["unit_graph"]))
+        if x["mojo"] != t["MOJO"] or x["toolchain"]["mojo"] != t["MOJO"]:
+            fail("the table says Mojo {} but its unit graph of {} is for Mojo {}: run `buildrules mojo sync`".format(t["MOJO"], sd, x["mojo"]))
+        if x["toolchain"].get("subdir", BASE_SUBDIR) != sd:
+            fail("the graph kept for {} is the graph of {}: the file was edited by hand; run `buildrules mojo sync`".format(sd, x["toolchain"].get("subdir", BASE_SUBDIR)))
 
 def own_static_natives(unit):
     """The static native libraries a registry package ships, `{soname: sha256}`, in the order of the unit's `natives` (mopm's link order). The
@@ -302,8 +312,18 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     units = {u["id"]: u for u in graph["units"]}
     root = graph["package"].split("@")[0]
     prebuilt_packages = {u["package"]: True for u in graph["units"] if u["kind"] == "prebuilt"}
-    toolchain = "toolchains//:mojo_" + vname(mojo)
-    mopm = "toolchains//:mopm_" + vname(table["MOPM"]["version"])
+    graphs = table_graphs(table)
+    units_by = {sd: {u["id"]: u for u in g["units"]} for sd, g in graphs.items()}
+    subdirs = sorted(graphs.keys())
+
+    def toolchain_of(sd):
+        return "toolchains//:mojo_" + vname(mojo) + ("" if sd == BASE_SUBDIR else "_" + subdir_suffix(sd))
+
+    # The graph, the toolchain and the `.conda` directory of a unit follow the target platform (rules/mojo/subdirs.bzl). A coverage build is a linux-64
+    # build: it runs where kcov and the instrumented link are (rules/coverage), so what it is built from and run with names the linux-64 ones.
+    toolchain_base = toolchain_of(BASE_SUBDIR)
+    toolchain = by_subdir(graphs, {sd: toolchain_of(sd) for sd in subdirs})
+    mopm ="toolchains//:mopm_" + vname(table["MOPM"]["version"])
     build_args = isa_select(lambda l: list(ISA_LEVELS[l]["mojo"]), [])
     taken = {}
 
@@ -338,12 +358,13 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         check_names.append(full)
     mojo_check_rule(
         name = name_once("check"),
-        expect_toolchain = {k: v for k, v in graph["toolchain"].items() if k != "mojo"},
+        expect_toolchain = by_subdir(graphs, {sd: {k: v for k, v in graphs[sd]["toolchain"].items() if k != "mojo"} for sd in subdirs}),
         files = check_files,
         hashes = check_hashes,
         mojo = mojo,
         names = check_names,
         toolchain = toolchain,
+        unsupported = unsupported_platform(graphs, here + ":check"),
         exec_compatible_with = LINUX_X86_64,
         visibility = visibility,
     )
@@ -369,6 +390,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         mojo = mojo,
         mopm = mopm,
         package_dir = pkg_dir,
+        subdirs = [sd for sd in subdirs if sd != BASE_SUBDIR],
         table = _join(project, "buildrules.mojo.lock.bzl"),
         workspace = ":workspace",
         workspace_root = rooted,
@@ -390,7 +412,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         # A path of the graph below this package's directory (what the BUCK file's labels are relative to).
         return graph_path_in_package(path, pkg_dir, rooted)
 
-    def slice_of(uid, profile = None):
+    def slice_of(uid, profile = None, sd = BASE_SUBDIR):
         # The unit's own entry, whole but for its `key`; every unit it imports reduced to what `mopm unit build` reads of a dependency
         # (its identity, its place in the graph and the name of its .mojoc). A dependency's sources, key and profile are not inputs
         # of this unit: they change when the dependency changes, and what this unit is built from is the dependency's `.mojoc`, an input
@@ -398,10 +420,12 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         # action key replaces it, and a rebuild that leaves a dependency's `.mojoc` as it was stops there (docs/contract.md, section 12).
         # The native units a `built` entry of the unit names stay whole (but for their `key`): the archive is the unit's input, and the
         # entry has to name a unit of the graph it is given.
+        us = units_by[sd]
+        g = graphs[sd]
         cut = []
-        wanted = {n["built"]: True for n in units[uid]["natives"] if n.get("built")}
-        for i in sorted(_closure(units, uid) + [uid] + [b for b in wanted.keys() if b in units]):
-            u = units[i]
+        wanted = {n["built"]: True for n in us[uid]["natives"] if n.get("built")}
+        for i in sorted(_closure(us, uid) + [uid] + [b for b in wanted.keys() if b in us]):
+            u = us[i]
             if i == uid or is_native_unit(i):
                 u = {k: v for k, v in u.items() if k != "key"}
                 if profile and i == uid:
@@ -410,10 +434,10 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 u = {k: v for k, v in u.items() if k in _DEP_FIELDS}
             cut.append(u)
         return json.encode({
-            "unit_graph": graph["unit_graph"],
-            "package": graph["package"],
-            "mojo": graph["mojo"],
-            "toolchain": graph["toolchain"],
+            "unit_graph": g["unit_graph"],
+            "package": g["package"],
+            "mojo": g["mojo"],
+            "toolchain": g["toolchain"],
             "units": cut,
         })
 
@@ -456,7 +480,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         sonames, native_labels = native_wiring(u, prebuilt_packages, natives, here, built = built_labels)
         return dict(
             deps = [label_of(d, ":lib_ungated" if kind == "test" else ":lib") for d in u["deps"]],
-            graph = slice_of(uid, profile),
+            graph = slice_of(uid, profile) if profile else by_subdir(graphs, {sd: slice_of(uid, None, sd) for sd in subdirs}),
             kind = kind,
             mojo = mojo,
             mopm = mopm,
@@ -469,7 +493,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             check = ":check",
             src_paths = [s["path"] for s in u["srcs"]],
             srcs = [_join(project, in_package(s["path"])) for s in u["srcs"]],
-            toolchain = toolchain,
+            toolchain = toolchain_base if profile else toolchain,
             unit_id = uid,
             exec_compatible_with = LINUX_X86_64,
             visibility = visibility,
@@ -578,13 +602,18 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         if kind == "prebuilt":
             if u["package"] == root:
                 fail("{}: the graph holds a prebuilt unit for the root package itself".format(uid))
-            a = u["artifact"]
-            pinned_file(name = name_once("prebuilt_" + u["package"] + ".conda"), url = mapped_url(a["url"]), sha256 = a["sha256"], size_bytes = a["size"])
+            # The `.conda` of a registry package is the one of the subdir: `prebuilt_<package>.conda` is the linux-64 one, `..._<subdir>` the others.
+            archives = {}
+            for sd in subdirs:
+                a = units_by[sd][uid]["artifact"]
+                fname = "prebuilt_" + u["package"] + ".conda" + ("" if sd == BASE_SUBDIR else "_" + subdir_suffix(sd))
+                pinned_file(name = name_once(fname), url = mapped_url(a["url"]), sha256 = a["sha256"], size_bytes = a["size"])
+                archives[sd] = ":" + fname
             mojo_prebuilt_rule(
                 name = name_once("prebuilt_" + u["package"]),
-                archive = ":prebuilt_" + u["package"] + ".conda",
+                archive = by_subdir(graphs, archives),
                 deps = [label_of(d) for d in u["deps"]],
-                natives = own_static_natives(u),
+                natives = by_subdir(graphs, {sd: own_static_natives(units_by[sd][uid]) for sd in subdirs}),
                 package = u["package"],
                 unit_id = uid,
                 visibility = visibility,
@@ -650,7 +679,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 must_contain = _join(here_repo, test_src),
                 required_isa = required_isa(),
                 share = share,
-                toolchain = toolchain,
+                toolchain = toolchain_base,
                 exec_compatible_with = test_exec_compatible_with(),
                 visibility = visibility,
             )
@@ -672,7 +701,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                     native_needs = {n["soname"]: n["needs"] for n in u["natives"] if n.get("needs")},
                     native_sonames = pgo_sonames,
                     natives = pgo_natives,
-                    toolchain = toolchain,
+                    toolchain = toolchain_base,
                     exec_compatible_with = LINUX_X86_64,
                     visibility = visibility,
                 )
@@ -687,7 +716,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                     share = share,
                     test_env = test_env,
                     test_layout = test_layout,
-                    toolchain = toolchain,
+                    toolchain = toolchain_base,
                     exec_compatible_with = test_exec_compatible_with(),
                     visibility = visibility,
                 )
@@ -758,6 +787,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             mojo = mojo,
             mopm = mopm,
             natives = {nid: ":native_" + nid for nid in own_native_ids.keys()},
+            subdir = by_subdir(graphs, {sd: sd for sd in subdirs}),
             package = root,
             version = graph["package"].partition("@")[2],
             visibility = visibility,

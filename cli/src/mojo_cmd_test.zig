@@ -12,20 +12,22 @@ const pins_toml = @import("pins_toml.zig");
 const Diag = @import("diag.zig").Diag;
 const t = std.testing;
 
-const fx = struct {
-    const graph = @embedFile("fixture/mojo.graph.json");
-    const manifest = @embedFile("fixture/mojo.mopm.toml");
-    const mopm_lock = @embedFile("fixture/mojo.mopm.lock");
-    const lib = @embedFile("fixture/mojo.lib.mojo");
-    const test_src = @embedFile("fixture/mojo.test.mojo");
-    const toolchain = "[toolchain]\nmopm = \"0.0.1\"\nmojo = \"1.0.0\"\n";
+pub const fx = struct {
+    pub const graph = @embedFile("fixture/mojo.graph.json");
+    pub const manifest = @embedFile("fixture/mojo.mopm.toml");
+    pub const mopm_lock = @embedFile("fixture/mojo.mopm.lock");
+    pub const lib = @embedFile("fixture/mojo.lib.mojo");
+    pub const test_src = @embedFile("fixture/mojo.test.mojo");
+    pub const toolchain = "[toolchain]\nmopm = \"0.0.1\"\nmojo = \"1.0.0\"\n";
     const buck = "load(\":buildrules.mojo.bzl\", \"mojo_package\")\n\nmojo_package(path = \".\")\n";
 };
 
 var calls: [32][]const u8 = undefined;
 var n_calls: usize = 0;
 var plan_code: u8 = 0;
-var plan_graph: []const u8 = fx.graph;
+pub var plan_graph: []const u8 = fx.graph;
+/// A test's own answer to a plan run (mojo_subdir_test.zig): null leaves it to the fake.
+pub var plan_hook: ?*const fn (ctx: *ctxm.Ctx, spec: ctxm.Exec) ?ctxm.ExecResult = null;
 /// What the fake buck2 and mopm do instead of answering: an error from the exec seam (for the program whose path ends with `exec_error_on`), a
 /// non-zero exit of buck2, or other output of buck2.
 var exec_error: ?anyerror = null;
@@ -38,8 +40,8 @@ var mopm_dir_seen: [32][]const u8 = undefined;
 /// What the fake mopm prints for `--help` (the capability probe), and its exit code. `fresh` starts with a mopm whose help does not list
 /// `--workspace-root`; `help_with` is one that does.
 const help_without = "usage: mopm <command> [args]\n  plan --unit-graph --locked [--mojo <version>] [-o <file>]\n";
-const help_with = "usage: mopm <command> [args]\n  plan --unit-graph --locked [--mojo <version>] [--workspace-root <dir>] [-o <file>]\n";
-var help_out: []const u8 = help_without;
+pub const help_with = "usage: mopm <command> [args]\n  plan --unit-graph --locked [--mojo <version>] [--workspace-root <dir>] [-o <file>]\n";
+pub var help_out: []const u8 = help_without;
 var help_code: u8 = 0;
 
 fn joinArgs(ctx: *ctxm.Ctx, spec: ctxm.Exec) ![]const u8 {
@@ -74,12 +76,13 @@ fn fakeExec(ctx: *ctxm.Ctx, spec: ctxm.Exec) anyerror!ctxm.ExecResult {
         if (help_code != 0) return .{ .code = help_code };
         return .{ .code = 0, .stdout = help_out };
     }
+    if (plan_hook) |hook| if (hook(ctx, spec)) |answer| return answer;
     // mopm plan --unit-graph --locked --mojo M
     if (plan_code != 0) return .{ .code = plan_code };
     return .{ .code = 0, .stdout = plan_graph };
 }
 
-fn called(needle: []const u8) usize {
+pub fn called(needle: []const u8) usize {
     var n: usize = 0;
     for (calls[0..n_calls]) |c| {
         if (std.mem.indexOf(u8, c, needle) != null) n += 1;
@@ -88,7 +91,7 @@ fn called(needle: []const u8) usize {
 }
 
 /// The package's files, before any sync.
-fn fresh() !*kit.Harness {
+pub fn fresh() !*kit.Harness {
     const h = try kit.Harness.create();
     h.ctx.execer = &fakeExec;
     n_calls = 0;
@@ -96,6 +99,7 @@ fn fresh() !*kit.Harness {
     help_out = help_without;
     help_code = 0;
     plan_graph = fx.graph;
+    plan_hook = null;
     exec_error = null;
     exec_error_spares_help = false;
     buck2_code = 0;
@@ -111,7 +115,7 @@ fn fresh() !*kit.Harness {
     return h;
 }
 
-fn synced() !*kit.Harness {
+pub fn synced() !*kit.Harness {
     const h = try fresh();
     const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
     if (r.code != 0) std.debug.panic("sync failed: {s}", .{r.err});
@@ -760,6 +764,7 @@ test "sync: a toolchain in a graph that a table may not carry is refused, and so
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "the unit graph's toolchain has no zig"));
     plan_graph = fx.graph;
+    plan_hook = null;
     try h.tmp.dir.deleteFile("pkgs/base/mopm.lock");
     const missing = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
     try t.expectEqual(@as(u8, 1), missing.code);
@@ -837,7 +842,7 @@ fn memberGraph(h: *kit.Harness, src: []const u8, key: []const u8, root: []const 
 }
 
 /// The repository of `fresh` with a second package `util` that `base` imports: the graph names it, and its manifest is a manifest of the table.
-fn withMember(h: *kit.Harness) !void {
+pub fn withMember(h: *kit.Harness) !void {
     try h.put("pkgs/util/mopm.toml", "[package]\nname = \"util\"\nversion = \"0.1.0\"\n");
     try h.put("pkgs/util/src/util/__init__.mojo", util_src);
     plan_graph = try memberGraph(h, util_src, "k0", "../util/src/util", "../util/src/util/__init__.mojo", "");
@@ -1058,7 +1063,7 @@ test "check: the toolchain tables that are missing are stale, a glue file that i
 
 // ---- path dependencies: identity in the table, and the repository root as the base of the graph's paths ----------------------------------
 
-const lock_path = "pkgs/base/buildrules.mojo.lock.bzl";
+pub const lock_path = "pkgs/base/buildrules.mojo.lock.bzl";
 
 test "probe: the flag is used when the mopm's own help lists it, whatever release the toolchain file names" {
     // a release number that no rule knows: only the binary's answer counts

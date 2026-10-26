@@ -505,6 +505,27 @@ the graph says (the unit id, version and Mojo included), and refuses a dependenc
 size). **buildrules has no Mojo pin of its own**: `toolchains//:mojo_<v>` fetches those packages by sha256 and the zig that links, unpacks them
 (`conda_unpack`; busybox for the zig) and names the closure hash. A new Mojo version is a mopm release plus a `sync`.
 
+**One graph per subdir.** A mopm that takes `plan --unit-graph --subdir <s>` (linux-64 is its default; `linux-aarch64` and `osx-arm64` are the others) prints a graph
+per conda subdir: the same units, sources and dependencies, with the toolchain (compiler, runtime packages and zig of that platform), the `.conda` of every registry package and the keys
+of that subdir. `sync` asks for the graph of every other subdir whose toolchain closure the package's `mopm.lock` records (`"toolchain": {"1.0.0": {"linux-64": ..., "osx-arm64": ...}}`, which `mopm lock` writes for all three
+from mopm 0.0.73 on; a lock that records linux-64 alone gets the table it always had, whatever mopm is pinned), and a subdir mopm cannot plan stops the sync. The table then holds, after `GRAPH`, one block per other subdir and the map of all of them:
+
+```python
+GRAPH_JSON_LINUX_AARCH64 = r'''<the same, for --subdir linux-aarch64>'''
+GRAPH_JSON_OSX_ARM64 = r'''<the same, for --subdir osx-arm64>'''
+GRAPHS = {"linux-64": GRAPH, "linux-aarch64": json.decode(GRAPH_JSON_LINUX_AARCH64), "osx-arm64": json.decode(GRAPH_JSON_OSX_ARM64)}
+```
+
+`CLOSURE_SHA256` stays the one of the linux-64 graph; `buildrules.mojo.bzl` loads and passes `GRAPHS` only for such a table (a table with `GRAPH` alone has the glue it always had).
+`toolchains/mojo_pins.bzl` gets a row per subdir: the key is the Mojo version for linux-64 and `<version>@<subdir>` for the others, and `mojo_toolchains()` declares
+`toolchains//:mojo_<v>_<subdir with _>` beside `mojo_<v>` (the compiler closure, the zig and the toolchain; the coverage toolchains exist for linux-64 only). `mojo_package` chooses by the
+**target platform**: its constraint on the OS and the CPU (`//platforms:is_linux_x86_64`, `is_linux_aarch64`, `is_macos_aarch64`) selects the graph a unit is built from,
+the toolchain, the `.conda` of a registry package and the subdir of `mopm pack` (`:conda` is `<subdir>/mojo-<name>-<version>-mojo<M>_0.conda` and its natives are packed for the subdir).
+The coverage builds are linux-64 builds. A platform that matches none of the subdirs the table has graphs for fails the analysis of the package's `:check`, which every target waits for, naming
+the graphs the table has. A table with the graph of linux-64 alone is built for every platform exactly as before. `:table` asks mopm for each subdir and compares it with its block,
+`mojo check` reads each block (the Mojo version, the subdir the toolchain names), and ci/subdirs.bzl configures an example for each platform and holds what was chosen (there is no
+execution platform for linux aarch64 or macOS arm64 yet, so the gate is analysis).
+
 ### 12.4 How a unit becomes an action
 
 `mopm unit build --unit ID --graph G --out O --toolchain T [--src S] [--deps D] [--natives N]` is the one compile entry (offline; it checks

@@ -28,6 +28,8 @@ def _differs(have, want):
     return [k for k in sorted(keys.keys()) if have.get(k) != want.get(k)]
 
 def _impl(ctx):
+    if ctx.attrs.unsupported:
+        fail(ctx.attrs.unsupported)
     tc = ctx.attrs.toolchain[MojoToolchainInfo]
     who = str(ctx.label.raw_target())
     if tc.version != ctx.attrs.mojo:
@@ -54,6 +56,8 @@ mojo_check_rule = rule(
         "mojo": attrs.string(),
         "names": attrs.list(attrs.string()),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
+        # Empty on a target platform the table has a unit graph for; else the refusal (rules/mojo/subdirs.bzl).
+        "unsupported": attrs.string(default = ""),
         "_tool": attrs.exec_dep(default = "buildrules//rules/mojo:files_check", providers = [RunInfo]),
     },
 )
@@ -106,6 +110,8 @@ def _table_impl(ctx):
     if ctx.attrs.workspace_root:
         # The graph's paths start at the repository root: mopm is told where it is (the staged workspace) and the table was made that way.
         cmd.add("--workspace-root")
+    for s in ctx.attrs.subdirs:
+        cmd.add("--subdir", s)
     cmd.add(
         ctx.attrs.mopm[RunInfo],
         ctx.attrs.workspace[DefaultInfo].default_outputs[0],
@@ -125,6 +131,9 @@ mojo_table_rule = rule(
         "mopm": attrs.exec_dep(providers = [RunInfo]),
         # The package's directory from the repository root: where mopm runs inside the staged workspace.
         "package_dir": attrs.string(default = ""),
+        # The subdirs other than linux-64 whose graph the table holds (`GRAPHS`): the check asks mopm for each with `plan --subdir` and compares it with the
+        # table's block, so a stale graph for any one of them is red.
+        "subdirs": attrs.list(attrs.string(), default = []),
         "table": attrs.source(),
         "workspace": attrs.dep(),
         # The table was made by a mopm given --workspace-root (`MOPM.workspace_root`).
