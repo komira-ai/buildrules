@@ -78,32 +78,50 @@ test "rm -rf and mkdir -p through links: they act on the file system, in the wor
     try t.expectEqualStrings("rm: cannot remove 'never-there': No such file or directory\n", r.stderr);
 }
 
-test "sleep really waits: 0.3 seconds is at least 0.25, and 0 does not wait" {
+test "sleep through the real clock ends with status 0 and no output, for a fraction and for zero (how long it asks to wait is toolbox_test's recorded sleeps)" {
     var c = tk.Case.init();
     defer c.deinit();
     const a = c.alloc();
     const exe = try tk.exe(a);
-    var timer = try std.time.Timer.start();
     try expectRun(try run(a, c.tmp.dir, &.{ exe, "sleep", "0.3" }, &.{}), 0, "");
-    const waited = timer.read();
-    if (waited < 250 * std.time.ns_per_ms or waited > 20 * std.time.ns_per_s) {
-        std.debug.print("sleep 0.3 took {d} ms\n", .{waited / std.time.ns_per_ms});
-        return error.TestUnexpectedResult;
-    }
-    timer.reset();
     try expectRun(try run(a, c.tmp.dir, &.{ exe, "sleep", "0" }, &.{}), 0, "");
-    try t.expect(timer.read() < 5 * std.time.ns_per_s);
+}
+
+/// The state letter the kernel reports for process `pid` in /proc/<pid>/stat (R running, S sleeping, Z ended and not yet waited for).
+fn procState(a: std.mem.Allocator, pid: std.process.Child.Id) !u8 {
+    const path = try std.fmt.allocPrint(a, "/proc/{d}/stat", .{pid});
+    defer a.free(path);
+    const f = try std.fs.openFileAbsolute(path, .{});
+    defer f.close();
+    const stat = try f.readToEndAlloc(a, 1 << 16);
+    defer a.free(stat);
+    // "<pid> (<comm>) <state> ...": the comm may hold spaces and parentheses, so the state follows the last ')'.
+    const close = std.mem.lastIndexOfScalar(u8, stat, ')') orelse return error.TestUnexpectedResult;
+    if (close + 2 >= stat.len) return error.TestUnexpectedResult;
+    return stat[close + 2];
 }
 
 test "sleep 30 blocks until it is killed" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
     var c = tk.Case.init();
     defer c.deinit();
     const a = c.alloc();
     const exe = try tk.exe(a);
     var child = std.process.Child.init(&.{ exe, "sleep", "30" }, a);
     try child.spawn();
-    std.Thread.sleep(300 * std.time.ns_per_ms);
-    // After 0.3 s it is still waiting: killed, it ends by the signal, not by its own exit.
+    // The progress event is the kernel's own report that the child is asleep in its wait; nothing is timed. A sleep that came back at once would
+    // show as ended (Z) and fail here; a child that never sleeps and never ends would stop the test at the build's own limit.
+    while (true) {
+        const state = try procState(a, child.id);
+        if (state == 'S') break;
+        if (state == 'Z' or state == 'X') {
+            _ = try child.wait();
+            std.debug.print("sleep 30 ended instead of waiting\n", .{});
+            return error.TestUnexpectedResult;
+        }
+        try std.Thread.yield();
+    }
+    // Asleep: killed, it ends by the signal, not by its own exit.
     const term = try child.kill();
     try t.expect(term == .Signal);
 }
