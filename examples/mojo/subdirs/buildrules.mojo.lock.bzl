@@ -47,13 +47,13 @@ GRAPH_JSON = r'''{
       "version": "0.1.0",
       "kind": "test",
       "srcs": [
-        {"path": "examples/mojo/subdirs/tests/test_bare_name_native.mojo", "sha256": "f2bb2541143f3334868c5e6b108221d4e8a2c65f99132a9057d6383b540f9013"}
+        {"path": "examples/mojo/subdirs/tests/test_bare_name_native.mojo", "sha256": "47e1429084581a3f04b394d3154e24d93ffb08a6c68e1539bad317f602adeb11"}
       ],
       "deps": ["subdirs@0.1.0#mojo1.0.0/lib"],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_bare_name_native.pass"],
-      "key": "824c9c0eb485643b035601df9a5f61e638125f8596d97758795ee9786c2251a0"
+      "key": "77beb70f474d11ea55f10265bc86cb94b63cb25a7c1ec79eac42438cd431f6b1"
     },
     {
       "id": "subdirs@0.1.0#mojo1.0.0/test:examples/mojo/subdirs/tests/test_tripled.mojo",
@@ -111,13 +111,13 @@ GRAPH_JSON_LINUX_AARCH64 = r'''{
       "version": "0.1.0",
       "kind": "test",
       "srcs": [
-        {"path": "examples/mojo/subdirs/tests/test_bare_name_native.mojo", "sha256": "f2bb2541143f3334868c5e6b108221d4e8a2c65f99132a9057d6383b540f9013"}
+        {"path": "examples/mojo/subdirs/tests/test_bare_name_native.mojo", "sha256": "47e1429084581a3f04b394d3154e24d93ffb08a6c68e1539bad317f602adeb11"}
       ],
       "deps": ["subdirs@0.1.0#mojo1.0.0/lib"],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_bare_name_native.pass"],
-      "key": "8889fb671f73c855ec19a7eb445332679a075f5ae3e931cc3597a3842a39ef9b"
+      "key": "531d578e899d7147efcdfb7218308fb54453d230e037064eaa2f5df414500a22"
     },
     {
       "id": "subdirs@0.1.0#mojo1.0.0/test:examples/mojo/subdirs/tests/test_tripled.mojo",
@@ -172,13 +172,13 @@ GRAPH_JSON_OSX_ARM64 = r'''{
       "version": "0.1.0",
       "kind": "test",
       "srcs": [
-        {"path": "examples/mojo/subdirs/tests/test_bare_name_native.mojo", "sha256": "f2bb2541143f3334868c5e6b108221d4e8a2c65f99132a9057d6383b540f9013"}
+        {"path": "examples/mojo/subdirs/tests/test_bare_name_native.mojo", "sha256": "47e1429084581a3f04b394d3154e24d93ffb08a6c68e1539bad317f602adeb11"}
       ],
       "deps": ["subdirs@0.1.0#mojo1.0.0/lib"],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_bare_name_native.pass"],
-      "key": "4345e17a2f06c48c3646c715f01282c8636925ccf8c8bb94ca60e1577b5fe681"
+      "key": "12a6392a6e07bf66b718ee2a5cd87dfaefdbf279dd3044062a0fba527d71a51f"
     },
     {
       "id": "subdirs@0.1.0#mojo1.0.0/test:examples/mojo/subdirs/tests/test_tripled.mojo",
