@@ -41,7 +41,7 @@ const Env = struct {
         try l.appendSlice(e.a, opts);
         try l.append(e.a, "--");
         try l.appendSlice(e.a, cmd);
-        return kit.runGate(e.a, e.dir, l.items, .{ .env = env, .timeout_ms = 30_000, .setup = setup });
+        return kit.runGate(e.a, e.dir, l.items, .{ .env = env, .setup = setup });
     }
 
     fn status(e: *Env) ![]const u8 {
@@ -50,6 +50,10 @@ const Env = struct {
 };
 
 const no_scratch = [_][]const u8{"GATE_TEST=1"};
+
+fn contains(hay: []const u8, needle: []const u8) bool {
+    return std.mem.indexOf(u8, hay, needle) != null;
+}
 
 // S1. Mutant: accept a leading zero in the limit.
 test "S1 usage: each bad command line exits 2, and an unreadable --after file fails before any status" {
@@ -81,7 +85,27 @@ test "S1 usage: each bad command line exits 2, and an unreadable --after file fa
     try std.testing.expect(!kit.exists(e.p("status")));
 }
 
-// S4. Mutant: record a timeout as `fail` (the group is killed either way).
+// S4's clocks. The 2 s limit passes between the readings 1999 and 2000, once
+// both processes of the fixture exist; the SIGTERM to the group comes at 2000.
+const timeout_clock = [_]u64{ 0, 1999, 2000 };
+
+fn timeoutSetup() void {
+    kit.useClock(&timeout_clock, 2);
+    supervise.plat.kill = kit.loggingKill;
+}
+
+// A 5 s limit that the run does not reach: the readings stop at 4999, and the
+// run is released at the third.
+const inside_clock = [_]u64{ 0, 4999 };
+
+fn insideSetup() void {
+    kit.useClock(&inside_clock, 0);
+    kit.release_at = 3;
+}
+
+// S4. Defect caught: a timeout recorded as `fail` (the group is killed either way), or
+// act at 1999 or not at all (the logged kill is at another reading, or the
+// clock guard ends the run).
 test "S4 results: ok, fail <n>, and timeout <n> with the whole group gone; each with the log's tail" {
     const e = try Env.init();
     defer e.deinit();
@@ -91,51 +115,19 @@ test "S4 results: ok, fail <n>, and timeout <n> with the whole group gone; each 
     r = try e.step(&.{ "--limit-s", "30", "--infra-exit", "124" }, &.{ "x/exit", "3" }, &no_scratch);
     try std.testing.expectEqual(@as(u8, 0), r.status);
     try std.testing.expectEqualStrings("fail 3\n", try e.status());
-    // The step's clock is a manual one: it stands at 0 until the command has said it runs (both
-    // pids written), then moves 1 s per reading. The 2 s limit passes at the second reading
-    // after that, whatever the machine's speed.
+    // The step's clock is a manual one (timeoutSetup): it waits for the command to have said it
+    // runs (both pids written), so the limit passes at the same reading on any machine.
     const f = e.p("s4.pids");
-    const f_env = [_][]const u8{ "GATE_TEST=1", try std.fmt.allocPrint(e.a, "GATE_PIDS={s}", .{f}) };
-    r = try e.stepWith(&.{ "--limit-s", "2", "--infra-exit", "143" }, &.{ "x/spawnwait", f }, &f_env, useRunningClock);
+    r = try e.stepWith(&.{ "--limit-s", "2", "--infra-exit", "143" }, &.{ "x/spawnwait", f }, &no_scratch, timeoutSetup);
     try std.testing.expectEqual(@as(u8, 0), r.status);
     try std.testing.expectEqualStrings("timeout 2\n", try e.status());
-    // The whole group is gone, the command's child too.
-    try std.testing.expect(kit.goneSpin(try kit.pidsFrom(e.a, f, 2), 10_000_000));
-    // Inside its limit, a run that lasts 4 s of the manual clock (the limit is 5 s) is ok: the
-    // clock reaches 4 s, which makes the command's file, and the command ends.
-    const go = e.p("s4.go");
-    const go_env = [_][]const u8{ "GATE_TEST=1", try std.fmt.allocPrint(e.a, "GATE_GO={s}", .{go}) };
-    r = try e.stepWith(&.{ "--limit-s", "5" }, &.{ "x/waitfile", go }, &go_env, useGoClock);
-    try std.testing.expectEqual(@as(u8, 0), r.status);
+    try std.testing.expect(contains(r.err, try kit.killLine(e.a, posix.SIG.TERM, true, 2000)));
+    try std.testing.expect(!contains(r.err, "at clock 1999"));
+    try kit.expectKilled(r, try kit.pidsFrom(e.a, f, 2));
+    // Inside its limit (the clock reads 4999 of 5000 and the run ends by
+    // itself at the third reading), a run is ok.
+    r = try e.stepWith(&.{ "--limit-s", "5" }, &.{"x/held"}, &no_scratch, insideSetup);
     try std.testing.expectEqualStrings("ok\n", try e.status());
-    try std.testing.expect(kit.exists(go));
-}
-
-var manual_ms: u64 = 0;
-
-/// Moves 1 s per reading once the command has written its two pids.
-fn runningClock() ?u64 {
-    const f = posix.getenv("GATE_PIDS") orelse return null;
-    if (kit.pidCount(f) >= 2) manual_ms += 1000;
-    return manual_ms;
-}
-
-fn useRunningClock() void {
-    manual_ms = 0;
-    supervise.plat.now_ms = runningClock;
-}
-
-/// Moves 1 s per reading up to 4 s, where it makes the file the command waits for.
-fn goClock() ?u64 {
-    const f = posix.getenv("GATE_GO") orelse return null;
-    if (manual_ms < 4000) manual_ms += 1000;
-    if (manual_ms == 4000) kit.writeFile(f, "go") catch return null;
-    return manual_ms;
-}
-
-fn useGoClock() void {
-    manual_ms = 0;
-    supervise.plat.now_ms = goClock;
 }
 
 // S2, S6. Mutant: create the `-o` outputs after a success (a step's own

@@ -28,8 +28,12 @@ const Env = struct {
     }
 
     fn run(e: *Env, harness: []const u8, timeout: []const u8) !kit.Result {
+        return e.runWith(harness, timeout, null);
+    }
+
+    fn runWith(e: *Env, harness: []const u8, timeout: []const u8, setup: ?*const fn () void) !kit.Result {
         const bin = try std.fmt.allocPrint(e.a, "h/{s}", .{harness});
-        return kit.runGate(e.a, e.dir, try e.argv(e.bb, "passed", bin, timeout), .{ .timeout_ms = 30_000 });
+        return kit.runGate(e.a, e.dir, try e.argv(e.bb, "passed", bin, timeout), .{ .setup = setup });
     }
 
     /// `gate rust` over the harness `test_bin`, the applet tool `tool` and the marker `marker_path`.
@@ -125,8 +129,8 @@ test "R4-R6 refusals: empty list, a failing list, a failing run, ignored tests, 
     }
 }
 
-// R7. Mutant: check NO VERDICT after the status check (137 and 142 would
-// read GATED TEST FAILED).
+// R7. Catches: NO VERDICT checked after the status check (137 and 142 would
+// read GATED TEST FAILED), or the alarm never sent at the limit.
 test "R7 NO VERDICT: SIGKILL (137) in either run, and the timeout's SIGALRM (142)" {
     const e = try Env.init();
     defer e.deinit();
@@ -140,9 +144,10 @@ test "R7 NO VERDICT: SIGKILL (137) in either run, and the timeout's SIGALRM (142
     // The hang: the manual clock reads 0 until the harness reports (by
     // creating hang_started) that it is running its tests, then 1000 ms, the
     // limit of `--timeout-s 01`. The listing run never creates the file, so
-    // the clock stays at 0 for it. Nothing here measures or waits on time.
-    const bin = try std.fmt.allocPrint(e.a, "h/{s}", .{"rust_hangs"});
-    const r3 = try kit.runGate(e.a, e.dir, try e.argv(e.bb, "passed", bin, "01"), .{ .setup = useHangClock, .timeout_ms = 30_000 });
+    // the clock stays at 0 for it. The clock does not count readings: how
+    // many the supervisor takes before the harness starts depends on the
+    // machine, and nothing here measures or waits on time.
+    const r3 = try e.runWith("rust_hangs", "01", useHangClock);
     try std.testing.expectEqual(@as(u8, 142), r3.status);
     try std.testing.expectEqualStrings(rule ++ "NO VERDICT: the tests of //r:t timed out after 01s (exit 142).\n  A hang is not the test's failure; find what it waits on, or raise `test_timeout_s`.\n", r3.err);
     try std.testing.expect(kit.exists(try std.fmt.allocPrint(e.a, "{s}/hang_started", .{e.dir})));
