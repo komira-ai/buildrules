@@ -35,24 +35,6 @@ pub fn run(argv: []const []const u8) !u8 {
     return code;
 }
 
-/// Seconds the program takes (its output thrown away), the fastest of `times` runs.
-pub fn timeIt(argv: []const []const u8, times: usize) !f64 {
-    var best: u64 = std.math.maxInt(u64);
-    var i: usize = 0;
-    while (i < times) : (i += 1) {
-        var c = std.process.Child.init(argv, a);
-        c.stdout_behavior = .Ignore;
-        c.stderr_behavior = .Inherit;
-        var timer = try std.time.Timer.start();
-        try c.spawn();
-        const term = try c.wait();
-        const ns = timer.read();
-        if (term != .Exited or term.Exited != 0) return error.ProgramFailed;
-        best = @min(best, ns);
-    }
-    return @as(f64, @floatFromInt(best)) / 1e9;
-}
-
 /// The tree below `dir` as sorted lines: `d path`, `f path x|- size sha256`, `l path -> target`. A file's executable bit is the one mode bit compared (the umask
 /// of the extracting process decides the others).
 pub fn tree(dir: []const u8) ![]u8 {

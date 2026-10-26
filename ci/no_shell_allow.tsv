@@ -84,7 +84,6 @@ site/tools/inline.ts	heredoc	1
 tools/bootstrap/BUCK	busybox	1
 tools/bootstrap/src/real.zig	busybox	1
 tools/bootstrap/src/real_test.zig	busybox	2
-tools/bootstrap/src/xz_speed_test.zig	busybox	3
 tools/channels/BUCK	busybox	3
 tools/deploy/BUCK	busybox	7
 tools/release/BUCK	busybox	3

@@ -717,7 +717,7 @@ group(name = "all", deps = [
     "//tools/bootstrap:linux_aarch64_is_aarch64_linux_musl",
     "//tools/bootstrap:macos_aarch64_is_aarch64_macos",
     "//tools/bootstrap:real_unit",
-    "//tools/bootstrap:xz_speed_unit",
+    "//tools/bootstrap:xz_decode_unit",
     "//tools/bootstrap:mem_zig_xz_unit",
     "//tools/bootstrap:mem_rustc_xz_unit",
     "//tools/bootstrap:mem_rustc_gz_unit",
