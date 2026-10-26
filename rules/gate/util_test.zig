@@ -138,6 +138,18 @@ test "the real process table shows this process" {
     try std.testing.expectEqual(@as(i64, sys.getpid()), seen[1]);
 }
 
+test "the real clock and sleep, which the supervisor uses unless a test replaces them: a reading exists and never goes back, a zero sleep returns, and the platform defaults are these" {
+    const first = sys.monotonicMs().?;
+    sys.sleepMs(0);
+    const second = sys.monotonicMs().?;
+    try std.testing.expect(second >= first);
+    const plat = @import("supervise.zig").Platform{};
+    try std.testing.expect(plat.now_ms == &sys.monotonicMs);
+    try std.testing.expect(plat.sleep_ms == &sys.sleepMs);
+    plat.sleep_ms(0);
+    try std.testing.expect(plat.now_ms().? >= second);
+}
+
 /// An allocator that refuses exactly one allocation, the `fail_at`-th (from 0), and serves every other (std's FailingAllocator keeps refusing after its first).
 const OneFailure = struct {
     backing: std.mem.Allocator,

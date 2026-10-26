@@ -1,2 +1,2 @@
 lines 99.08 slack 1.00
-branches 40.22
+branches 40.47
