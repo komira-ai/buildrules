@@ -524,7 +524,8 @@ the toolchain, the `.conda` of a registry package and the subdir of `mopm pack` 
 The coverage builds are linux-64 builds. A platform that matches none of the subdirs the table has graphs for fails the analysis of the package's `:check`, which every target waits for, naming
 the graphs the table has. A table with the graph of linux-64 alone is built for every platform exactly as before. `:table` asks mopm for each subdir and compares it with its block,
 `mojo check` reads each block (the Mojo version, the subdir the toolchain names), and ci/subdirs.bzl configures an example for each platform and holds what was chosen (there is no
-execution platform for linux aarch64 or macOS arm64 yet, so the gate is analysis).
+execution platform for linux aarch64 or macOS arm64 yet, so the gate is analysis). Every compile action still declares a linux x86_64 execution platform, so the compiler chosen for
+another target platform would not run on it: a real aarch64 or macOS build also needs execution-platform selection, and the analysis gate is no proof that such a build works.
 
 ### 12.4 How a unit becomes an action
 

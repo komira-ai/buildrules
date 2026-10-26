@@ -764,7 +764,6 @@ test "sync: a toolchain in a graph that a table may not carry is refused, and so
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "the unit graph's toolchain has no zig"));
     plan_graph = fx.graph;
-    plan_hook = null;
     try h.tmp.dir.deleteFile("pkgs/base/mopm.lock");
     const missing = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
     try t.expectEqual(@as(u8, 1), missing.code);

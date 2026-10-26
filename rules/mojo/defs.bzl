@@ -323,7 +323,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     # build: it runs where kcov and the instrumented link are (rules/coverage), so what it is built from and run with names the linux-64 ones.
     toolchain_base = toolchain_of(BASE_SUBDIR)
     toolchain = by_subdir(graphs, {sd: toolchain_of(sd) for sd in subdirs})
-    mopm ="toolchains//:mopm_" + vname(table["MOPM"]["version"])
+    mopm = "toolchains//:mopm_" + vname(table["MOPM"]["version"])
     build_args = isa_select(lambda l: list(ISA_LEVELS[l]["mojo"]), [])
     taken = {}
 
