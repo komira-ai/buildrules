@@ -64,6 +64,7 @@ toolchain) and the test runs as the platform's `exec_compatible_with`, so the fa
 """
 
 load("//rules:isa.bzl", "ISA_LEVELS", "isa_select", "required_isa", "test_exec_compatible_with")
+load(":exec.bzl", "test_exec", "unit_exec", "unsupported_exec")
 load("//rules/core:pinned_file.bzl", "pinned_file")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/core:url_map.bzl", "mapped_url")
@@ -365,6 +366,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         names = check_names,
         toolchain = toolchain,
         unsupported = unsupported_platform(graphs, here + ":check"),
+        exec_missing = unsupported_exec(here + ":check"),
         exec_compatible_with = LINUX_X86_64,
         visibility = visibility,
     )
@@ -495,7 +497,8 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             srcs = [_join(project, in_package(s["path"])) for s in u["srcs"]],
             toolchain = toolchain_base if profile else toolchain,
             unit_id = uid,
-            exec_compatible_with = LINUX_X86_64,
+            # A coverage build (`profile`) is compiled with the linux x86_64 toolchain: it stays on linux x86_64 (coverage runs there only).
+            exec_compatible_with = LINUX_X86_64 if profile else unit_exec(),
             visibility = visibility,
         )
 
@@ -617,7 +620,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 package = u["package"],
                 unit_id = uid,
                 visibility = visibility,
-                exec_compatible_with = LINUX_X86_64,
+                exec_compatible_with = unit_exec(),
             )
         elif kind == "lib" and u["package"] == root:
             mojo_unit_rule(name = name_once("lib_ungated"), **common(uid, "lib", u["outputs"][0]))
@@ -640,7 +643,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 test_layout = test_layout,
                 required_isa = required_isa(),
                 toolchain = toolchain,
-                exec_compatible_with = test_exec_compatible_with(),
+                exec_compatible_with = test_exec(),
                 visibility = visibility,
             )
             tests.append(":" + stem)
@@ -752,7 +755,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             test_runs = tests,
             package = own_lib["package"],
             check = ":check",
-            exec_compatible_with = LINUX_X86_64,
+            exec_compatible_with = unit_exec(),
             visibility = visibility,
         )
 

@@ -296,7 +296,7 @@ mojo_test_run_rule = rule(
         # the data under `<root>/share`, the working directory `<root>`.
         "test_layout": attrs.string(default = LAYOUT_DEFAULT),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
-        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
+        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check_for_host", providers = [RunInfo]),
         "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
     },
 )
@@ -333,7 +333,7 @@ mojo_gated_lib_rule = rule(
         "lib": attrs.dep(providers = [MojoLibInfo]),
         "package": attrs.string(),
         "test_runs": attrs.list(attrs.dep(providers = [MojoTestRunInfo]), default = []),
-        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
+        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check_for_host", providers = [RunInfo]),
     },
 )
 

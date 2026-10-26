@@ -91,6 +91,18 @@ zig_exe_target_test(name = "linux_aarch64_is_aarch64_linux_musl", exe = ":check_
 
 zig_exe_target_test(name = "macos_arm64_is_aarch64_macos", exe = ":check_macos_arm64", expect = "aarch64-macos", same_tests_as = ":check", visibility = ["PUBLIC"])
 
+# The program a Mojo test run starts its test with, for the host that runs it (rules/mojo/exec.bzl): `:check` on linux x86_64 and on every platform with no host of
+# its own, the build for linux aarch64 or macOS arm64 on those. An `exec_dep` is configured as the execution platform of the rule that has it, so the select is made on that host.
+alias(
+    name = "check_for_host",
+    actual = select({
+        "buildrules//platforms:is_linux_aarch64": ":check_linux_aarch64",
+        "buildrules//platforms:is_macos_aarch64": ":check_macos_arm64",
+        "DEFAULT": ":check",
+    }),
+    visibility = ["PUBLIC"],
+)
+
 # The executable as a process (check_exe_test.zig): the command line from argv, the real environment and working directory, stdout flushed, the
 # exit status. A validation of `:check`; it adds nothing to the coverage.
 zig_test(

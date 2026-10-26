@@ -1,0 +1,7 @@
+# Placeholders for ci/exec_select.bxl:check --state configured. The property sets name no real worker and the file holds no endpoint: the check only
+# configures targets, nothing runs. A farm's real values live in its own .buckconfig.local, never here.
+[buildrules_re]
+  mode = remote
+  linux_x86_64_properties = OSFamily=Linux,ISA=x86-64,pool=analysis-only
+  linux_aarch64_properties = OSFamily=Linux,ISA=aarch64,pool=analysis-only
+  macos_aarch64_properties = OSFamily=macOS,ISA=aarch64,pool=analysis-only

@@ -10,6 +10,7 @@ sha256; the consumer's `mojo_package` takes it out of the `.conda` (rules/mojo/t
 """
 
 load("//rules/core:platform.bzl", "LINUX_X86_64")
+load(":exec.bzl", "unit_exec")
 load("//rules/cxx:providers.bzl", "NativeArchiveInfo")
 load(":providers.bzl", "MojoLibInfo")
 
@@ -105,7 +106,7 @@ _mojo_conda = rule(
 )
 
 def mojo_conda(**kwargs):
-    _mojo_conda(exec_compatible_with = LINUX_X86_64, **kwargs)
+    _mojo_conda(exec_compatible_with = unit_exec(), **kwargs)
 
 def _holds_impl(ctx):
     out = ctx.actions.declare_output(ctx.attrs.package + ".mojoc")

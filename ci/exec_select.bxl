@@ -1,0 +1,22 @@
+# The Mojo actions of a package run on the execution platform of the target platform's kind (ci/exec_select.bzl says what is held). The public CI runs the first; the second needs a farm:
+#
+#   buck2 bxl -c buildrules_re.mode=local //ci:exec_select.bxl:check -- --state absent
+#   buck2 bxl --config-file ci/exec_select.buckconfig //ci:exec_select.bxl:check -- --state configured   (a machine with a farm: local mode refuses property sets)
+#
+# `absent`: no worker property set for linux aarch64 or macOS arm64 is configured. `configured`: ci/exec_select.buckconfig sets both to placeholders (analysis only:
+# nothing is sent to any endpoint, and the file holds no endpoint).
+
+load("@buildrules//ci:exec_select.bzl", "exec_problems")
+
+def _impl(ctx):
+    problems = exec_problems(ctx, ctx.cli_args.state)
+    if problems:
+        fail("ci/exec_select ({}): {} problem(s):\n  ".format(ctx.cli_args.state, len(problems)) + "\n  ".join(problems))
+    ctx.output.print("ok ({}): the Mojo actions of examples/mojo/subdirs are placed and equipped for the host of their target platform".format(ctx.cli_args.state))
+
+check = bxl_main(
+    impl = _impl,
+    cli_args = {
+        "state": cli_args.enum(["absent", "configured"]),
+    },
+)

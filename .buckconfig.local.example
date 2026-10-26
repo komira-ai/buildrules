@@ -16,3 +16,6 @@
 [buildrules_re]
   # The exact REAPI property set of linux-x86_64 workers (key=value, comma separated).
   # linux_x86_64_properties = OSFamily=Linux,ISA=x86-64,container-image=docker://<image>@sha256:<digest>
+  # Optional, for Mojo packages built for linux aarch64 / macOS arm64 (docs/contract.md, section 14):
+  # linux_aarch64_properties = <the exact property set of your linux aarch64 workers>
+  # macos_aarch64_properties = <the exact property set of your macOS arm64 workers>

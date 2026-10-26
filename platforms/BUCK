@@ -21,7 +21,8 @@ platform(
 
 # The other hosts (rules/pins/hosts.bzl): a runner that is linux aarch64 or macOS on Apple silicon. These are the configuration of the
 # execution platform that `[buildrules_re] mode = local` registers on such a machine (rules/platforms.bzl), and a target platform for the
-# pins that exist for them. No rule runs on them yet: every toolchain is still `exec_compatible_with` linux x86_64.
+# pins that exist for them. A farm that has workers of such a kind registers the platform with `[buildrules_re] linux_aarch64_properties` / `macos_aarch64_properties`
+# (rules/platforms.bzl); the Mojo rules run on the platform of their target platform's kind (rules/mojo/exec.bzl), every other rule on linux x86_64.
 platform(
     name = "linux_aarch64",
     constraint_values = [":linux", ":aarch64"],
@@ -69,6 +70,17 @@ constraint_setting(name = "exec_isa", visibility = ["PUBLIC"])
         config_setting(name = "exec_isa_is_" + v["id"], constraint_values = [":exec_isa_" + v["id"]], visibility = ["PUBLIC"]),
     ]
     for v in ISA_LEVELS.values()
+]
+
+# An Arm level is also linux aarch64: the key of the `select` of a test's execution platform that is the more specific for a platform at that level (rules/mojo/exec.bzl).
+[
+    config_setting(
+        name = "linux_aarch64_isa_is_" + v["id"],
+        constraint_values = [":linux", ":aarch64", ":isa_" + v["id"]],
+        visibility = ["PUBLIC"],
+    )
+    for v in ISA_LEVELS.values()
+    if v["family"] == "aarch64"
 ]
 
 [

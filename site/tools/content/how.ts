@@ -206,6 +206,7 @@ export const howConfigure: Page = {
       ['`[buck2_re_client] engine_address`, `action_cache_address`, `cas_address`', 'standard Buck2 RE client settings; many farms use one address for all three'],
       ['`[buck2_re_client] instance_name`, `tls`', 'the REAPI instance; whether to use TLS'],
       ['`[buildrules_re] linux_x86_64_properties`', 'the exact property set of the workers that run linux x86_64 actions'],
+      ['`[buildrules_re] linux_aarch64_properties`, `macos_aarch64_properties`', 'optional: the exact property set of the workers that run linux aarch64 / macOS arm64 actions; absent = no such platform is registered, and a Mojo package built for that platform fails analysis naming the key'],
       ['`[buildrules_re] mode`', '`remote` or `local`'],
     ),
     p('Action cache keys do not depend on the mode. Local mode is hermetic in what it runs (the pinned tools, checked by sha256), not in where: the machine supplies Buck2, its kernel and its CPU. buildrules has been run against one farm. It uses plain REAPI v2 through Buck2, so other farms that implement it should work; if yours differs, check the worker properties and the glibc version first. See also [Remote execution](/remote-execution/).'),

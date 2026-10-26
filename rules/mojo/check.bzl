@@ -28,6 +28,8 @@ def _differs(have, want):
     return [k for k in sorted(keys.keys()) if have.get(k) != want.get(k)]
 
 def _impl(ctx):
+    if ctx.attrs.exec_missing:
+        fail(ctx.attrs.exec_missing)
     if ctx.attrs.unsupported:
         fail(ctx.attrs.unsupported)
     tc = ctx.attrs.toolchain[MojoToolchainInfo]
@@ -51,6 +53,8 @@ mojo_check_rule = rule(
     attrs = {
         # The toolchain section of the table's graph, without its `mojo` key: what toolchains/mojo_pins.bzl must hold for this version.
         "expect_toolchain": attrs.dict(attrs.string(), attrs.any()),
+        # Empty when the execution platform of the target platform's host is registered; else the refusal that names the key of the farm's workers (rules/mojo/exec.bzl).
+        "exec_missing": attrs.string(default = ""),
         "files": attrs.list(attrs.dep()),
         "hashes": attrs.list(attrs.string()),
         "mojo": attrs.string(),
