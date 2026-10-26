@@ -104,12 +104,15 @@ pub const Http = struct {
     /// handshake that hangs is ended only by the workflow job's `timeout-minutes`. A server that sends a
     /// byte at a time can keep a body coming for longer than this; the cap on the body and the job's timeout bound that.
     timeout_seconds: u32 = 60,
+    /// Puts the read and write deadlines on a connected socket: called once per request, with the connection's socket and `timeout_seconds`.
+    /// A field so that a test can stand in for the kernel's timer.
+    deadlines_fn: *const fn (std.posix.socket_t, u32) anyerror!void = setDeadlines,
 
     pub fn api(self: *Http) Api {
         return .{ .ctx = self, .sendFn = send };
     }
 
-    fn setDeadlines(handle: std.posix.socket_t, seconds: u32) !void {
+    pub fn setDeadlines(handle: std.posix.socket_t, seconds: u32) !void {
         const tv = std.posix.timeval{ .sec = @intCast(seconds), .usec = 0 };
         try std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv));
         try std.posix.setsockopt(handle, std.posix.SOL.SOCKET, std.posix.SO.SNDTIMEO, std.mem.asBytes(&tv));
@@ -140,7 +143,7 @@ pub const Http = struct {
             .extra_headers = &headers,
         });
         defer hreq.deinit();
-        try setDeadlines(hreq.connection.?.stream_reader.getStream().handle, self.timeout_seconds);
+        try self.deadlines_fn(hreq.connection.?.stream_reader.getStream().handle, self.timeout_seconds);
         if (req.body) |b| {
             try hreq.sendBodyComplete(try a.dupe(u8, b));
         } else {
