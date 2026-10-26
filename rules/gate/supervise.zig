@@ -153,7 +153,7 @@ fn closeOwn(extra: []const sys.fd_t) void {
     for (extra) |fd| if (fd >= 0) posix.close(fd);
 }
 
-const Child = struct {
+pub const Child = struct {
     c: sys.pid_t,
     q: sys.pid_t,
     tether_w: sys.fd_t,
@@ -224,9 +224,17 @@ fn spawn(spec: Spec) !Child {
 }
 
 /// C's status if it has exited (not reaped on Linux).
-fn exited(ch: *Child) ?u8 {
+pub fn exited(ch: *Child) ?u8 {
     if (ch.reaped) |s| return s;
-    if (sys.is_linux) return sys.exitedNoReap(ch.c);
+    if (sys.is_linux) {
+        if (sys.exitedNoReap(ch.c)) |st| return st;
+        // The pidfd says C is gone while waitid does not show it yet: a tracer (a coverage tool) has not released
+        // it. Wait for it to be shown, rather than go round the loop at once, reading the clock, until it is.
+        if (ch.pidfd) |fd| {
+            if (sys.readable(fd)) return sys.waitExitedNoReap(ch.c);
+        }
+        return null;
+    }
     ch.reaped = sys.waitpid(ch.c, true);
     return ch.reaped;
 }

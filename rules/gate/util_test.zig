@@ -9,6 +9,7 @@ const sys = @import("sys.zig");
 const util = @import("util.zig");
 const kit = @import("testkit.zig");
 const proctab = @import("proctab.zig");
+const supervise = @import("supervise.zig");
 
 fn busyboxTail(alloc: std.mem.Allocator, bb: []const u8, n: usize, path: []const u8, out_path: []const u8) ![]u8 {
     const pid = try posix.fork();
@@ -234,6 +235,50 @@ test "waiting for a process that is not a child of this one reports nothing, wit
     try std.testing.expectEqual(@as(?u8, null), sys.waitpid(sys.getpid(), false));
     try std.testing.expectEqual(@as(?u8, null), sys.waitpid(sys.getpid(), true));
     if (sys.is_linux) try std.testing.expectEqual(@as(?u8, null), sys.exitedNoReap(sys.getpid()));
+}
+
+test "a pipe is readable once it has data or has ended, and not before" {
+    const p = try posix.pipe();
+    defer posix.close(p[0]);
+    try std.testing.expect(!sys.readable(p[0]));
+    sys.writeAll(p[1], "x");
+    try std.testing.expect(sys.readable(p[0]));
+    posix.close(p[1]);
+    try std.testing.expect(sys.readable(p[0]));
+    try std.testing.expect(!sys.readable(-1));
+}
+
+// The supervisor takes C's exit from waitid, and from the pidfd when waitid shows nothing although the pidfd says C is
+// gone (a coverage tool that traces C holds its exit back from its parent): it waits for waitid then, where it used to
+// go round its loop, reading the clock, until the tracer let go. Here the pidfd is readable and waitid shows nothing
+// because the child has already been reaped: the call returns at once with nothing, it does not wait.
+test "a child's exit: seen by waitid, or by its pidfd with waitid showing nothing; without a pidfd, by waitid alone" {
+    if (!sys.is_linux) return error.SkipZigTest;
+    const gate = try posix.pipe();
+    const pid = try posix.fork();
+    if (pid == 0) {
+        posix.close(gate[1]);
+        var b: [1]u8 = undefined;
+        _ = posix.read(gate[0], &b) catch {};
+        posix.exit(7);
+    }
+    posix.close(gate[0]);
+    var bare = supervise.Child{ .c = pid, .q = 0, .tether_w = -1, .pidfd = null };
+    var fd = supervise.Child{ .c = pid, .q = 0, .tether_w = -1, .pidfd = sys.pidfdOpen(pid) };
+    try std.testing.expect(fd.pidfd != null);
+    defer posix.close(fd.pidfd.?);
+    // Running: neither sees an exit.
+    try std.testing.expectEqual(@as(?u8, null), supervise.exited(&bare));
+    try std.testing.expectEqual(@as(?u8, null), supervise.exited(&fd));
+    // Gone (the gate is closed): both see the status, and the child is still there to be reaped.
+    posix.close(gate[1]);
+    try std.testing.expectEqual(@as(?u8, 7), sys.waitExitedNoReap(pid));
+    try std.testing.expectEqual(@as(?u8, 7), supervise.exited(&bare));
+    try std.testing.expectEqual(@as(?u8, 7), supervise.exited(&fd));
+    try std.testing.expectEqual(@as(?u8, 7), sys.waitpid(pid, false));
+    // Reaped: the pidfd stays readable and waitid has nothing to show; neither call waits.
+    try std.testing.expectEqual(@as(?u8, null), supervise.exited(&bare));
+    try std.testing.expectEqual(@as(?u8, null), supervise.exited(&fd));
 }
 
 test "a directory that cannot be made is an error, not a retry: a missing parent is FileNotFound for one directory and for a list" {

@@ -67,12 +67,28 @@ pub fn waitpid(pid: pid_t, nohang: bool) ?u8 {
 /// pid nor its process group id can be reused until waitpid reaps it. Null
 /// while it runs.
 pub fn exitedNoReap(pid: pid_t) ?u8 {
+    return exitedNoReapWith(pid, linux.W.NOHANG);
+}
+
+/// `exitedNoReap` that waits for `pid` to be seen as exited (null only on an error, such as no such child).
+pub fn waitExitedNoReap(pid: pid_t) ?u8 {
+    return exitedNoReapWith(pid, 0);
+}
+
+/// Whether `fd` has data or has ended (a pidfd: its process has exited), without waiting.
+pub fn readable(fd: fd_t) bool {
+    var fds = [1]posix.pollfd{.{ .fd = fd, .events = posix.POLL.IN, .revents = 0 }};
+    const n = posix.poll(&fds, 0) catch return false;
+    return n > 0 and fds[0].revents != 0;
+}
+
+fn exitedNoReapWith(pid: pid_t, hang_flag: u32) ?u8 {
     if (!is_linux) @compileError("exitedNoReap is Linux only");
     // siginfo_t: signo, errno, code (i32 each), padding to 8, then for
     // SIGCHLD si_pid (i32), si_uid (u32), si_status (i32).
     var info: [128]u8 align(8) = [_]u8{0} ** 128;
     while (true) {
-        const rc = linux.waitid(.PID, pid, @ptrCast(&info), linux.W.EXITED | linux.W.NOWAIT | linux.W.NOHANG);
+        const rc = linux.waitid(.PID, pid, @ptrCast(&info), linux.W.EXITED | linux.W.NOWAIT | hang_flag);
         switch (linux.E.init(rc)) {
             .SUCCESS => {},
             .INTR => continue,

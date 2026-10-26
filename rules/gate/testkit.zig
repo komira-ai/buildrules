@@ -269,25 +269,10 @@ pub fn tick() void {
     if (release_at != 0 and ticks == release_at) sys.writeAll(hold_w, "r");
 }
 
-/// What the guard saw when it ended a run: each process below this one, with the kernel's state letter.
-fn reportChildren() void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const t = proctab.read(arena.allocator()) orelse return;
-    const me = sys.getpid();
-    for (t.procs) |p| {
-        if (p.ppid != me) continue;
-        var buf: [64]u8 = undefined;
-        const s = std.fmt.bufPrint(&buf, "testkit: child {d} is in state {c}\n", .{ p.pid, p.state }) catch return;
-        sys.writeAll(2, s);
-    }
-}
-
 fn guardReads() void {
     clock_reads += 1;
     if (clock_reads > clock_guard) {
         sys.writeAll(2, "testkit: the clock was read over and over without the run ending\n");
-        reportChildren();
         posix.exit(251);
     }
 }
