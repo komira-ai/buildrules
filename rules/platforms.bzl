@@ -26,7 +26,9 @@ compile cannot target another platform than the one it runs on. A farm that has 
       [buildrules_re] macos_aarch64_properties   workers that run macOS arm64 actions     (execution platform `//platforms:macos_aarch64`)
 
 A key that is absent registers no platform of that kind and no value of it is ever committed. A Mojo package built for such a platform then fails analysis
-and names the key (`:check`, rules/mojo/exec.bzl). In local mode the keys are refused like `linux_x86_64_properties`: the platform of the machine is the one registered.
+and names the key (`:check`, rules/mojo/exec.bzl).
+A repo whose platforms/BUCK does not call buildrules_execution_platforms must register `buildrules//platforms:linux_aarch64` and `macos_aarch64` itself, each with the
+property set of its key: the keys alone register nothing there. In local mode the keys are refused like `linux_x86_64_properties`: the platform of the machine is the one registered.
 
 ISA levels (rules/isa.bzl): the FIRST platform is ISA-agnostic (the property set as configured, `ISA=x86-64`), so every
 compile lands there and on any worker. One more platform per level x86-64-v2..v4 has the same properties with `ISA=<level>`
