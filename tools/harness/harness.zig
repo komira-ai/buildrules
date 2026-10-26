@@ -11,7 +11,6 @@ pub const Report = struct {
     failures: usize = 0,
 
     pub fn check(self: *Report, name: []const u8, ok: bool, detail: []const u8) void {
-        stage = name;
         if (ok) {
             std.debug.print("ok   {s}\n", .{name});
         } else {
@@ -173,21 +172,4 @@ pub fn join(a: Allocator, parts: []const []const u8) ![]u8 {
 
 pub fn fmt(a: Allocator, comptime f: []const u8, args: anytype) ![]u8 {
     return std.fmt.allocPrint(a, f, args);
-}
-
-/// What the test was last doing, for the watchdog's message.
-pub var stage: []const u8 = "starting";
-
-/// Ends the process with a message after `seconds`: a driver that waits on a
-/// child or a server must fail with a reason, not hang until the action's own
-/// deadline.
-pub fn watchdog(seconds: u64) !void {
-    const t = try std.Thread.spawn(.{}, struct {
-        fn run(s: u64) void {
-            std.time.sleep(s * std.time.ns_per_s);
-            std.debug.print("FAIL watchdog: no progress in {d} s; last step: {s}\n", .{ s, stage });
-            std.process.exit(3);
-        }
-    }.run, .{seconds});
-    t.detach();
 }

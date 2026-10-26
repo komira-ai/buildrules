@@ -171,7 +171,6 @@ test "tap: the pull request the tap's guard admits, and every planted defect ref
     defer arena.deinit();
     const a = arena.allocator();
     try h.enterWork(a);
-    try h.watchdog(300);
     const tools = Tools{
         .tap = try h.toolPath(a, "TAP"),
         .gh = try h.toolPath(a, "FAKE_GH"),
