@@ -53,6 +53,7 @@ def workspace_tree(dir, manifest, members):
 
 def _impl(ctx):
     lib = ctx.attrs.lib[MojoLibInfo]
+    subdir = ctx.attrs.subdir
     out = ctx.actions.declare_output("channel", dir = True)
     manifest = ctx.attrs.manifest
     if ctx.attrs.members:
@@ -65,7 +66,7 @@ def _impl(ctx):
         "--compiler",
         ctx.attrs.mojo,
         "--mojoc",
-        cmd_args("linux-64=", lib.mojoc, delimiter = ""),
+        cmd_args(subdir + "=", lib.mojoc, delimiter = ""),
         "--manifest",
         manifest,
         "-o",
@@ -76,9 +77,9 @@ def _impl(ctx):
         # be the soname of the unit: a `native_archive` says its own).
         info = archive.get(NativeArchiveInfo)
         named = ctx.actions.copy_file("natives/" + (info.soname if info else "lib{}.a".format(native_id)), archive[DefaultInfo].default_outputs[0])
-        cmd.add("--native", cmd_args("{}=linux-64:".format(native_id), named, delimiter = ""))
+        cmd.add("--native", cmd_args("{}={}:".format(native_id, subdir), named, delimiter = ""))
     ctx.actions.run(cmd, category = "mopm_pack", identifier = ctx.attrs.package)
-    conda = out.project("linux-64/mojo-{}-{}-mojo{}_0.conda".format(ctx.attrs.package, ctx.attrs.version, ctx.attrs.mojo))
+    conda = out.project("{}/mojo-{}-{}-mojo{}_0.conda".format(subdir, ctx.attrs.package, ctx.attrs.version, ctx.attrs.mojo))
     return [DefaultInfo(default_output = conda, sub_targets = {"channel": [DefaultInfo(default_output = out)]})]
 
 _mojo_conda = rule(
@@ -96,6 +97,9 @@ _mojo_conda = rule(
         "mojo": attrs.string(),
         "mopm": attrs.exec_dep(),
         "package": attrs.string(),
+        # The conda subdir of the target platform (`linux-64`, `linux-aarch64`, `osx-arm64`): the directory of the channel the `.conda` is in, and the
+        # subdir `mopm pack` is told the `.mojoc` and every native archive are built for (rules/mojo/subdirs.bzl).
+        "subdir": attrs.string(default = "linux-64"),
         "version": attrs.string(),
     },
 )

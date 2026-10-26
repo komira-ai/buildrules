@@ -8,6 +8,8 @@ load(":natives.bzl", "BUILT", "BUILT_UNIT", "PREBUILT", "UNIT", "USER", "built_n
 load(":siblings.bzl", "graph_paths_below_the_package", "nested_member_keeps_its_target", "sibling_is_named_by_its_directory", "sibling_with_a_path_up_is_named_by_its_directory", "workspace_is_flat_at_repository_paths")
 load("//rules/mojo:sync.bzl", "sync_packages", "sync_stage_tree")
 load(":sync.bzl", "packages_are_normalized", "stage_holds_the_workspaces_and_the_other_files_once")
+load(":subdirs.bzl", "LINUX_64", "LINUX_AARCH64", "OSX_ARM64", "a_table_with_graphs_per_subdir_is_read_as_it_is", "a_table_without_graphs_per_subdir_has_the_linux_64_graph_alone", "graph_with_a_unit_more", "graph_with_other_dependencies", "same_units_in_every_graph", "the_graph_of_a_single_subdir_gives_the_value_itself", "toolchain_rows_are_told_by_their_key")
+load("//rules/mojo:subdirs.bzl", "table_graphs")
 load(":test_data_targets.bzl", "test_data_targets")
 
 _NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.48\"", "mojo = \"1.0.0\""]
@@ -319,3 +321,52 @@ test_data_targets()
 
 scrub_files()
 
+
+# Graphs per subdir (rules/mojo/tests/subdirs.bzl has the tables and the checks).
+_r20, _f20 = recording()
+a_table_without_graphs_per_subdir_has_the_linux_64_graph_alone(_f20)
+refusal_test(name = "table_without_graphs_per_subdir_is_the_linux_64_graph", refusals = _r20, none = True, visibility = ["PUBLIC"])
+
+_r21, _f21 = recording()
+a_table_with_graphs_per_subdir_is_read_as_it_is(_f21)
+refusal_test(name = "table_with_graphs_per_subdir_is_read_as_it_is", refusals = _r21, none = True, visibility = ["PUBLIC"])
+
+_r22, _f22 = recording()
+the_graph_of_a_single_subdir_gives_the_value_itself(_f22)
+refusal_test(name = "single_graph_leaves_every_attribute_a_plain_value", refusals = _r22, none = True, visibility = ["PUBLIC"])
+
+_r23, _f23 = recording()
+toolchain_rows_are_told_by_their_key(_f23)
+refusal_test(name = "toolchain_rows_are_told_by_their_key", refusals = _r23, none = True, visibility = ["PUBLIC"])
+
+_r24, _f24 = recording()
+same_units_in_every_graph(_f24)
+refusal_test(name = "graphs_that_differ_only_in_toolchain_are_accepted", refusals = _r24, none = True, visibility = ["PUBLIC"])
+
+refuses(
+    name = "graph_of_a_subdir_mopm_does_not_plan_for_is_refused",
+    check = table_graphs,
+    args = [{"GRAPH": LINUX_64, "GRAPHS": {"linux-64": LINUX_64, "win-64": LINUX_64}}],
+    contains = ["a graph for win-64", "linux-64, linux-aarch64, osx-arm64", "buildrules mojo sync"],
+)
+
+refuses(
+    name = "graphs_without_the_linux_64_one_are_refused",
+    check = table_graphs,
+    args = [{"GRAPH": LINUX_64, "GRAPHS": {"osx-arm64": OSX_ARM64}}],
+    contains = ["graphs for osx-arm64 and none for linux-64"],
+)
+
+refuses(
+    name = "graph_with_a_unit_more_is_refused",
+    check = graph_with_a_unit_more,
+    args = [],
+    contains = ["the unit graph of osx-arm64 does not name the units of the graph of linux-64"],
+)
+
+refuses(
+    name = "graph_with_other_dependencies_is_refused",
+    check = graph_with_other_dependencies,
+    args = [],
+    contains = ["the unit graph of linux-aarch64 does not name the units of the graph of linux-64"],
+)

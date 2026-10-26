@@ -24,6 +24,12 @@ MOPM_VERSIONS = {
         # The directory the tarball unpacks into; `mopm` is the executable in it.
         "dir": "mopm-0.0.48-linux-x86_64",
     },
+    "0.0.73": {
+        "url": "https://github.com/komira-ai/mopm/releases/download/v0.0.73/mopm-0.0.73-linux-x86_64.tar.gz",
+        "sha256": "02d4d8d8328f3a996cef137596bab2421575312fc84e22491f2d813e24ff728b",
+        "size": 1225546,
+        "dir": "mopm-0.0.73-linux-x86_64",
+    },
 }
 
 def vname(version):

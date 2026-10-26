@@ -34,6 +34,19 @@ platform(
     visibility = ["PUBLIC"],
 )
 
+# A platform that matches a conda subdir with an own unit graph (rules/mojo/subdirs.bzl). The config settings are the keys of the `select`s that
+# choose the graph, the toolchain and the `.conda` directory of a Mojo package; an ISA-level platform (linux_x86_64_v3, ...) is linux x86_64 and matches too.
+config_setting(name = "is_linux_x86_64", constraint_values = [":linux", ":x86_64"], visibility = ["PUBLIC"])
+config_setting(name = "is_linux_aarch64", constraint_values = [":linux", ":aarch64"], visibility = ["PUBLIC"])
+config_setting(name = "is_macos_aarch64", constraint_values = [":macos", ":aarch64"], visibility = ["PUBLIC"])
+
+# macOS on Intel: no subdir of mopm's has a unit graph for it, so a Mojo package built for it is refused at analysis (ci/negative).
+platform(
+    name = "macos_x86_64",
+    constraint_values = [":macos", ":x86_64"],
+    visibility = ["PUBLIC"],
+)
+
 # No platform has this value: a target that requires it is skipped by a wildcard build (`:coverage` until it exists).
 constraint_setting(name = "implementation", visibility = ["PUBLIC"])
 constraint_value(name = "not_implemented", constraint_setting = ":implementation", visibility = ["PUBLIC"])

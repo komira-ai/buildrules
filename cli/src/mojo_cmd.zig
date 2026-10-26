@@ -23,6 +23,8 @@ const lockm = @import("mojo_lock.zig");
 const mopm_pins = @import("mopm_pins.zig");
 const pins_toml = @import("pins_toml.zig");
 const toolchain = @import("toolchain.zig");
+const plan = @import("mojo_plan.zig");
+const sha256Of = plan.sha256Of;
 const graph_norm = @import("mojo_graph_norm");
 const Diag = @import("diag.zig").Diag;
 const Ctx = ctxm.Ctx;
@@ -467,10 +469,6 @@ fn refuseInPackage(ctx: *Ctx, tabs: Tables, pkg: []const u8) u8 {
 
 // ---- sync ----------------------------------------------------------------------------------------------
 
-fn sha256Of(ctx: *Ctx, rel: []const u8) !?[]const u8 {
-    const bytes = (try ctx.readOpt(rel)) orelse return null;
-    return try ctxm.sha256Hex(ctx.a, bytes);
-}
 
 fn lessManifest(_: void, x: lockm.Manifest, y: lockm.Manifest) bool {
     return std.mem.lessThan(u8, x.path, y.path);
@@ -552,33 +550,6 @@ fn mopmFor(ctx: *Ctx, buck2: []const u8, version: []const u8, given: ?[]const u8
     return null;
 }
 
-const Probe = enum { supported, unsupported, failed };
-
-/// Whether the mopm at `mopm` takes `plan --unit-graph --workspace-root DIR`, asked of the binary itself: `mopm --help` (standard output, exit 0)
-/// lists the flag in its `plan` line when it has it. (`mopm plan --help` is no probe: `plan` takes no help option and prints its usage to
-/// standard error with exit 2 whatever it supports.) No release number is compared. The answer is kept for the run per binary path and sha256, so
-/// a binary is asked once. A mopm that cannot be asked is reported once and counts as unsupported: the caller does not plan with it.
-fn probeWorkspaceRoot(ctx: *Ctx, mopm: []const u8, cache: *std.StringHashMap(Probe)) !Probe {
-    const a = ctx.a;
-    const digest = (try sha256Of(ctx, mopm)) orelse "unreadable";
-    const key = try std.fmt.allocPrint(a, "{s}\x00{s}", .{ mopm, digest });
-    if (cache.get(key)) |known| return known;
-    var answer: Probe = .unsupported;
-    const r = ctx.execer(ctx, .{ .argv = &.{ mopm, "--help" }, .capture = true }) catch |e| {
-        _ = ctx.fail("cannot ask {s} whether it supports --workspace-root: `{s} --help` cannot run: {s}; this mopm is treated as not supporting it, and sync does not use it", .{ mopm, mopm, @errorName(e) });
-        try cache.put(key, .failed);
-        return .failed;
-    };
-    if (r.code != 0) {
-        _ = ctx.fail("cannot ask {s} whether it supports --workspace-root: `{s} --help` exited {d}; this mopm is treated as not supporting it, and sync does not use it", .{ mopm, mopm, r.code });
-        try cache.put(key, .failed);
-        return .failed;
-    }
-    if (std.mem.indexOf(u8, r.stdout, "--workspace-root") != null) answer = .supported;
-    try cache.put(key, answer);
-    return answer;
-}
-
 fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]const u8, buck2: []const u8, tc_flag: ?[]const u8) !u8 {
     const a = ctx.a;
     if (!ctx.exists(".buckconfig")) return ctx.fail("no .buckconfig here: run `buildrules mojo sync` from the repository root (or give --dir)", .{});
@@ -606,7 +577,7 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
     // refuses halfway leaves the files as they were. (The two pins tables above are written first on purpose: the build of the pinned mopm loads them.)
     var pend = std.ArrayList(Pending).empty;
     var mopm_cache = std.StringHashMap(?[]const u8).init(a);
-    var probe_cache = std.StringHashMap(Probe).init(a);
+    var probe_cache = std.StringHashMap(plan.Probe).init(a);
     var tcs = std.ArrayList(lockm.Tc).empty;
     for (pkgs) |pkg| {
         if (!ctx.exists(try inDir(a, pkg, "mopm.toml"))) {
@@ -626,34 +597,15 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
         defer sub.dir.close();
         // From the first mopm that has `--workspace-root`, the graph's paths are relative to the repository root, so that a package and the path
         // dependencies it imports may be siblings; an older mopm prints paths relative to the package and takes path dependencies below it only.
-        const probe = try probeWorkspaceRoot(ctx, mopm, &probe_cache);
+        const probe = try plan.probeWorkspaceRoot(ctx, mopm, &probe_cache);
         if (probe == .failed) {
             code |= ctxm.exit_fail;
             continue;
         }
         const rooted = probe == .supported;
-        var argv = std.ArrayList([]const u8).empty;
-        try argv.appendSlice(a, &.{ mopm, "plan", "--unit-graph", "--locked", "--mojo", tc.mojo });
-        if (rooted) try argv.appendSlice(a, &.{ "--workspace-root", try ctx.dir.realpathAlloc(a, ".") });
-        const r = ctx.execer(&sub, .{ .argv = argv.items, .capture = true }) catch |e| {
-            code |= ctx.fail("{s}: cannot run mopm: {s}", .{ pkg, @errorName(e) });
-            continue;
-        };
-        if (r.code != 0) {
-            code |= ctx.fail("{s}: `mopm plan --unit-graph --locked --mojo {s}{s}` exited {d}{s}", .{
-                if (pkg.len == 0) "." else pkg,                           tc.mojo,
-                if (rooted) " --workspace-root <the repository root>" else "", r.code,
-                if (r.code == 3) " (no usable mopm.lock, or it is out of date with mopm.toml: run `mopm lock`)" else if (r.code == 4) " (mopm cannot make a graph from this project and lock; its message is above)" else "",
-            });
-            if (!rooted) _ = ctx.fail("{s}: this mopm does not support --workspace-root (needs a release containing it); pin one in mopm-toolchain.toml", .{
-                if (pkg.len == 0) "." else pkg,
-            });
-            continue;
-        }
-        if (std.mem.indexOf(u8, r.stdout, "'''") != null) {
-            code |= ctx.fail("{s}: mopm's graph holds ''' and cannot be embedded in a table", .{pkg});
-            continue;
-        }
+        const planned = (try plan.planAll(ctx, &sub, pkg, mopm, tc.mojo, rooted, &code)) orelse continue;
+        const r = struct { stdout: []const u8 }{ .stdout = planned.base };
+        const extra_runs = planned.extra;
         var diag = Diag.init(a);
         const g = lockm.parseGraph(a, pkg, r.stdout, &diag) catch {
             for (diag.msgs.items) |m| _ = ctx.fail("{s}", .{m});
@@ -706,6 +658,9 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
                 continue;
             },
         };
+        var extras = std.ArrayList(lockm.SubGraph).empty;
+        var extra_tcs = std.ArrayList(lockm.Tc).empty;
+        if (!(try plan.committedExtras(ctx, pkg, tc.mojo, tc.mopm, extra_runs, &extras, &extra_tcs, &code))) continue;
         const text = try lockm.render(a, .{
             .schema = contract.mojo_schema,
             .mopm_version = tc.mopm,
@@ -715,17 +670,19 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
             .closure_sha256 = g.closure_sha256,
             .manifests = ms.items,
             .graph_json = committed,
+            .extra = extras.items,
         });
         try tcs.append(a, .{ .mojo = g.mojo, .toolchain = g.toolchain });
+        try tcs.appendSlice(a, extra_tcs.items);
         code |= try ensureExport(ctx, tc, check_only, &pend);
         const lock_path = try inDir(a, pkg, contract.mojo_lock_file);
         const bzl_path = try inDir(a, pkg, contract.mojo_bzl_file);
         if (check_only) {
             code |= compareOne(ctx, lock_path, text);
-            code |= compareOne(ctx, bzl_path, contract.mojo_bzl_text);
+            code |= compareOne(ctx, bzl_path, contract.mojoBzlFor(extras.items.len > 0));
         } else {
             try queue(a, &pend, .{ .path = lock_path, .text = text });
-            try queue(a, &pend, .{ .path = bzl_path, .text = contract.mojo_bzl_text });
+            try queue(a, &pend, .{ .path = bzl_path, .text = contract.mojoBzlFor(extras.items.len > 0) });
         }
     }
 
@@ -898,6 +855,18 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
     if (!std.mem.eql(u8, g.mojo, l.mojo)) stale(ctx, bad, "{s}: MOJO is {s} but its unit graph is for Mojo {s}", .{ lock_path, l.mojo, g.mojo });
     if (!std.mem.eql(u8, g.closure_sha256, l.closure_sha256)) stale(ctx, bad, "{s}: CLOSURE_SHA256 {s} is not the closure its unit graph pins ({s}): the file was edited by hand; {s}", .{ lock_path, l.closure_sha256, g.closure_sha256, fix });
     try tcs.append(a, .{ .mojo = g.mojo, .toolchain = g.toolchain });
+    for (l.extra) |x| {
+        var xd = Diag.init(a);
+        const xg = lockm.parseGraph(a, lock_path, x.graph_json, &xd) catch {
+            for (xd.msgs.items) |m| _ = ctx.fail("{s}", .{m});
+            bad.* += @max(1, xd.count());
+            continue;
+        };
+        const got_sub = lockm.toolchainSubdir(xg.toolchain);
+        if (!std.mem.eql(u8, xg.mojo, l.mojo)) stale(ctx, bad, "{s}: the {s} graph is for Mojo {s} but MOJO is {s}", .{ lock_path, x.subdir, xg.mojo, l.mojo });
+        if (!std.mem.eql(u8, got_sub, x.subdir)) stale(ctx, bad, "{s}: the graph kept for {s} is the graph of \"{s}\": the file was edited by hand; {s}", .{ lock_path, x.subdir, got_sub, fix });
+        try tcs.append(a, .{ .mojo = xg.mojo, .toolchain = xg.toolchain, .subdir = x.subdir });
+    }
 
     // Every file the table was made from.
     for (l.manifests) |m| {
@@ -936,7 +905,8 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
     // The glue and the BUCK file.
     const bzl_path = try inDir(a, pkg, contract.mojo_bzl_file);
     if (try ctx.readOpt(bzl_path)) |b| {
-        if (!std.mem.eql(u8, b, contract.mojo_bzl_text)) stale(ctx, bad, "{s} is not what sync writes (first difference at line {d}): {s}", .{ bzl_path, firstDifference(b, contract.mojo_bzl_text), fix });
+        const want_bzl = contract.mojoBzlFor(l.extra.len > 0);
+        if (!std.mem.eql(u8, b, want_bzl)) stale(ctx, bad, "{s} is not what sync writes (first difference at line {d}): {s}", .{ bzl_path, firstDifference(b, want_bzl), fix });
     } else {
         _ = ctx.fail("{s} is missing: {s}", .{ bzl_path, fix });
         bad.* += 1;

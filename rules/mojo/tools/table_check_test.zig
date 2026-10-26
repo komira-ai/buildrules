@@ -134,7 +134,7 @@ test "the program: the same graph writes the result; every refusal is a message 
     try t.expect(std.mem.indexOf(u8, (try drive(a, tmp.dir, good, failSpawn, 6)).?, "exit 4): no graph from this lock") != null);
     try t.expect(std.mem.indexOf(u8, (try drive(a, tmp.dir, good, killedSpawn, 6)).?, "did not succeed") != null);
     try t.expect(std.mem.indexOf(u8, (try drive(a, tmp.dir, good, missingSpawn, 6)).?, "FileNotFound") != null);
-    try t.expectEqualStrings("usage: table_check [--workspace-root] <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>", (try drive(a, tmp.dir, good, okSpawn, 5)).?);
+    try t.expectEqualStrings("usage: table_check [--workspace-root] [--subdir <subdir>]... <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>", (try drive(a, tmp.dir, good, okSpawn, 5)).?);
     try t.expect(absent(tmp.dir, "out"));
 
     var msg: []const u8 = "";
@@ -331,4 +331,93 @@ test "a table that holds a path dependency by identity is the table mopm's outpu
     served = try std.mem.replaceOwned(u8, a, try members(a, "s2", "k2", "a2"), "    {\n      \"id\": \"util", "    {\n      \"note\": \"first\",\n      \"id\": \"util");
     const odd = (try driveMembers(a, tmp.dir, committed)).?;
     try t.expect(std.mem.indexOf(u8, odd, "not in the layout") != null);
+}
+
+// ---- one graph per subdir ---------------------------------------------------------------------------------
+
+const graph_arm = "{\n  \"unit_graph\": 1,\n  \"toolchain\": {\"subdir\": \"linux-aarch64\"}\n}\n";
+
+/// A table of the linux-64 graph `base` and the linux-aarch64 graph `arm` (null: the table has no block for it).
+fn subdirTable(a: std.mem.Allocator, base: []const u8, arm: ?[]const u8) ![]u8 {
+    const block = if (arm) |g| try std.fmt.allocPrint(a, "GRAPH_JSON_LINUX_AARCH64 = r'''{s}'''\n", .{g}) else "";
+    return std.fmt.allocPrint(a, "{s}GRAPH_JSON = r'''{s}'''\n{s}{s}", .{ head, base, tail, block });
+}
+
+var asked_subdirs: [4][]const u8 = undefined;
+var n_asked: usize = 0;
+
+fn baseSpawn(_: std.mem.Allocator, _: []const u8, _: []const u8, _: []const u8, _: ?[]const u8) anyerror!T.Ran {
+    return .{ .exited = true, .stdout = graph };
+}
+
+fn subdirSpawn(_: std.mem.Allocator, _: []const u8, _: []const u8, _: []const u8, _: ?[]const u8, subdir: []const u8) anyerror!T.Ran {
+    asked_subdirs[n_asked] = subdir;
+    n_asked += 1;
+    return .{ .exited = true, .stdout = graph_arm };
+}
+
+fn driveSubdir(a: std.mem.Allocator, dir: std.fs.Dir, table_text: []const u8) !?[]const u8 {
+    try dir.writeFile(.{ .sub_path = "table.bzl", .data = table_text });
+    try dir.writeFile(.{ .sub_path = "mopm", .data = "" });
+    try dir.makePath("ws");
+    n_asked = 0;
+    var msg: []const u8 = "";
+    T.runWith(a, dir, &.{ "--subdir", "linux-aarch64", "mopm", "ws", ".", "1.0.0", "table.bzl", "out" }, baseSpawn, subdirSpawn, &msg) catch |e| {
+        try t.expectEqual(error.Refused, e);
+        return msg;
+    };
+    return null;
+}
+
+test "the block of a subdir is found by its name, and a table without it is refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const text = try subdirTable(a, graph, graph_arm);
+    try t.expectEqualStrings(graph_arm, try T.graphOfSubdir(a, text, "linux-aarch64"));
+    try t.expectEqualStrings(graph, try T.graphOf(text));
+    try t.expectError(error.NoGraph, T.graphOfSubdir(a, text, "osx-arm64"));
+    try t.expectError(error.NoGraph, T.graphOfSubdir(a, try subdirTable(a, graph, null), "linux-aarch64"));
+}
+
+test "each subdir is compared with its own block: the same graph for every subdir writes the result" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try t.expect((try driveSubdir(a, tmp.dir, try subdirTable(a, graph, graph_arm))) == null);
+    try t.expectEqual(@as(usize, 1), n_asked);
+    try t.expectEqualStrings("linux-aarch64", asked_subdirs[0]);
+}
+
+test "a stale block of one subdir is red though the linux-64 graph is current, and the reverse" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const stale_arm = try driveSubdir(a, tmp.dir, try subdirTable(a, graph, "{\n  \"unit_graph\": 1,\n  \"toolchain\": {\"subdir\": \"osx-arm64\"}\n}\n"));
+    try t.expect(std.mem.indexOf(u8, stale_arm.?, "the linux-aarch64 graph: the committed graph is not what mopm says") != null);
+    const stale_base = try driveSubdir(a, tmp.dir, try subdirTable(a, "{}\n", graph_arm));
+    try t.expect(std.mem.indexOf(u8, stale_base.?, "first difference at line 1") != null);
+    try t.expect(std.mem.indexOf(u8, stale_base.?, "linux-aarch64") == null);
+    const missing = try driveSubdir(a, tmp.dir, try subdirTable(a, graph, null));
+    try t.expect(std.mem.indexOf(u8, missing.?, "has no GRAPH_JSON_ block for linux-aarch64") != null);
+}
+
+test "a --subdir given to a run that has no way to plan another subdir stops there, after the linux-64 graph was found current" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "table.bzl", .data = try subdirTable(a, graph, graph_arm) });
+    try tmp.dir.writeFile(.{ .sub_path = "mopm", .data = "" });
+    try tmp.dir.makePath("ws");
+    var msg: []const u8 = "";
+    try t.expectError(error.Refused, T.run(a, tmp.dir, &.{ "--subdir", "linux-aarch64", "mopm", "ws", ".", "1.0.0", "table.bzl", "out" }, baseSpawn, &msg));
+    try t.expect(std.mem.indexOf(u8, msg, "NoSpawnForSubdirs") != null);
+    // The same table without the flag is the linux-64 check, and passes.
+    try T.run(a, tmp.dir, &.{ "mopm", "ws", ".", "1.0.0", "table.bzl", "out" }, baseSpawn, &msg);
 }

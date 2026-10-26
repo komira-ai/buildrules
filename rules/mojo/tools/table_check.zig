@@ -1,6 +1,6 @@
 //! table_check: is the committed table what the pinned mopm says now?
 //!
-//! usage: table_check [--workspace-root] <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>
+//! usage: table_check [--workspace-root] [--subdir <subdir>]... <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>
 //!
 //! `buildrules mojo sync` commits mopm's `plan --unit-graph --locked` output between `GRAPH_JSON = r'''` and `'''` in
 //! buildrules.mojo.lock.bzl, with the path dependencies reduced to their identity (graph_norm.zig). This is the build's copy of that
@@ -23,10 +23,25 @@ pub const Error = error{ NoGraph, Differs, EmptyOutput };
 
 /// The text of the graph in a table: what `sync` wrote between the markers.
 pub fn graphOf(table: []const u8) error{NoGraph}![]const u8 {
-    const gi = std.mem.indexOf(u8, table, graph_open) orelse return error.NoGraph;
-    const body = gi + graph_open.len;
+    return graphAfter(table, graph_open);
+}
+
+fn graphAfter(table: []const u8, open: []const u8) error{NoGraph}![]const u8 {
+    const gi = std.mem.indexOf(u8, table, open) orelse return error.NoGraph;
+    const body = gi + open.len;
     const ge = std.mem.indexOfPos(u8, table, body, graph_close) orelse return error.NoGraph;
     return table[body..ge];
+}
+
+/// The text of the graph of another subdir in a table: the block `GRAPH_JSON_<SUBDIR> = r'''` (`linux-aarch64` -> `GRAPH_JSON_LINUX_AARCH64`).
+pub fn graphOfSubdir(a: std.mem.Allocator, table: []const u8, subdir: []const u8) (error{NoGraph} || std.mem.Allocator.Error)![]const u8 {
+    const prefix = "\nGRAPH_JSON_";
+    const suffix = " = r'''";
+    const open = try a.alloc(u8, prefix.len + subdir.len + suffix.len);
+    @memcpy(open[0..prefix.len], prefix);
+    for (subdir, 0..) |c, i| open[prefix.len + i] = if (c == '-') '_' else std.ascii.toUpper(c);
+    @memcpy(open[prefix.len + subdir.len ..], suffix);
+    return graphAfter(table, open);
 }
 
 /// The offset of the first byte at which the table's graph and mopm's output differ, or null when they are the same text.
@@ -50,9 +65,14 @@ pub fn lineAt(text: []const u8, offset: usize) struct { no: usize, text: []const
 
 /// The comparison, with the reason in the error message when the two differ.
 pub fn check(a: std.mem.Allocator, table: []const u8, mopm_out: []const u8, why: *[]const u8) (Error || std.mem.Allocator.Error)!void {
+    return checkIn(a, table, null, mopm_out, why);
+}
+
+/// `check` for the graph of `subdir` (null: the graph of linux-64, `GRAPH_JSON`).
+pub fn checkIn(a: std.mem.Allocator, table: []const u8, subdir: ?[]const u8, mopm_out: []const u8, why: *[]const u8) (Error || std.mem.Allocator.Error)!void {
     // mopm printed nothing: there is no graph to be the same as, whatever the table holds (a blank block would pass the newline allowance).
     if (mopm_out.len == 0) return error.EmptyOutput;
-    const graph = try graphOf(table);
+    const graph = if (subdir) |s| try graphOfSubdir(a, table, s) else try graphOf(table);
     const at = firstDifference(graph, mopm_out) orelse return;
     const t = lineAt(graph, at);
     const m = lineAt(mopm_out, at);
@@ -60,7 +80,7 @@ pub fn check(a: std.mem.Allocator, table: []const u8, mopm_out: []const u8, why:
     return error.Differs;
 }
 
-const usage = "usage: table_check [--workspace-root] <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>";
+const usage = "usage: table_check [--workspace-root] [--subdir <subdir>]... <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>";
 
 /// What running mopm gave: how it ended, and what it printed.
 pub const Ran = struct { exited: bool, code: u8 = 0, stdout: []const u8 = "", stderr: []const u8 = "" };
@@ -69,12 +89,25 @@ pub const Ran = struct { exited: bool, code: u8 = 0, stdout: []const u8 = "", st
 /// passes its own.
 pub const Spawn = *const fn (a: std.mem.Allocator, mopm: []const u8, project: []const u8, mojo: []const u8, root: ?[]const u8) anyerror!Ran;
 
+/// The same for another subdir: `... --subdir <subdir>` follows.
+pub const SpawnSubdir = *const fn (a: std.mem.Allocator, mopm: []const u8, project: []const u8, mojo: []const u8, root: ?[]const u8, subdir: []const u8) anyerror!Ran;
+
 pub fn spawnMopm(a: std.mem.Allocator, mopm: []const u8, project: []const u8, mojo: []const u8, root: ?[]const u8) anyerror!Ran {
-    const base = [_][]const u8{ mopm, "plan", "--unit-graph", "--locked", "--mojo", mojo };
-    const argv = if (root) |r| try std.mem.concat(a, []const u8, &.{ &base, &.{ "--workspace-root", r } }) else try a.dupe([]const u8, &base);
+    return spawnWith(a, mopm, project, mojo, root, null);
+}
+
+pub fn spawnMopmSubdir(a: std.mem.Allocator, mopm: []const u8, project: []const u8, mojo: []const u8, root: ?[]const u8, subdir: []const u8) anyerror!Ran {
+    return spawnWith(a, mopm, project, mojo, root, subdir);
+}
+
+fn spawnWith(a: std.mem.Allocator, mopm: []const u8, project: []const u8, mojo: []const u8, root: ?[]const u8, subdir: ?[]const u8) anyerror!Ran {
+    var argv = std.ArrayList([]const u8).empty;
+    try argv.appendSlice(a, &.{ mopm, "plan", "--unit-graph", "--locked", "--mojo", mojo });
+    if (root) |r| try argv.appendSlice(a, &.{ "--workspace-root", r });
+    if (subdir) |s| try argv.appendSlice(a, &.{ "--subdir", s });
     const r = try std.process.Child.run(.{
         .allocator = a,
-        .argv = argv,
+        .argv = argv.items,
         .cwd = project,
         .max_output_bytes = 64 << 20,
     });
@@ -84,10 +117,32 @@ pub fn spawnMopm(a: std.mem.Allocator, mopm: []const u8, project: []const u8, mo
     };
 }
 
+/// The seam of a run that has none for the other subdirs (a test of the linux-64 graph alone): any `--subdir` is then a run that cannot start.
+pub fn noSubdirSpawn(_: std.mem.Allocator, _: []const u8, _: []const u8, _: []const u8, _: ?[]const u8, _: []const u8) anyerror!Ran {
+    return error.NoSpawnForSubdirs;
+}
+
 /// The whole program: `args` are the arguments after the program's name. Every refusal is `error.Refused` with the words in `msg.*`.
 pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, all_args: []const []const u8, spawn: Spawn, msg: *[]const u8) !void {
-    const with_root = all_args.len > 0 and std.mem.eql(u8, all_args[0], "--workspace-root");
-    const args = if (with_root) all_args[1..] else all_args;
+    return runWith(a, cwd, all_args, spawn, noSubdirSpawn, msg);
+}
+
+/// `run` with the seam for the graphs of the other subdirs (`--subdir <s>` before the positional arguments, once for each): each is compared with its own
+/// `GRAPH_JSON_<SUBDIR>` block, so a table whose graph for one subdir is stale is red whichever the others are.
+pub fn runWith(a: std.mem.Allocator, cwd: std.fs.Dir, all_args: []const []const u8, spawn: Spawn, spawn_subdir: SpawnSubdir, msg: *[]const u8) !void {
+    var with_root = false;
+    var subdirs = std.ArrayList([]const u8).empty;
+    var at: usize = 0;
+    while (at < all_args.len) {
+        if (std.mem.eql(u8, all_args[at], "--workspace-root")) {
+            with_root = true;
+            at += 1;
+        } else if (std.mem.eql(u8, all_args[at], "--subdir") and at + 1 < all_args.len) {
+            try subdirs.append(a, all_args[at + 1]);
+            at += 2;
+        } else break;
+    }
+    const args = all_args[at..];
     if (args.len != 6) {
         msg.* = usage;
         return error.Refused;
@@ -102,12 +157,22 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, all_args: []const []const u8, 
         msg.* = try std.fmt.allocPrint(a, "cannot read {s}: {s}", .{ args[4], @errorName(e) });
         return error.Refused;
     };
-    const r = spawn(a, mopm, project, args[3], if (with_root) workspace else null) catch |e| {
+    const root: ?[]const u8 = if (with_root) workspace else null;
+    try compareOne(a, table, args, mopm, project, root, null, spawn, spawn_subdir, msg);
+    for (subdirs.items) |s| try compareOne(a, table, args, mopm, project, root, s, spawn, spawn_subdir, msg);
+    // A validation result is JSON (Buck2 rejects any other content).
+    try cwd.writeFile(.{ .sub_path = args[5], .data = "{\"version\": 1, \"data\": {\"status\": \"success\", \"message\": \"the committed graph is what the pinned mopm says\"}}\n" });
+}
+
+/// One graph of the table against what mopm prints for it now (`subdir` null: the linux-64 graph, `GRAPH_JSON`).
+fn compareOne(a: std.mem.Allocator, table: []const u8, args: []const []const u8, mopm: []const u8, project: []const u8, root: ?[]const u8, subdir: ?[]const u8, spawn: Spawn, spawn_subdir: SpawnSubdir, msg: *[]const u8) !void {
+    const what: []const u8 = if (subdir) |s| try std.fmt.allocPrint(a, " --subdir {s}", .{s}) else "";
+    const r = (if (subdir) |s| spawn_subdir(a, mopm, project, args[3], root, s) else spawn(a, mopm, project, args[3], root)) catch |e| {
         msg.* = try std.fmt.allocPrint(a, "cannot run {s}: {s}", .{ mopm, @errorName(e) });
         return error.Refused;
     };
     if (!r.exited or r.code != 0) {
-        msg.* = try std.fmt.allocPrint(a, "`mopm plan --unit-graph --locked --mojo {s}` did not succeed (exit {d}): {s}", .{ args[3], r.code, r.stderr });
+        msg.* = try std.fmt.allocPrint(a, "`mopm plan --unit-graph --locked --mojo {s}{s}` did not succeed (exit {d}): {s}", .{ args[3], what, r.code, r.stderr });
         return error.Refused;
     }
     // The committed form: the path dependencies by identity only (graph_norm.zig).
@@ -119,23 +184,24 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, all_args: []const []const u8, 
         },
     };
     var why: []const u8 = "";
-    check(a, table, printed, &why) catch |e| switch (e) {
+    checkIn(a, table, subdir, printed, &why) catch |e| switch (e) {
         error.NoGraph => {
-            msg.* = try std.fmt.allocPrint(a, "{s} has no GRAPH_JSON = r'''...''' block", .{args[4]});
+            msg.* = if (subdir) |s|
+                try std.fmt.allocPrint(a, "{s} has no GRAPH_JSON_ block for {s}: the pinned mopm prints a graph for it and the table holds none; run `buildrules mojo sync`", .{ args[4], s })
+            else
+                try std.fmt.allocPrint(a, "{s} has no GRAPH_JSON = r'''...''' block", .{args[4]});
             return error.Refused;
         },
         error.EmptyOutput => {
-            msg.* = "`mopm plan --unit-graph --locked` printed nothing";
+            msg.* = try std.fmt.allocPrint(a, "`mopm plan --unit-graph --locked{s}` printed nothing", .{what});
             return error.Refused;
         },
         error.Differs => {
-            msg.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ args[4], why });
+            msg.* = if (subdir) |s| try std.fmt.allocPrint(a, "{s}: the {s} graph: {s}", .{ args[4], s, why }) else try std.fmt.allocPrint(a, "{s}: {s}", .{ args[4], why });
             return error.Refused;
         },
         error.OutOfMemory => return e,
     };
-    // A validation result is JSON (Buck2 rejects any other content).
-    try cwd.writeFile(.{ .sub_path = args[5], .data = "{\"version\": 1, \"data\": {\"status\": \"success\", \"message\": \"the committed graph is what the pinned mopm says\"}}\n" });
 }
 
 pub fn main() !void {
@@ -143,7 +209,7 @@ pub fn main() !void {
     const a = arena_state.allocator();
     const args = try std.process.argsAlloc(a);
     var msg: []const u8 = "";
-    run(a, std.fs.cwd(), args[1..], spawnMopm, &msg) catch |e| {
+    runWith(a, std.fs.cwd(), args[1..], spawnMopm, spawnMopmSubdir, &msg) catch |e| {
         if (e != error.Refused) return e;
         std.debug.print("table_check: {s}\n", .{msg});
         std.process.exit(1);

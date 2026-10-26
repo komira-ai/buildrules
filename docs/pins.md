@@ -34,6 +34,14 @@ which reads every row of `MOPM_VERSIONS` in `rules/mopm/pins.bzl`, downloads the
 A pin whose digest was changed to a build mopm's release did not sign, or whose release was never signed by that workflow, fails the job. `ci/mopm_pin_workflow_check.zig` holds the
 workflow to being a check that cannot be removed or softened. The branch-protection rule that requires `mopm-pin / verify` is the repository owner's setting; the workflow is the part this tree can hold.
 
+## mopm 0.0.73
+
+mopm 0.0.73 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.73, pinned in `rules/mopm/pins.bzl` beside the default: its linux-x86_64 asset's size and digest are that row's, the
+ones in the release's `SHA256SUMS` (downloaded and compared, 2026-10-26), and the same workflow verifies its signature as it does the default's. It is the first release whose `plan --unit-graph --subdir`
+prints the graph of linux-aarch64 and osx-arm64 as well as linux-64, and whose `mopm lock` records the toolchain closure of all three, so the packages that commit a graph per subdir (`examples/mojo/subdirs`)
+name it in their own `mopm-toolchain.toml`. `MOPM_DEFAULT` stays 0.0.48: the packages that name it are synced with it, and `mopm pack` of 0.0.73 writes other bytes, so moving them
+means regenerating the locks of every package that consumes a packed library.
+
 ## Mirrors
 
 `buildrules.url_map` (rules/core/url_map.bzl) replaces the leading part of a download's URL and nothing else: the sha256 and size are still checked, so a mirror
