@@ -25,6 +25,7 @@ compile cannot target another platform than the one it runs on. A farm that has 
       [buildrules_re] linux_aarch64_properties   workers that run linux aarch64 actions   (execution platform `//platforms:linux_aarch64`)
       [buildrules_re] macos_aarch64_properties   workers that run macOS arm64 actions     (execution platform `//platforms:macos_aarch64`)
       [buildrules_re] darwin_macos_hosts         the identities of those macOS workers, space separated (`mojo_compile host-identity`); a macOS Mojo compile needs them
+      [buildrules_re] macos_library_dirs         optional: directories (separated by ':' or spaces) a macOS test run searches for a library it opens by its bare name, before dyld's defaults
 
 The linux aarch64 platform is registered only while `[buildrules_re] linux_arm64_enabled = true` (default false: linux arm64 farm hardware is not racked); while it is
 off the key is ignored and every Mojo target configured for linux aarch64 is incompatible, "skipped: waiting on linux-arm64 hardware" (`linux_arm64_gate`).

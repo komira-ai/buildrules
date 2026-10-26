@@ -224,8 +224,11 @@ test "G7 environment: the runner's five variables, the action's others, and each
     // G12: on macOS dyld reads DYLD_LIBRARY_PATH, set to the same directory.
     // Variant (macOS): drop it from the environment the gate builds.
     try std.testing.expectEqual(sys.is_darwin, hasLine(out, try std.fmt.allocPrint(e.a, "DYLD_LIBRARY_PATH={s}/rt/lib", .{e.real})));
-    // A library opened by its bare name is found under the host package prefix on macOS only; a Linux test sees no DYLD_* variable.
-    try std.testing.expectEqual(sys.is_darwin, hasLine(out, "DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib:/usr/lib"));
+    // No library directories given: dyld's own default applies, so no test sees DYLD_FALLBACK_LIBRARY_PATH.
+    try std.testing.expect(lineWith(out, "DYLD_FALLBACK_LIBRARY_PATH=") == null);
+    // Given directories, a macOS test gets them then dyld's defaults; a Linux test still sees no DYLD_* variable.
+    const r3 = try e.run(try e.args("env", &.{ "--macos-library-dirs", "/opt/x/lib" }), .{ .env = &env });
+    try std.testing.expectEqual(sys.is_darwin, hasLine(output(r3.err), "DYLD_FALLBACK_LIBRARY_PATH=/opt/x/lib:/usr/local/lib:/usr/lib"));
     for ([_][]const u8{ "GATE_INHERITED=yes", "SPACED=a b=c", "EMPTY=", "TWICE=2" }) |l| try std.testing.expect(hasLine(out, l));
     for ([_][]const u8{ "PATH=/nowhere", "HOME=/nohome", "TMPDIR=/notmp", "TWICE=1" }) |l| try std.testing.expect(!hasLine(out, l));
 }
@@ -396,4 +399,49 @@ test "a share directory the test cannot enter: the test does not run, and the ba
     try std.testing.expectEqual(@as(u8, 2), r.status);
     try std.testing.expect(std.mem.indexOf(u8, r.err, "gate: cannot change to the test's directory\n") != null);
     try std.testing.expect(!kit.exists(try e.path("passed")));
+}
+
+fn hasEntry(env: []const []const u8, line: []const u8) bool {
+    for (env) |l| if (std.mem.eql(u8, l, line)) return true;
+    return false;
+}
+
+fn hasPrefix(env: []const []const u8, prefix: []const u8) bool {
+    for (env) |l| if (std.mem.startsWith(u8, l, prefix)) return true;
+    return false;
+}
+
+// Defect caught: a macOS test given no library directories getting DYLD_FALLBACK_LIBRARY_PATH (dyld's own default replaced by a layout the rules bake in); the
+// consumer's directories lost, put after the defaults, or the defaults dropped; the variable (or DYLD_LIBRARY_PATH) appearing in a Linux test's environment
+// whether or not directories are given.
+test "buildEnv: the fallback variable is the consumer's directories then dyld's defaults, on macOS and only with directories" {
+    const mojo = @import("mojo.zig");
+    const e = try Env.init();
+    defer e.deinit();
+    const inherited = [_][]const u8{"KEEP=1"};
+    const none = try mojo.buildEnv(e.a, &inherited, "/run", "/rt/lib", "/cwd", &.{}, true, null);
+    try std.testing.expect(hasEntry(none, "DYLD_LIBRARY_PATH=/rt/lib") and hasEntry(none, "KEEP=1"));
+    try std.testing.expect(!hasPrefix(none, "DYLD_FALLBACK_LIBRARY_PATH="));
+    const empty = try mojo.buildEnv(e.a, &inherited, "/run", "/rt/lib", "/cwd", &.{}, true, "");
+    try std.testing.expect(!hasPrefix(empty, "DYLD_FALLBACK_LIBRARY_PATH="));
+    const one = try mojo.buildEnv(e.a, &inherited, "/run", "/rt/lib", "/cwd", &.{}, true, "/opt/x/lib");
+    try std.testing.expect(hasEntry(one, "DYLD_FALLBACK_LIBRARY_PATH=/opt/x/lib:/usr/local/lib:/usr/lib"));
+    const two = try mojo.buildEnv(e.a, &inherited, "/run", "/rt/lib", "/cwd", &.{}, true, "/opt/x/lib:/opt/y/lib");
+    try std.testing.expect(hasEntry(two, "DYLD_FALLBACK_LIBRARY_PATH=/opt/x/lib:/opt/y/lib:/usr/local/lib:/usr/lib"));
+    for ([_]?[]const u8{ null, "/opt/x/lib" }) |dirs| {
+        const lin = try mojo.buildEnv(e.a, &inherited, "/run", "/rt/lib", "/cwd", &.{}, false, dirs);
+        try std.testing.expect(hasEntry(lin, "LD_LIBRARY_PATH=/rt/lib"));
+        try std.testing.expect(!hasPrefix(lin, "DYLD_"));
+    }
+}
+
+test "gate mojo parse: --macos-library-dirs is read, and given twice is refused" {
+    const mojo = @import("mojo.zig");
+    const e = try Env.init();
+    defer e.deinit();
+    var a = mojo.Args{};
+    try std.testing.expect(mojo.parse(e.a, (try e.args("ok", &.{ "--macos-library-dirs", "/opt/x/lib:/opt/y/lib" }))[1..], &a) == null);
+    try std.testing.expectEqualStrings("/opt/x/lib:/opt/y/lib", a.macos_library_dirs.?);
+    var b = mojo.Args{};
+    try std.testing.expectEqual(@as(?u8, 2), mojo.parse(e.a, (try e.args("ok", &.{ "--macos-library-dirs", "/a", "--macos-library-dirs", "/b" }))[1..], &b));
 }

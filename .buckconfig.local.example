@@ -22,6 +22,9 @@
   # With macos_aarch64_properties: the host identities of those workers, separated by spaces (what `mojo_compile host-identity` prints on each). A macOS compile
   # runs on a listed host only, and the list is part of its action key.
   # darwin_macos_hosts = <identity> <identity>
+  # Optional, for macOS test runs: the directories (absolute, separated by ':' or spaces) where the macOS workers install the system libraries a package opens by its
+  # bare name (dlopen("liblz4.dylib")); they are searched before dyld's defaults (/usr/local/lib:/usr/lib). Absent: dyld's own defaults only.
+  # macos_library_dirs = <absolute directory> <absolute directory>
   # Linux arm64 tests are off (default) until Linux arm64 farm hardware is racked: the linux aarch64 platform is not registered and Mojo targets for linux aarch64 are
   # skipped ("skipped: waiting on linux-arm64 hardware"), whatever linux_aarch64_properties says. Re-enable with this one line:
   # linux_arm64_enabled = true

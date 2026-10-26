@@ -56,6 +56,15 @@ def check_data_destinations(where, dests, refuse = fail):
         if dest in prefixes:
             refuse("{}: data destination {} is both a file and the directory of {}".format(where, repr(dest), repr(prefixes[dest])))
 
+def macos_library_dirs(raw, refuse = fail):
+    """The directories of `[buildrules_re] macos_library_dirs` (separated by ':' or white space) as one ':'-separated string, in the order given; "" when the
+    key is absent or empty. Each must be an absolute path: a relative directory would name something different in every action's working directory."""
+    dirs = [d for d in raw.replace(":", " ").split() if d]
+    for d in dirs:
+        if not d.startswith("/"):
+            refuse("[buildrules_re] macos_library_dirs: {} is not an absolute directory".format(repr(d)))
+    return ":".join(dirs)
+
 def env_args(where, env, refuse = fail):
     """`--env NAME=VALUE` runner arguments, after refusing names the runner owns."""
     args = []
@@ -93,14 +102,18 @@ def test_root(ctx, path, exe, data):
     root = ctx.actions.copied_dir(path, files)
     return root, root.project("bin/" + name)
 
-def gate_mojo(tc, label, test, marker, flags = [], tail = []):
+def gate_mojo(tc, label, test, marker, flags = [], tail = [], macos_library_dirs = ""):
     """The command that runs one gated test: `gate mojo` (rules/gate,
     README.md) of `test` (the binary inside a test_root) as `label`, writing
     `PASS <label>` to `marker` when it passes. `flags` are its limits (the
     memory cap, cap_flags in defines.bzl; the time limit, deadline_flags in
     test_limit.bzl); `tail` its `--env` and `--arg` options, which come
     last. `tc.gate` is the execution platform's build of the gate (linux:
-    run:gate, darwin-arm64: run:gate_darwin)."""
+    run:gate, darwin-arm64: run:gate_darwin). `macos_library_dirs` is the
+    value of `macos_library_dirs()` of the consumer's key; a caller that runs
+    the test on macOS passes it, and it is part of that action's key. The
+    runner uses it on macOS only."""
+    dirs = ["--macos-library-dirs", macos_library_dirs] if macos_library_dirs else []
     return cmd_args(
         tc.gate,
         "mojo",
@@ -114,6 +127,7 @@ def gate_mojo(tc, label, test, marker, flags = [], tail = []):
         test,
         "--marker",
         marker,
+        dirs,
         flags,
         tail,
     )

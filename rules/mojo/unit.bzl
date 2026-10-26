@@ -18,7 +18,7 @@ load("//rules:isa.bzl", "isa_satisfies")
 load("//rules/coverage/branch:llvm_branch.bzl", "CovBranchInfo", "RAW_PROFILE_VERSION")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
 load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoTestRunInfo", "MojoToolchainInfo")
-load("//rules/core:test_runtime.bzl", "check_data_destinations")
+load("//rules/core:test_runtime.bzl", "check_data_destinations", "macos_library_dirs")
 load(":test_data.bzl", "DATA_ENV", "LAYOUT_DEFAULT", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_env", "check_test_layout")
 
 # `-c buildrules.unit_nonce=N` changes every unit action's key without changing any input the compiler sees: the compile
@@ -29,6 +29,11 @@ _NONCE = read_config("buildrules", "unit_nonce", "")
 # compile is given them (toolchain.cfg, so they are part of its action key) and refuses a worker that is not one of them. Read from the root cell, where the execution
 # platforms are configured.
 _MACOS_HOSTS = sorted([h for h in read_root_config("buildrules_re", "darwin_macos_hosts", "").split(" ") if h])
+
+# The directories a macOS test run adds to dyld's search for a library it opens by its bare name (`[buildrules_re] macos_library_dirs`, separated by ':' or spaces;
+# docs/contract.md). Empty when the key is absent. Only a macOS test run is given them (`--macos-library-dirs`, so they are part of that action's key); a Linux
+# run's command is the same with or without the key.
+_MACOS_LIBRARY_DIRS = macos_library_dirs(read_root_config("buildrules_re", "macos_library_dirs", ""))
 
 def _file(dep):
     return dep[DefaultInfo].default_outputs[0]
@@ -278,6 +283,8 @@ def _test_run_impl(ctx):
     libs = cmd_args(compiler, "/lib", delimiter = "")
     data_dir = _data_dir(ctx)
     start = _start_options(ctx, data_dir)
+    if _MACOS_LIBRARY_DIRS and "-macos" in ctx.attrs.toolchain[MojoToolchainInfo].cc_target:
+        start = ["--macos-library-dirs", _MACOS_LIBRARY_DIRS] + start
     marker = ctx.actions.declare_output(ctx.label.name + ".passed")
     ctx.actions.run(
         cmd_args(check, "marker", "--out", marker.as_output(), "--ld-library-path", libs, start, "--", info.exe, hidden = [info.dir]),

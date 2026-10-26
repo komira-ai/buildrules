@@ -3,7 +3,7 @@ from std.sys.info import CompilationTarget
 from std.testing import TestSuite, assert_true
 
 # The native library a test opens by its bare name: the system's liblz4, which no graph of this package lists (a `mode = "load"` library is not linked). The
-# loader finds it in the system directories on Linux and under the host's package prefix on macOS.
+# loader finds it in the system directories on Linux and, on macOS, in the directories of `[buildrules_re] macos_library_dirs` or dyld's defaults.
 comptime _LZ4: StaticString = (
     "liblz4.dylib" if CompilationTarget.is_macos() else "liblz4.so.1"
 )
