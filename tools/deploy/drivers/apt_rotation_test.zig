@@ -75,7 +75,6 @@ test "apt_rotation apt-check: the verdict on apt's behaviour, each refusal one t
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try h.watchdog(300);
     const t = Tools{ .rotation = try h.toolPath(a, "APT_ROTATION"), .apt = try h.toolPath(a, "FAKE_APT") };
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
