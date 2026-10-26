@@ -56,6 +56,15 @@ jobs:
       - name: Every target of the tree is covered
         run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check
 
+      # A Mojo package built for linux aarch64 or macOS arm64 needs workers of that kind; with no worker property set for them (a runner has none) every target of
+      # it is refused naming the key (linux aarch64: skipped, "waiting on linux-arm64 hardware", while the switch is off), and linux x86_64 is as it was (ci/exec_select.bzl). The state with the sets configured needs a farm: `ci/exec_select.bxl`.
+      - name: Mojo actions are placed on the host of the target platform
+        run: ./buck2 bxl -c buildrules_re.mode=local //ci:exec_select.bxl:check -- --state absent
+
+      # The same with the linux arm64 switch on (it is off by default: linux arm64 farm hardware is not racked yet, rules/platforms.bzl): both Arm platforms are refused naming their key.
+      - name: Mojo actions on Arm are refused without workers (linux arm64 switch on)
+        run: ./buck2 bxl -c buildrules_re.mode=local -c buildrules_re.linux_arm64_enabled=true //ci:exec_select.bxl:check -- --state absent_enabled
+
       # //ci:mojo is not built: its packages need a package channel, which is fetched through
       # buildrules.url_map from a mirror a public runner does not have (docs/contract.md section 14).
       - name: Build and test

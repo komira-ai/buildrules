@@ -1,8 +1,13 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # The Mojo rules (docs/contract.md, section 12): the tools their actions run, built by the pinned zig behind their unit tests.
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
-load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/core:platform.bzl", "LINUX_X86_64", "by_host")
 load("//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
+
+# The tools the unit, test, conda and closure actions run are built for the host that runs them (rules/mojo/exec.bzl): `zig_exe` is a build on the linux x86_64
+# worker whatever it targets, so these are cross-compiled by the one pinned zig. They are `exec_dep`s, configured as the execution platform of the rule that runs
+# them, so the select is made on the host: linux x86_64 (the default, and the target of every key they had) or the host of a farm's Arm workers.
+_HOST_TARGET = by_host("x86_64-linux-musl", "aarch64-linux-musl", "aarch64-macos")
 
 # The compile watchdog's process-tree code and its loop (tools/proc_tree.zig): the /proc parsing, the idle arithmetic and the loop, which the tests
 # drive on a manual clock.
@@ -18,6 +23,7 @@ zig_test(
 # that knows how to run the hermetic compiler; mopm executes it through mojo_launch.
 zig_exe(
     name = "mojo_compile",
+    target = _HOST_TARGET,
     exec_compatible_with = LINUX_X86_64,
     src = "tools/mojo_compile.zig",
     imports = [
@@ -35,6 +41,7 @@ zig_exe(
 # conda_unpack (a newer copy than rules/zig's: zstd windows, CLOSURE_MANIFEST): unpacks the compiler closure.
 zig_exe(
     name = "conda_unpack",
+    target = _HOST_TARGET,
     exec_compatible_with = LINUX_X86_64,
     src = "tools/conda_unpack.zig",
     busybox = "buildrules//rules/pins:busybox",
@@ -56,6 +63,7 @@ zig_test(
 
 zig_exe(
     name = "mojo_launch",
+    target = _HOST_TARGET,
     exec_compatible_with = LINUX_X86_64,
     src = "tools/mojo_launch.zig",
     busybox = "buildrules//rules/pins:busybox",
@@ -76,6 +84,7 @@ zig_test(
 
 zig_exe(
     name = "prebuilt_unpack",
+    target = _HOST_TARGET,
     exec_compatible_with = LINUX_X86_64,
     src = "tools/prebuilt_unpack.zig",
     busybox = "buildrules//rules/pins:busybox",

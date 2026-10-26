@@ -53,13 +53,24 @@ def by_subdir(graphs, values):
     branches["DEFAULT"] = values[BASE_SUBDIR]
     return select(branches)
 
-def unsupported_platform(graphs, who):
-    """What the package's `:check` is given as `unsupported`: empty on a platform that has a graph, else the refusal."""
-    if len(graphs) == 1:
-        return ""
+def unsupported_branches(graphs, who):
+    """`{config setting or "DEFAULT": refusal}` of `unsupported_platform`. A table with one graph (linux-64) refuses the Arm platforms and nothing else: its x86_64
+    toolchain would run on an Arm host. A table with several refuses the platforms that match none of its subdirs."""
     have = sorted(graphs.keys())
+    if len(graphs) == 1:
+        arm = ("{}: buildrules.mojo.lock.bzl holds a unit graph for linux-64 only, and this target platform is Arm ({{}}). The toolchain of linux-64 is x86_64 and " +
+               "would run on an Arm host. The package needs `buildrules mojo sync` with a mopm that records the graph of that platform's subdir.").format(who)
+        return {
+            SUBDIR_SETTINGS["linux-aarch64"]: arm.format("linux-aarch64"),
+            SUBDIR_SETTINGS["osx-arm64"]: arm.format("osx-arm64"),
+            "DEFAULT": "",
+        }
     branches = {SUBDIR_SETTINGS[sd]: "" for sd in have}
     branches["DEFAULT"] = ("{}: buildrules.mojo.lock.bzl has no unit graph for this target platform. It holds graphs for {}, chosen by the OS and the CPU of " +
                            "the target platform (linux-64: linux x86_64, linux-aarch64: linux aarch64, osx-arm64: macOS aarch64), and this platform is none " +
                            "of those. Build for one of them; mopm plans for no other subdir.").format(who, ", ".join(have))
-    return select(branches)
+    return branches
+
+def unsupported_platform(graphs, who):
+    """What the package's `:check` is given as `unsupported`: empty on a platform that has a graph, else the refusal."""
+    return select(unsupported_branches(graphs, who))

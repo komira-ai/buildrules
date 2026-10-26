@@ -6,6 +6,13 @@ export_file(
     visibility = ["//site:", "//ci:"],
 )
 
+# The mopm tarballs of the other hosts: read by ci/mopm_pin.zig (signature) and ci/pin_mirrors_check.zig (hosts of the URLs).
+export_file(
+    name = "hosts.bzl",
+    src = "hosts.bzl",
+    visibility = ["//ci:"],
+)
+
 export_file(
     name = "toolchain.bzl",
     src = "toolchain.bzl",

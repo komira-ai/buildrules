@@ -108,6 +108,8 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:table_without_graphs_per_subdir_is_the_linux_64_graph",
     "//rules/mojo/tests:table_with_graphs_per_subdir_is_read_as_it_is",
     "//rules/mojo/tests:single_graph_leaves_every_attribute_a_plain_value",
+    "//rules/mojo/tests:linux_64_graph_alone_is_refused_on_arm_only",
+    "//rules/mojo/tests:several_graphs_refuse_the_platforms_they_have_none_for",
     "//rules/mojo/tests:toolchain_rows_are_told_by_their_key",
     "//rules/mojo/tests:graphs_that_differ_only_in_toolchain_are_accepted",
     "//rules/mojo/tests:graph_of_a_subdir_mopm_does_not_plan_for_is_refused",
@@ -452,6 +454,7 @@ zig_test(
         "rules/node/pins.bzl": "//rules/node:pins.bzl",
         "rules/coverage/pins.bzl": "//rules/coverage:pins.bzl",
         "rules/mopm/pins.bzl": "//rules/mopm:pins.bzl",
+        "rules/mopm/hosts.bzl": "//rules/mopm:hosts.bzl",
         "tools/held/mirror-busybox.sh": "//tools/held:mirror-busybox.sh",
         # the tests of workflow_check.zig, which this file imports, run here too
         ".github/workflows/ci.yml": "//:ci.yml",
@@ -586,7 +589,7 @@ no_shell(
     require = ["BUCK", "ci/no_shell_check.zig", "ci/no_shell_allow.tsv", "rules/zig/zig.bzl", "site/static/install.sh", "tools/held/BUCK", "examples/crates/Cargo.toml", ".github/workflows/ci.yml"],
 )
 
-# The signature of the pinned mopm (.github/workflows/mopm-pin.yml, docs/pins.md "mopm"): ci/mopm_pin.zig reads rules/mopm/pins.bzl, and verifies each pinned release's
+# The signature of the pinned mopm (.github/workflows/mopm-pin.yml, docs/pins.md "mopm"): ci/mopm_pin.zig reads rules/mopm/pins.bzl and rules/mopm/hosts.bzl, and verifies each pinned release's
 # size, sha256 and cosign signature (mopm's release workflow on main, the Actions issuer). Its unit tests run against fakes of curl and cosign; the program is not built unless they pass.
 zig_test(
     name = "mopm_pin_unit",
@@ -594,6 +597,7 @@ zig_test(
     src = "mopm_pin.zig",
     data = {
         "rules/mopm/pins.bzl": "//rules/mopm:pins.bzl",
+        "rules/mopm/hosts.bzl": "//rules/mopm:hosts.bzl",
     },
 )
 

@@ -1,7 +1,7 @@
 //! The command line of the mopm pin verification (ci/mopm_pin.zig; .github/workflows/mopm-pin.yml runs it).
 //!
-//! usage: mopm_pin verify --pins <rules/mopm/pins.bzl> --work <existing dir> [--cosign <program>] [--curl <program>]
-//! Reads every pinned mopm release from the table, downloads its tarball and bundle, and exits 0 only when each has the pinned size and sha256 and verifies with
+//! usage: mopm_pin verify --pins <rules/mopm/pins.bzl> --work <existing dir> [--hosts <rules/mopm/hosts.bzl>] [--cosign <program>] [--curl <program>]
+//! Reads every pinned mopm release from the table, and every host tarball of rules/mopm/hosts.bzl (`--hosts`, by default hosts.bzl beside the pins file; a missing one is an error), downloads its tarball and bundle, and exits 0 only when each has the pinned size and sha256 and verifies with
 //! `cosign verify-blob` against mopm's release workflow on main. Each failure is printed; any failure exits 1, a usage or table error exits 2.
 const std = @import("std");
 const pin = @import("mopm_pin.zig");
@@ -16,10 +16,11 @@ pub fn main() !u8 {
     defer arena.deinit();
     const a = arena.allocator();
     const argv = try std.process.argsAlloc(a);
-    const usage = "usage: mopm_pin verify --pins <pins.bzl> --work <dir> [--cosign <program>] [--curl <program>]";
+    const usage = "usage: mopm_pin verify --pins <pins.bzl> --work <dir> [--hosts <hosts.bzl>] [--cosign <program>] [--curl <program>]";
     if (argv.len < 2 or !std.mem.eql(u8, argv[1], "verify")) return die(usage, .{});
     var pins: ?[]const u8 = null;
     var work: ?[]const u8 = null;
+    var hosts: ?[]const u8 = null;
     var cosign: []const u8 = "cosign";
     var curl: []const u8 = "curl";
     var i: usize = 2;
@@ -30,6 +31,8 @@ pub fn main() !u8 {
             pins = v;
         } else if (std.mem.eql(u8, argv[i], "--work")) {
             work = v;
+        } else if (std.mem.eql(u8, argv[i], "--hosts")) {
+            hosts = v;
         } else if (std.mem.eql(u8, argv[i], "--cosign")) {
             cosign = v;
         } else if (std.mem.eql(u8, argv[i], "--curl")) {
@@ -39,7 +42,11 @@ pub fn main() !u8 {
     const pins_path = pins orelse return die("--pins is required\n{s}", .{usage});
     const work_dir = work orelse return die("--work is required\n{s}", .{usage});
     const text = std.fs.cwd().readFileAlloc(a, pins_path, 1 << 20) catch |e| return die("cannot read {s}: {s}", .{ pins_path, @errorName(e) });
-    const table = pin.parse(a, text) catch |e| return die("{s} is not a table this can read: {s}", .{ pins_path, @errorName(e) });
+    const base_table = pin.parse(a, text) catch |e| return die("{s} is not a table this can read: {s}", .{ pins_path, @errorName(e) });
+    const hosts_path = hosts orelse try std.fs.path.join(a, &.{ std.fs.path.dirname(pins_path) orelse ".", "hosts.bzl" });
+    const hosts_text = std.fs.cwd().readFileAlloc(a, hosts_path, 1 << 20) catch |e| return die("cannot read {s}: {s}", .{ hosts_path, @errorName(e) });
+    const host_rows = pin.parseHosts(a, hosts_text) catch |e| return die("{s} is not a table this can read: {s}", .{ hosts_path, @errorName(e) });
+    const table = pin.withHosts(a, base_table, host_rows) catch |e| return die("{s}: {s}", .{ hosts_path, @errorName(e) });
     var io = pin.RealIo{ .curl = curl };
     const failures = try pin.verifyAll(pin.RealIo, &io, a, table, work_dir, cosign);
     for (failures) |f| std.debug.print("mopm_pin: {s}\n", .{f});

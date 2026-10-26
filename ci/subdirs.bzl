@@ -13,6 +13,8 @@ of each subdir and what it was built from is read off the configured targets, no
 """
 
 load("//examples/mojo/subdirs:buildrules.mojo.lock.bzl", "GRAPHS")
+load("//rules:platforms.bzl", "LINUX_ARM64_SKIPPED")
+load(":exec_select.bzl", "host_refusal_ok")
 
 PACKAGE = "//examples/mojo/subdirs"
 
@@ -24,12 +26,17 @@ PLATFORMS = [
     ("buildrules//platforms:macos_aarch64", "osx-arm64", "aarch64-macos.11.0", "mojo_1_0_0_osx_arm64"),
 ]
 
+LINUX_AARCH64_PLATFORM = "buildrules//platforms:linux_aarch64"
+
 # The platform that matches no subdir, and what the refusal must say.
 UNSUPPORTED = "buildrules//platforms:macos_x86_64"
 
 def _attrs(ctx, label, platform):
     node = ctx.configured_targets(label, target_platform = platform)
-    return node.resolved_attrs_eager(ctx)
+    if node == None:
+        return None  # incompatible: the linux arm64 switch is off (rules/platforms.bzl)
+    # Not `resolved_attrs_eager`: it analyses the dependencies, which a platform whose host has no workers refuses (ci/exec_select.bzl).
+    return node.attrs_eager()
 
 def subdir_problems(ctx):
     """Every way a platform is not built from the graph, the toolchain and the `.conda` directory of its subdir: a list of strings, empty when all is as it must be."""
@@ -40,7 +47,14 @@ def subdir_problems(ctx):
             problems.append("{}: the lock of the package has no graph for {}".format(who, subdir))
             continue
         lib = _attrs(ctx, PACKAGE + ":lib_ungated", platform)
-        graph = json.decode(lib.graph)
+        if lib == None:
+            # Incompatible: the only platform that may be is linux aarch64, while `[buildrules_re] linux_arm64_enabled` is off. It is reported, never counted as held.
+            if platform != LINUX_AARCH64_PLATFORM:
+                problems.append("{}: the library is incompatible with the platform, which only linux aarch64 is while the linux arm64 switch is off".format(who))
+            else:
+                ctx.output.print("{}: {} (the graph, toolchain and .conda directory of {} are not checked)".format(who, LINUX_ARM64_SKIPPED, subdir))
+            continue
+        graph = json.decode(lib.graph.value())
         tc = graph["toolchain"]
         if tc["subdir"] != subdir:
             problems.append("{}: the library is built from the graph of {}, not of {}".format(who, tc["subdir"], subdir))
@@ -48,15 +62,17 @@ def subdir_problems(ctx):
             problems.append("{}: the graph's compiler triple is {}, not {}".format(who, tc["cc_target"], triple))
         if tc["closure_sha256"] != GRAPHS[subdir]["toolchain"]["closure_sha256"]:
             problems.append("{}: the graph's toolchain closure is {}, not the one the lock records for {}".format(who, tc["closure_sha256"], subdir))
-        if lib.toolchain.label.name != toolchain:
-            problems.append("{}: the library is built with {}, not {}".format(who, lib.toolchain.label.name, toolchain))
+        if lib.toolchain.value().name != toolchain:
+            problems.append("{}: the library is built with {}, not {}".format(who, lib.toolchain.value().name, toolchain))
         conda = _attrs(ctx, PACKAGE + ":conda", platform)
-        if conda.subdir != subdir:
-            problems.append("{}: the .conda is packed for {}, not {}".format(who, conda.subdir, subdir))
+        if conda.subdir.value() != subdir:
+            problems.append("{}: the .conda is packed for {}, not {}".format(who, conda.subdir.value(), subdir))
         test = _attrs(ctx, PACKAGE + ":test_tripled__bin", platform)
-        if json.decode(test.graph)["toolchain"]["subdir"] != subdir:
-            problems.append("{}: the test is built from the graph of {}, not of {}".format(who, json.decode(test.graph)["toolchain"]["subdir"], subdir))
-        analysed = ctx.lazy.analysis(ctx.configured_targets(PACKAGE + ":lib_ungated", target_platform = platform)).catch().resolve()
-        if not analysed.is_ok():
-            problems.append("{}: the library does not analyse: {}".format(who, str(analysed.unwrap_err())))
+        if json.decode(test.graph.value())["toolchain"]["subdir"] != subdir:
+            problems.append("{}: the test is built from the graph of {}, not of {}".format(who, json.decode(test.graph.value())["toolchain"]["subdir"], subdir))
+        # The library analyses on the platform. On an Arm platform whose farm workers are not configured it is refused for that and says which key (ci/exec_select.bzl
+        # holds the platform with the workers set, where it must analyse).
+        why = host_refusal_ok(ctx, PACKAGE + ":lib_ungated", platform)
+        if why != None:
+            problems.append("{}: the library does not analyse: {}".format(who, why))
     return problems

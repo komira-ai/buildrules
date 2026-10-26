@@ -292,6 +292,8 @@ them), review the diff, commit.
 | `[buck2_re_client] engine_address`, `action_cache_address`, `cas_address` | standard Buck2 RE client settings; many farms use one address for all three |
 | `[buck2_re_client] instance_name`, `tls` | the REAPI instance; whether to use TLS |
 | `[buildrules_re] linux_x86_64_properties` | the exact property set of the workers that run linux x86_64 actions |
+| `[buildrules_re] linux_aarch64_properties`, `macos_aarch64_properties` | optional: the exact property set of the workers that run linux aarch64 / macOS arm64 actions; absent = no such platform is registered, and a Mojo package built for that platform fails analysis naming the key |
+| `[buildrules_re] linux_arm64_enabled` | `true` or `false` (the default, also when absent). Linux arm64 tests are off until Linux arm64 farm hardware is racked: while `false`, the linux aarch64 platform is not registered even if `linux_aarch64_properties` is set, and every Mojo target configured for linux aarch64 is incompatible, reported as `skipped: waiting on linux-arm64 hardware` (Buck2 lists it among the skipped incompatible targets, naming `//platforms:skipped_waiting_on_linux_arm64_hardware`). macOS arm64 is not covered. To re-enable: `linux_arm64_enabled = true` under `[buildrules_re]` |
 | `[buildrules_re] mode` | `remote` or `local` |
 
 Action cache keys do not depend on the mode. Local mode is hermetic in what it runs (the pinned tools,

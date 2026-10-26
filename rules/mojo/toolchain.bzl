@@ -14,7 +14,7 @@ toolchains/mojo_pins.bzl and `mojo_toolchains()` (one call of toolchains/BUCK) d
 """
 
 load("//rules/core:pinned_file.bzl", "pinned_file")
-load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/core:platform.bzl", "LINUX_X86_64", "exec_for_target")
 load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/coverage:defs.bzl", "cov_link")
 load("//rules/coverage/branch:llvm_branch.bzl", "RAW_PROFILE_VERSION", "cov_branch_toolchain", "llvm_branch_check", "llvm_branch_unpack")
@@ -211,7 +211,7 @@ def mojo_subdir_toolchains(by_subdir = {}):
                 libs = libs,
                 package = compiler,
                 unpacker = "buildrules//rules/mojo:conda_unpack",
-                exec_compatible_with = LINUX_X86_64,
+                exec_compatible_with = exec_for_target(),
             )
             _mojo_zig(v, ":mojo-{}-{}-zig.tar.xz".format(version, subdir), zig_url)
             mojo_toolchain(

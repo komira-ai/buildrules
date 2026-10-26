@@ -16,3 +16,9 @@
 [buildrules_re]
   # The exact REAPI property set of linux-x86_64 workers (key=value, comma separated).
   # linux_x86_64_properties = OSFamily=Linux,ISA=x86-64,container-image=docker://<image>@sha256:<digest>
+  # Optional, for Mojo packages built for linux aarch64 / macOS arm64 (docs/contract.md, section 14):
+  # linux_aarch64_properties = <the exact property set of your linux aarch64 workers>
+  # macos_aarch64_properties = <the exact property set of your macOS arm64 workers>
+  # Linux arm64 tests are off (default) until Linux arm64 farm hardware is racked: the linux aarch64 platform is not registered and Mojo targets for linux aarch64 are
+  # skipped ("skipped: waiting on linux-arm64 hardware"), whatever linux_aarch64_properties says. Re-enable with this one line:
+  # linux_arm64_enabled = true
