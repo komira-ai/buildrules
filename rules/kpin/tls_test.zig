@@ -45,6 +45,7 @@ fn freePort() !u16 {
 const Server = struct {
     child: std.process.Child,
     port: u16,
+    reaped: bool = false,
 
     fn start(version: []const u8) !Server {
         const bssl = try env("BSSL");
@@ -68,7 +69,17 @@ const Server = struct {
     }
 
     fn stop(self: *Server) void {
+        if (self.reaped) return;
         _ = self.child.kill() catch {};
+    }
+
+    /// False once the child has exited (and been reaped here).
+    fn alive(self: *Server) bool {
+        if (self.reaped) return false;
+        const r = std.posix.waitpid(self.child.id, std.posix.W.NOHANG);
+        if (r.pid == 0) return true;
+        self.reaped = true;
+        return false;
     }
 
     fn url(self: *const Server) ![]u8 {
@@ -76,19 +87,31 @@ const Server = struct {
     }
 };
 
-/// One GET of `/`, retried while the server is still starting.
-fn getWhenUp(f: *fetch.HttpFetcher, url: []const u8) ![]u8 {
-    var tries: usize = 0;
-    while (true) : (tries += 1) {
-        var c = fetch.Collect{ .a = a, .max = 1 << 20 };
-        if (f.fetcher().get(url, c.sink())) |_| {
-            return c.buf.toOwnedSlice(a);
+/// Blocks until the server is listening: the event is a TCP connect that the
+/// kernel accepts (a refused connect means the child has not bound yet and is
+/// retried at once, with no sleep and no clock). The child being gone is the
+/// other event, and fails the wait instead of spinning for ever. The probe
+/// connection is closed unanswered; `-loop` makes the server take the next.
+fn awaitListening(srv: *Server) !void {
+    const addr = try std.net.Address.parseIp4("127.0.0.1", srv.port);
+    while (true) {
+        if (std.net.tcpConnectToAddress(addr)) |s| {
+            s.close();
+            return;
         } else |e| {
-            c.buf.deinit(a);
-            if (e != error.ConnectionRefused or tries >= 100) return e;
-            std.Thread.sleep(100 * std.time.ns_per_ms);
+            if (e != error.ConnectionRefused) return e;
         }
+        if (!srv.alive()) return error.ServerExited;
+        std.Thread.yield() catch {};
     }
+}
+
+/// One GET of `/` against a server that is already listening.
+fn getWhenUp(f: *fetch.HttpFetcher, url: []const u8) ![]u8 {
+    var c = fetch.Collect{ .a = a, .max = 1 << 20 };
+    errdefer c.buf.deinit(a);
+    try f.fetcher().get(url, c.sink());
+    return c.buf.toOwnedSlice(a);
 }
 
 fn trusting(ca: []const u8) fetch.HttpFetcher {
@@ -98,6 +121,7 @@ fn trusting(ca: []const u8) fetch.HttpFetcher {
 test "a TLS 1.2-only server is reached: the negotiated version is 1.2" {
     var srv = try Server.start("tls1.2");
     defer srv.stop();
+    try awaitListening(&srv);
     const ca = try work("fixtures/root_ca.pem");
     defer a.free(ca);
     const url = try srv.url();
@@ -112,6 +136,7 @@ test "a TLS 1.2-only server is reached: the negotiated version is 1.2" {
 test "a TLS 1.3-only server is reached: the negotiated version is 1.3" {
     var srv = try Server.start("tls1.3");
     defer srv.stop();
+    try awaitListening(&srv);
     const ca = try work("fixtures/root_ca.pem");
     defer a.free(ca);
     const url = try srv.url();
@@ -126,11 +151,13 @@ test "a certificate that does not chain to the trusted roots is refused, on TLS 
     for ([_][]const u8{ "tls1.2", "tls1.3" }) |version| {
         var srv = try Server.start(version);
         defer srv.stop();
+        try awaitListening(&srv);
         const good = try work("fixtures/root_ca.pem");
         defer a.free(good);
         const url = try srv.url();
         defer a.free(url);
-        // The server is up once a client that trusts its root gets through.
+        // A client that trusts its root gets through, so the refusal below is
+        // the certificate and not a server that is not serving.
         var ok = trusting(good);
         a.free(try getWhenUp(&ok, url));
         // The same server, a client whose only root is another certificate.
