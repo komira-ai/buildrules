@@ -137,6 +137,27 @@ pub const Watch = struct {
     }
 };
 
+/// How `watchLoop` ended.
+pub const LoopEnd = enum { exited, killed };
+
+/// The watchdog's loop, with the clock and the world behind `env` so a test
+/// can drive it without sleeping. `env` provides:
+///   sleep()        one second passes (the real one calls nanosleep);
+///   checkSignal()  acts on a signal caught during that second;
+///   exited() bool  the compiler has been reaped;
+///   ticks() ?i64   the tree's CPU ticks now, null when not readable.
+/// Each pass calls them in that order; a pass whose ticks are unreadable
+/// does not reach `watch`. Returns `.killed` when `watch` says kill.
+pub fn watchLoop(env: anytype, watch: *Watch) LoopEnd {
+    while (true) {
+        env.sleep();
+        env.checkSignal();
+        if (env.exited()) return .exited;
+        const ticks = env.ticks() orelse continue;
+        if (watch.tick(ticks)) return .killed;
+    }
+}
+
 // ---- Linux: read and kill (not pure) -----------------------------------------
 
 /// Every process /proc shows now. A process that exits while it is read is
@@ -279,4 +300,79 @@ test "idle arithmetic: need is ceil(idle / sample); a busy sample resets the cou
     try testing.expect(!w.tick(105));
     try testing.expect(w.tick(105));
     try testing.expectEqual(@as(u64, 3), w.idleSecs());
+}
+
+/// A manual clock and a scripted process table for `watchLoop`: `sleep`
+/// advances `now` by one second and nothing else; `script[now - 1]` is the
+/// tree's ticks at that second (the last entry repeats), and the compiler is
+/// reaped once `now` reaches `exit_at`. No wall time passes.
+const FakeWorld = struct {
+    script: []const ?i64,
+    exit_at: ?u64 = null,
+    now: u64 = 0,
+    signals_checked: u64 = 0,
+    ticks_read: u64 = 0,
+
+    pub fn sleep(self: *FakeWorld) void {
+        self.now += 1;
+    }
+    pub fn checkSignal(self: *FakeWorld) void {
+        self.signals_checked += 1;
+    }
+    pub fn exited(self: *FakeWorld) bool {
+        const at = self.exit_at orelse return false;
+        return self.now >= at;
+    }
+    pub fn ticks(self: *FakeWorld) ?i64 {
+        self.ticks_read += 1;
+        const i = @min(self.now - 1, self.script.len - 1);
+        return self.script[i];
+    }
+};
+
+// Catches: a hung compiler that is never killed, or killed early or late.
+// The kill second is read from the manual clock, never measured.
+test "watch loop: a tree with no CPU is killed at exactly idle seconds on the manual clock" {
+    var w = Watch.init(6, 3, 0);
+    var world = FakeWorld{ .script = &.{0} };
+    try testing.expectEqual(LoopEnd.killed, watchLoop(&world, &w));
+    try testing.expectEqual(@as(u64, 6), world.now);
+    try testing.expectEqual(@as(u64, 6), world.signals_checked);
+    try testing.expectEqual(@as(u64, 6), world.ticks_read);
+    try testing.expectEqual(@as(u64, 6), w.idleSecs());
+}
+
+// Catches: a busy compiler killed, or a busy sample not resetting the idle
+// count. Busy at second 3 (gains 3 ticks over a 3 s sample), idle after.
+test "watch loop: a busy sample restarts the idle count, so the kill comes one idle window later" {
+    var w = Watch.init(6, 3, 0);
+    var world = FakeWorld{ .script = &.{ 0, 0, 3, 3, 3, 3, 3, 3, 3, 3 } };
+    try testing.expectEqual(LoopEnd.killed, watchLoop(&world, &w));
+    // Busy sample at 3, idle samples at 6 and 9: two idle samples.
+    try testing.expectEqual(@as(u64, 9), world.now);
+}
+
+// Catches: a compiler that exits being reported as killed, and the loop
+// reading CPU after the compiler is gone.
+test "watch loop: a compiler that exits before the idle window ends is never killed" {
+    var w = Watch.init(6, 3, 0);
+    var world = FakeWorld{ .script = &.{0}, .exit_at = 5 };
+    try testing.expectEqual(LoopEnd.exited, watchLoop(&world, &w));
+    try testing.expectEqual(@as(u64, 5), world.now);
+    // The exit pass reads no ticks: 4 passes read them.
+    try testing.expectEqual(@as(u64, 4), world.ticks_read);
+    try testing.expectEqual(@as(u64, 5), world.signals_checked);
+}
+
+// Catches: an unreadable /proc read counted as idle (it would kill a healthy
+// compiler during a transient failure). Unreadable seconds are skipped, and
+// do not advance the sample clock.
+test "watch loop: seconds with unreadable ticks do not count toward the kill" {
+    var w = Watch.init(2, 1, 0);
+    var world = FakeWorld{ .script = &.{ null, null, 0, 0 } };
+    try testing.expectEqual(LoopEnd.killed, watchLoop(&world, &w));
+    // Seconds 1-2 unreadable; idle samples at 3 and 4.
+    try testing.expectEqual(@as(u64, 4), world.now);
+    try testing.expectEqual(@as(u64, 4), world.ticks_read);
+    try testing.expectEqual(@as(u64, 2), w.idleSecs());
 }
