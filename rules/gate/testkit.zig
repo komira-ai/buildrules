@@ -193,6 +193,31 @@ pub fn goneWithin(pids: []const i32, ms: u64) bool {
     }
 }
 
+/// Waits for every pid to be gone, by yielding the processor between looks (no
+/// clock is read: a pid that is never gone ends the wait after `spins` looks,
+/// a count and not a time); true when they are gone.
+pub fn goneSpin(pids: []const i32, spins: usize) bool {
+    var n: usize = 0;
+    while (n < spins) : (n += 1) {
+        var any = false;
+        for (pids) |p| {
+            if (alive(p)) any = true;
+        }
+        if (!any) return true;
+        std.Thread.yield() catch {};
+    }
+    return false;
+}
+
+/// How many pids (one per line) the fixture has written to `path` so far.
+pub fn pidCount(path: []const u8) usize {
+    var buf: [4096]u8 = undefined;
+    const f = std.fs.cwd().openFile(path, .{}) catch return 0;
+    defer f.close();
+    const n = f.readAll(&buf) catch return 0;
+    return std.mem.count(u8, buf[0..n], "\n");
+}
+
 /// Reads the pids a fixture wrote (one per line) to `path`, waiting up to
 /// 5 s for the file to hold `n` of them.
 pub fn pidsFrom(alloc: std.mem.Allocator, path: []const u8, n: usize) ![]i32 {
@@ -251,7 +276,8 @@ fn hold(mib: u64, secs: u64, pause_ms: u64) noreturn {
 ///   exit N             exits N
 ///   signal N           kills itself with signal N
 ///   sleep S [N]        sleeps S s, exits N
-///   hog MiB [S] [P]    says "hog touches MiB", touches MiB of memory (pausing
+///   waitfile FILE [N]  runs until FILE exists, exits N (0)
+///   hog MiB [S] [P]   says "hog touches MiB", touches MiB of memory (pausing
 ///                      P ms after each MiB, 0), says "hog holds MiB", holds
 ///                      them for S s (60), exits 0
 ///   daemon FILE KIND   forks a child (KIND: sleep or hog) that stays in the
@@ -292,6 +318,12 @@ fn behave(a: std.mem.Allocator, name: []const u8, args: []const []const u8, env:
     }
     if (std.mem.eql(u8, name, "sleep")) {
         sys.sleepMs(num(arg(args, 1), 1) * 1000);
+        posix.exit(@intCast(num(arg(args, 2), 0)));
+    }
+    if (std.mem.eql(u8, name, "waitfile")) {
+        // Runs until FILE exists (a progress event of the test, not a time).
+        const file = arg(args, 1) orelse posix.exit(99);
+        while (!exists(file)) std.Thread.yield() catch {};
         posix.exit(@intCast(num(arg(args, 2), 0)));
     }
     if (std.mem.eql(u8, name, "hog")) hold(num(arg(args, 1), 64), num(arg(args, 2), 60), num(arg(args, 3), 0));

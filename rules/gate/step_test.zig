@@ -32,12 +32,16 @@ const Env = struct {
     }
 
     fn step(e: *Env, opts: []const []const u8, cmd: []const []const u8, env: ?[]const []const u8) !kit.Result {
+        return e.stepWith(opts, cmd, env, null);
+    }
+
+    fn stepWith(e: *Env, opts: []const []const u8, cmd: []const []const u8, env: ?[]const []const u8, setup: ?*const fn () void) !kit.Result {
         var l = std.ArrayList([]const u8).empty;
         try l.appendSlice(e.a, &.{ "step", "--status", "status" });
         try l.appendSlice(e.a, opts);
         try l.append(e.a, "--");
         try l.appendSlice(e.a, cmd);
-        return kit.runGate(e.a, e.dir, l.items, .{ .env = env, .timeout_ms = 30_000 });
+        return kit.runGate(e.a, e.dir, l.items, .{ .env = env, .timeout_ms = 30_000, .setup = setup });
     }
 
     fn status(e: *Env) ![]const u8 {
@@ -87,15 +91,51 @@ test "S4 results: ok, fail <n>, and timeout <n> with the whole group gone; each 
     r = try e.step(&.{ "--limit-s", "30", "--infra-exit", "124" }, &.{ "x/exit", "3" }, &no_scratch);
     try std.testing.expectEqual(@as(u8, 0), r.status);
     try std.testing.expectEqualStrings("fail 3\n", try e.status());
+    // The step's clock is a manual one: it stands at 0 until the command has said it runs (both
+    // pids written), then moves 1 s per reading. The 2 s limit passes at the second reading
+    // after that, whatever the machine's speed.
     const f = e.p("s4.pids");
-    r = try e.step(&.{ "--limit-s", "2", "--infra-exit", "143" }, &.{ "x/spawnwait", f }, &no_scratch);
+    const f_env = [_][]const u8{ "GATE_TEST=1", try std.fmt.allocPrint(e.a, "GATE_PIDS={s}", .{f}) };
+    r = try e.stepWith(&.{ "--limit-s", "2", "--infra-exit", "143" }, &.{ "x/spawnwait", f }, &f_env, useRunningClock);
     try std.testing.expectEqual(@as(u8, 0), r.status);
     try std.testing.expectEqualStrings("timeout 2\n", try e.status());
-    try std.testing.expect(r.ms >= 2000 and r.ms < 7000);
-    try std.testing.expect(kit.goneWithin(try kit.pidsFrom(e.a, f, 2), 2000));
-    // Inside its limit, a run that takes 1 s is ok.
-    r = try e.step(&.{ "--limit-s", "5" }, &.{ "x/sleep", "1" }, &no_scratch);
+    // The whole group is gone, the command's child too.
+    try std.testing.expect(kit.goneSpin(try kit.pidsFrom(e.a, f, 2), 10_000_000));
+    // Inside its limit, a run that lasts 4 s of the manual clock (the limit is 5 s) is ok: the
+    // clock reaches 4 s, which makes the command's file, and the command ends.
+    const go = e.p("s4.go");
+    const go_env = [_][]const u8{ "GATE_TEST=1", try std.fmt.allocPrint(e.a, "GATE_GO={s}", .{go}) };
+    r = try e.stepWith(&.{ "--limit-s", "5" }, &.{ "x/waitfile", go }, &go_env, useGoClock);
+    try std.testing.expectEqual(@as(u8, 0), r.status);
     try std.testing.expectEqualStrings("ok\n", try e.status());
+    try std.testing.expect(kit.exists(go));
+}
+
+var manual_ms: u64 = 0;
+
+/// Moves 1 s per reading once the command has written its two pids.
+fn runningClock() ?u64 {
+    const f = posix.getenv("GATE_PIDS") orelse return null;
+    if (kit.pidCount(f) >= 2) manual_ms += 1000;
+    return manual_ms;
+}
+
+fn useRunningClock() void {
+    manual_ms = 0;
+    supervise.plat.now_ms = runningClock;
+}
+
+/// Moves 1 s per reading up to 4 s, where it makes the file the command waits for.
+fn goClock() ?u64 {
+    const f = posix.getenv("GATE_GO") orelse return null;
+    if (manual_ms < 4000) manual_ms += 1000;
+    if (manual_ms == 4000) kit.writeFile(f, "go") catch return null;
+    return manual_ms;
+}
+
+fn useGoClock() void {
+    manual_ms = 0;
+    supervise.plat.now_ms = goClock;
 }
 
 // S2, S6. Mutant: create the `-o` outputs after a success (a step's own
