@@ -182,7 +182,6 @@ pub const Harness = struct {
     fn replays(self: *Harness, argv: []const []const u8, before: std.fs.Dir, real: Run) void {
         replaying = true;
         defer replaying = false;
-        const t0 = std.time.milliTimestamp();
         // A run that records the place of every allocation it makes (the same run, so the same allocations, as the ones that fail below).
         var rec_fba = std.heap.FixedBufferAllocator.init(&fixed_memory);
         var rec_arena = std.heap.ArenaAllocator.init(rec_fba.allocator());
@@ -266,7 +265,7 @@ pub const Harness = struct {
                 std.debug.panic("`{s}`: with allocation {d} failing, the run left {s}, a write it began and did not finish", .{ joined(argv), i, path });
             }
         }
-        if (trace) std.debug.print("replay {s}: {d} of {d} allocations failed ({d} exit 0), {d} ms\n", .{ joined(argv), failures, rec.sites.items.len, exit_zero, std.time.milliTimestamp() - t0 });
+        if (trace) std.debug.print("replay {s}: {d} of {d} allocations failed ({d} exit 0)\n", .{ joined(argv), failures, rec.sites.items.len, exit_zero });
     }
 
     pub fn put(self: *Harness, path: []const u8, data: []const u8) !void {

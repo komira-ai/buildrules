@@ -34,6 +34,8 @@ const Server = struct {
     routes: []const Route,
     seen: std.ArrayList(Seen) = .empty,
     mutex: std.Thread.Mutex = .{},
+    /// Set by `stop`: a stalled connection is held until then.
+    release: std.Thread.ResetEvent = .{},
 
     const gpa = std.heap.page_allocator;
 
@@ -48,6 +50,7 @@ const Server = struct {
 
     fn stop(self: *Server) void {
         self.stopping.store(true, .release);
+        self.release.set();
         if (std.net.tcpConnectToAddress(self.server.listen_address)) |s| s.close() else |_| {}
         self.thread.join();
         self.server.deinit();
@@ -114,9 +117,8 @@ const Server = struct {
             var head_buf: [512]u8 = undefined;
             if (found) |r| {
                 if (r.stall) {
-                    // Ten seconds at most: a client with no deadline gets its answer (a closed connection) after that.
-                    var waited: u64 = 0;
-                    while (!self.stopping.load(.acquire) and waited < 10_000) : (waited += 20) std.Thread.sleep(20 * std.time.ns_per_ms);
+                    // Held, with the request read and no answer sent, until the test stops the server: no clock is involved.
+                    self.release.wait();
                     continue;
                 }
                 const loc = if (r.location) |l| std.fmt.bufPrint(head_buf[256..], "Location: {s}\r\n", .{l}) catch "" else "";
@@ -250,7 +252,75 @@ test "http: http is refused unless loopback was allowed, and an unknown path is 
     try t.expectEqual(@as(usize, 1), s.count("/repos/o/r") + s.count("/nothing/here"));
 }
 
-test "http: a server that reads the request and never answers ends the call at the read deadline, with an error and no answer" {
+/// What the stand-in for the kernel's timer was asked, and what the real call put on the socket. Zig runs the tests of a binary one after
+/// another; each test that uses these resets them first.
+var deadline_calls: usize = 0;
+var deadline_seconds: u32 = 0;
+var deadline_rcv_sec: i64 = -1;
+var deadline_snd_sec: i64 = -1;
+
+fn readBackTimeout(handle: std.posix.socket_t, which: u32) !i64 {
+    var tv: std.posix.timeval = undefined;
+    var len: std.posix.socklen_t = @sizeOf(std.posix.timeval);
+    const rc = std.posix.system.getsockopt(handle, std.posix.SOL.SOCKET, @intCast(which), @ptrCast(&tv), &len);
+    if (std.posix.errno(rc) != .SUCCESS) return error.GetSockOptFailed;
+    return @intCast(tv.sec);
+}
+
+/// The real deadlines, then a look at what the kernel holds.
+fn recordRealDeadlines(handle: std.posix.socket_t, seconds: u32) anyerror!void {
+    deadline_calls += 1;
+    deadline_seconds = seconds;
+    try api_mod.Http.setDeadlines(handle, seconds);
+    deadline_rcv_sec = try readBackTimeout(handle, std.posix.SO.RCVTIMEO);
+    deadline_snd_sec = try readBackTimeout(handle, std.posix.SO.SNDTIMEO);
+}
+
+/// A socket whose timer has already run out: a read that has nothing to read ends at once with `WouldBlock`, which is what the kernel's
+/// receive timeout does when the time is up. No time passes in the test; the server has read the request and is silent.
+fn expiredDeadlines(handle: std.posix.socket_t, seconds: u32) anyerror!void {
+    deadline_calls += 1;
+    deadline_seconds = seconds;
+    const flags = try std.posix.fcntl(handle, std.posix.F.GETFL, 0);
+    const nonblock: u32 = @bitCast(std.posix.O{ .NONBLOCK = true });
+    _ = try std.posix.fcntl(handle, std.posix.F.SETFL, flags | nonblock);
+}
+
+test "http: the configured timeout is what is put on the connection, as both the read and the write deadline, once per request" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const s = try Server.start(&table_routes);
+    defer s.stop();
+    var http = try client(a, s);
+    http.timeout_seconds = 7;
+    http.deadlines_fn = recordRealDeadlines;
+    deadline_calls = 0;
+    deadline_rcv_sec = -1;
+    deadline_snd_sec = -1;
+    const r = try http.api().send(a, .{ .path = "repos/o/r" });
+    try t.expectEqual(@as(u16, 200), r.status);
+    try t.expectEqual(@as(usize, 1), deadline_calls);
+    try t.expectEqual(@as(u32, 7), deadline_seconds);
+    try t.expectEqual(@as(i64, 7), deadline_rcv_sec);
+    try t.expectEqual(@as(i64, 7), deadline_snd_sec);
+}
+
+test "http: the default deadline is sixty seconds" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const s = try Server.start(&table_routes);
+    defer s.stop();
+    var http = try client(a, s);
+    http.deadlines_fn = recordRealDeadlines;
+    deadline_calls = 0;
+    deadline_rcv_sec = -1;
+    _ = try http.api().send(a, .{ .path = "repos/o/r" });
+    try t.expectEqual(@as(i64, 60), deadline_rcv_sec);
+}
+
+test "http: a server that reads the request and never answers ends the call when the read deadline runs out, with an error and no answer" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -259,11 +329,12 @@ test "http: a server that reads the request and never answers ends the call at t
     defer s.stop();
     var http = try client(a, s);
     http.timeout_seconds = 1;
-    const started = std.time.milliTimestamp();
+    http.deadlines_fn = expiredDeadlines;
+    deadline_calls = 0;
     try t.expect(std.meta.isError(http.api().send(a, .{ .path = "repos/o/r" })));
-    const took = std.time.milliTimestamp() - started;
-    // The deadline is one second. Without it the server's ten seconds of silence would be the end of the call.
-    try t.expect(took >= 900 and took < 5000);
+    // The deadline was put on the connection from the configured value; the stalled server was not what ended the call.
+    try t.expectEqual(@as(usize, 1), deadline_calls);
+    try t.expectEqual(@as(u32, 1), deadline_seconds);
 }
 
 test "http: a body that ends before its Content-Length is an error, not a short body taken for the whole" {
