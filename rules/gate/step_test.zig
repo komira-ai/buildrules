@@ -132,6 +132,7 @@ test "S4 results: ok, fail <n>, and timeout <n> with the whole group gone; each 
     // Inside its limit (the clock reads 4999 of 5000 and the run ends by
     // itself at the third reading), a run is ok.
     r = try e.stepWith(&.{ "--limit-s", "5" }, &.{ "x/pid", e.p("s4.inside.pid"), "held" }, &no_scratch, insideSetup);
+    if (r.status != 0) std.debug.print("the inside-limit run ended with {d}: {s}\n", .{ r.status, r.err });
     try std.testing.expectEqual(@as(u8, 0), r.status);
     try std.testing.expectEqualStrings("ok\n", try e.status());
 }
