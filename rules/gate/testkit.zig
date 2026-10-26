@@ -500,7 +500,13 @@ fn rustFake(name: []const u8, args: []const []const u8, env: []const []const u8)
             say("a: test\n", .{});
             posix.exit(0);
         }
-        sys.sleepMs(100_000);
+        // Progress event for the manual clock (rust_test.zig): this file,
+        // two levels above the harness's cwd, is the gate's directory.
+        const f = posix.open("../../hang_started", .{ .ACCMODE = .WRONLY, .CREAT = true }, 0o644) catch posix.exit(97);
+        posix.close(f);
+        // Blocks until a signal arrives; no timer to race.
+        var none: [0]posix.pollfd = .{};
+        _ = posix.poll(&none, -1) catch {};
         posix.exit(0);
     }
     if (eq(u8, name, "rust_env")) {
