@@ -360,7 +360,7 @@ fn expectFindings(a: std.mem.Allocator, entries: []const tar.Entry, expected: []
         if (!hit) {
             std.debug.print("no finding with `{s}`; got:\n", .{nd});
             for (f.items) |m| std.debug.print("  {s}\n", .{m});
-            return error.MutantSurvived;
+            return error.DefectSurvived;
         }
     }
     if (needles.len == 0 and f.items.len != 0) {

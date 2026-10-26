@@ -59,7 +59,7 @@ fn contains(hay: []const u8, needle: []const u8) bool {
     return std.mem.indexOf(u8, hay, needle) != null;
 }
 
-// S1. Mutant: accept a leading zero in the limit.
+// S1. Defect caught: accept a leading zero in the limit.
 test "S1 usage: each bad command line exits 2, and an unreadable --after file fails before any status" {
     const e = try Env.init();
     defer e.deinit();
@@ -161,7 +161,7 @@ test "S4 default clock: a step with no clock of its own runs on one that cannot 
     try std.testing.expectEqualStrings("ok\nclock 0\n", try e.status());
 }
 
-// S2, S6. Mutant: create the `-o` outputs after a success (a step's own
+// S2, S6. Defect caught: create the `-o` outputs after a success (a step's own
 // output is truncated).
 test "S2 S6 skip and outputs: skipped with an empty -o file; -o kept after a success" {
     const e = try Env.init();
@@ -184,17 +184,17 @@ test "S2 S6 skip and outputs: skipped with an empty -o file; -o kept after a suc
     try std.testing.expectEqualStrings("skipped\n", try e.status());
 }
 
-// S5. Mutant: record an infra exit as `fail` (the action would be cached).
+// S5. Defect caught: record an infra exit as `fail` (the action would be cached).
 test "S5 infra exit: a listed status fails the action with the log's tail, and writes no status" {
     const e = try Env.init();
     defer e.deinit();
     const r = try e.step(&.{ "--limit-s", "30", "--infra-exit", "2", "--infra-exit", "124" }, &.{ "x/lines", "1", "1", "124" }, &no_scratch);
     try std.testing.expectEqual(@as(u8, 124), r.status);
-    try std.testing.expectEqualStrings("mut_step: the step exited 124, a failure of the machine it ran on, not of the mutant; failing the action so that it is not cached\nline 1\n", r.err);
+    try std.testing.expectEqualStrings("mut_step: the step exited 124, a failure of the machine it ran on, not of the variant; failing the action so that it is not cached\nline 1\n", r.err);
     try std.testing.expect(!kit.exists(e.p("status")));
 }
 
-// S3. Mutant: a relative BUCK_SCRATCH_PATH taken from / (or not made).
+// S3. Defect caught: a relative BUCK_SCRATCH_PATH taken from / (or not made).
 test "S3 @MUT_SCRATCH@: absolute, relative and unset scratch paths" {
     const e = try Env.init();
     defer e.deinit();

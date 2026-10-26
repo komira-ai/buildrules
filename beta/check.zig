@@ -119,7 +119,7 @@ fn expectFinding(f: Findings, needle: []const u8) !void {
     }
     std.debug.print("expected a finding with `{s}`, got {d}:\n", .{ needle, f.items.len });
     for (f.items) |m| std.debug.print("  {s}\n", .{m});
-    return error.MutantSurvived;
+    return error.DefectSurvived;
 }
 
 fn run(a: std.mem.Allocator, tmp: *t.TmpDir, all_bzl: []const u8) !Findings {
@@ -128,7 +128,7 @@ fn run(a: std.mem.Allocator, tmp: *t.TmpDir, all_bzl: []const u8) !Findings {
     return checkTree(a, d, all_bzl);
 }
 
-test "the synthetic beta directory has no finding, so each mutant below is red for its own rule" {
+test "the synthetic beta directory has no finding, so each variant below is red for its own rule" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();

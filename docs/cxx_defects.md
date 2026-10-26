@@ -1,6 +1,6 @@
-# rules/cxx: planted defects (all run on the farm, `local: 0`)
+# rules/cxx: known defects (all run on the farm, `local: 0`)
 
-| # | mutant | target | red because |
+| # | variant | target | red because |
 |---|---|---|---|
 | 1 | last hex digit of the aws-lc tarball sha256 changed | `//third_party/aws-lc:src` | the pinned download's digest does not match |
 | 2 | `umodti3.c` returns `r + 1` | `:crypto` | `selfcheck` prints `bn: got 79 186405112 want 78 509977877`; `selfcheck_runs` fails |

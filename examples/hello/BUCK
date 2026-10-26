@@ -25,7 +25,7 @@ rust_binary(
     srcs = ["src/main.rs"],
     crate_root = "src/main.rs",
     deps = [":hello_lib"],
-    visibility = ["//ci/planted:"],
+    visibility = ["//ci/faulty:"],
 )
 
 # Runs the binary on the farm and compares its stdout.

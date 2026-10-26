@@ -22,7 +22,7 @@
 //! red when `strict_stale` is true (the last step of the migration flips it and empties the list). Each pull request of the migration lowers or deletes the rows
 //! it makes stale. `permanent` holds what stays for good, each entry with its reason: the shipped installer is run as `curl | sh`, so it needs a shell.
 //!
-//! A pure function of the files' text, tested below against planted text; ci/no_shell_main.zig reads the tree, and ci/completeness.bxl holds the list of packages
+//! A pure function of the files' text, tested below against faulty text; ci/no_shell_main.zig reads the tree, and ci/completeness.bxl holds the list of packages
 //! it is given to every package of the tree.
 const std = @import("std");
 const t = std.testing;
@@ -685,7 +685,7 @@ fn expectWarn(rep: Report, sub: []const u8) !void {
 
 const one_bb = Entry{ .path = "rules/x/BUCK", .text = "x = busy" ++ "box\n" };
 
-test "MUTANT: a new busy box use in a file nothing allows is red" {
+test "VARIANT: a new busy box use in a file nothing allows is red" {
     var arena = Arena.init(t.allocator);
     defer arena.deinit();
     const rep = try runWith(arena.allocator(), &.{one_bb}, "", opt_loose);
@@ -693,7 +693,7 @@ test "MUTANT: a new busy box use in a file nothing allows is red" {
     try expectErr(rep, "rules/x/BUCK:1: [" ++ bb_word ++ "] 1 use(s) names " ++ bb_word ++ ", 0 allowed");
 }
 
-test "MUTANT: a new shell -c in a .bzl nothing allows is red, as a shell word and as the flag" {
+test "VARIANT: a new shell -c in a .bzl nothing allows is red, as a shell word and as the flag" {
     var arena = Arena.init(t.allocator);
     defer arena.deinit();
     const rep = try runWith(arena.allocator(), &.{entryOf("rules/x/new.bzl", "cmd_args(\"s" ++ "h\", \"-c\", s)\n")}, "", opt_loose);
@@ -702,7 +702,7 @@ test "MUTANT: a new shell -c in a .bzl nothing allows is red, as a shell word an
     try expectErr(rep, "[shell-c]");
 }
 
-test "MUTANT: a new .sh file is red, however empty" {
+test "VARIANT: a new .sh file is red, however empty" {
     var arena = Arena.init(t.allocator);
     defer arena.deinit();
     const rep = try runWith(arena.allocator(), &.{entryOf("tools/new.s" ++ "h", "")}, "", opt_loose);
@@ -710,7 +710,7 @@ test "MUTANT: a new .sh file is red, however empty" {
     try expectErr(rep, "tools/new." ++ "sh:1: [sh-file]");
 }
 
-test "MUTANT: a new shell shebang and a new heredoc are red" {
+test "VARIANT: a new shell shebang and a new heredoc are red" {
     var arena = Arena.init(t.allocator);
     defer arena.deinit();
     const rep = try runWith(arena.allocator(), &.{ entryOf("tools/run", "#!/usr/bin/env bas" ++ "h\n"), entryOf("rules/y.bzl", "_S = \"\"\"set -eu\n\"\"\"\n") }, "", opt_loose);
@@ -718,7 +718,7 @@ test "MUTANT: a new shell shebang and a new heredoc are red" {
     try expectErr(rep, "rules/y.bzl:1: [heredoc]");
 }
 
-test "MUTANT: a raised count is red: the row allows one, the file now has two" {
+test "VARIANT: a raised count is red: the row allows one, the file now has two" {
     var arena = Arena.init(t.allocator);
     defer arena.deinit();
     const two = Entry{ .path = "rules/x/BUCK", .text = "x = busy" ++ "box\ny = busy" ++ "box\n" };
@@ -727,7 +727,7 @@ test "MUTANT: a raised count is red: the row allows one, the file now has two" {
     try expectErr(rep, "rules/x/BUCK:1: [" ++ bb_word ++ "] 2 use(s) names " ++ bb_word ++ ", 1 allowed");
 }
 
-test "MUTANT: an unlisted file is red even when another file has a row for the same rule" {
+test "VARIANT: an unlisted file is red even when another file has a row for the same rule" {
     var arena = Arena.init(t.allocator);
     defer arena.deinit();
     const other = Entry{ .path = "rules/y/BUCK", .text = "x = busy" ++ "box\n" };
@@ -736,7 +736,7 @@ test "MUTANT: an unlisted file is red even when another file has a row for the s
     try expectErr(rep, "rules/y/BUCK:1");
 }
 
-test "MUTANT: a row for another rule does not allow this one" {
+test "VARIANT: a row for another rule does not allow this one" {
     var arena = Arena.init(t.allocator);
     defer arena.deinit();
     const rep = try runWith(arena.allocator(), &.{one_bb}, "rules/x/BUCK\theredoc\t1\n", opt_loose);
@@ -789,7 +789,7 @@ test "the permanent entries are green as they are, and need no row" {
     try t.expectEqual(@as(usize, 0), rep.current.len);
 }
 
-test "MUTANT: a second shell use in the installer's test is over the permanent entry, and a row covers only the excess" {
+test "VARIANT: a second shell use in the installer's test is over the permanent entry, and a row covers only the excess" {
     var arena = Arena.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -806,7 +806,7 @@ test "MUTANT: a second shell use in the installer's test is over the permanent e
     try t.expectEqual(@as(usize, 0), generated.errors.items.len);
 }
 
-test "MUTANT: a permanent entry whose file no longer needs it is red; so is one whose file is gone" {
+test "VARIANT: a permanent entry whose file no longer needs it is red; so is one whose file is gone" {
     var arena = Arena.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -925,7 +925,7 @@ test "the vocabulary: every rule has a name and a sentence, and parses back" {
     for (permanent) |p| try t.expect(p.why.len > 20);
 }
 
-test "MUTANT: a command line in one string is a shell word when its first word is a shell, with or without a path" {
+test "VARIANT: a command line in one string is a shell word when its first word is a shell, with or without a path" {
     try expectShape("a/x.bzl", "x = \"s" ++ "h -c 'echo hi'\"\n", "shell-word@1");
     try expectShape("a/x.bzl", "x = \"bas" ++ "h -c \"\n", "shell-word@1");
     try expectShape("a/x.zig", "const c = \"/usr/bin/zs" ++ "h -lc 'x'\";\n", "shell-word@1");
@@ -933,7 +933,7 @@ test "MUTANT: a command line in one string is a shell word when its first word i
     try expectShape("a/x.zig", "const c = \"cs" ++ "h \";\n", "shell-word@1");
 }
 
-test "MUTANT: a command line through env is a shell word: env's options and assignments are skipped" {
+test "VARIANT: a command line through env is a shell word: env's options and assignments are skipped" {
     try expectShape("a/x.bzl", "x = \"/usr/bin/env bas" ++ "h -c x\"\n", "shell-word@1");
     try expectShape("a/x.bzl", "x = \"env s" ++ "h\"\n", "shell-word@1");
     try expectShape("a/x.bzl", "x = \"env -i FOO=1 -S /bin/zs" ++ "h -l\"\n", "shell-word@1");
@@ -952,7 +952,7 @@ test "a one-string command is no argv: the flag after it is not a shell -c" {
     try expectShape("a/x.bzl", "x = [\"s" ++ "h -c\", \"-c\"]\n", "shell-word@1");
 }
 
-test "MUTANT: a string that starts with a shell shebang is a shebang, however it is quoted" {
+test "VARIANT: a string that starts with a shell shebang is a shebang, however it is quoted" {
     try expectShape("a/x.bzl", "ctx.actions.write(out, \"#!/bin/s" ++ "h\\necho hi\\n\")\n", "shebang@1");
     try expectShape("a/x.bzl", "ctx.actions.write(out, \"\"\"#!/usr/bin/env bas" ++ "h\necho hi\n\"\"\")\n", "shebang@1");
     try expectShape("a/x.bzl", "x = \"\"\"\n\n  #!/bin/das" ++ "h\necho\n\"\"\"\n", "shebang@1");
@@ -966,11 +966,11 @@ test "GREEN control: a string that starts with another interpreter's shebang is 
     try expectShape("a/x.bzl", "x = \"#!\"\n", "");
 }
 
-test "MUTANT: a shebang whose shell is only in a path later in the string is still a bin-sh use" {
+test "VARIANT: a shebang whose shell is only in a path later in the string is still a bin-sh use" {
     try expectShape("a/x.bzl", "x = \"#!/usr/bin/python3\\n# run via /bin/bas" ++ "h\"\n", "bin-sh@1");
 }
 
-test "MUTANT: every shell the lint knows is a word, a path, a shebang and a file extension" {
+test "VARIANT: every shell the lint knows is a word, a path, a shebang and a file extension" {
     const names = [_][]const u8{ "s" ++ "h", "bas" ++ "h", "das" ++ "h", "as" ++ "h", "zs" ++ "h", "ks" ++ "h", "fis" ++ "h", "cs" ++ "h", "tcs" ++ "h" };
     var arena = Arena.init(t.allocator);
     defer arena.deinit();

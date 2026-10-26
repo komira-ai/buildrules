@@ -1,15 +1,15 @@
-# The planted defect of ci/negative must stay red (ci/negative.bzl says how it is held). The public CI runs this check as a part of
+# The known defect of ci/negative must stay red (ci/negative.bzl says how it is held). The public CI runs this check as a part of
 # `buck2 bxl //ci:completeness.bxl:check`; run alone:
 #
 #   buck2 bxl //ci:negative.bxl:check
 
-load("@buildrules//ci:negative.bzl", "CASES", "CONTROL", "FIXTURE", "PLANTED", "PLATFORM", "negative_problems")
+load("@buildrules//ci:negative.bzl", "CASES", "CONTROL", "FIXTURE", "FAULTY", "PLATFORM", "negative_problems")
 
 def _impl(ctx):
     problems = negative_problems(ctx)
     if problems:
         fail("ci/negative: {} problem(s):\n  ".format(len(problems)) + "\n  ".join(problems))
-    ctx.output.print("ok: {} is red on {} for the reason it plants, {} analyses, and {} more planted defects are red for their reasons; the Mojo gate holds (a library behind a failing test is unbuildable, behind a passing one buildable, and each real package waits for its tests); a package with a unit graph per subdir is built from the graph, the toolchain and the .conda directory of each platform and refused on one with no graph; the {} checks and markers of ci/planted refuse their bad inputs".format(FIXTURE, PLATFORM, CONTROL, len(CASES), len(PLANTED)))
+    ctx.output.print("ok: {} is red on {} for the reason it carries, {} analyses, and {} more known defects are red for their reasons; the Mojo gate holds (a library behind a failing test is unbuildable, behind a passing one buildable, and each real package waits for its tests); a package with a unit graph per subdir is built from the graph, the toolchain and the .conda directory of each platform and refused on one with no graph; the {} checks and markers of ci/faulty refuse their bad inputs".format(FIXTURE, PLATFORM, CONTROL, len(CASES), len(FAULTY)))
 
 check = bxl_main(
     impl = _impl,

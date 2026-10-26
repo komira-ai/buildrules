@@ -333,7 +333,7 @@ A vendored C library can be built with every global symbol renamed under a prefi
 example is AWS-LC 1.39.0 (libcrypto only), which a Rust override can use in place of a crate's
 own AWS-LC build script. The renaming header is generated from the library's own symbol table, and the
 prefixed archive is read back and refused unless every defined symbol carries the prefix.
-`docs/cxx_mutants.md` lists six planted defects that each go red.
+`docs/cxx_defects.md` lists six known defects that each go red.
 
 ### 5.7 Pins and version tables
 
@@ -414,8 +414,8 @@ A test is an action, and the library it covers cannot exist without it: a Rust l
 `gate_tests`, a Zig executable with `unit_tests`, a Cargo member's `:test` marker. A cached rebuild
 therefore means the tests passed on identical inputs. The consequence for review: a green cached
 build is evidence about the inputs it was keyed on, and a gate is proven only by a red build on a
-planted defect. The repository follows that rule: `ci/negative` holds planted defects that must stay
-red, and `docs/cxx_mutants.md` lists the mutants of the C/C++ gates.
+known defect. The repository follows that rule: `ci/negative` holds known defects that must stay
+red, and `docs/cxx_defects.md` lists the variants of the C/C++ gates.
 
 ## 6. What the repository itself runs on
 
@@ -518,7 +518,7 @@ tests and checked for their file header and their version, and are not yet run o
 platform. The command line is also built from the source archive on your farm or machine (part 2).
 The install script (`site/static/install.sh`, served by the site once it is published) installs the command
 line for your platform after checking its sha256, and `--verify` adds a cosign check of its signature
-(part 2). A test runs it against fake releases and plants a defect for each of its checks. Other
+(part 2). A test runs it against fake releases and injects a defect for each of its checks. Other
 channels are planned (section 9).
 
 ## 9. Trade-offs, limits and what is not done

@@ -1,5 +1,5 @@
 """The stand-in test of ci/mojo_data: `MojoExeInfo` over a built program (the data probe), so `mojo_test_run_rule` can run it with staged data and variables
-without a Mojo compiler (the toolchain stand-in is ci/planted/fixture.bzl)."""
+without a Mojo compiler (the toolchain stand-in is ci/faulty/fixture.bzl)."""
 
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/mojo:providers.bzl", "MojoExeInfo")

@@ -1,5 +1,5 @@
 //! The site workflows (.github/workflows/site.yml, the caller, and site-publish.yml, the reusable workflow the AWS role trusts) are what RELEASING.md "The site" and
-//! infra/site/README.md say they are. A pure function of the text per file, so each rule is tested against planted text as well as against the real files (the
+//! infra/site/README.md say they are. A pure function of the text per file, so each rule is tested against faulty text as well as against the real files (the
 //! zig_test's `data`, under BUILDRULES_TEST_WORK). The rules shared with the other workflows (actions pinned by commit, local mode, the pinned buck2 install, no
 //! `continue-on-error`, no inline expansion of `vars.` or `github.event.` in a `run:`) are workflow_check.zig's.
 //!
@@ -514,9 +514,9 @@ fn real(a: std.mem.Allocator) !Real {
     };
 }
 
-/// `text` with the first `from` replaced by `to`; fails the test if `from` is absent (a mutant that changes nothing proves nothing).
+/// `text` with the first `from` replaced by `to`; fails the test if `from` is absent (a variant that changes nothing proves nothing).
 fn mutate(a: std.mem.Allocator, text: []const u8, from: []const u8, to: []const u8) ![]u8 {
-    const i = std.mem.indexOf(u8, text, from) orelse return error.MutantDidNotApply;
+    const i = std.mem.indexOf(u8, text, from) orelse return error.DefectDidNotApply;
     return std.mem.concat(a, u8, &.{ text[0..i], to, text[i + from.len ..] });
 }
 
@@ -527,7 +527,7 @@ fn expectCaller(a: std.mem.Allocator, r: Real, wf: []const u8, needle: []const u
     }
     std.debug.print("site.yml: expected a finding with `{s}`, got {d}:\n", .{ needle, f.items.len });
     for (f.items) |m| std.debug.print("  {s}\n", .{m});
-    return error.MutantSurvived;
+    return error.DefectSurvived;
 }
 
 fn expectPublish(a: std.mem.Allocator, r: Real, wf: []const u8, config: []const u8, needle: []const u8) !void {
@@ -538,7 +538,7 @@ fn expectPublish(a: std.mem.Allocator, r: Real, wf: []const u8, config: []const 
     std.debug.print("site-publish.yml: expected a finding with `{s}`, got {d}:\n", .{ needle, f.items.len });
     for (f.items) |m| std.debug.print("  {s}\n", .{m});
     _ = r;
-    return error.MutantSurvived;
+    return error.DefectSurvived;
 }
 
 test "the real workflows have no findings" {

@@ -30,7 +30,7 @@ Example: `third_party/aws-lc` (aws-lc 1.39.0, libcrypto only, linux x86_64): `cr
 `buildrules_awslc_`, gated by `crypto_symbols`, `selfcheck_runs` (known-answer tests through the public API) and
 `selfcheck_floor`.
 
-Planted defects (each goes red; logs under the scratch directory, see docs/cxx_mutants.md):
+Known defects (each goes red; logs under the scratch directory, see docs/cxx_defects.md):
 wrong tarball sha256, a wrong `__umodti3`, a dropped `allow`, a missing renaming header, a wrong `expected_stdout`,
 a floor lower than the binary needs. The tools' own unit tests (`prefix_tool_unit`, `glibc_floor_unit`) carry their
-planted-defect cases and are welded to the tools.
+faulty variants and are welded to the tools.

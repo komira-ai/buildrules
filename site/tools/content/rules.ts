@@ -287,7 +287,7 @@ export const cxx: Page = {
       ['`glibc_floor_check`', 'a validation that the binary needs no glibc symbol version newer than a given one'],
     ),
     h2('Example: AWS-LC'),
-    p('`third_party/aws-lc` builds AWS-LC\'s libcrypto from a pinned source archive as `crypto[static-pic]`, with every symbol prefixed. Three gates must pass: the symbol check, a known-answer self-test run through the public API, and the glibc floor. Planted defects (a wrong tarball hash, a wrong arithmetic helper, a dropped allow-list entry, a missing renaming header, a wrong expected output, a too-low floor) each turn the build red.'),
+    p('`third_party/aws-lc` builds AWS-LC\'s libcrypto from a pinned source archive as `crypto[static-pic]`, with every symbol prefixed. Three gates must pass: the symbol check, a known-answer self-test run through the public API, and the glibc floor. Known defects (a wrong tarball hash, a wrong arithmetic helper, a dropped allow-list entry, a missing renaming header, a wrong expected output, a too-low floor) each turn the build red.'),
     limit('Linux x86_64 only.'),
   ],
 };

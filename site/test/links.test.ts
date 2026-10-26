@@ -21,8 +21,8 @@ describe('the built site', () => {
   });
 });
 
-// The checker must be able to fail: each case plants one defect into a copy of the real site.
-function planted(edit: (file: string, html: string) => string | undefined): Files {
+// The checker must be able to fail: each case injects one defect into a copy of the real site.
+function faulty(edit: (file: string, html: string) => string | undefined): Files {
   const m = new Map(real);
   for (const [file, c] of real) {
     if (!file.endsWith('.html')) continue;
@@ -33,17 +33,17 @@ function planted(edit: (file: string, html: string) => string | undefined): File
 }
 const onHome = (f: (h: string) => string) => (file: string, h: string) => (file === 'index.html' ? f(h) : undefined);
 
-describe('planted defects are caught', () => {
+describe('known defects are caught', () => {
   test('a link to a page that does not exist', () => {
-    const p = checkSite(planted(onHome((h) => h.replace('href="/cli/"', 'href="/clii/"'))));
+    const p = checkSite(faulty(onHome((h) => h.replace('href="/cli/"', 'href="/clii/"'))));
     expect(p.join('\n')).toMatch(/index\.html: broken link \/clii\/ \(no clii\/index\.html\)/);
   });
   test('a link to a heading that does not exist', () => {
-    const p = checkSite(planted(onHome((h) => h.replace('href="/concepts/#lockfile-native"', 'href="/concepts/#no-such-section"'))));
+    const p = checkSite(faulty(onHome((h) => h.replace('href="/concepts/#lockfile-native"', 'href="/concepts/#no-such-section"'))));
     expect(p.join('\n')).toMatch(/has no id 'no-such-section'/);
   });
   test('a same-page fragment that does not exist', () => {
-    const p = checkSite(planted(onHome((h) => h.replace('href="#main"', 'href="#mainn"'))));
+    const p = checkSite(faulty(onHome((h) => h.replace('href="#main"', 'href="#mainn"'))));
     expect(p.join('\n')).toMatch(/has no id 'mainn'/);
   });
   test('a page nothing links to', () => {
@@ -69,7 +69,7 @@ describe('planted defects are caught', () => {
     ['a second h1', (h: string) => h.replace('</main>', '<h1>again</h1></main>'), /exactly one <h1>/],
     ['no title', (h: string) => h.replace(/<title>[^<]*<\/title>/, ''), /<title>/],
   ])('%s', (_name, edit, re) => {
-    expect(checkSite(planted(onHome(edit))).join('\n')).toMatch(re);
+    expect(checkSite(faulty(onHome(edit))).join('\n')).toMatch(re);
   });
   test('a sitemap that omits a page', () => {
     const m = new Map(real);

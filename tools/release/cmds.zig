@@ -1565,7 +1565,7 @@ fn expectFinding(f: assets.Findings, needle: []const u8) !void {
     }
     std.debug.print("expected a finding with `{s}`, got {d}:\n", .{ needle, f.items.len });
     for (f.items) |m| std.debug.print("  {s}\n", .{m});
-    return error.MutantSurvived;
+    return error.DefectSurvived;
 }
 
 fn expectClean(f: assets.Findings) !void {
@@ -1738,7 +1738,7 @@ test "verify --dry checks everything but the signatures and attestations, which 
     try t.expectEqual(@as(usize, 7), n);
 }
 
-test "verify mutants: each defect is a finding" {
+test "verify defect: each defect is a finding" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();

@@ -11,14 +11,14 @@ load(":fixture.bzl", "gate_fixture_lib", "gate_fixture_test")
 #   red    `consumer_of_red`:   the same library with a second, failing test. The consumer must FAIL to build, because the library's
 #                               `.mojoc` is made by an action that has the failing test's marker among its inputs.
 #
-# `consumer_of_red` is a planted defect: it is excluded from the wildcard build (ci/all.bzl), and `buck2 bxl //ci:negative.bxl:check` (a part of
+# `consumer_of_red` is a known defect: it is excluded from the wildcard build (ci/all.bzl), and `buck2 bxl //ci:negative.bxl:check` (a part of
 # //ci:completeness.bxl:check) builds it, requires the failure, and requires the green one to build (ci/negative.bzl, `gate_problems`). Make the
 # gate not depend on the markers (rules/mojo/unit.bzl, `hidden = markers`) and the red consumer builds: that check is red.
 gate_fixture_lib(name = "compiled", package = "gated")
 
 gate_fixture_test(name = "test_passes", passes = True)
 
-# PLANTED DEFECT: a test that fails.
+# KNOWN DEFECT: a test that fails.
 gate_fixture_test(name = "test_fails", passes = False)
 
 mojo_gated_lib_rule(

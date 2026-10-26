@@ -1,5 +1,5 @@
-//! The planted defect of ci/negative stays a planted defect: this holds the files that make it one to each other, in //ci:all, and the bxl check
-//! (ci/negative.bzl, run by the public CI as a part of ci/completeness.bxl) holds the build itself. A pure function per rule, each tested against planted
+//! The known defect of ci/negative stays a known defect: this holds the files that make it one to each other, in //ci:all, and the bxl check
+//! (ci/negative.bzl, run by the public CI as a part of ci/completeness.bxl) holds the build itself. A pure function per rule, each tested against faulty
 //! text as well as against the real files (the zig_test's `data`, under BUILDRULES_TEST_WORK).
 //!
 //! What the rules catch:
@@ -9,7 +9,7 @@
 //!  - ci/negative.bzl naming a target that is not in the BUCK file, a platform that is not the ISA one, or a reason the rule no longer gives;
 //!  - ci/completeness.bxl (the step of the public CI) not running the check;
 //!  - a fixture of ci/negative.bzl's CASES that is not in ci/negative/BUCK, lacks the platform it is compatible with, or is not excluded in ci/all.bzl, and a fixture
-//!    of ci/negative/BUCK (compatible only with that platform) that CASES does not assert: either way a planted defect would not be held red.
+//!    of ci/negative/BUCK (compatible only with that platform) that CASES does not assert: either way a known defect would not be held red.
 const std = @import("std");
 const t = std.testing;
 
@@ -53,7 +53,7 @@ pub fn buckFindings(a: std.mem.Allocator, buck: []const u8) ![]const []const u8 
         return f.toOwnedSlice(a);
     };
     if (std.mem.indexOf(u8, bad, "exec_compatible_with") != null)
-        try add(a, &f, "{s} has exec_compatible_with: it is the valid test run, and the planted defect is gone", .{fixture_name});
+        try add(a, &f, "{s} has exec_compatible_with: it is the valid test run, and the known defect is gone", .{fixture_name});
     if (std.mem.indexOf(u8, bad, compat) == null)
         try add(a, &f, "{s} lacks `{s}`: a wildcard build would not skip it", .{ fixture_name, compat });
     if (std.mem.indexOf(u8, good, "exec_compatible_with = test_exec_compatible_with()") == null)
@@ -197,7 +197,7 @@ fn expectOne(findings: []const []const u8, contains: []const u8) !void {
 
 // ---- the real files ----
 
-test "the real fixture, control, constants and CI step are as planted" {
+test "the real fixture, control, constants and CI step are as faulty" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -208,7 +208,7 @@ test "the real fixture, control, constants and CI step are as planted" {
     try expectNone(try casesFindings(a, try readAll(a, work, "ci/negative.bzl"), try readAll(a, work, "ci/negative/BUCK"), try readAll(a, work, "ci/all.bzl")));
 }
 
-// ---- planted text ----
+// ---- faulty text ----
 
 const GOOD =
     \\test_run(
@@ -232,7 +232,7 @@ fn replaced(a: std.mem.Allocator, text: []const u8, from: []const u8, to: []cons
     return std.mem.replaceOwned(u8, a, text, from, to);
 }
 
-test "buck: the planted pair passes" {
+test "buck: the faulty pair passes" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     try expectNone(try buckFindings(arena.allocator(), GOOD));
@@ -243,7 +243,7 @@ test "buck: the fixture made valid is found" {
     defer arena.deinit();
     const a = arena.allocator();
     const valid = try replaced(a, GOOD, "    name = \"v3_test_without_isa_property\",\n", "    name = \"v3_test_without_isa_property\",\n    exec_compatible_with = test_exec_compatible_with(),\n");
-    try expectOne(try buckFindings(a, valid), "the planted defect is gone");
+    try expectOne(try buckFindings(a, valid), "the known defect is gone");
 }
 
 test "buck: a fixture that a wildcard build would build is found" {
@@ -373,7 +373,7 @@ test "cases: a fixture the BUCK file does not declare, one a wildcard build woul
     try expectOne(try casesFindings(a, CASES_BZL, CASES_BUCK, "\"//ci/negative:first_fixture\": \"why\","), "does not exclude //ci/negative:second_fixture");
 }
 
-test "cases: a planted fixture that CASES does not assert, and a CASES that is gone, are found" {
+test "cases: a faulty fixture that CASES does not assert, and a CASES that is gone, are found" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();

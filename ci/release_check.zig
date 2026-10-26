@@ -1,5 +1,5 @@
 //! The release workflow (.github/workflows/release.yml) is what RELEASING.md says it is. A pure function of the text, so each rule is tested
-//! against planted text as well as against the real files (the zig_test's `data`, under BUILDRULES_TEST_WORK). The rules that release.yml
+//! against faulty text as well as against the real files (the zig_test's `data`, under BUILDRULES_TEST_WORK). The rules that release.yml
 //! shares with ci.yml (actions pinned by commit, local mode on every buck2 command, the pinned buck2 install) are the ones in
 //! workflow_check.zig; what is here is what only the release has:
 //!
@@ -1213,8 +1213,8 @@ fn real(a: std.mem.Allocator) !Real {
 
 // ---- synthetic fixtures -------------------------------------------------------------------------------------------------------------------
 //
-// The planted-defect tests run on this text and not on the real release.yml: every mutant anchors on text this file itself holds, so it cannot fail with
-// `MutantDidNotApply` because the real workflow was reworded, and each red run is the rule under test. It is the shape of release.yml (every job, its
+// The faulty-defect tests run on this text and not on the real release.yml: every variant anchors on text this file itself holds, so it cannot fail with
+// `DefectDidNotApply` because the real workflow was reworded, and each red run is the rule under test. It is the shape of release.yml (every job, its
 // needs, permissions and conditions) with the comments left out and the buck2 install pointed at a synthetic release; "the synthetic workflow has no finding" requires it clean first. The real file
 // is checked by "the real release workflow has no findings" alone.
 
@@ -2228,7 +2228,7 @@ fn fx(a: std.mem.Allocator) !Real {
     return .{ .wf = fixture_wf, .ds = fixture_ds, .ci = "on:\n  workflow_call:\n" };
 }
 
-test "the synthetic workflow has no finding, so every mutant below is red for its own rule" {
+test "the synthetic workflow has no finding, so every variant below is red for its own rule" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -2239,17 +2239,17 @@ test "the synthetic workflow has no finding, so every mutant below is red for it
 }
 
 fn mutate(a: std.mem.Allocator, wf: []const u8, from: []const u8, to: []const u8) ![]u8 {
-    const i = std.mem.indexOf(u8, wf, from) orelse return error.MutantDidNotApply;
+    const i = std.mem.indexOf(u8, wf, from) orelse return error.DefectDidNotApply;
     return std.mem.concat(a, u8, &.{ wf[0..i], to, wf[i + from.len ..] });
 }
 
-/// As `mutate`, within the job `job` and no further (the first `from` between its header and the next job's). A mutant whose text is not in that job did not
+/// As `mutate`, within the job `job` and no further (the first `from` between its header and the next job's). A variant whose text is not in that job did not
 /// apply: it is an error, and not a quiet change of another job.
 fn mutateIn(a: std.mem.Allocator, wf: []const u8, job: []const u8, from: []const u8, to: []const u8) ![]u8 {
     const block = jobBlock(wf, job);
-    if (block.len == 0) return error.MutantDidNotApply;
+    if (block.len == 0) return error.DefectDidNotApply;
     const at = @intFromPtr(block.ptr) - @intFromPtr(wf.ptr);
-    const i = std.mem.indexOfPos(u8, wf[0 .. at + block.len], at, from) orelse return error.MutantDidNotApply;
+    const i = std.mem.indexOfPos(u8, wf[0 .. at + block.len], at, from) orelse return error.DefectDidNotApply;
     return std.mem.concat(a, u8, &.{ wf[0..i], to, wf[i + from.len ..] });
 }
 
@@ -2260,7 +2260,7 @@ fn expectFinding(a: std.mem.Allocator, r: Real, wf: []const u8, needle: []const 
     }
     std.debug.print("expected a finding with `{s}`, got {d}:\n", .{ needle, f.items.len });
     for (f.items) |m| std.debug.print("  {s}\n", .{m});
-    return error.MutantSurvived;
+    return error.DefectSurvived;
 }
 
 test "the real release workflow has no findings" {
@@ -2392,13 +2392,13 @@ test "rule: exactly the jobs that read the release bot's key declare the environ
     const r = try fx(a);
     const env = "    environment: release\n";
     const reads = "reads `RELEASE_BOT_*` but does not declare `environment: release`";
-    // mutant: tag without it; bump without it
+    // defect: tag without it; bump without it
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", env, ""), "the job `tag` " ++ reads);
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", env, ""), "the job `bump` " ++ reads);
-    // mutant: the wrong name, on either
+    // defect: the wrong name, on either
     try expectFinding(a, r, try mutateIn(a, r.wf, "tag", env, "    environment: relase\n"), "the job `tag` " ++ reads);
     try expectFinding(a, r, try mutateIn(a, r.wf, "bump", env, "    environment: prod\n"), "the job `bump` " ++ reads);
-    // mutant: the environment on a job that does not read the key
+    // defect: the environment on a job that does not read the key
     try expectFinding(a, r, try mutateIn(a, r.wf, "publish", "    timeout-minutes: 15\n", "    timeout-minutes: 15\n" ++ env), "the job `publish` declares `environment: release`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "verify", "    timeout-minutes: 60\n", "    timeout-minutes: 60\n" ++ env), "the job `verify` declares `environment: release`");
 }
@@ -2580,7 +2580,7 @@ test "rule: the order gate -> plan -> build-cli -> beta -> gamma -> archive -> a
     const waits = "waits for `tag` or `publish`";
     for ([_][]const u8{ "plan", "build-cli", "beta", "gamma", "archive", "attest", "verify" }) |name| {
         const header = try std.fmt.allocPrint(a, "\n  {s}:\n    needs: [", .{name});
-        const at = std.mem.indexOf(u8, r.wf, header) orelse return error.MutantDidNotApply;
+        const at = std.mem.indexOf(u8, r.wf, header) orelse return error.DefectDidNotApply;
         const inner = at + header.len;
         const wf = try std.mem.concat(a, u8, &.{ r.wf[0..inner], "tag, ", r.wf[inner..] });
         try expectFinding(a, r, wf, waits);
@@ -3088,7 +3088,7 @@ test "rule: a cosign bundle is named <file>.sigstore.json, for the files release
         for (f.items) |m| std.debug.print("finding: {s}\n", .{m});
         try t.expectEqual(@as(usize, 0), f.items.len);
     }
-    // Any other spelling is a finding (each a mutant of a defect a release could ship: a name that `sign` never wrote).
+    // Any other spelling is a finding (each a variant of a defect a release could ship: a name that `sign` never wrote).
     for ([_][]const u8{
         "SHA256SUMS.sigstore",
         "SHA256SUMS.bundle.sigstore.json",

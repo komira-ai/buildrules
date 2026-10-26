@@ -1,4 +1,4 @@
-//! `gate step`: runs one build step of one mutant and records how it ended
+//! `gate step`: runs one build step of one variant and records how it ended
 //! (S1-S6 of the gate runner's design;
 //! the statuses are read by `mutate score`, coverage/mutate/mutate/score.mojo).
 //!
@@ -15,7 +15,7 @@
 //!
 //! and the last 60 lines of the command's output follow. A status named by
 //! --infra-exit (when the step did not time out) is a failure of the
-//! machine, not of the mutant: the tool prints the output and exits with
+//! machine, not of the defect: the tool prints the output and exits with
 //! that status, so the action fails and is not cached.
 //!
 //! Each argument that starts with @MUT_SCRATCH@ has that prefix replaced by
@@ -155,7 +155,7 @@ fn run(alloc: std.mem.Allocator, argv: []const []const u8) !u8 {
         const rc_s = try std.fmt.allocPrint(alloc, "{d}", .{o.status});
         for (infra.items) |n| {
             if (std.mem.eql(u8, n, rc_s)) {
-                util.err("mut_step: the step exited {d}, a failure of the machine it ran on, not of the mutant; failing the action so that it is not cached\n", .{o.status});
+                util.err("mut_step: the step exited {d}, a failure of the machine it ran on, not of the variant; failing the action so that it is not cached\n", .{o.status});
                 util.writeTail(2, log, 60);
                 return o.status;
             }

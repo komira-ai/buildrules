@@ -1,5 +1,5 @@
 //! Runs site/static/install.sh (under the busybox `sh` this test runs beside: it is the one shell script of the project, because `curl | sh` needs one)
-//! against fake releases served over loopback, and then plants defects in copies of the script and requires the same checks to go red for each.
+//! against fake releases served over loopback, and then injects defects in copies of the script and requires the same checks to go red for each.
 //!
 //! The script runs the way a user's does, on a PATH this test builds for it: the busybox applets it needs (awk, tar, mktemp, mkdir, cp, chmod, mv, rm,
 //! sha256sum) and the stand-ins of fakes.zig (`curl`, a `uname` that reports a chosen platform, a `shasum`, a `cosign`). The server is this file's: it
@@ -17,7 +17,7 @@
 //!     program that does not report the version it was released as is refused; no release at all is refused;
 //!   - --verify runs `cosign verify-blob` on the tarball with its bundle, the release workflow's identity and the issuer; a cosign that refuses stops the
 //!     install, a missing cosign or a missing bundle stops it, and without --verify cosign is never run.
-//! The standing step then plants defects in copies of the script (a skipped sha check, any platform accepted, Intel Macs sent to the Apple silicon file or to a
+//! The standing step then injects defects in copies of the script (a skipped sha check, any platform accepted, Intel Macs sent to the Apple silicon file or to a
 //! file that is not released, a skipped version check, wrong platform mappings, "latest" not resolved, a verification that is skipped, ignored or aimed at
 //! the wrong identity, ...) and requires a failing check for every one of them.
 //!
@@ -682,13 +682,13 @@ const Pass = struct {
     }
 };
 
-// ---- the planted defects --------------------------------------------------------------------------------------------------------------------------------
+// ---- the known defects --------------------------------------------------------------------------------------------------------------------------------
 
-const Mutant = struct { name: []const u8, from: []const u8, to: []const u8 };
+const Variant = struct { name: []const u8, from: []const u8, to: []const u8 };
 
 const darwin_intel = "    Darwin-x86_64) die \"no buildrules release for Intel Macs (Darwin x86_64); buildrules is released for Apple silicon Macs (arm64) and for Linux on x86_64 and arm64. On an Apple silicon Mac, run this from a native shell, not one running under Rosetta\" ;;";
 
-const mutants = [_]Mutant{
+const variants = [_]Variant{
     .{ .name = "skip-sha-compare", .from = "[ \"$got\" = \"$want\" ] || die \"sha256 mismatch for $asset: got $got, SHA256SUMS says $want; nothing was installed\"", .to = "true" },
     .{ .name = "shasum-result-ignored", .from = "got=$(shasum -a 256 \"$tmp/$asset\" | awk '{ print $1 }')", .to = "got=$want" },
     .{ .name = "any-platform-accepted", .from = "    *) die \"no buildrules release for $(uname -s) $(uname -m); there are releases for Linux on x86_64 and arm64 and for macOS on arm64\" ;;", .to = "    *) target=linux-x86_64 ;;" },
@@ -719,7 +719,7 @@ const mutants = [_]Mutant{
     .{ .name = "verify-always", .from = "if [ \"$verify\" = 1 ]; then", .to = "if true; then" },
 };
 
-test "install.sh against fake releases, and the planted defects are caught" {
+test "install.sh against fake releases, and the known defects are caught" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -734,26 +734,26 @@ test "install.sh against fake releases, and the planted defects are caught" {
     try pass.run();
     try std.testing.expectEqual(@as(usize, 0), rep.failures);
 
-    // Each planted defect must turn at least one check red.
+    // Each known defect must turn at least one check red.
     const text = try readFile(a, script);
     var survived: usize = 0;
-    for (mutants) |m| {
+    for (variants) |m| {
         if (std.mem.indexOf(u8, text, m.from) == null) {
-            std.debug.print("MUTANT {s}: the text it replaces is not in install.sh\n", .{m.name});
+            std.debug.print("VARIANT {s}: the text it replaces is not in install.sh\n", .{m.name});
             survived += 1;
             continue;
         }
         const mutated = try std.mem.replaceOwned(u8, a, text, m.from, m.to);
-        const mscript = try join(a, &.{ fx.work, "mutants", try std.fmt.allocPrint(a, "install-{s}.sh", .{m.name}) });
+        const mscript = try join(a, &.{ fx.work, "variants", try std.fmt.allocPrint(a, "install-{s}.sh", .{m.name}) });
         try writeFile(mscript, mutated);
         var mrep = Rep{ .verbose = false };
         var mpass = Pass{ .a = a, .fx = fx, .script = mscript, .work = try join(a, &.{ fx.work, try std.fmt.allocPrint(a, "pass-{s}", .{m.name}) }), .rep = &mrep };
         try mpass.run();
         if (mrep.failures == 0) {
-            std.debug.print("MUTANT {s} SURVIVED: every check still passed\n", .{m.name});
+            std.debug.print("VARIANT {s} SURVIVED: every check still passed\n", .{m.name});
             survived += 1;
         } else {
-            std.debug.print("mutant {s} killed by {d} checks, the first: {s}\n", .{ m.name, mrep.failures, mrep.first });
+            std.debug.print("variant {s} killed by {d} checks, the first: {s}\n", .{ m.name, mrep.failures, mrep.first });
         }
     }
     try std.testing.expectEqual(@as(usize, 0), survived);

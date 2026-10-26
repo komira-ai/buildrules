@@ -75,7 +75,7 @@ fn lineWith(text: []const u8, prefix: []const u8) ?[]const u8 {
     return null;
 }
 
-// G1. Mutant: accept `--env` after `--arg` (the case "env after arg" turns
+// G1. Defect caught: accept `--env` after `--arg` (the case "env after arg" turns
 // red), or accept a leading zero in a number (the cap and deadline cases).
 test "G1 usage: every bad command line exits 2 with its runner's message, and no marker" {
     const e = try Env.init();
@@ -118,7 +118,7 @@ test "G1 usage: every bad command line exits 2 with its runner's message, and no
     try std.testing.expectEqualStrings("gate: usage: gate mojo|rust|step <options> (README.md)\n", (try kit.runInline(e.a, e.dir, &.{})).err);
 }
 
-// G3. Mutant: drop LD_PRELOAD from the list (its case passes the run).
+// G3. Defect caught: drop LD_PRELOAD from the list (its case passes the run).
 test "G3 reserved names: each of the ten is refused with exit 2" {
     const e = try Env.init();
     defer e.deinit();
@@ -133,7 +133,7 @@ test "G3 reserved names: each of the ten is refused with exit 2" {
     }
 }
 
-// G4. Mutant: read the label or the marker from the environment the test
+// G4. Defect caught: read the label or the marker from the environment the test
 // gets (the decoy cases turn red).
 test "G4 isolation: no --env reaches the runner's own state" {
     const e = try Env.init();
@@ -155,7 +155,7 @@ test "G4 isolation: no --env reaches the runner's own state" {
     try std.testing.expect(!kit.exists(try e.path("decoy")));
 }
 
-// G5. Mutant: replace only the first @BUILDRULES_ACTION_DIR@ of a value.
+// G5. Defect caught: replace only the first @BUILDRULES_ACTION_DIR@ of a value.
 test "G5 arguments: in order, exactly, every action-directory token replaced, none exported" {
     const e = try Env.init();
     defer e.deinit();
@@ -169,7 +169,7 @@ test "G5 arguments: in order, exactly, every action-directory token replaced, no
     try std.testing.expect(std.mem.indexOf(u8, output(r2.err), "two words") == null);
 }
 
-// G6. Mutants: a fixed directory name (the two runs share it), or no
+// G6. Defect caught: a fixed directory name (the two runs share it), or no
 // cleanup (the directories are left).
 test "G6 run directory: each run its own empty TMPDIR under the action's directory, applets installed, gone after" {
     const e = try Env.init();
@@ -192,7 +192,7 @@ test "G6 run directory: each run its own empty TMPDIR under the action's directo
     try std.testing.expect(!std.mem.eql(u8, seen[0], seen[1]));
 }
 
-// G7. Mutant: drop the inherited environment (GATE_INHERITED is lost), or
+// G7. Defect caught: drop the inherited environment (GATE_INHERITED is lost), or
 // let an inherited PATH or HOME through.
 test "G7 environment: the runner's five variables, the action's others, and each --env" {
     const e = try Env.init();
@@ -222,13 +222,13 @@ test "G7 environment: the runner's five variables, the action's others, and each
     }
     try std.testing.expect(hasLine(out, try std.fmt.allocPrint(e.a, "LD_LIBRARY_PATH={s}/rt/lib", .{e.real})));
     // G12: on macOS dyld reads DYLD_LIBRARY_PATH, set to the same directory.
-    // Mutant (macOS): drop it from the environment the gate builds.
+    // Variant (macOS): drop it from the environment the gate builds.
     try std.testing.expectEqual(sys.is_darwin, hasLine(out, try std.fmt.allocPrint(e.a, "DYLD_LIBRARY_PATH={s}/rt/lib", .{e.real})));
     for ([_][]const u8{ "GATE_INHERITED=yes", "SPACED=a b=c", "EMPTY=", "TWICE=2" }) |l| try std.testing.expect(hasLine(out, l));
     for ([_][]const u8{ "PATH=/nowhere", "HOME=/nohome", "TMPDIR=/notmp", "TWICE=1" }) |l| try std.testing.expect(!hasLine(out, l));
 }
 
-// G8. Mutant: run the test in the action's directory.
+// G8. Defect caught: run the test in the action's directory.
 test "G8 working directory: <root>/share when it exists, else an empty one; never the action's; stdin empty" {
     const e = try Env.init();
     defer e.deinit();
@@ -248,7 +248,7 @@ test "G8 working directory: <root>/share when it exists, else an empty one; neve
     try std.testing.expectEqualStrings(try std.fmt.allocPrint(e.a, "{s}/deep/bin/x/share", .{e.real}), lineWith(output(r3.err), "cwd ").?);
 }
 
-// G9. Mutants: a trailing space in the marker, or the marker written before
+// G9. Defect caught: a trailing space in the marker, or the marker written before
 // the verdict (it exists after a red run).
 test "G9 marker: exactly `PASS <label>\\n` on exit 0, nothing printed; nothing written on red" {
     const e = try Env.init();
@@ -272,7 +272,7 @@ test "G9 marker: exactly `PASS <label>\\n` on exit 0, nothing printed; nothing w
     try std.testing.expectEqual(@as(u8, 0), (try e.run(n.items, .{})).status);
 }
 
-// G10, G11. Mutants: 65 `=`, or 77 taken as a pass.
+// G10, G11. Defect caught: 65 `=`, or 77 taken as a pass.
 test "G10 G11 banner: byte golden for exit 1 and 77 and deaths by SIGKILL and SIGABRT" {
     const e = try Env.init();
     defer e.deinit();

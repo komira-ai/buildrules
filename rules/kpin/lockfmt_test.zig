@@ -229,7 +229,7 @@ test "render refuses an injection-shaped value in each emitted field" {
 fn parseMutated(find: []const u8, replace: []const u8) !void {
     const text = try std.mem.replaceOwned(u8, t.allocator, golden, find, replace);
     defer t.allocator.free(text);
-    try t.expect(!std.mem.eql(u8, text, golden)); // the mutation applied
+    try t.expect(!std.mem.eql(u8, text, golden)); // the edit applied
     try parseFails(text);
 }
 

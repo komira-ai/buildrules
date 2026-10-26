@@ -273,7 +273,7 @@ test "shim: -rpath|--rpath <p> and -Wl,-rpath|-Wl,--rpath <p> drop both" {
     try expectRewrite(&.{ "-rpath", "/p1", "--rpath", "/p2", "-Wl,-rpath", "/p3", "-Wl,--rpath", "/p4", "a.o" }, &.{"a.o"});
 }
 
-// Mutant planted: keep `-Wl,-rpath=`.
+// Defect caught: keep `-Wl,-rpath=`.
 test "shim: -Wl,-rpath,* -Wl,-rpath=* -Wl,--rpath,* -Wl,--rpath=* -Wl,-R,* are dropped" {
     try expectRewrite(&.{ "-Wl,-rpath,/a", "-Wl,-rpath=/b", "-Wl,--rpath,/c", "-Wl,--rpath=/d", "-Wl,-R,/e", "a.o" }, &.{"a.o"});
 }
@@ -289,7 +289,7 @@ test "shim: a trailing -Xlinker passes through" {
 }
 
 // Catches any change to the link line cov_zig and cov_branch_link.zig read.
-// Mutant planted: drop -Wl,--enable-new-dtags.
+// Defect caught: drop -Wl,--enable-new-dtags.
 test "shim: the exact exec line, link tail last in order" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -344,7 +344,7 @@ fn expectRewriteMacos(in: []const []const u8, want: []const []const u8) !void {
 }
 
 // Each catches a run path naming the action's sandbox reaching the host's
-// linker (design item 18). Mutant planted: keep `-Wl,-rpath,`.
+// linker (design item 18). Defect caught: keep `-Wl,-rpath,`.
 test "macOS shim: the three run path forms drop; another -Xlinker pair passes" {
     try expectRewriteMacos(&.{ "-Xlinker", "-rpath", "-Xlinker", "/sandbox/lib", "x.o" }, &.{"x.o"});
     try expectRewriteMacos(&.{ "-Wl,-rpath,/sandbox/q", "x.o" }, &.{"x.o"});

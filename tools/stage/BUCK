@@ -16,7 +16,7 @@ _SRCS = [
     "stage.zig",
 ]
 
-# Every rule of the STEPS format, the copy of a beta repository, the hashing of an output, the build-twice determinism check (with a planted
+# Every rule of the STEPS format, the copy of a beta repository, the hashing of an output, the build-twice determinism check (with a faulty
 # difference), the farm's `local: 0`, the pin of the candidate, and each failure, against a fake that writes the files a build would.
 zig_test(
     name = "stage_unit",

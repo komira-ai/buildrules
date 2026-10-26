@@ -52,7 +52,7 @@ fn contains(hay: []const u8, needle: []const u8) bool {
     return std.mem.indexOf(u8, hay, needle) != null;
 }
 
-// R1. Mutant: accept a timeout of 0.
+// R1. Defect caught: accept a timeout of 0.
 test "R1 usage: exactly five options; a timeout that is empty, not a number, or 0 is refused; 007 is not" {
     const e = try Env.init();
     defer e.deinit();
@@ -75,7 +75,7 @@ test "R1 usage: exactly five options; a timeout that is empty, not a number, or 
     try std.testing.expectEqual(@as(u8, 0), (try e.run("rust_ok", "007")).status);
 }
 
-// R8. Mutant: a trailing space, or the marker written before the summary
+// R8. Defect caught: a trailing space, or the marker written before the summary
 // checks (the refusals below then leave one).
 test "R8 marker: `PASS <label>: <n> passed\\n` to the marker and to stdout" {
     const e = try Env.init();
@@ -86,7 +86,7 @@ test "R8 marker: `PASS <label>: <n> passed\\n` to the marker and to stdout" {
     try std.testing.expectEqualStrings("PASS //r:t: 3 passed\n", try kit.readFile(e.a, e.marker()));
 }
 
-// R3. Mutant: inherit the action's environment.
+// R3. Defect caught: inherit the action's environment.
 test "R3 environment: exactly PATH, TMPDIR and HOME" {
     const e = try Env.init();
     defer e.deinit();
@@ -105,7 +105,7 @@ test "R3 environment: exactly PATH, TMPDIR and HOME" {
     try std.testing.expect(std.mem.indexOf(u8, r.err, "/.buildrules_rust_test.") != null);
 }
 
-// R4-R6. Mutant: drop a refusal (its case passes and leaves a marker).
+// R4-R6. Defect caught: drop a refusal (its case passes and leaves a marker).
 test "R4-R6 refusals: empty list, a failing list, a failing run, ignored tests, a count mismatch, no summary" {
     const e = try Env.init();
     defer e.deinit();

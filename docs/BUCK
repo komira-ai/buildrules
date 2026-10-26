@@ -6,7 +6,7 @@ export_file(
     visibility = ["//site:"],
 )
 
-# The two parts of the documentation, and the list of planted C/C++ defects: the site's Why and How pages repeat their facts, and the
+# The two parts of the documentation, and the list of faulty C/C++ defects: the site's Why and How pages repeat their facts, and the
 # site tests (site/BUCK) check the pages and these files against the sources.
 export_file(
     name = "why.md",
@@ -21,8 +21,8 @@ export_file(
 )
 
 export_file(
-    name = "cxx_mutants.md",
-    src = "cxx_mutants.md",
+    name = "cxx_defects.md",
+    src = "cxx_defects.md",
     visibility = ["//site:"],
 )
 

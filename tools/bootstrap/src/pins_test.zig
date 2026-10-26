@@ -1,4 +1,4 @@
-//! pins.zig: the agreement of the pin rows with the built programs, against planted text: each way the table can be wrong is found, and an agreeing table is not.
+//! pins.zig: the agreement of the pin rows with the built programs, against faulty text: each way the table can be wrong is found, and an agreeing table is not.
 const std = @import("std");
 const pins = @import("pins.zig");
 const t = std.testing;
@@ -41,7 +41,7 @@ fn built() [3]pins.Built {
 }
 
 fn mutate(text: []const u8, from: []const u8, to: []const u8) ![]u8 {
-    const at = std.mem.indexOf(u8, text, from) orelse return error.MutantAnchorMissing;
+    const at = std.mem.indexOf(u8, text, from) orelse return error.DefectAnchorMissing;
     return std.mem.concat(a, u8, &.{ text[0..at], to, text[at + from.len ..] });
 }
 

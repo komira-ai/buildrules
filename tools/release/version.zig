@@ -4,7 +4,7 @@
 //!  - PATCH is the highest existing `v<MAJOR>.<MINOR>.N` plus one, and 1 when there is none: the first release is v0.0.1.
 //!  - A commit is released when it touches more than documentation or CI (`releaseWorthy`).
 //!
-//! Everything here is a pure function of text, so each rule is tested against planted input.
+//! Everything here is a pure function of text, so each rule is tested against faulty input.
 const std = @import("std");
 
 pub const Version = struct {

@@ -1,6 +1,6 @@
 // docs/pins.md repeats each pin's version, size and sha256 as prose. These tests read it and the pin tables it describes (rules/rust/pins.bzl,
 // rules/pins/pins.bzl, rules/mopm/pins.bzl) and fail when a figure in the page is not the figure in the table: the heading of the mopm section, the
-// size of a tarball, one digit of a sha256. Each rule is also run against planted text, so a check that cannot fail is caught here.
+// size of a tarball, one digit of a sha256. Each rule is also run against faulty text, so a check that cannot fail is caught here.
 
 import { repoFile } from './helpers';
 
@@ -116,9 +116,9 @@ describe('docs/pins.md figures are the figures in the pin tables', () => {
     expect(HEX64.test(entry(PINS, 'zig_next').sha256)).toBe(true);
   });
 
-  // Planted defects: each is a change to one figure of the page (or of a table) that the check must name.
-  const planted = (what: string, from: string, to: string, want: RegExp, where: 'md' | 'mopm' = 'md'): void => {
-    test(`planted: ${what}`, () => {
+  // Known defects: each is a change to one figure of the page (or of a table) that the check must name.
+  const faulty = (what: string, from: string, to: string, want: RegExp, where: 'md' | 'mopm' = 'md'): void => {
+    test(`faulty: ${what}`, () => {
       const src = where === 'md' ? MD : MOPM;
       expect(src.split(from).length - 1).toBeGreaterThanOrEqual(1);
       const mutated = src.replace(from, to);
@@ -128,20 +128,20 @@ describe('docs/pins.md figures are the figures in the pin tables', () => {
   };
   const v = one(MOPM, /MOPM_DEFAULT = "([^"]+)"/);
   const mp = entry(MOPM, v);
-  planted('the mopm heading names the previous release', `## mopm ${v}`, '## mopm 0.0.14', /mopm heading version/);
-  planted('the mopm size is one more', `is ${mp.size} bytes`, `is ${Number(mp.size) + 1} bytes`, /mopm size/);
-  planted('one digit of the mopm sha256 differs', mp.sha256, mp.sha256.slice(0, 20) + (mp.sha256[20] === '0' ? '1' : '0') + mp.sha256.slice(21), /mopm sha256/);
+  faulty('the mopm heading names the previous release', `## mopm ${v}`, '## mopm 0.0.14', /mopm heading version/);
+  faulty('the mopm size is one more', `is ${mp.size} bytes`, `is ${Number(mp.size) + 1} bytes`, /mopm size/);
+  faulty('one digit of the mopm sha256 differs', mp.sha256, mp.sha256.slice(0, 20) + (mp.sha256[20] === '0' ? '1' : '0') + mp.sha256.slice(21), /mopm sha256/);
   const rs = rustRow(RUST, one(RUST, /RUST_DEFAULT = "([^"]+)"/));
-  planted('the rustc size is one more', `| ${rs.rustc.size} |`, `| ${Number(rs.rustc.size) + 1} |`, /rustc size/);
-  planted('the rust-std size is one more', `| ${rs.rust_std.size} |`, `| ${Number(rs.rust_std.size) + 1} |`, /rust-std size/);
-  planted('one digit of the cargo sha256 differs', rs.cargo.sha256, rs.cargo.sha256.slice(0, 5) + (rs.cargo.sha256[5] === '0' ? '1' : '0') + rs.cargo.sha256.slice(6), /cargo sha256/);
-  planted('the zig size is one more', '| 53733924 |', '| 53733925 |', /zig 0\.15\.2 size/);
-  planted('the busybox sha256 differs', '| 6e123e7f3202', '| 7e123e7f3202', /busybox 1\.35\.0 sha256/);
-  planted('the oldest rustc size is one more', 'rustc 118068031', 'rustc 118068032', /Rust 1\.85\.0 rustc size/);
-  planted('the oldest cargo sha prefix differs', '`e27ffcaf...c372`', '`e27ffcae...c372`', /Rust 1\.85\.0 cargo sha256/);
-  planted('the llvm-tools size is one more', '66089964 bytes', '66089965 bytes', /llvm-tools size/);
-  planted('a new row nothing compares', '| busybox 1.35.0 |', '| newpin 1.0 | f | 1 | ab |\n| busybox 1.35.0 |', /row newpin 1\.0 is not compared/);
-  planted('a row is deleted','| zig 0.15.2 | zig-x86_64-linux-0.15.2.tar.xz | 53733924 | 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239 |\n', '', /0 rows for zig 0\.15\.2/);
+  faulty('the rustc size is one more', `| ${rs.rustc.size} |`, `| ${Number(rs.rustc.size) + 1} |`, /rustc size/);
+  faulty('the rust-std size is one more', `| ${rs.rust_std.size} |`, `| ${Number(rs.rust_std.size) + 1} |`, /rust-std size/);
+  faulty('one digit of the cargo sha256 differs', rs.cargo.sha256, rs.cargo.sha256.slice(0, 5) + (rs.cargo.sha256[5] === '0' ? '1' : '0') + rs.cargo.sha256.slice(6), /cargo sha256/);
+  faulty('the zig size is one more', '| 53733924 |', '| 53733925 |', /zig 0\.15\.2 size/);
+  faulty('the busybox sha256 differs', '| 6e123e7f3202', '| 7e123e7f3202', /busybox 1\.35\.0 sha256/);
+  faulty('the oldest rustc size is one more', 'rustc 118068031', 'rustc 118068032', /Rust 1\.85\.0 rustc size/);
+  faulty('the oldest cargo sha prefix differs', '`e27ffcaf...c372`', '`e27ffcae...c372`', /Rust 1\.85\.0 cargo sha256/);
+  faulty('the llvm-tools size is one more', '66089964 bytes', '66089965 bytes', /llvm-tools size/);
+  faulty('a new row nothing compares', '| busybox 1.35.0 |', '| newpin 1.0 | f | 1 | ab |\n| busybox 1.35.0 |', /row newpin 1\.0 is not compared/);
+  faulty('a row is deleted','| zig 0.15.2 | zig-x86_64-linux-0.15.2.tar.xz | 53733924 | 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239 |\n', '', /0 rows for zig 0\.15\.2/);
 });
 
 // A digest copied into prose goes stale when the pin moves. Pages other than docs/pins.md (which the tests above compare row by row) point at the
@@ -170,7 +170,7 @@ export function strayDigests(md: string, pinned: ReadonlySet<string>, mopmDigest
 describe('pages quote no digest that a pin table does not hold', () => {
   const mopmDigest = entry(MOPM, one(MOPM, /MOPM_DEFAULT = "([^"]+)"/)).sha256;
   // The pages the jest_test's `data` stages (site/BUCK): a page added there is added here.
-  const pages = ['contract', 'cxx_mutants', 'how', 'pins', 'why'].map((n) => `docs/${n}.md`);
+  const pages = ['contract', 'cxx_defects', 'how', 'pins', 'why'].map((n) => `docs/${n}.md`);
 
   test('there are pages to read, among them the contract', () => {
     expect(pages).toContain('docs/contract.md');

@@ -150,7 +150,7 @@ test "update, then lock and check agree; lock rewrites nothing" {
     try t.expectEqual(@as(usize, 1), e.reg.hitsOf("/tool-1.0.0-linux-x86_64.bin"));
 }
 
-test "MUTANT stale lock accepted: a lock with an entry the inputs no longer ask for fails check" {
+test "VARIANT stale lock accepted: a lock with an entry the inputs no longer ask for fails check" {
     var routes = [_]registry.Route{.{ .path = "/tool-1.0.0-linux-x86_64.bin", .body = fx.ABC }};
     const e = try Env.init(&routes);
     defer e.deinit();
@@ -184,7 +184,7 @@ test "a version bump without update is stale, not silently re-hashed" {
     try t.expect(contains(r.err, "kpin update"));
 }
 
-test "MUTANT changed hash for an unchanged version accepted: a hash edited in the lock is exit 3 against the base" {
+test "VARIANT changed hash for an unchanged version accepted: a hash edited in the lock is exit 3 against the base" {
     var routes = [_]registry.Route{.{ .path = "/tool-1.0.0-linux-x86_64.bin", .body = fx.ABC }};
     const e = try Env.init(&routes);
     defer e.deinit();
@@ -208,7 +208,7 @@ test "MUTANT changed hash for an unchanged version accepted: a hash edited in th
     try t.expectEqual(@as(u8, 0), e.kpin(&.{ "check", "--previous", e.path("base.lock.bzl") }).code);
 }
 
-test "MUTANT changed hash for an unchanged version accepted: package-lock.json with new integrity for a locked version is exit 3, from lock and from check" {
+test "VARIANT changed hash for an unchanged version accepted: package-lock.json with new integrity for a locked version is exit 3, from lock and from check" {
     var routes = [_]registry.Route{};
     const e = try Env.init(&routes);
     defer e.deinit();
@@ -248,7 +248,7 @@ test "MUTANT changed hash for an unchanged version accepted: package-lock.json w
     try t.expect(contains(e.read("pins.lock.bzl"), fx.ABC_SRI512));
 }
 
-test "MUTANT non-deterministic output: the order of the package-lock.json entries never reaches the lock" {
+test "VARIANT non-deterministic output: the order of the package-lock.json entries never reaches the lock" {
     var routes = [_]registry.Route{};
     const e = try Env.init(&routes);
     defer e.deinit();

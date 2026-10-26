@@ -19,7 +19,7 @@ test_run(
     target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
 )
 
-# The files that make the fixture a planted defect, held to each other: the pair, ci/negative.bzl, the CI step (ci/completeness.bxl) and the rule's message.
+# The files that make the fixture a known defect, held to each other: the pair, ci/negative.bzl, the CI step (ci/completeness.bxl) and the rule's message.
 # The bxl check holds the build itself; this is the part of it that //ci:all builds.
 zig_test(
     name = "negative_check",
@@ -37,7 +37,7 @@ zig_test(
     visibility = ["//ci:"],
 )
 
-# PLANTED DEFECTS that must stay red. Each is compatible only with the platform it breaks on, so a wildcard build of the
+# KNOWN DEFECTS that must stay red. Each is compatible only with the platform it breaks on, so a wildcard build of the
 # repository skips it, and building it by name on that platform must FAIL while the build graph is analysed:
 #
 #   buck2 build --target-platforms buildrules//platforms:linux_x86_64_v3 //ci/negative:v3_test_without_isa_property
@@ -55,7 +55,7 @@ test_run(
 )
 
 # The cross-built copy of a program must wait for exactly the unit tests of the program it copies (cli/BUCK: `zig_exe_target_test(same_tests_as = ...)`).
-# Planted: `hello_zig` is for the triple it is expected to be (the triple check passes), but waits for its own tests and not for those of `//cli:buildrules`,
+# Faulty: `hello_zig` is for the triple it is expected to be (the triple check passes), but waits for its own tests and not for those of `//cli:buildrules`,
 # so the rule must refuse, and for that reason (the message names the unit tests). Building it by name on the platform it is compatible with must FAIL
 # in analysis:
 #

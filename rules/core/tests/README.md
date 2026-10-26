@@ -21,7 +21,7 @@ did not, so a check that refuses everything is red too).
 What a tool prints cannot be recorded that way. The process tests run the built tool with an empty environment in a directory of their own and read the exit status and
 the whole message on stderr (`proc.expectRefusal`: the status, every fragment, and nothing on stdout). `gate` and `kpin` are tested through their entry points in the same way.
 
-Refusals only a graph shows are planted in `ci/negative/BUCK` and held red by `buck2 bxl //ci:completeness.bxl:check` (`ci/negative.bzl`, `CASES`): a dependency of the wrong
+Refusals only a graph shows are faulty in `ci/negative/BUCK` and held red by `buck2 bxl //ci:completeness.bxl:check` (`ci/negative.bzl`, `CASES`): a dependency of the wrong
 kind for a Zig, C/C++ and Node rule (Buck2 refuses it before the rule runs), a coverage target with no test, and a cross-built program that waits for other tests. The same
 list asserts the Mojo coverage fixture that has no test.
 

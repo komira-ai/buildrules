@@ -3,7 +3,7 @@
 //! errors and read most messages by their first words; these are the ones they leave to a prefix or do not reach, and each reads the whole sentence and the exit status,
 //! and requires that nothing was written (no marker, no status file, nothing on stdout).
 //!
-//! Mutant (one per row): remove the check, or the `return` of its message, and the row's case goes red.
+//! Variant (one per row): remove the check, or the `return` of its message, and the row's case goes red.
 
 const std = @import("std");
 const kit = @import("testkit.zig");
