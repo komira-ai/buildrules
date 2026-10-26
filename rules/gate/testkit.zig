@@ -135,7 +135,9 @@ pub fn runGate(alloc: std.mem.Allocator, cwd: []const u8, argv: []const []const 
             std.os.environ = z[0..env.len];
         }
         // PWD names the test's directory, as a shell's would.
-        supervise.plat = .{ .exec = fixture };
+        // The supervisor's clock starts as one that cannot pass any limit: a verdict never depends on how long a
+        // machine takes. A test that needs a limit to pass sets a manual clock (`useClock`) in `setup`.
+        supervise.plat = .{ .exec = fixture, .now_ms = frozenClock };
         if (opts.setup) |f| f();
         posix.exit(gate.entry(a, argv));
     }
@@ -226,6 +228,12 @@ fn markSurvived() void {
 }
 
 // ---- the manual clock and the events that stand in for waiting -------------
+
+/// The clock every `runGate` run starts with: always the start of the run, so no limit passes however slowly the
+/// run goes, and no reading is counted (unlike `manualClock`).
+fn frozenClock() ?u64 {
+    return 0;
+}
 
 /// The readings `manualClock` returns, one per call; after the last it keeps
 /// returning the last (moved on by `manualSleep`).
@@ -516,6 +524,7 @@ fn hold(mib: u64, paced: bool, survivor: bool) noreturn {
 ///   exit N             exits N
 ///   signal N           kills itself with signal N
 ///   held [N]          stays until released (`release_at`) or killed, exits N
+///   clock              prints `clock N`, N the supervisor's clock reading, exits 0
 ///   hog MiB [PACED]    says "hog touches MiB", touches MiB of memory (PACED
 ///                      1: one MiB per released byte, `pace_per_tick`), says
 ///                      "hog holds MiB", holds them until released or killed,
@@ -560,6 +569,11 @@ fn behave(a: std.mem.Allocator, name: []const u8, args: []const []const u8, env:
     if (std.mem.eql(u8, name, "held")) {
         holdWait();
         posix.exit(@intCast(num(arg(args, 1), 0)));
+    }
+    if (std.mem.eql(u8, name, "clock")) {
+        // The clock the supervisor of this run reads (this process is forked from it, so it has the same one).
+        say("clock {d}\n", .{supervise.plat.now_ms() orelse 999});
+        posix.exit(0);
     }
     if (std.mem.eql(u8, name, "hog")) hold(num(arg(args, 1), 64), num(arg(args, 2), 0) != 0, false);
     if (std.mem.eql(u8, name, "daemon")) {

@@ -44,8 +44,12 @@ const Env = struct {
         return kit.runGate(e.a, e.dir, l.items, .{ .env = env, .setup = setup });
     }
 
+    /// The verdict the last run wrote, read once: the file is removed, so a run that writes none (it died, or a
+    /// defect skipped the write) cannot be mistaken for the earlier run's verdict. A missing file is an error.
     fn status(e: *Env) ![]const u8 {
-        return kit.readFile(e.a, e.p("status"));
+        const text = try kit.readFile(e.a, e.p("status"));
+        try std.fs.cwd().deleteFile(e.p("status"));
+        return text;
     }
 };
 
@@ -95,11 +99,12 @@ fn timeoutSetup() void {
 }
 
 // A 5 s limit that the run does not reach: the readings stop at 4999, and the
-// run is released at the third.
+// run is released at the third, once the command has said it runs (its pid is
+// written first), so a slow start of the command moves neither reading.
 const inside_clock = [_]u64{ 0, 4999 };
 
 fn insideSetup() void {
-    kit.useClock(&inside_clock, 0);
+    kit.useClock(&inside_clock, 1);
     kit.release_at = 3;
 }
 
@@ -126,8 +131,34 @@ test "S4 results: ok, fail <n>, and timeout <n> with the whole group gone; each 
     try kit.expectKilled(r, try kit.pidsFrom(e.a, f, 2));
     // Inside its limit (the clock reads 4999 of 5000 and the run ends by
     // itself at the third reading), a run is ok.
-    r = try e.stepWith(&.{ "--limit-s", "5" }, &.{"x/held"}, &no_scratch, insideSetup);
+    r = try e.stepWith(&.{ "--limit-s", "5" }, &.{ "x/pid", e.p("s4.inside.pid"), "held" }, &no_scratch, insideSetup);
+    try std.testing.expectEqual(@as(u8, 0), r.status);
     try std.testing.expectEqualStrings("ok\n", try e.status());
+}
+
+// The verdict file is read once. Defect caught: a run that writes no status
+// (here a clock that cannot be read, exit 2) read as the verdict of the run
+// before it in the same directory.
+test "S4 verdict oracle: a run that writes no status leaves none to read after an earlier run's" {
+    const e = try Env.init();
+    defer e.deinit();
+    var r = try e.step(&.{ "--limit-s", "30" }, &.{ "x/exit", "3" }, &no_scratch);
+    try std.testing.expectEqual(@as(u8, 0), r.status);
+    try std.testing.expectEqualStrings("fail 3\n", try e.status());
+    r = try e.stepWith(&.{ "--limit-s", "30" }, &.{ "x/exit", "0" }, &no_scratch, useDeadClock);
+    try std.testing.expectEqual(@as(u8, 2), r.status);
+    try std.testing.expectError(error.FileNotFound, e.status());
+}
+
+// Defect caught: a run whose clock is the machine's, so that a slow machine
+// can pass a limit: the supervisor of every run starts with a clock that
+// stays at the start, and the command (forked from the supervisor) reads it.
+test "S4 default clock: a step with no clock of its own runs on one that cannot pass its limit" {
+    const e = try Env.init();
+    defer e.deinit();
+    const r = try e.step(&.{ "--limit-s", "1" }, &.{"x/clock"}, &no_scratch);
+    try std.testing.expectEqual(@as(u8, 0), r.status);
+    try std.testing.expectEqualStrings("ok\nclock 0\n", try e.status());
 }
 
 // S2, S6. Mutant: create the `-o` outputs after a success (a step's own
