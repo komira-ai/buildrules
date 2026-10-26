@@ -172,7 +172,7 @@ fn work(a: std.mem.Allocator, sub: []const u8) ![]u8 {
     return std.fs.cwd().readFileAlloc(a, p, 1 << 20);
 }
 
-const names = [_][]const u8{ "rules/pins/pins.bzl", "rules/pins/hosts.bzl", "rules/rust/pins.bzl", "rules/node/pins.bzl", "rules/coverage/pins.bzl", "rules/mopm/pins.bzl" };
+const names = [_][]const u8{ "rules/pins/pins.bzl", "rules/pins/hosts.bzl", "rules/rust/pins.bzl", "rules/node/pins.bzl", "rules/coverage/pins.bzl", "rules/mopm/pins.bzl", "rules/mopm/hosts.bzl" };
 
 fn realFiles(a: std.mem.Allocator) ![]File {
     const out = try a.alloc(File, names.len);
@@ -259,6 +259,24 @@ test "mutant: a new pin on a host that is neither github.com nor listed" {
     try expectFinding(a, m, script, &allow, "a download from downloads.example");
     const h = try with(a, files, 1, try mutate(a, files[1].text, "https://static.rust-lang.org/dist/", "https://cdn.example/dist/"));
     try expectFinding(a, h, script, &allow, "a download from cdn.example");
+}
+
+test "the host tarballs of mopm are read like the other pin tables: a download from a host that is not listed is found" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const files = try realFiles(a);
+    // The held script has its own findings; this test reads the finding of the host table only.
+    const script = "";
+    const i = files.len - 1;
+    try t.expectEqualStrings("rules/mopm/hosts.bzl", files[i].name);
+    var github: usize = 0;
+    for ((try hostsOf(a, files[i].text)).items) |h| {
+        if (std.mem.eql(u8, h, "github.com")) github += 1;
+    }
+    try t.expect(github >= 2);
+    const m = try with(a, files, i, try mutate(a, files[i].text, "https://github.com/komira-ai/mopm/releases/download/v0.0.73/mopm-0.0.73-linux-aarch64.tar.gz", "https://downloads.example/mopm-0.0.73-linux-aarch64.tar.gz"));
+    try expectFinding(a, m, script, &allow, "rules/mopm/hosts.bzl: a download from downloads.example");
 }
 
 test "a github.com release needs no entry, and a comment is never read" {

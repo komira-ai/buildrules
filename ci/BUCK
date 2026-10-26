@@ -454,6 +454,7 @@ zig_test(
         "rules/node/pins.bzl": "//rules/node:pins.bzl",
         "rules/coverage/pins.bzl": "//rules/coverage:pins.bzl",
         "rules/mopm/pins.bzl": "//rules/mopm:pins.bzl",
+        "rules/mopm/hosts.bzl": "//rules/mopm:hosts.bzl",
         "tools/held/mirror-busybox.sh": "//tools/held:mirror-busybox.sh",
         # the tests of workflow_check.zig, which this file imports, run here too
         ".github/workflows/ci.yml": "//:ci.yml",
@@ -588,7 +589,7 @@ no_shell(
     require = ["BUCK", "ci/no_shell_check.zig", "ci/no_shell_allow.tsv", "rules/zig/zig.bzl", "site/static/install.sh", "tools/held/BUCK", "examples/crates/Cargo.toml", ".github/workflows/ci.yml"],
 )
 
-# The signature of the pinned mopm (.github/workflows/mopm-pin.yml, docs/pins.md "mopm"): ci/mopm_pin.zig reads rules/mopm/pins.bzl, and verifies each pinned release's
+# The signature of the pinned mopm (.github/workflows/mopm-pin.yml, docs/pins.md "mopm"): ci/mopm_pin.zig reads rules/mopm/pins.bzl and rules/mopm/hosts.bzl, and verifies each pinned release's
 # size, sha256 and cosign signature (mopm's release workflow on main, the Actions issuer). Its unit tests run against fakes of curl and cosign; the program is not built unless they pass.
 zig_test(
     name = "mopm_pin_unit",
@@ -596,6 +597,7 @@ zig_test(
     src = "mopm_pin.zig",
     data = {
         "rules/mopm/pins.bzl": "//rules/mopm:pins.bzl",
+        "rules/mopm/hosts.bzl": "//rules/mopm:hosts.bzl",
     },
 )
 

@@ -29,7 +29,7 @@ mopm 0.0.48 is the published release, https://github.com/komira-ai/mopm/releases
 `SHA256SUMS` (downloaded and compared, 2026-10-25; the sigstore bundle of the tarball carries the same digest); it unpacks into `mopm-0.0.48-linux-x86_64/` holding `mopm` and `LICENSE`.
 
 The digest is also checked against its signer on every pull request, and not by hand: the workflow `.github/workflows/mopm-pin.yml` (the check `mopm-pin / verify`) builds `//ci:mopm_pin`,
-which reads every row of `MOPM_VERSIONS` in `rules/mopm/pins.bzl`, downloads the row's tarball and its `.sigstore.json` bundle, requires the pinned size and sha256, and runs
+which reads every row of `MOPM_VERSIONS` in `rules/mopm/pins.bzl` and every host tarball of `rules/mopm/hosts.bzl` (a row must be the file of its own version and host, and its version must be pinned in `pins.bzl`), downloads the row's tarball and its `.sigstore.json` bundle, requires the pinned size and sha256, and runs
 `cosign verify-blob` with the identity of mopm's `release.yml` on `refs/heads/main` and the GitHub Actions issuer (cosign v3.0.6 and its installer, pinned as `release.yml` pins them).
 A pin whose digest was changed to a build mopm's release did not sign, or whose release was never signed by that workflow, fails the job. `ci/mopm_pin_workflow_check.zig` holds the
 workflow to being a check that cannot be removed or softened. The branch-protection rule that requires `mopm-pin / verify` is the repository owner's setting; the workflow is the part this tree can hold.

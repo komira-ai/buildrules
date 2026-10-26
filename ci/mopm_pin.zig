@@ -107,6 +107,118 @@ pub fn parse(a: std.mem.Allocator, text: []const u8) !Table {
     return .{ .default = d, .rows = try rows.toOwnedSlice() };
 }
 
+/// The hosts rules/mopm/hosts.bzl has tarballs for, in the spelling of its keys.
+pub const hosts = [_][]const u8{ "linux-aarch64", "macos-aarch64" };
+
+fn isHost(h: []const u8) bool {
+    for (hosts) |k| {
+        if (std.mem.eql(u8, k, h)) return true;
+    }
+    return false;
+}
+
+/// The rows of `MOPM_HOST_ASSETS` in the text of rules/mopm/hosts.bzl: `{version: {host: {url, sha256, size, dir}}}`, one `Row` per version and host, whose `version` is
+/// `<version> <host>` (so a verdict names both). Comment lines are not read. As `parse`, anything that is not a complete row is an error and a table of another shape is never
+/// skipped. A row must also be the tarball of its own version and host: the host a known one, the url of release `v<version>`, its file `mopm-<version>-<...>.tar.gz`, and `dir`
+/// the file's name without `.tar.gz` (the directory the tarball unpacks into), so a row copied from another version or host is found without a download.
+pub fn parseHosts(a: std.mem.Allocator, text: []const u8) ![]const Row {
+    var rows = std.ArrayList(Row).init(a);
+    var in_table = false;
+    var version: ?[]const u8 = null;
+    var host: ?[]const u8 = null;
+    var url: ?[]const u8 = null;
+    var sha: ?[]const u8 = null;
+    var size: ?u64 = null;
+    var dir: ?[]const u8 = null;
+    var closed = false;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trimRight(u8, raw, " \r");
+        const trimmed = std.mem.trimLeft(u8, line, " ");
+        if (std.mem.startsWith(u8, trimmed, "#")) continue;
+        if (!in_table) {
+            if (std.mem.eql(u8, line, "MOPM_HOST_ASSETS = {")) in_table = true;
+            continue;
+        }
+        if (std.mem.eql(u8, line, "}")) {
+            closed = true;
+            in_table = false;
+            break;
+        }
+        if (std.mem.startsWith(u8, line, "    \"") and std.mem.endsWith(u8, line, "\": {")) {
+            if (version != null) return error.RowNotClosed;
+            version = line[5 .. line.len - 4];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "        \"") and std.mem.endsWith(u8, line, "\": {")) {
+            if (version == null) return error.RowNotOpened;
+            if (host != null) return error.RowNotClosed;
+            host = line[9 .. line.len - 4];
+            url = null;
+            sha = null;
+            size = null;
+            dir = null;
+            continue;
+        }
+        if (std.mem.eql(u8, line, "        },")) {
+            const v = version orelse return error.RowNotOpened;
+            const h = host orelse return error.RowNotOpened;
+            const row = Row{
+                .version = try std.fmt.allocPrint(a, "{s} {s}", .{ v, h }),
+                .url = url orelse return error.RowWithoutUrl,
+                .sha256 = sha orelse return error.RowWithoutSha256,
+                .size = size orelse return error.RowWithoutSize,
+            };
+            const d = dir orelse return error.RowWithoutDir;
+            if (!isHost(h)) return error.UnknownHost;
+            if (!isHex64(row.sha256)) return error.Sha256NotHex;
+            const file = baseName(row.url);
+            const want_dir = try std.fmt.allocPrint(a, "{s}.tar.gz", .{d});
+            if (!std.mem.eql(u8, file, want_dir)) return error.DirIsNotTheFile;
+            
+            const release = try std.fmt.allocPrint(a, "/v{s}/mopm-{s}-", .{ v, v });
+            if (std.mem.indexOf(u8, row.url, release) == null) return error.RowIsNotOfItsVersion;
+            try rows.append(row);
+            host = null;
+            continue;
+        }
+        if (std.mem.eql(u8, line, "    },")) {
+            if (version == null or host != null) return error.RowNotOpened;
+            version = null;
+            continue;
+        }
+        if (host == null) return error.UnreadableLine;
+        if (quoted(line, "\"url\": ")) |v| url = v;
+        if (quoted(line, "\"sha256\": ")) |v| sha = v;
+        if (quoted(line, "\"dir\": ")) |v| dir = v;
+        if (std.mem.startsWith(u8, trimmed, "\"size\": ")) {
+            const num = std.mem.trimRight(u8, trimmed["\"size\": ".len..], ",");
+            size = std.fmt.parseInt(u64, num, 10) catch return error.SizeNotANumber;
+        }
+    }
+    if (in_table or version != null or host != null or !closed) return error.TableNotClosed;
+    if (rows.items.len == 0) return error.NoRows;
+    return try rows.toOwnedSlice();
+}
+
+/// Every version rules/mopm/hosts.bzl names is a version of `MOPM_VERSIONS`: a host tarball of a release that is not pinned would be a pin nothing else vouches for.
+pub fn hostVersionsArePinned(table: Table, host_rows: []const Row) !void {
+    for (host_rows) |r| {
+        const v = r.version[0..std.mem.indexOfScalar(u8, r.version, ' ').?];
+        var found = false;
+        for (table.rows) |p| {
+            if (std.mem.eql(u8, p.version, v)) found = true;
+        }
+        if (!found) return error.HostVersionNotPinned;
+    }
+}
+
+/// `table` with the rows of the host tarballs added: every one is verified by `verifyAll` like a linux x86_64 row.
+pub fn withHosts(a: std.mem.Allocator, table: Table, host_rows: []const Row) !Table {
+    try hostVersionsArePinned(table, host_rows);
+    return .{ .default = table.default, .rows = try std.mem.concat(a, Row, &.{ table.rows, host_rows }) };
+}
+
 pub const Run = struct { code: u8, stderr: []const u8 };
 
 /// cosign could not fetch the Sigstore trusted root: a network failure, not a verdict. Only these are retried; a refusal of the signature or of the certificate is final.
@@ -523,6 +635,108 @@ test "the real pins.bzl is a table this reads, and each url is a release asset o
     const tab = try parse(a, text);
     try t.expect(tab.rows.len >= 1);
     for (tab.rows) |r| {
+        try t.expect(std.mem.startsWith(u8, r.url, url_prefix));
+        try t.expect(r.size > 0);
+    }
+}
+
+const hosts_shape =
+    \\"""docs"""
+    \\
+    \\MOPM_HOST_ASSETS = {
+    \\    "0.0.25": {
+    \\        "linux-aarch64": {
+    \\            "url": "https://github.com/komira-ai/mopm/releases/download/v0.0.25/mopm-0.0.25-linux-aarch64.tar.gz",
+    \\            "sha256": "1848ffbb6c3f3522e95c36d3d5f7d4260abb8dde2cb3c415b17ca94dc48edeac",
+    \\            "size": 11,
+    \\            "dir": "mopm-0.0.25-linux-aarch64",
+    \\        },
+    \\        # a comment between rows
+    \\        "macos-aarch64": {
+    \\            "url": "https://github.com/komira-ai/mopm/releases/download/v0.0.25/mopm-0.0.25-macos-arm64.tar.gz",
+    \\            "sha256": "2848ffbb6c3f3522e95c36d3d5f7d4260abb8dde2cb3c415b17ca94dc48edeac",
+    \\            "size": 12,
+    \\            "dir": "mopm-0.0.25-macos-arm64",
+    \\        },
+    \\    },
+    \\}
+;
+
+fn hostsReplaced(a: std.mem.Allocator, from: []const u8, to: []const u8) ![]u8 {
+    const i = std.mem.indexOf(u8, hosts_shape, from) orelse return error.EditDidNotApply;
+    return std.mem.concat(a, u8, &.{ hosts_shape[0..i], to, hosts_shape[i + from.len ..] });
+}
+
+fn expectHostsError(a: std.mem.Allocator, text: []const u8, want: anyerror) !void {
+    try t.expectError(want, parseHosts(a, text));
+}
+
+test "the host table is read: a row per version and host, named by both" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const rows = try parseHosts(ar.allocator(), hosts_shape);
+    try t.expectEqual(@as(usize, 2), rows.len);
+    try t.expectEqualStrings("0.0.25 linux-aarch64", rows[0].version);
+    try t.expectEqual(@as(u64, 11), rows[0].size);
+    try t.expectEqualStrings("0.0.25 macos-aarch64", rows[1].version);
+    try t.expect(std.mem.endsWith(u8, rows[1].url, "mopm-0.0.25-macos-arm64.tar.gz"));
+}
+
+test "a bad row of the host table is an error, not a pass" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    try expectHostsError(a, "MOPM_HOST_ASSETS = {\n}\n", error.NoRows);
+    try expectHostsError(a, "", error.TableNotClosed);
+    try expectHostsError(a, try hostsReplaced(a, "1848ffbb6c3f3522e95c36d3d5f7d4260abb8dde2cb3c415b17ca94dc48edeac", "1848"), error.Sha256NotHex);
+    try expectHostsError(a, try hostsReplaced(a, "            \"size\": 11,\n", ""), error.RowWithoutSize);
+    try expectHostsError(a, try hostsReplaced(a, "            \"size\": 11,\n", "            \"size\": eleven,\n"), error.SizeNotANumber);
+    try expectHostsError(a, try hostsReplaced(a, "            \"dir\": \"mopm-0.0.25-linux-aarch64\",\n", ""), error.RowWithoutDir);
+    try expectHostsError(a, try hostsReplaced(a, "\"linux-aarch64\": {", "\"linux-riscv\": {"), error.UnknownHost);
+    // a row copied from another host: the file is the macOS one, the directory the linux one
+    try expectHostsError(a, try hostsReplaced(a, "mopm-0.0.25-linux-aarch64.tar.gz", "mopm-0.0.25-macos-arm64.tar.gz"), error.DirIsNotTheFile);
+    // a row of another release: the url is under v0.0.24
+    try expectHostsError(a, try hostsReplaced(a, "download/v0.0.25/mopm-0.0.25-linux-aarch64", "download/v0.0.24/mopm-0.0.25-linux-aarch64"), error.RowIsNotOfItsVersion);
+    // a version row left open
+    try expectHostsError(a, try hostsReplaced(a, "        },\n        # a comment", "        # a comment"), error.RowNotClosed);
+    try expectHostsError(a, try hostsReplaced(a, "    },\n}", "}"), error.TableNotClosed);
+}
+
+test "a host tarball is verified like any pinned row, and its release must be pinned" {
+    var c: Case = undefined;
+    try setup(&c);
+    defer teardown(&c);
+    const a = c.arena.allocator();
+    // a host row whose bytes differ from the pin fails before cosign is asked; a good one verifies
+    var host_row = c.row;
+    host_row.version = "1.2.3 linux-aarch64";
+    c.row = host_row;
+    try t.expect((try verdict(&c)) == null);
+    c.fake.bodies.items[0] = "PRETEND MOPM TARBALL";
+    try expectReason(try verdict(&c), "mopm 1.2.3 linux-aarch64: the sha256 of the download is");
+    // the version of a host row is a pinned version
+    const pinned = [_]Row{try goodRow(a)};
+    const table = Table{ .default = "1.2.3", .rows = &pinned };
+    const ok_rows = [_]Row{host_row};
+    const merged = try withHosts(a, table, &ok_rows);
+    try t.expectEqual(@as(usize, 2), merged.rows.len);
+    var other = host_row;
+    other.version = "9.9.9 linux-aarch64";
+    const bad_rows = [_]Row{other};
+    try t.expectError(error.HostVersionNotPinned, withHosts(a, table, &bad_rows));
+}
+
+test "the real hosts.bzl is a table this reads, every release in it is pinned, and each url is a release asset of mopm" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const w = try std.process.getEnvVarOwned(a, "BUILDRULES_TEST_WORK");
+    const pins_text = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ w, "rules/mopm/pins.bzl" }), 1 << 20);
+    const text = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ w, "rules/mopm/hosts.bzl" }), 1 << 20);
+    const rows = try parseHosts(a, text);
+    try t.expect(rows.len >= 2);
+    _ = try withHosts(a, try parse(a, pins_text), rows);
+    for (rows) |r| {
         try t.expect(std.mem.startsWith(u8, r.url, url_prefix));
         try t.expect(r.size > 0);
     }
