@@ -38,7 +38,7 @@ rules/gate/testkit.zig	shell-word	2
 rules/gate/util_test.zig	busybox	8
 rules/kpin/BUCK	busybox	2
 rules/kpin/pins_test.zig	busybox	4
-rules/mojo/BUCK	busybox	10
+rules/mojo/BUCK	busybox	11
 rules/mojo/toolchain.bzl	busybox	1
 rules/mopm/toolchain.bzl	busybox	4
 rules/node/BUCK	busybox	2

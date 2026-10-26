@@ -445,7 +445,7 @@ fn sleepOneSecond() void {
     _ = linux.nanosleep(&ts, null);
 }
 
-fn checkSignal(alloc: std.mem.Allocator, pid: i32) void {
+fn actOnSignal(alloc: std.mem.Allocator, pid: i32) void {
     const s = caught.load(.seq_cst);
     if (s == 0) return;
     proc_tree.killTree(alloc, pid);
@@ -458,6 +458,28 @@ fn treeTicks(alloc: std.mem.Allocator, pid: i32) ?i64 {
     const members = (proc_tree.select(alloc, procs, pid) catch return null) orelse return null;
     return proc_tree.cpu(procs, members);
 }
+
+/// The real clock and process table behind `proc_tree.watchLoop`.
+const RealWorld = struct {
+    loop_state: *std.heap.ArenaAllocator,
+    pid: i32,
+    status: *?u32,
+
+    pub fn sleep(self: *RealWorld) void {
+        _ = self.loop_state.reset(.retain_capacity);
+        sleepOneSecond();
+    }
+    pub fn checkSignal(self: *RealWorld) void {
+        actOnSignal(self.loop_state.allocator(), self.pid);
+    }
+    pub fn exited(self: *RealWorld) bool {
+        self.status.* = reaped(self.pid);
+        return self.status.* != null;
+    }
+    pub fn ticks(self: *RealWorld) ?i64 {
+        return treeTicks(self.loop_state.allocator(), self.pid);
+    }
+};
 
 fn runWatched(o: compile_args.Options, mojo: []const u8, argv: Argv, envp: Envp, subcmd: []const u8) u8 {
     var loop_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -487,14 +509,9 @@ fn runWatched(o: compile_args.Options, mojo: []const u8, argv: Argv, envp: Envp,
 
     var status: ?u32 = reaped(pid);
     var watch = proc_tree.Watch.init(o.idle_secs, o.sample_secs, treeTicks(loop, pid) orelse 0);
-    while (status == null) {
-        _ = loop_state.reset(.retain_capacity);
-        sleepOneSecond();
-        checkSignal(loop, pid);
-        status = reaped(pid);
-        if (status != null) break;
-        const ticks = treeTicks(loop, pid) orelse continue;
-        if (watch.tick(ticks)) {
+    if (status == null) {
+        var env = RealWorld{ .loop_state = &loop_state, .pid = pid, .status = &status };
+        if (proc_tree.watchLoop(&env, &watch) == .killed) {
             proc_tree.killTree(loop, pid);
             _ = posix.waitpid(pid, 0);
             std.debug.print("mojo-watchdog: killed deadlocked compiler after {d}s of zero process-tree CPU (mojo {s}, output {s}); the action is safe to retry. Knobs: watchdog_idle_secs / watchdog_sample_secs of the Mojo toolchain.\n", .{ watch.idleSecs(), subcmd, o.output });
