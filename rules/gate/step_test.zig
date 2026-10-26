@@ -103,7 +103,7 @@ fn insideSetup() void {
     kit.release_at = 3;
 }
 
-// S4. Mutant: record a timeout as `fail` (the group is killed either way), or
+// S4. Defect caught: a timeout recorded as `fail` (the group is killed either way), or
 // act at 1999 or not at all (the logged kill is at another reading, or the
 // clock guard ends the run).
 test "S4 results: ok, fail <n>, and timeout <n> with the whole group gone; each with the log's tail" {

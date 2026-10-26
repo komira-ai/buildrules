@@ -120,7 +120,7 @@ test "M3 cap: a hog over its cap is killed (137), the banner first, then the MEM
 // before it could print "hog holds". The run must read the same as when the
 // hog is quick. Defect caught: a test (or a supervisor) that only works when
 // the hog has finished growing before the first reading over the cap.
-// Mutants: those of the test above.
+// Defects caught: those of the test above.
 test "M3 cap: a hog killed while its pages are still being touched reads the same" {
     try capKillsHog(true);
 }
@@ -171,7 +171,7 @@ fn tableAtCap(alloc: std.mem.Allocator) ?proctab.Table {
     return t;
 }
 
-// M3: strictly over. Mutant: `>=` (a test exactly at its cap is killed). The
+// M3: strictly over. Defect caught: `>=` (a test exactly at its cap is killed). The
 // test at its cap is released after three readings, all of them at the cap,
 // so it has been looked at three times and not killed; the one a KiB over is
 // killed at its first.
@@ -285,7 +285,7 @@ fn frozen() void {
     kit.useClock(&frozen_clock, 0);
 }
 
-// D2. Mutant: wait for the limit before returning the status (the clock is
+// D2. Defect caught: waiting for the limit before returning the status (the clock is
 // frozen, so the limit never comes: the run ends by the clock guard, status
 // 251).
 test "D2 prompt exit: exit 7 under a 30 s limit is the run's status, and the limit has not fired" {
@@ -337,7 +337,7 @@ fn sparingKill(pid: sys.pid_t, sig: u8) void {
 // reading a millisecond before, at the one that is the grace after.
 const d4_clock = [_]u64{ 0, 1000, 1000 + supervise.deadline_grace_ms - 1, 1000 + supervise.deadline_grace_ms };
 
-// D4. Mutant: omit the group-kill fallback (the clock stays at its last
+// D4. Defect caught: no group-kill fallback (the clock stays at its last
 // reading until the clock guard ends the run, status 251), or take it at
 // the limit or a millisecond early (the group kill is logged at the wrong
 // reading).
@@ -503,7 +503,7 @@ fn blindSelf() [2]i64 {
 // The scan for survivors looks, sleeps `survivor_poll_ms` on the fake sleeper
 // (which moves the clock), and gives up when `survivor_wait_ms` has passed on
 // that clock: so it sleeps exactly wait / poll times, however long the real
-// host takes. Mutants: a wait of another length, or a sleep of another
+// host takes. Defects caught: a wait of another length, or a sleep of another
 // length between looks (the sleeps read back from the fake sleeper differ).
 test "C1 coverage limit: a survivor of the kill and a blind /proc are each refused" {
     const e = try Env.init();
