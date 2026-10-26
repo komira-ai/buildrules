@@ -78,8 +78,8 @@ zig_exe_target_test(name = "linux_aarch64_is_aarch64_linux_musl", exe = ":unpack
 
 zig_exe_target_test(name = "macos_aarch64_is_aarch64_macos", exe = ":unpack_macos_aarch64", expect = "aarch64-macos", same_tests_as = ":unpack", visibility = ["PUBLIC"])
 
-# The built program on the real pinned archives, against busybox's extraction of the same bytes (src/real_test.zig), and how fast it reads the real xz tarball against
-# busybox's (src/xz_speed_test.zig). They run the executable, so they are tests of it and not behind it: the program does not wait for them.
+# The built program on the real pinned archives, against busybox's extraction of the same bytes (src/real_test.zig), and that its xz path accepts the real tarball and refuses a cut copy
+# (src/xz_decode_test.zig). They run the executable, so they are tests of it and not behind it: the program does not wait for them.
 _REAL_DATA = {
     "zig.tar.xz": "buildrules//rules/pins:zig_linux_x86_64.tar.xz",
     "actionlint.tar.gz": "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
@@ -102,7 +102,7 @@ _REAL_DATA = {
         },
         visibility = ["//ci:"],
     )
-    for name in ["real", "xz_speed"]
+    for name in ["real", "xz_decode"]
 ]
 
 # The pins of the program are the programs this tree builds, for each host (src/pins.zig, rules/pins/bootstrap.bzl): //ci builds this. A change to the source that does

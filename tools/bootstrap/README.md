@@ -35,7 +35,7 @@ are zstd-compressed tars, which `unpack` does not read, and the two copies hold 
 ## Tests that run the built program
 
 `real_test.zig` runs the built `unpack` on the pinned zig tarball (against the zig distribution the build unpacks today), the pinned actionlint tarball (against busybox), and a conda package.
-`xz_speed_test.zig` times the real xz tarball against busybox's `xzcat`. `pin_check_test.zig` holds the pins to the built programs (docs/pins.md, "unpack").
+`xz_decode_test.zig` checks that the xz path accepts the real tarball and refuses a copy cut off after its first megabyte (no test here asserts elapsed time). `pin_check_test.zig` holds the pins to the built programs (docs/pins.md, "unpack").
 
 ## Publishing
 
