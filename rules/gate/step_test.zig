@@ -115,6 +115,8 @@ test "S4 results: ok, fail <n>, and timeout <n> with the whole group gone; each 
     r = try e.step(&.{ "--limit-s", "30", "--infra-exit", "124" }, &.{ "x/exit", "3" }, &no_scratch);
     try std.testing.expectEqual(@as(u8, 0), r.status);
     try std.testing.expectEqualStrings("fail 3\n", try e.status());
+    // The step's clock is a manual one (timeoutSetup): it waits for the command to have said it
+    // runs (both pids written), so the limit passes at the same reading on any machine.
     const f = e.p("s4.pids");
     r = try e.stepWith(&.{ "--limit-s", "2", "--infra-exit", "143" }, &.{ "x/spawnwait", f }, &no_scratch, timeoutSetup);
     try std.testing.expectEqual(@as(u8, 0), r.status);

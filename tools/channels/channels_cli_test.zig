@@ -163,7 +163,6 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
     defer arena.deinit();
     const a = arena.allocator();
     try h.enterWork(a);
-    try h.watchdog(300);
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const w = World{ .a = a, .tool = try h.toolPath(a, "CHANNELS"), .root = try h.tmpPath(a, &tmp) };

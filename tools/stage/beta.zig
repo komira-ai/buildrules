@@ -221,7 +221,7 @@ fn runRetrying(a: std.mem.Allocator, io: Io, o: Options, cwd: []const u8, argv: 
     var left = o.download_retries;
     while (r.code != 0 and left > 0 and isDownloadFlake(r.stderr)) : (left -= 1) {
         io_mod.say("beta {s}: a pinned download failed ({d} retries left); waiting {d} ms\n{s}\n", .{ o.lang, left, wait_ms, io_mod.tail(r.stderr, 6) });
-        if (wait_ms > 0) std.Thread.sleep(wait_ms * std.time.ns_per_ms);
+        if (wait_ms > 0) io.sleep(wait_ms);
         wait_ms *= 2;
         // The first retry asks the same host again (a throttle ends); from the second on the pins are fetched from their mirrors
         // (`mirror_map`, rules/core/url_map.bzl).
@@ -445,6 +445,9 @@ const Fake = struct {
     rules: []Rule,
     calls: std.ArrayList([]const u8) = .empty,
     cwds: std.ArrayList([]const u8) = .empty,
+    /// Every wait the code under test asked for, in order (milliseconds). Nothing really waits.
+    sleep_log: [8]u64 = undefined,
+    sleep_n: usize = 0,
 
     const File = struct {
         path: []const u8,
@@ -484,7 +487,17 @@ const Fake = struct {
     }
 
     fn io(self: *Fake) Io {
-        return .{ .ctx = self, .run_fn = runCmd };
+        return .{ .ctx = self, .run_fn = runCmd, .sleep_fn = sleepCmd };
+    }
+
+    fn sleepCmd(ctx: *anyopaque, ms: u64) void {
+        const self: *Fake = @ptrCast(@alignCast(ctx));
+        self.sleep_log[self.sleep_n] = ms;
+        self.sleep_n += 1;
+    }
+
+    fn waited(self: *const Fake) []const u64 {
+        return self.sleep_log[0..self.sleep_n];
     }
 
     fn count(self: *const Fake, needle: []const u8) usize {
@@ -531,7 +544,7 @@ const Env = struct {
     }
 
     fn opts(self: Env, exec: Exec) Options {
-        return .{ .lang = "demo", .root = self.root, .work = self.work, .origin = "https://example.invalid/r", .commit = "c" ** 40, .buck2 = "/bin/buck2", .buildrules = "/bin/buildrules", .exec = exec, .retry_delay_ms = 0 };
+        return .{ .lang = "demo", .root = self.root, .work = self.work, .origin = "https://example.invalid/r", .commit = "c" ** 40, .buck2 = "/bin/buck2", .buildrules = "/bin/buildrules", .exec = exec };
     }
 };
 
@@ -609,8 +622,29 @@ test "a build that failed only because a pinned download timed out is made again
     try t.expectEqual(@as(?bool, true), r.deterministic);
     // 2 failed + 4 good ones (the step's build, the expect's, the first hash, the second directory's)
     try t.expectEqual(@as(usize, 6), fake.count("build --console simple"));
+    // two retries waited the default delay, then twice it: read from the fake sleeper, never measured
+    try t.expectEqualSlices(u64, &.{ 20_000, 40_000 }, fake.waited());
     // the first retry asks the same host, the second goes to the mirrors
     try t.expectEqual(@as(usize, 1), fake.count("buildrules.url_map=https://github.com/komira-ai/buildrules/releases/download/mirror-busybox-1.35.0/=https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/"));
+}
+
+test "a retry delay of zero makes the build again with no wait at all" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = try Env.make(a, demo_steps);
+    defer env.tmp.cleanup();
+    var rules = [_]Fake.Rule{
+        .{ .needle = "init" },
+        .{ .needle = "build --console simple", .out = failOut(flake_stderr) },
+    };
+    var fake = Fake{ .a = a, .rules = &rules };
+    var o = env.opts(.local);
+    o.retry_delay_ms = 0;
+    try t.expectError(error.StepFailed, run(a, fake.io(), o));
+    // still 1 + download_retries tries, and nothing waited
+    try t.expectEqual(@as(usize, 4), fake.count("build --console simple"));
+    try t.expectEqual(@as(usize, 0), fake.waited().len);
 }
 
 test "a download that keeps failing is red after the retries, and a compile or hash failure is not made again" {
@@ -629,6 +663,8 @@ test "a download that keeps failing is red after the retries, and a compile or h
     try t.expectError(error.StepFailed, run(a, fake.io(), env.opts(.local)));
     try t.expectEqual(@as(usize, 4), fake.count("build --console simple"));
     try t.expectEqual(@as(usize, 2), fake.count("buildrules.url_map="));
+    // one wait before each retry, each twice the one before
+    try t.expectEqualSlices(u64, &.{ 20_000, 40_000, 80_000 }, fake.waited());
 
     // a compile failure: one try
     var env2 = try Env.make(a, demo_steps);
@@ -640,6 +676,7 @@ test "a download that keeps failing is red after the retries, and a compile or h
     var fake2 = Fake{ .a = a, .rules = &rules2 };
     try t.expectError(error.StepFailed, run(a, fake2.io(), env2.opts(.local)));
     try t.expectEqual(@as(usize, 1), fake2.count("build --console simple"));
+    try t.expectEqual(@as(usize, 0), fake2.waited().len);
 
     // a test failure whose output mentions a timeout: one try (the message names no download)
     var env3 = try Env.make(a, demo_steps);
@@ -745,6 +782,7 @@ test "a sync step that failed only because a pinned download timed out is run ag
     try t.expectEqual(Outcome.passed, r.outcome);
     // 2 failed + 1 good
     try t.expectEqual(@as(usize, 3), fake.count("/bin/buildrules mojo sync"));
+    try t.expectEqualSlices(u64, &.{ 20_000, 40_000 }, fake.waited());
     // the CLI takes no `-c`, so every try is the same argv and no mirror flag is passed to it
     for (fake.calls.items) |c| {
         if (std.mem.indexOf(u8, c, "mojo sync") != null) try t.expectEqualStrings("/bin/buildrules mojo sync", c);
@@ -783,6 +821,7 @@ test "a sync step that keeps timing out is red after the retries, and a wrong ha
     var fake = Fake{ .a = a, .rules = &rules };
     try t.expectError(error.StepFailed, run(a, fake.io(), env.opts(.local)));
     try t.expectEqual(@as(usize, 4), fake.count("/bin/buildrules mojo sync"));
+    try t.expectEqualSlices(u64, &.{ 20_000, 40_000, 80_000 }, fake.waited());
 }
 
 test "an output that depends on the directory it was built in is red: the second build is in another directory" {

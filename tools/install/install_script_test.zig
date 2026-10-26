@@ -121,17 +121,6 @@ fn runProc(a: Allocator, argv: []const []const u8, env: *const std.process.EnvMa
     return .{ .code = code, .text = try std.mem.concat(a, u8, &.{ so.items, se.items }) };
 }
 
-fn watchdog(seconds: u64) !void {
-    const t = try std.Thread.spawn(.{}, struct {
-        fn run(s: u64) void {
-            std.time.sleep(s * std.time.ns_per_s);
-            std.debug.print("install_script_test: still running after {d} s, giving up\n", .{s});
-            std.process.exit(3);
-        }
-    }.run, .{seconds});
-    t.detach();
-}
-
 // ---- a loopback stand-in for GitHub releases ------------------------------------------------------------------------------------------------------------
 
 /// GET /latest redirects to /tag/v<newest directory name under root>; GET /download/v<version>/<file> serves root/<version>/<file>; GET /tag/* is an
@@ -734,7 +723,6 @@ test "install.sh against fake releases, and the planted defects are caught" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try watchdog(1500);
 
     const fx = try Fx.init(a);
     defer fx.stop();

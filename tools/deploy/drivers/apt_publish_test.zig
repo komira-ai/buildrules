@@ -232,7 +232,6 @@ test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every pla
     defer arena.deinit();
     const a = arena.allocator();
     try h.enterWork(a);
-    try h.watchdog(600);
     const t = Tools{
         .apt = try h.toolPath(a, "APT_PUBLISH"),
         .aws = try h.toolPath(a, "FAKE_AWS"),

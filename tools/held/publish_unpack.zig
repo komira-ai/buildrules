@@ -419,6 +419,11 @@ const Stdout = struct {
     }
 };
 
+/// The run id for a clock reading in milliseconds: the reading in decimal, written into `buf`; "0" if it does not fit. The reading is a parameter so a test passes a fixed one.
+pub fn runIdAt(buf: []u8, now_ms: i64) []const u8 {
+    return std.fmt.bufPrint(buf, "{d}", .{now_ms}) catch "0";
+}
+
 pub fn main() u8 {
     const a = std.heap.smp_allocator;
     const args = std.process.argsAlloc(a) catch return 2;
@@ -434,7 +439,7 @@ pub fn main() u8 {
     var unused: u8 = 0;
     var id_buf: [32]u8 = undefined;
     var o2 = o;
-    o2.run_id = std.fmt.bufPrint(&id_buf, "{d}", .{std.time.milliTimestamp()}) catch "0";
+    o2.run_id = runIdAt(&id_buf, std.time.milliTimestamp());
     var env = std.process.getEnvMap(a) catch return 2;
     defer env.deinit();
     var real = RealRunner{ .gh = o2.gh, .env = &env };

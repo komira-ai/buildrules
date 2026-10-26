@@ -38,7 +38,7 @@ rules/gate/testkit.zig	shell-word	2
 rules/gate/util_test.zig	busybox	8
 rules/kpin/BUCK	busybox	2
 rules/kpin/pins_test.zig	busybox	4
-rules/mojo/BUCK	busybox	10
+rules/mojo/BUCK	busybox	11
 rules/mojo/toolchain.bzl	busybox	1
 rules/mopm/toolchain.bzl	busybox	4
 rules/node/BUCK	busybox	2
@@ -84,7 +84,6 @@ site/tools/inline.ts	heredoc	1
 tools/bootstrap/BUCK	busybox	1
 tools/bootstrap/src/real.zig	busybox	1
 tools/bootstrap/src/real_test.zig	busybox	2
-tools/bootstrap/src/xz_speed_test.zig	busybox	3
 tools/channels/BUCK	busybox	3
 tools/deploy/BUCK	busybox	7
 tools/release/BUCK	busybox	3

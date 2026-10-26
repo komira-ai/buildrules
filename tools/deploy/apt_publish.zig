@@ -298,7 +298,7 @@ fn cmdIndex(a: Allocator, args: []const []const u8) !void {
     const out = need(flags, "--out");
     const debs_dir = need(flags, "--debs");
     const pool_dir = one(flags, "--pool-dir") orelse "pool/buildrules";
-    const date = if (one(flags, "--date")) |d| d else try std.fmt.allocPrint(a, "{d}", .{std.time.timestamp()});
+    const date = try state.dateArg(a, one(flags, "--date"), std.time.timestamp());
     const etags_in = try std.fs.path.join(a, &.{ current, state.etags_file });
     if (!exists(etags_in)) die("{s} is missing: run `read` first", .{etags_in});
 

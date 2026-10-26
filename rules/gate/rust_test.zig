@@ -5,6 +5,7 @@
 const std = @import("std");
 const kit = @import("testkit.zig");
 const util = @import("util.zig");
+const supervise = @import("supervise.zig");
 
 const Env = struct {
     arena: std.heap.ArenaAllocator,
@@ -128,13 +129,8 @@ test "R4-R6 refusals: empty list, a failing list, a failing run, ignored tests, 
     }
 }
 
-fn alarmSetup() void {
-    kit.useReadyClock(1000);
-}
-
-// R7. Mutant: check NO VERDICT after the status check (137 and 142 would
-// read GATED TEST FAILED), or never send the alarm at the limit (the clock
-// guard ends the run, status 251).
+// R7. Catches: NO VERDICT checked after the status check (137 and 142 would
+// read GATED TEST FAILED), or the alarm never sent at the limit.
 test "R7 NO VERDICT: SIGKILL (137) in either run, and the timeout's SIGALRM (142)" {
     const e = try Env.init();
     defer e.deinit();
@@ -145,12 +141,27 @@ test "R7 NO VERDICT: SIGKILL (137) in either run, and the timeout's SIGALRM (142
     const r2 = try e.run("rust_killed", "30");
     try std.testing.expectEqual(@as(u8, 137), r2.status);
     try std.testing.expect(contains(r2.err, "NO VERDICT: the tests of //r:t was killed by SIGKILL (exit 137).\n"));
-    // The harness hangs; the clock reads 0 until it has said it is running
-    // (the listing run before it never does), then 1000, the limit "01".
-    const r3 = try e.runWith("rust_hangs", "01", alarmSetup);
+    // The hang: the manual clock reads 0 until the harness reports (by
+    // creating hang_started) that it is running its tests, then 1000 ms, the
+    // limit of `--timeout-s 01`. The listing run never creates the file, so
+    // the clock stays at 0 for it. The clock does not count readings: how
+    // many the supervisor takes before the harness starts depends on the
+    // machine, and nothing here measures or waits on time.
+    const r3 = try e.runWith("rust_hangs", "01", useHangClock);
     try std.testing.expectEqual(@as(u8, 142), r3.status);
     try std.testing.expectEqualStrings(rule ++ "NO VERDICT: the tests of //r:t timed out after 01s (exit 142).\n  A hang is not the test's failure; find what it waits on, or raise `test_timeout_s`.\n", r3.err);
+    try std.testing.expect(kit.exists(try std.fmt.allocPrint(e.a, "{s}/hang_started", .{e.dir})));
     try std.testing.expect(!kit.exists(e.marker()));
+}
+
+/// 0 until the hanging harness has started, then exactly the 1000 ms limit.
+fn hangClock() ?u64 {
+    std.fs.cwd().access("hang_started", .{}) catch return 0;
+    return 1000;
+}
+
+fn useHangClock() void {
+    supervise.plat.now_ms = hangClock;
 }
 
 test "summary parsing follows the shell's sed expression" {

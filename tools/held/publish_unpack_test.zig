@@ -683,6 +683,18 @@ test "a build that leaves the tree with changes is refused in a dry run and in -
     }
 }
 
+test "the run id is the clock reading in decimal, so two readings give two ids, and a buffer too small gives 0" {
+    var b1: [32]u8 = undefined;
+    var b2: [32]u8 = undefined;
+    const first = pub_.runIdAt(&b1, 1760000000000);
+    const second = pub_.runIdAt(&b2, 1760000000001);
+    try t.expectEqualStrings("1760000000000", first);
+    try t.expectEqualStrings("1760000000001", second);
+    try t.expect(!std.mem.eql(u8, first, second));
+    var tiny: [3]u8 = undefined;
+    try t.expectEqualStrings("0", pub_.runIdAt(&tiny, 1760000000000));
+}
+
 test "each run downloads into a directory of its own, so a second run meets no file of the first" {
     var w = try World.init(null);
     defer w.deinit();
