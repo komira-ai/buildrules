@@ -15,15 +15,34 @@ LINUX_X86_64 = ["buildrules//platforms:linux", "buildrules//platforms:x86_64"]
 LINUX_AARCH64 = ["buildrules//platforms:linux", "buildrules//platforms:aarch64"]
 MACOS_AARCH64 = ["buildrules//platforms:macos", "buildrules//platforms:aarch64"]
 
-_IS_LINUX_AARCH64 = "buildrules//platforms:is_linux_aarch64"
-_IS_MACOS_AARCH64 = "buildrules//platforms:is_macos_aarch64"
+# A target platform states its OS and CPU in this package's constraint values, in the prelude's (a repository that does not know buildrules has only those), or in
+# both. platforms/BUCK has three config settings per (OS, CPU) pair, and a `select` that chooses by the host has a branch for each of the three.
+_VOCABULARIES = ["is_", "is_prelude_", "is_both_"]
+
+def os_cpu_keys(os_cpu):
+    """The three config settings of an (OS, CPU) pair (`linux_x86_64`, `linux_aarch64`, `macos_aarch64`): the platform that states it in this package's constraint
+    values, in the prelude's, or in both. A platform matches the first, the second, or all three (the third is the more specific, so the `select` is not ambiguous)."""
+    return ["buildrules//platforms:" + v + os_cpu for v in _VOCABULARIES]
+
+def by_os_cpu(branches):
+    """A `select` over (OS, CPU) pairs: `branches` maps `linux_x86_64`, `linux_aarch64`, `macos_aarch64` or `DEFAULT` to a value; a pair is chosen by whichever
+    vocabulary the target platform states it in (`os_cpu_keys`), and a platform that states none of them takes `DEFAULT`."""
+    m = {}
+    for k, v in branches.items():
+        if k == "DEFAULT":
+            m[k] = v
+        else:
+            for key in os_cpu_keys(k):
+                m[key] = v
+    return select(m)
 
 def by_host(linux_x86_64, linux_aarch64, macos_aarch64):
     """A `select` over the OS and the CPU of the configuration it is resolved in: linux aarch64 and macOS on Apple silicon have their own value, every other
-    platform (linux x86_64 at any ISA level, macOS on Intel) has `linux_x86_64`, the value of every platform before the other hosts existed."""
-    return select({
-        _IS_LINUX_AARCH64: linux_aarch64,
-        _IS_MACOS_AARCH64: macos_aarch64,
+    platform (linux x86_64 at any ISA level, macOS on Intel, a platform that states neither vocabulary) has `linux_x86_64`, the value of every platform before the
+    other hosts existed."""
+    return by_os_cpu({
+        "linux_aarch64": linux_aarch64,
+        "macos_aarch64": macos_aarch64,
         "DEFAULT": linux_x86_64,
     })
 

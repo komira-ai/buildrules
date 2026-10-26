@@ -1,0 +1,56 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+# Target platforms that state their OS and CPU in the prelude's constraint values alone (what a repository that does not know buildrules has), in this package's
+# and the prelude's both, and in neither. ci/subdirs.bzl configures a package with a graph per conda subdir for each and holds the graph that was chosen (rules/mojo/subdirs.bzl).
+# Not built: a platform is configuration, and they are only target platforms of that analysis.
+
+platform(
+    name = "prelude_linux_x86_64",
+    constraint_values = ["prelude//os/constraints:linux", "prelude//cpu/constraints:x86_64"],
+    visibility = ["//ci/..."],
+)
+
+platform(
+    name = "prelude_linux_aarch64",
+    constraint_values = ["prelude//os/constraints:linux", "prelude//cpu/constraints:arm64"],
+    visibility = ["//ci/..."],
+)
+
+platform(
+    name = "prelude_macos_aarch64",
+    constraint_values = ["prelude//os/constraints:macos", "prelude//cpu/constraints:arm64"],
+    visibility = ["//ci/..."],
+)
+
+platform(
+    name = "prelude_macos_x86_64",
+    constraint_values = ["prelude//os/constraints:macos", "prelude//cpu/constraints:x86_64"],
+    visibility = ["//ci/..."],
+)
+
+platform(
+    name = "both_linux_x86_64",
+    constraint_values = ["buildrules//platforms:linux", "buildrules//platforms:x86_64", "prelude//os/constraints:linux", "prelude//cpu/constraints:x86_64"],
+    visibility = ["//ci/..."],
+)
+
+platform(
+    name = "both_linux_aarch64",
+    constraint_values = ["buildrules//platforms:linux", "buildrules//platforms:aarch64", "prelude//os/constraints:linux", "prelude//cpu/constraints:arm64"],
+    visibility = ["//ci/..."],
+)
+
+platform(
+    name = "both_macos_aarch64",
+    constraint_values = ["buildrules//platforms:macos", "buildrules//platforms:aarch64", "prelude//os/constraints:macos", "prelude//cpu/constraints:arm64"],
+    visibility = ["//ci/..."],
+)
+
+# Neither vocabulary: no constraint value at all.
+platform(
+    name = "neither",
+    constraint_values = [],
+    visibility = ["//ci/..."],
+)
+
+scrub_files()

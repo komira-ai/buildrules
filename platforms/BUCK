@@ -35,11 +35,29 @@ platform(
     visibility = ["PUBLIC"],
 )
 
-# A platform that matches a conda subdir with an own unit graph (rules/mojo/subdirs.bzl). The config settings are the keys of the `select`s that
-# choose the graph, the toolchain and the `.conda` directory of a Mojo package; an ISA-level platform (linux_x86_64_v3, ...) is linux x86_64 and matches too.
-config_setting(name = "is_linux_x86_64", constraint_values = [":linux", ":x86_64"], visibility = ["PUBLIC"])
-config_setting(name = "is_linux_aarch64", constraint_values = [":linux", ":aarch64"], visibility = ["PUBLIC"])
-config_setting(name = "is_macos_aarch64", constraint_values = [":macos", ":aarch64"], visibility = ["PUBLIC"])
+# The OS and the CPU of a target platform are read in two vocabularies: this package's own constraint values (`:linux`, `:aarch64`, ...), and the prelude's
+# (`prelude//os/constraints:linux`, `prelude//cpu/constraints:arm64`, ...), which a repository that does not know buildrules puts on its platforms. Each
+# (OS, CPU) pair therefore has three config settings, and every `select` that chooses by the host lists all three with the same value (rules/core/platform.bzl,
+# `by_os_cpu`):
+#
+#   is_<os>_<cpu>          this package's two values
+#   is_prelude_<os>_<cpu>  the prelude's two values
+#   is_both_<os>_<cpu>     all four: a platform that carries both vocabularies matches the three, and this one is the more specific, so Buck2 does not see an
+#                          ambiguous `select`.
+#
+# A platform that carries neither vocabulary (or one value of one and one of the other) matches none and takes the `DEFAULT`. An ISA-level platform
+# (linux_x86_64_v3, ...) is linux x86_64 and matches too.
+_PRELUDE_OS = {"linux": "prelude//os/constraints:linux", "macos": "prelude//os/constraints:macos"}
+_PRELUDE_CPU = {"x86_64": "prelude//cpu/constraints:x86_64", "aarch64": "prelude//cpu/constraints:arm64"}
+
+[
+    [
+        config_setting(name = "is_" + os + "_" + cpu, constraint_values = [":" + os, ":" + cpu], visibility = ["PUBLIC"]),
+        config_setting(name = "is_prelude_" + os + "_" + cpu, constraint_values = [_PRELUDE_OS[os], _PRELUDE_CPU[cpu]], visibility = ["PUBLIC"]),
+        config_setting(name = "is_both_" + os + "_" + cpu, constraint_values = [":" + os, ":" + cpu, _PRELUDE_OS[os], _PRELUDE_CPU[cpu]], visibility = ["PUBLIC"]),
+    ]
+    for os, cpu in [("linux", "x86_64"), ("linux", "aarch64"), ("macos", "aarch64")]
+]
 
 # macOS on Intel: no subdir of mopm's has a unit graph for it, so a Mojo package built for it is refused at analysis (ci/negative).
 platform(
@@ -79,12 +97,25 @@ constraint_setting(name = "exec_isa", visibility = ["PUBLIC"])
 ]
 
 # An Arm level is also linux aarch64: the key of the `select` of a test's execution platform that is the more specific for a platform at that level (rules/mojo/exec.bzl).
+# One per vocabulary and one for both, as `is_linux_aarch64` has, so that each is the more specific than the `is_*linux_aarch64` it refines.
 [
-    config_setting(
-        name = "linux_aarch64_isa_is_" + v["id"],
-        constraint_values = [":linux", ":aarch64", ":isa_" + v["id"]],
-        visibility = ["PUBLIC"],
-    )
+    [
+        config_setting(
+            name = "linux_aarch64_isa_is_" + v["id"],
+            constraint_values = [":linux", ":aarch64", ":isa_" + v["id"]],
+            visibility = ["PUBLIC"],
+        ),
+        config_setting(
+            name = "prelude_linux_aarch64_isa_is_" + v["id"],
+            constraint_values = [_PRELUDE_OS["linux"], _PRELUDE_CPU["aarch64"], ":isa_" + v["id"]],
+            visibility = ["PUBLIC"],
+        ),
+        config_setting(
+            name = "both_linux_aarch64_isa_is_" + v["id"],
+            constraint_values = [":linux", ":aarch64", _PRELUDE_OS["linux"], _PRELUDE_CPU["aarch64"], ":isa_" + v["id"]],
+            visibility = ["PUBLIC"],
+        ),
+    ]
     for v in ISA_LEVELS.values()
     if v["family"] == "aarch64"
 ]

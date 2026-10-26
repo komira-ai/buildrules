@@ -41,6 +41,8 @@ and the `exec_isa` constraint of its level in its configuration; only an action 
 `exec_compatible_with` (test runs) is placed on it, and the farm then requires a worker that reports at least the level.
 """
 
+load("//rules/core:platform.bzl", "by_os_cpu")
+
 def _mode():
     mode = read_config("buildrules_re", "mode", "remote").strip()
     if mode not in ("remote", "local"):
@@ -85,8 +87,8 @@ def linux_arm64_gate():
     target requires a constraint no platform has, so it is incompatible, `--skip-incompatible-targets` lists it as skipped, and it is never built (no empty success)."""
     if linux_arm64_enabled():
         return []
-    return select({
-        "buildrules//platforms:is_linux_aarch64": [_LINUX_ARM64_WAITING],
+    return by_os_cpu({
+        "linux_aarch64": [_LINUX_ARM64_WAITING],
         "DEFAULT": [],
     })
 

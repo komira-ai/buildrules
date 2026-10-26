@@ -5,17 +5,29 @@
 differs by subdir in its toolchain (the compiler and the zig that link for the platform), in the `.conda` of every registry package it names, and in the
 keys; the units, their sources and their dependencies are the same, and `mojo_package` refuses a table where they are not.
 
-`mojo_package` chooses the graph by the target platform: its constraint on the OS and on the CPU (`buildrules//platforms:is_<os>_<cpu>`). A table with the
+`mojo_package` chooses the graph by the target platform: its constraint on the OS and on the CPU, in either vocabulary. A platform states them in this package's own
+constraint values (`buildrules//platforms:linux`, `:aarch64`, ...), in the prelude's (`prelude//os/constraints:linux`, `prelude//cpu/constraints:arm64`, ...), which a
+repository that does not know buildrules has, or in both; `SUBDIR_PAIRS` names the (OS, CPU) pair of each subdir and rules/core/platform.bzl (`os_cpu_keys`) turns it into
+the branches of a `select` for each vocabulary (platforms/BUCK has the config settings). A platform that states neither is in no subdir. A table with the
 graph of linux-64 alone is built for every platform exactly as it was before, so a repository that has not synced again keeps building. A table with several
 graphs is built for the platforms of its subdirs, and for any other platform the package's `:check` fails analysis and says so.
 """
 
-# conda subdir -> the config setting that a target platform of that OS and CPU matches.
-SUBDIR_SETTINGS = {
-    "linux-64": "buildrules//platforms:is_linux_x86_64",
-    "linux-aarch64": "buildrules//platforms:is_linux_aarch64",
-    "osx-arm64": "buildrules//platforms:is_macos_aarch64",
+load("//rules/core:platform.bzl", "os_cpu_keys")
+
+# conda subdir -> the (OS, CPU) pair that a target platform of that subdir states (`os_cpu_keys` has its config settings, one for each vocabulary).
+SUBDIR_PAIRS = {
+    "linux-64": "linux_x86_64",
+    "linux-aarch64": "linux_aarch64",
+    "osx-arm64": "macos_aarch64",
 }
+
+# conda subdir -> the config settings that a target platform of that OS and CPU matches.
+SUBDIR_SETTINGS = {sd: os_cpu_keys(pair) for sd, pair in SUBDIR_PAIRS.items()}
+
+def _branches(subdirs, value):
+    """`{config setting: value(subdir)}` for the subdirs, every vocabulary of each."""
+    return {key: value(sd) for sd in subdirs for key in SUBDIR_SETTINGS[sd]}
 
 # The subdir whose graph is `GRAPH`, and the toolchains `toolchains//:mojo_<v>` (the others are `mojo_<v>_<subdir with _>`).
 BASE_SUBDIR = "linux-64"
@@ -49,7 +61,7 @@ def by_subdir(graphs, values):
     that matches none gets the linux-64 value: `unsupported_platform` is what refuses it, in the package's `:check`, which every target waits for."""
     if len(graphs) == 1:
         return values[BASE_SUBDIR]
-    branches = {SUBDIR_SETTINGS[sd]: values[sd] for sd in sorted(graphs.keys())}
+    branches = _branches(sorted(graphs.keys()), lambda sd: values[sd])
     branches["DEFAULT"] = values[BASE_SUBDIR]
     return select(branches)
 
@@ -60,12 +72,10 @@ def unsupported_branches(graphs, who):
     if len(graphs) == 1:
         arm = ("{}: buildrules.mojo.lock.bzl holds a unit graph for linux-64 only, and this target platform is Arm ({{}}). The toolchain of linux-64 is x86_64 and " +
                "would run on an Arm host. The package needs `buildrules mojo sync` with a mopm that records the graph of that platform's subdir.").format(who)
-        return {
-            SUBDIR_SETTINGS["linux-aarch64"]: arm.format("linux-aarch64"),
-            SUBDIR_SETTINGS["osx-arm64"]: arm.format("osx-arm64"),
-            "DEFAULT": "",
-        }
-    branches = {SUBDIR_SETTINGS[sd]: "" for sd in have}
+        branches = _branches(["linux-aarch64", "osx-arm64"], arm.format)
+        branches["DEFAULT"] = ""
+        return branches
+    branches = _branches(have, lambda sd: "")
     branches["DEFAULT"] = ("{}: buildrules.mojo.lock.bzl has no unit graph for this target platform. It holds graphs for {}, chosen by the OS and the CPU of " +
                            "the target platform (linux-64: linux x86_64, linux-aarch64: linux aarch64, osx-arm64: macOS aarch64), and this platform is none " +
                            "of those. Build for one of them; mopm plans for no other subdir.").format(who, ", ".join(have))

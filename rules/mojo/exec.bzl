@@ -19,7 +19,7 @@ x86_64 for such a platform, and `unsupported_exec()`, which `:check` is given, m
 
 load("//rules:isa.bzl", "ISA_LEVELS", "isa_exec", "test_levels")
 load("//rules:platforms.bzl", "exec_platform_missing", "exec_platform_ready", "linux_arm64_gate")
-load("//rules/core:platform.bzl", "LINUX_AARCH64", "LINUX_X86_64", "MACOS_AARCH64", "by_host")
+load("//rules/core:platform.bzl", "LINUX_AARCH64", "LINUX_X86_64", "MACOS_AARCH64", "by_host", "os_cpu_keys")
 
 def unit_exec():
     """`exec_compatible_with` of a rule that runs the Mojo compiler or what it built, for the target platform: its host when a farm has workers of it, else linux x86_64."""
@@ -41,9 +41,12 @@ def test_exec():
             m["buildrules//platforms:isa_is_" + row["id"]] = want
         else:
             host = LINUX_AARCH64 if exec_platform_ready("linux-aarch64") else LINUX_X86_64
-            m["buildrules//platforms:linux_aarch64_isa_is_" + row["id"]] = host + want
-    m["buildrules//platforms:is_linux_aarch64"] = LINUX_AARCH64 if exec_platform_ready("linux-aarch64") else LINUX_X86_64
-    m["buildrules//platforms:is_macos_aarch64"] = MACOS_AARCH64 if exec_platform_ready("macos-aarch64") else LINUX_X86_64
+            for prefix in ["", "prelude_", "both_"]:
+                m["buildrules//platforms:" + prefix + "linux_aarch64_isa_is_" + row["id"]] = host + want
+    for key in os_cpu_keys("linux_aarch64"):
+        m[key] = LINUX_AARCH64 if exec_platform_ready("linux-aarch64") else LINUX_X86_64
+    for key in os_cpu_keys("macos_aarch64"):
+        m[key] = MACOS_AARCH64 if exec_platform_ready("macos-aarch64") else LINUX_X86_64
     m["DEFAULT"] = []
     return select(m)
 

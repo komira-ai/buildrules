@@ -47,9 +47,16 @@ X86_EXEC = "buildrules//platforms:linux_x86_64"
 X86_TEST_EXEC = {"buildrules//platforms:linux_x86_64_v3": "buildrules//platforms:exec_x86_64_v3"}
 
 # (target platform, the key of its farm's workers, its execution platform, the zig target of the tools it runs, the pinned mopm tarball's name, the build of check it runs).
+# A target platform that states its OS and CPU in the prelude's constraint values, or in both vocabularies (ci/platforms), is the same host as the one of this package's
+# own values and is held to the same: the same placement, tools, skip and refusals.
+_HOST_ROWS = [
+    ("linux_aarch64", "linux_aarch64_properties", "buildrules//platforms:linux_aarch64", "aarch64-linux-musl", "linux-aarch64", "check_linux_aarch64"),
+    ("macos_aarch64", "macos_aarch64_properties", "buildrules//platforms:macos_aarch64", "aarch64-macos", "macos-aarch64", "check_macos_arm64"),
+]
 HOSTS = [
-    ("buildrules//platforms:linux_aarch64", "linux_aarch64_properties", "buildrules//platforms:linux_aarch64", "aarch64-linux-musl", "linux-aarch64", "check_linux_aarch64"),
-    ("buildrules//platforms:macos_aarch64", "macos_aarch64_properties", "buildrules//platforms:macos_aarch64", "aarch64-macos", "macos-aarch64", "check_macos_arm64"),
+    (target, row[1], row[2], row[3], row[4], row[5])
+    for row in _HOST_ROWS
+    for target in ["buildrules//platforms:" + row[0], "//ci/platforms:prelude_" + row[0], "//ci/platforms:both_" + row[0]]
 ]
 
 # The rules whose actions run the compiler or what it built.
@@ -200,7 +207,7 @@ def exec_problems(ctx, state):
     # What each Arm platform is in this state: placed (its workers are registered), refused (no key), or skipped (the linux arm64 switch is off).
     registered = _registered(ctx)
     for platform, key, exec, zig, mopm, check in HOSTS:
-        is_linux = platform == "buildrules//platforms:linux_aarch64"
+        is_linux = platform.endswith("linux_aarch64")
         if is_linux and not arm64_on:
             how = "skipped"
         elif keys:
@@ -224,7 +231,7 @@ def exec_problems(ctx, state):
         if why:
             problems.append("{} (the lock holds linux-64 only) does not analyse on {}: {}".format(LINUX_64_ONLY_PACKAGE, platform, why))
     for platform, key, exec, zig, mopm, check in HOSTS:
-        if platform == "buildrules//platforms:linux_aarch64" and not arm64_on:
+        if platform.endswith("linux_aarch64") and not arm64_on:
             continue
         if keys:
             # The table of the package holds the graph of linux-64 alone: an Arm platform refuses it, saying what to do (the toolchain of linux-64 is x86_64). With no worker
