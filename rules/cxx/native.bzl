@@ -44,7 +44,7 @@ def _impl(ctx):
         info.append(ValidationInfo(validations = [ValidationSpec(name = ctx.label.name, validation_result = result)]))
     else:
         # The check as an output of the target instead of a validation: its failure is then a failed action of this target, which a bxl can count
-        # (ci/planted, ci/negative.bzl); the failure of a validation ends the whole command.
+        # (ci/faulty, ci/negative.bzl); the failure of a validation ends the whole command.
         info.append(DefaultInfo(default_output = out, other_outputs = [result], sub_targets = {"symbols": [DefaultInfo(default_output = symbols)]}))
     return info
 
@@ -56,7 +56,7 @@ native_archive = rule(
         "lib": attrs.dep(),
         "needs": attrs.list(attrs.dep(), default = []),
         "soname": attrs.string(),
-        # False: the check is an output of the target and not a validation (the cases of ci/planted build it so).
+        # False: the check is an output of the target and not a validation (the cases of ci/faulty build it so).
         "validate": attrs.bool(default = True),
         "_tool": attrs.exec_dep(default = "buildrules//rules/cxx:archive_check", providers = [RunInfo]),
     },

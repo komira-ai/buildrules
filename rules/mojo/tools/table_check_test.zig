@@ -1,5 +1,5 @@
 //! Unit tests of table_check.zig: the comparison of a committed table's graph with mopm's output. (The run of mopm itself is the farm build of
-//! every package's `:table`; the planted differences of the examples' tables are in the PR that added it.)
+//! every package's `:table`; the faulty differences of the examples' tables are in the PR that added it.)
 const std = @import("std");
 const T = @import("table_check.zig");
 const t = std.testing;

@@ -1,5 +1,5 @@
 //! The strict lock reader, the table reader and the row-to-lock binding of `autopin`. The lock and the table are
-//! untrusted: every test plants one defect and names what must refuse it.
+//! untrusted: every test injects one defect and names what must refuse it.
 
 const std = @import("std");
 const lock = @import("autopin_lock.zig");

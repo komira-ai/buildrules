@@ -1,5 +1,5 @@
 //! The advisory workflow (.github/workflows/advisories.yml) is what its header says it is: a daily scan of the lockfiles that REPORTS and never gates. A pure
-//! function of the text, so each rule is tested against planted text as well as against the real file (the zig_test's `data`, under BUILDRULES_TEST_WORK). The
+//! function of the text, so each rule is tested against faulty text as well as against the real file (the zig_test's `data`, under BUILDRULES_TEST_WORK). The
 //! rules shared with the other workflows (actions pinned by commit, no `continue-on-error`, no inline expansion of `vars.` or `github.event.` in a `run:`) are
 //! workflow_check.zig's; the job parser is release_check.zig's.
 //!
@@ -272,9 +272,9 @@ fn real(a: std.mem.Allocator) !Real {
     return .{ .wf = try work(a, ".github/workflows/advisories.yml"), .pins = try work(a, "rules/pins/pins.bzl") };
 }
 
-/// `text` with the first `from` replaced by `to`; fails the test if `from` is absent (a mutant that changes nothing proves nothing).
+/// `text` with the first `from` replaced by `to`; fails the test if `from` is absent (a variant that changes nothing proves nothing).
 fn mutate(a: std.mem.Allocator, text: []const u8, from: []const u8, to: []const u8) ![]u8 {
-    const i = std.mem.indexOf(u8, text, from) orelse return error.MutantDidNotApply;
+    const i = std.mem.indexOf(u8, text, from) orelse return error.DefectDidNotApply;
     return std.mem.concat(a, u8, &.{ text[0..i], to, text[i + from.len ..] });
 }
 
@@ -285,10 +285,10 @@ fn expectFinding(a: std.mem.Allocator, wf: []const u8, pins: []const u8, needle:
     }
     std.debug.print("advisories.yml: expected a finding with `{s}`, got {d}:\n", .{ needle, f.items.len });
     for (f.items) |m| std.debug.print("  {s}\n", .{m});
-    return error.MutantSurvived;
+    return error.DefectSurvived;
 }
 
-fn expectMutant(a: std.mem.Allocator, r: Real, from: []const u8, to: []const u8, needle: []const u8) !void {
+fn expectDefect(a: std.mem.Allocator, r: Real, from: []const u8, to: []const u8, needle: []const u8) !void {
     try expectFinding(a, try mutate(a, r.wf, from, to), r.pins, needle);
 }
 
@@ -341,147 +341,147 @@ test "the file the farm fetched for the pins.bzl row hashes to the sha256 the wo
     try t.expect(!std.mem.eql(u8, want, &sha256Hex(other)));
 }
 
-test "mutant: a trigger a change can start" {
+test "defect: a trigger a change can start" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectMutant(a, r, "on:\n  schedule:", "on:\n  pull_request:\n  schedule:", "triggers are not exactly");
-    try expectMutant(a, r, "on:\n  schedule:", "on:\n  pull_request:\n  schedule:", "pull request trigger");
-    try expectMutant(a, r, "on:\n  schedule:", "on:\n  push:\n  schedule:", "triggers are not exactly");
-    try expectMutant(a, r, "on:\n  schedule:", "on:\n  workflow_run:\n  schedule:", "triggers are not exactly");
-    try expectMutant(a, r, "  workflow_dispatch:\n", "", "triggers are not exactly");
-    try expectMutant(a, r, "  schedule:\n    - cron: \"17 5 * * *\"\n", "", "triggers are not exactly");
-    try expectMutant(a, r, "on:\n  schedule:\n    - cron: \"17 5 * * *\"\n  workflow_dispatch:", "on:\n  schedule:\n  workflow_dispatch:", "no `schedule` with a cron");
-    try expectMutant(a, r, "\"17 5 * * *\"", "\"17 5 * * 1\"", "is not daily");
-    try expectMutant(a, r, "\"17 5 * * *\"", "\"17 5 1 * *\"", "is not daily");
-    try expectMutant(a, r, "\"17 5 * * *\"", "\"17 5 * *\"", "is not daily");
+    try expectDefect(a, r, "on:\n  schedule:", "on:\n  pull_request:\n  schedule:", "triggers are not exactly");
+    try expectDefect(a, r, "on:\n  schedule:", "on:\n  pull_request:\n  schedule:", "pull request trigger");
+    try expectDefect(a, r, "on:\n  schedule:", "on:\n  push:\n  schedule:", "triggers are not exactly");
+    try expectDefect(a, r, "on:\n  schedule:", "on:\n  workflow_run:\n  schedule:", "triggers are not exactly");
+    try expectDefect(a, r, "  workflow_dispatch:\n", "", "triggers are not exactly");
+    try expectDefect(a, r, "  schedule:\n    - cron: \"17 5 * * *\"\n", "", "triggers are not exactly");
+    try expectDefect(a, r, "on:\n  schedule:\n    - cron: \"17 5 * * *\"\n  workflow_dispatch:", "on:\n  schedule:\n  workflow_dispatch:", "no `schedule` with a cron");
+    try expectDefect(a, r, "\"17 5 * * *\"", "\"17 5 * * 1\"", "is not daily");
+    try expectDefect(a, r, "\"17 5 * * *\"", "\"17 5 1 * *\"", "is not daily");
+    try expectDefect(a, r, "\"17 5 * * *\"", "\"17 5 * *\"", "is not daily");
 }
 
-test "mutant: the token is on the report step alone" {
+test "defect: the token is on the report step alone" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
     // GH_TOKEN moved to job level (the original shape), added there, added to the workflow, or put on the scan step.
-    try expectMutant(a, r, "    steps:\n", "    env:\n      GH_TOKEN: ${{ github.token }}\n    steps:\n", "is set 2 times");
-    try expectMutant(a, r, "    steps:\n      - uses", "    env:\n      GH_TOKEN: ${{ github.token }}\n    steps:\n      - uses", "is set 2 times");
-    try expectMutant(a, r, "        env:\n          GH_TOKEN: ${{ github.token }}\n", "", "is not set in a step env");
-    try expectMutant(a, r, "name: advisories\n", "name: advisories\nenv:\n  GH_TOKEN: ${{ github.token }}\n", "is set 2 times");
-    try expectMutant(a, r, "    steps:\n", "    env:\n      \"GH_TOKEN\": ${{ github.token }}\n    steps:\n", "in any spelling");
-    try expectMutant(a, r, "    steps:\n", "    env:\n      'GH_TOKEN': ${{ github.token }}\n    steps:\n", "in any spelling");
-    try expectMutant(a, r, "    steps:\n", "    env: { \"GH_TOKEN\" : ${{ github.token }} }\n    steps:\n", "in any spelling");
-    try expectMutant(a, r, "      - name: Scan the lockfiles\n        run: |", "      - name: Scan the lockfiles\n        env:\n          GH_TOKEN: ${{ github.token }}\n        run: |", "is set 2 times");
+    try expectDefect(a, r, "    steps:\n", "    env:\n      GH_TOKEN: ${{ github.token }}\n    steps:\n", "is set 2 times");
+    try expectDefect(a, r, "    steps:\n      - uses", "    env:\n      GH_TOKEN: ${{ github.token }}\n    steps:\n      - uses", "is set 2 times");
+    try expectDefect(a, r, "        env:\n          GH_TOKEN: ${{ github.token }}\n", "", "is not set in a step env");
+    try expectDefect(a, r, "name: advisories\n", "name: advisories\nenv:\n  GH_TOKEN: ${{ github.token }}\n", "is set 2 times");
+    try expectDefect(a, r, "    steps:\n", "    env:\n      \"GH_TOKEN\": ${{ github.token }}\n    steps:\n", "in any spelling");
+    try expectDefect(a, r, "    steps:\n", "    env:\n      'GH_TOKEN': ${{ github.token }}\n    steps:\n", "in any spelling");
+    try expectDefect(a, r, "    steps:\n", "    env: { \"GH_TOKEN\" : ${{ github.token }} }\n    steps:\n", "in any spelling");
+    try expectDefect(a, r, "      - name: Scan the lockfiles\n        run: |", "      - name: Scan the lockfiles\n        env:\n          GH_TOKEN: ${{ github.token }}\n        run: |", "is set 2 times");
     // The token moved wholesale off the report step onto the scan step.
-    try expectMutant(a, r, "      - name: Report\n        env:\n          GH_TOKEN: ${{ github.token }}\n        run: |", "      - name: Report\n        run: |", "is not set in a step env");
+    try expectDefect(a, r, "      - name: Report\n        env:\n          GH_TOKEN: ${{ github.token }}\n        run: |", "      - name: Report\n        run: |", "is not set in a step env");
 }
 
-test "mutant: a token with more than it needs" {
+test "defect: a token with more than it needs" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectMutant(a, r, "permissions:\n  contents: read\n\nconcurrency", "permissions:\n  contents: write\n\nconcurrency", "top-level permissions are not exactly");
-    try expectMutant(a, r, "permissions:\n  contents: read\n\nconcurrency", "permissions:\n  contents: read\n  pull-requests: read\n\nconcurrency", "top-level permissions are not exactly");
-    try expectMutant(a, r, "permissions:\n  contents: read\n\nconcurrency", "permissions: write-all\n\nconcurrency", "`write-all`");
-    try expectMutant(a, r, "permissions:\n  contents: read\n\nconcurrency", "concurrency", "top-level permissions are not exactly");
-    try expectMutant(a, r, "      issues: write\n", "      issues: write\n      contents: write\n", "job `scan` permissions are not exactly");
-    try expectMutant(a, r, "      issues: write\n", "      issues: write\n      id-token: write\n", "the write permission `id-token: write`");
-    try expectMutant(a, r, "      issues: write\n", "      issues: read\n", "job `scan` permissions are not exactly");
-    try expectMutant(a, r, "      issues: write\n", "", "job `scan` permissions are not exactly");
-    try expectMutant(a, r, "    permissions:\n      contents: read\n      issues: write\n", "", "job `scan` permissions are not exactly");
-    try expectMutant(a, r, "          GH_TOKEN: ${{ github.token }}", "          GH_TOKEN: ${{ secrets.ADVISORIES_TOKEN }}", "reads a secret");
-    try expectMutant(a, r, "  scan:\n", "  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n  scan:\n", "not exactly one");
+    try expectDefect(a, r, "permissions:\n  contents: read\n\nconcurrency", "permissions:\n  contents: write\n\nconcurrency", "top-level permissions are not exactly");
+    try expectDefect(a, r, "permissions:\n  contents: read\n\nconcurrency", "permissions:\n  contents: read\n  pull-requests: read\n\nconcurrency", "top-level permissions are not exactly");
+    try expectDefect(a, r, "permissions:\n  contents: read\n\nconcurrency", "permissions: write-all\n\nconcurrency", "`write-all`");
+    try expectDefect(a, r, "permissions:\n  contents: read\n\nconcurrency", "concurrency", "top-level permissions are not exactly");
+    try expectDefect(a, r, "      issues: write\n", "      issues: write\n      contents: write\n", "job `scan` permissions are not exactly");
+    try expectDefect(a, r, "      issues: write\n", "      issues: write\n      id-token: write\n", "the write permission `id-token: write`");
+    try expectDefect(a, r, "      issues: write\n", "      issues: read\n", "job `scan` permissions are not exactly");
+    try expectDefect(a, r, "      issues: write\n", "", "job `scan` permissions are not exactly");
+    try expectDefect(a, r, "    permissions:\n      contents: read\n      issues: write\n", "", "job `scan` permissions are not exactly");
+    try expectDefect(a, r, "          GH_TOKEN: ${{ github.token }}", "          GH_TOKEN: ${{ secrets.ADVISORIES_TOKEN }}", "reads a secret");
+    try expectDefect(a, r, "  scan:\n", "  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n  scan:\n", "not exactly one");
 }
 
-test "mutant: a third-party or unpinned action" {
+test "defect: a third-party or unpinned action" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectMutant(a, r, "      - name: Report\n", "      - uses: someone/scan@3d3c42e5aac5ba805825da76410c181273ba90b1\n      - name: Report\n", "is not allowed");
-    try expectMutant(a, r, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v7", "not pinned to a full commit sha");
-    try expectMutant(a, r, "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n\n", "\n", "no `uses:` line found");
+    try expectDefect(a, r, "      - name: Report\n", "      - uses: someone/scan@3d3c42e5aac5ba805825da76410c181273ba90b1\n      - name: Report\n", "is not allowed");
+    try expectDefect(a, r, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v7", "not pinned to a full commit sha");
+    try expectDefect(a, r, "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n\n", "\n", "no `uses:` line found");
 }
 
-test "mutant: an unpinned or unverified tool" {
+test "defect: an unpinned or unverified tool" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
     const sha = pinRow(r.pins).?.sha256;
     // The workflow drifts from the table.
-    try expectMutant(a, r, "download/v2.7.0/", "download/v2.6.0/", "not the `osv_scanner` url");
-    try expectMutant(a, r, "releases/download/v2.7.0/osv-scanner_linux_amd64\n", "releases/latest/download/osv-scanner_linux_amd64\n", "not the `osv_scanner` url");
-    try expectMutant(a, r, sha, "0000000000000000000000000000000000000000000000000000000000000000", "the sha256 of the pins.bzl row");
+    try expectDefect(a, r, "download/v2.7.0/", "download/v2.6.0/", "not the `osv_scanner` url");
+    try expectDefect(a, r, "releases/download/v2.7.0/osv-scanner_linux_amd64\n", "releases/latest/download/osv-scanner_linux_amd64\n", "not the `osv_scanner` url");
+    try expectDefect(a, r, sha, "0000000000000000000000000000000000000000000000000000000000000000", "the sha256 of the pins.bzl row");
     // The table drifts from the workflow.
     try expectFinding(a, r.wf, try mutate(a, r.pins, sha, "1111111111111111111111111111111111111111111111111111111111111111"), "the sha256 of the pins.bzl row");
     try expectFinding(a, r.wf, try mutate(a, r.pins, "download/v2.7.0/", "download/v2.6.0/"), "not the `osv_scanner` url");
     try expectFinding(a, r.wf, try mutate(a, r.pins, sha, "ABC"), "not 64 lowercase hex");
     try expectFinding(a, r.wf, try mutate(a, r.pins, "\"osv_scanner\"", "\"other\""), "no `osv_scanner` row");
     // The check is weakened or gone.
-    try expectMutant(a, r, " | sha256sum --check --strict -", " | sha256sum --check -", "never checked");
-    try expectMutant(a, r, "  osv-scanner\" | sha256sum --check --strict -", "  osv-scanner\" | sha256sum --check --strict - # skipped\n          echo \"x\" | sha256sum --check --strict -", "the check is not");
+    try expectDefect(a, r, " | sha256sum --check --strict -", " | sha256sum --check -", "never checked");
+    try expectDefect(a, r, "  osv-scanner\" | sha256sum --check --strict -", "  osv-scanner\" | sha256sum --check --strict - # skipped\n          echo \"x\" | sha256sum --check --strict -", "the check is not");
     const check_line = try std.fmt.allocPrint(a, "          echo \"{s}  osv-scanner\" | sha256sum --check --strict -\n", .{sha});
-    try expectMutant(a, r, check_line, "", "never checked");
-    try expectMutant(a, r, "  osv-scanner\" | sha256sum", "  other\" | sha256sum", "the check is not");
+    try expectDefect(a, r, check_line, "", "never checked");
+    try expectDefect(a, r, "  osv-scanner\" | sha256sum", "  other\" | sha256sum", "the check is not");
     // A second download, an unnamed output, an order that runs the file before the check.
-    try expectMutant(a, r, "          chmod +x osv-scanner\n", "          chmod +x osv-scanner\n          curl --fail --output other https://example.org/x\n", "2 downloads");
-    try expectMutant(a, r, "--output osv-scanner \\", "--output scanner \\", "not written to `osv-scanner`");
-    try expectMutant(a, r, "          chmod +x osv-scanner\n", "", "missing");
-    try expectMutant(a, r, try std.mem.concat(a, u8, &.{ check_line, "          chmod +x osv-scanner\n" }), try std.mem.concat(a, u8, &.{ "          chmod +x osv-scanner\n", check_line }), "the order is not");
+    try expectDefect(a, r, "          chmod +x osv-scanner\n", "          chmod +x osv-scanner\n          curl --fail --output other https://example.org/x\n", "2 downloads");
+    try expectDefect(a, r, "--output osv-scanner \\", "--output scanner \\", "not written to `osv-scanner`");
+    try expectDefect(a, r, "          chmod +x osv-scanner\n", "", "missing");
+    try expectDefect(a, r, try std.mem.concat(a, u8, &.{ check_line, "          chmod +x osv-scanner\n" }), try std.mem.concat(a, u8, &.{ "          chmod +x osv-scanner\n", check_line }), "the order is not");
 }
 
-test "mutant: a scan that gates" {
+test "defect: a scan that gates" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectMutant(a, r, " \"$@\" || rc=$?", " \"$@\"", "does not absorb its exit code");
-    try expectMutant(a, r, "if [ \"$rc\" -gt 1 ]; then exit \"$rc\"; fi", "if [ \"$rc\" -gt 0 ]; then exit \"$rc\"; fi", "is not followed by");
-    try expectMutant(a, r, "if [ \"$rc\" -gt 1 ]; then exit \"$rc\"; fi\n", "", "is not followed by");
-    try expectMutant(a, r, "          rc=0\n", "", "`rc=0` does not precede");
-    try expectMutant(a, r, "          echo \"FOUND=$rc\" >> \"$GITHUB_ENV\"\n", "          echo \"FOUND=$rc\" >> \"$GITHUB_ENV\"\n          exit 1\n", "the only exit is the scan guard");
-    try expectMutant(a, r, "          set -euo pipefail\n          title=Advisories", "          set -euo pipefail\n          test \"$FOUND\" = 0 || exit 3\n          title=Advisories", "the only exit is the scan guard");
-    try expectMutant(a, r, "    timeout-minutes: 20\n", "    timeout-minutes: 20\n    continue-on-error: true\n", "`continue-on-error` is set to `true`");
-    try expectMutant(a, r, "      - name: Scan the lockfiles\n", "      - name: Scan the lockfiles\n        continue-on-error: true\n", "`continue-on-error` is set to `true`");
-    try expectMutant(a, r, "':(glob)**/package-lock.json' ':(glob)**/Cargo.lock'", "':(glob)**/package-lock.json'", "does not list every");
-    try expectMutant(a, r, " ':(exclude,glob)**/fixture/**'", "", "does not exclude test inputs");
-    try expectMutant(a, r, " ':(exclude,glob)**/fixture/**'", " ':(exclude,glob)**/fixture/**' ':(exclude,glob)beta/**'", "excludes the beta templates");
-    try expectMutant(a, r, "    timeout-minutes: 20\n", "    timeout-minutes: 20\n    continue-on-error: ${{ github.run_attempt }}\n", "`continue-on-error` is set to");
-    try expectMutant(a, r, "    timeout-minutes: 20\n", "    timeout-minutes: 20\n    continue-on-error: 'true'\n", "`continue-on-error` is set to");
-    try expectMutant(a, r, "    timeout-minutes: 20\n", "    timeout-minutes: 20\n    if: github.event_name == 'schedule'\n", "no `if:` on the job");
-    try expectMutant(a, r, "      - name: Scan the lockfiles\n", "      - name: Scan the lockfiles\n        if: false\n", "no `if:` on the job");
-    try expectMutant(a, r, "      - name: Report\n        env:", "      - if: always()\n        name: Report\n        env:", "no `if:` on the job");
+    try expectDefect(a, r, " \"$@\" || rc=$?", " \"$@\"", "does not absorb its exit code");
+    try expectDefect(a, r, "if [ \"$rc\" -gt 1 ]; then exit \"$rc\"; fi", "if [ \"$rc\" -gt 0 ]; then exit \"$rc\"; fi", "is not followed by");
+    try expectDefect(a, r, "if [ \"$rc\" -gt 1 ]; then exit \"$rc\"; fi\n", "", "is not followed by");
+    try expectDefect(a, r, "          rc=0\n", "", "`rc=0` does not precede");
+    try expectDefect(a, r, "          echo \"FOUND=$rc\" >> \"$GITHUB_ENV\"\n", "          echo \"FOUND=$rc\" >> \"$GITHUB_ENV\"\n          exit 1\n", "the only exit is the scan guard");
+    try expectDefect(a, r, "          set -euo pipefail\n          title=Advisories", "          set -euo pipefail\n          test \"$FOUND\" = 0 || exit 3\n          title=Advisories", "the only exit is the scan guard");
+    try expectDefect(a, r, "    timeout-minutes: 20\n", "    timeout-minutes: 20\n    continue-on-error: true\n", "`continue-on-error` is set to `true`");
+    try expectDefect(a, r, "      - name: Scan the lockfiles\n", "      - name: Scan the lockfiles\n        continue-on-error: true\n", "`continue-on-error` is set to `true`");
+    try expectDefect(a, r, "':(glob)**/package-lock.json' ':(glob)**/Cargo.lock'", "':(glob)**/package-lock.json'", "does not list every");
+    try expectDefect(a, r, " ':(exclude,glob)**/fixture/**'", "", "does not exclude test inputs");
+    try expectDefect(a, r, " ':(exclude,glob)**/fixture/**'", " ':(exclude,glob)**/fixture/**' ':(exclude,glob)beta/**'", "excludes the beta templates");
+    try expectDefect(a, r, "    timeout-minutes: 20\n", "    timeout-minutes: 20\n    continue-on-error: ${{ github.run_attempt }}\n", "`continue-on-error` is set to");
+    try expectDefect(a, r, "    timeout-minutes: 20\n", "    timeout-minutes: 20\n    continue-on-error: 'true'\n", "`continue-on-error` is set to");
+    try expectDefect(a, r, "    timeout-minutes: 20\n", "    timeout-minutes: 20\n    if: github.event_name == 'schedule'\n", "no `if:` on the job");
+    try expectDefect(a, r, "      - name: Scan the lockfiles\n", "      - name: Scan the lockfiles\n        if: false\n", "no `if:` on the job");
+    try expectDefect(a, r, "      - name: Report\n        env:", "      - if: always()\n        name: Report\n        env:", "no `if:` on the job");
 }
 
-test "mutant: a report that is not one issue" {
+test "defect: a report that is not one issue" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectMutant(a, r, "title=Advisories", "title=Findings", "missing `title=Advisories`");
-    try expectMutant(a, r, "gh issue list --state all", "gh issue list --state open", "missing `gh issue list --state all`");
-    try expectMutant(a, r, "gh issue reopen \"$number\"", "true", "missing `gh issue reopen");
-    try expectMutant(a, r, "gh issue close \"$number\"", "true", "missing `gh issue close");
-    try expectMutant(a, r, "gh issue edit \"$number\" --add-label advisory --body-file body.md", "true", "missing `gh issue edit");
-    try expectMutant(a, r, "gh issue edit \"$number\" --add-label advisory --body-file body.md", "gh issue edit \"$number\" --body-file body.md", "missing `gh issue edit");
-    try expectMutant(a, r, "gh issue create --title \"$title\" --label advisory --body-file body.md", "gh issue create --title \"$title\" --body-file body.md", "missing `gh issue create --title");
-    try expectMutant(a, r, "gh label create advisory --force ", "gh label create other --force ", "missing `gh label create advisory --force");
-    try expectMutant(a, r, "            cat body.md >> \"$GITHUB_STEP_SUMMARY\"\n", "", "missing `cat body.md >> ");
-    try expectMutant(a, r, "gh issue edit \"$number\" --add-label advisory --body-file body.md", "gh issue create --title \"$title\" --label advisory --body-file body.md", "not used exactly once");
-    try expectMutant(a, r, "gh issue create --title \"$title\" --label advisory --body-file body.md", "gh issue create --title \"$title\" --label advisory --body-file body.md; gh issue delete 1", "only `gh issue list");
-    try expectMutant(a, r, "gh label create advisory --force ", "gh label delete advisory; gh label create advisory --force ", "only `gh issue list");
-    try expectMutant(a, r, "gh issue close \"$number\" --comment", "gh pr create --title x --body y; gh issue close \"$number\" --comment", "only `gh issue list");
-    try expectMutant(a, r, "          set -euo pipefail\n          title=Advisories", "          set -euo pipefail\n          gh api -X DELETE repos/o/r\n          title=Advisories", "only `gh issue list");
-    try expectMutant(a, r, "          set -euo pipefail\n          title=Advisories", "          set -euo pipefail\n          gh workflow run ci.yml\n          title=Advisories", "only `gh issue list");
-    try expectMutant(a, r, "            gh issue create", "            gh issue create --repo x", "missing `gh issue create --title");
+    try expectDefect(a, r, "title=Advisories", "title=Findings", "missing `title=Advisories`");
+    try expectDefect(a, r, "gh issue list --state all", "gh issue list --state open", "missing `gh issue list --state all`");
+    try expectDefect(a, r, "gh issue reopen \"$number\"", "true", "missing `gh issue reopen");
+    try expectDefect(a, r, "gh issue close \"$number\"", "true", "missing `gh issue close");
+    try expectDefect(a, r, "gh issue edit \"$number\" --add-label advisory --body-file body.md", "true", "missing `gh issue edit");
+    try expectDefect(a, r, "gh issue edit \"$number\" --add-label advisory --body-file body.md", "gh issue edit \"$number\" --body-file body.md", "missing `gh issue edit");
+    try expectDefect(a, r, "gh issue create --title \"$title\" --label advisory --body-file body.md", "gh issue create --title \"$title\" --body-file body.md", "missing `gh issue create --title");
+    try expectDefect(a, r, "gh label create advisory --force ", "gh label create other --force ", "missing `gh label create advisory --force");
+    try expectDefect(a, r, "            cat body.md >> \"$GITHUB_STEP_SUMMARY\"\n", "", "missing `cat body.md >> ");
+    try expectDefect(a, r, "gh issue edit \"$number\" --add-label advisory --body-file body.md", "gh issue create --title \"$title\" --label advisory --body-file body.md", "not used exactly once");
+    try expectDefect(a, r, "gh issue create --title \"$title\" --label advisory --body-file body.md", "gh issue create --title \"$title\" --label advisory --body-file body.md; gh issue delete 1", "only `gh issue list");
+    try expectDefect(a, r, "gh label create advisory --force ", "gh label delete advisory; gh label create advisory --force ", "only `gh issue list");
+    try expectDefect(a, r, "gh issue close \"$number\" --comment", "gh pr create --title x --body y; gh issue close \"$number\" --comment", "only `gh issue list");
+    try expectDefect(a, r, "          set -euo pipefail\n          title=Advisories", "          set -euo pipefail\n          gh api -X DELETE repos/o/r\n          title=Advisories", "only `gh issue list");
+    try expectDefect(a, r, "          set -euo pipefail\n          title=Advisories", "          set -euo pipefail\n          gh workflow run ci.yml\n          title=Advisories", "only `gh issue list");
+    try expectDefect(a, r, "            gh issue create", "            gh issue create --repo x", "missing `gh issue create --title");
 }
 
-test "mutant: an inline expansion of event data" {
+test "defect: an inline expansion of event data" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectMutant(a, r, "          title=Advisories", "          echo ${{ github.event.inputs.x }}\n          title=Advisories", "expands `github.event.` inline");
+    try expectDefect(a, r, "          title=Advisories", "          echo ${{ github.event.inputs.x }}\n          title=Advisories", "expands `github.event.` inline");
 }

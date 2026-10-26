@@ -205,7 +205,7 @@ pub fn killTree(alloc: std.mem.Allocator, root: i32) void {
 const testing = std.testing;
 
 // Catches: fields counted from the first `)` (a comm holding `) (` shifts
-// every field). Mutant planted: read the fields after the first `)`.
+// every field). Defect caught: read the fields after the first `)`.
 test "/proc parse: comm with ') (' and spaces; field offsets 14-17" {
     const line = "4242 (a) (b c) d) S 17 4242 4240 0 -1 4194560 100 0 0 0 11 22 33 44 20 0 1 0 5 0 0\n";
     const p = parseStat(line) orelse return error.TestUnexpectedResult;
@@ -231,7 +231,7 @@ fn proc(pid: i32, ppid: i32, sid: i32, ticks: i64) Proc {
 }
 
 // Catches: a helper reparented away from the compiler (to init) missed,
-// so its CPU does not count and it survives the kill. Mutant planted: drop
+// so its CPU does not count and it survives the kill. Defect caught: drop
 // the session rule.
 test "tree selection: a session member reparented to 1 and a grandchild are in; others out" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -267,7 +267,7 @@ test "tree selection: pid 1 and 0 are never in the kill list" {
 }
 
 // Catches: a busy tree read as idle, or the reverse, at the 1% boundary.
-// Mutant planted: `<=` for `<`.
+// Defect caught: `<=` for `<`.
 test "idle arithmetic: delta = sample is busy, sample - 1 idle" {
     var w = Watch.init(60, 30, 0);
     try testing.expectEqual(@as(u64, 2), w.need);

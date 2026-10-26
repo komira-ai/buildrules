@@ -3,7 +3,7 @@
 //!
 //! The internal repository admits such a pull request only through its bump guard: author the release bot, exactly one changed path (the submodule's
 //! gitlink), branch bump/<submodule>-v<semver>, the new commit descends from the old, the tag v<semver> names the new commit. The good scenario checks
-//! every one of those on the calls the step made, then each test plants one defect (a mutant) and requires a refusal for that reason with no push and
+//! every one of those on the calls the step made, then each test injects one defect (a variant) and requires a refusal for that reason with no push and
 //! no pull request, so a refusal is the defect's doing. The fakes log their arguments: the token must be in no argument, only in the environment.
 const std = @import("std");
 const bump = @import("bump.zig");
@@ -470,14 +470,14 @@ test "bump-internal: the tag must name the commit, or nothing is cloned" {
         defer w.deinit();
         w.fake.tag_commit = other;
         const r = w.go();
-        try check(!r.ok and has(r.text, "the tag v1.2.3 of org/rules names " ++ other) and w.fake.untouched() and w.fake.clones() == 0, "mutant: the tag names another commit (the guard's tag_elsewhere) is refused before the clone");
+        try check(!r.ok and has(r.text, "the tag v1.2.3 of org/rules names " ++ other) and w.fake.untouched() and w.fake.clones() == 0, "defect: the tag names another commit (the guard's tag_elsewhere) is refused before the clone");
     }
     {
         const w = try World.init(a);
         defer w.deinit();
         w.fake.tag_commit = null;
         const r = w.go();
-        try check(!r.ok and has(r.text, "gh api failed") and w.fake.untouched() and w.fake.clones() == 0, "mutant: there is no tag (the guard's not_tagged) is refused before the clone");
+        try check(!r.ok and has(r.text, "gh api failed") and w.fake.untouched() and w.fake.clones() == 0, "defect: there is no tag (the guard's not_tagged) is refused before the clone");
     }
 }
 
@@ -513,14 +513,14 @@ test "bump-internal: a gitlink that is not a forward move of a gitlink is refuse
         defer w.deinit();
         w.fake.ls_tree = "100644 blob " ++ old ++ "\trules\n";
         const r = w.go();
-        try check(!r.ok and has(r.text, "is not a gitlink") and w.fake.index_entry == null and w.fake.untouched(), "mutant: the submodule is a file in the internal repository (not_a_gitlink) is refused before it is staged");
+        try check(!r.ok and has(r.text, "is not a gitlink") and w.fake.index_entry == null and w.fake.untouched(), "defect: the submodule is a file in the internal repository (not_a_gitlink) is refused before it is staged");
     }
     {
         const w = try World.init(a);
         defer w.deinit();
         w.fake.ls_tree = "";
         const r = w.go();
-        try check(!r.ok and has(r.text, "the path is not in the repository") and w.fake.untouched(), "mutant: the submodule is not in the internal repository at all is refused");
+        try check(!r.ok and has(r.text, "the path is not in the repository") and w.fake.untouched(), "defect: the submodule is not in the internal repository at all is refused");
     }
     for ([_][]const u8{ "behind", "diverged", "identical" }) |status| {
         const w = try World.init(a);
@@ -541,7 +541,7 @@ test "bump-internal: a gitlink that is not a forward move of a gitlink is refuse
         defer w.deinit();
         w.fake.commit_wrong = true;
         const r = w.go();
-        try check(!r.ok and has(r.text, "after the commit the gitlink of rules is not") and w.fake.untouched(), "mutant: the commit holds another gitlink than the one staged is refused before the push");
+        try check(!r.ok and has(r.text, "after the commit the gitlink of rules is not") and w.fake.untouched(), "defect: the commit holds another gitlink than the one staged is refused before the push");
     }
 }
 
@@ -593,7 +593,7 @@ test "bump-internal: every failing call is red, and a retry finishes what stoppe
         defer w.deinit();
         w.fake.auto_noop = true;
         const r = w.go();
-        try check(!r.ok and has(r.text, "auto-merge is not on"), "mutant: a merge call that leaves auto-merge off is caught by the check");
+        try check(!r.ok and has(r.text, "auto-merge is not on"), "defect: a merge call that leaves auto-merge off is caught by the check");
     }
     {
         const w = try World.init(a);
@@ -657,7 +657,7 @@ test "bump-internal: a token in an argument, and a work directory that is not em
         defer w.deinit();
         w.o.token = "internal-repo";
         const r = w.go();
-        try check(!r.ok and has(r.text, "with the token in its arguments") and w.fake.git_log.items.len == 0 and w.fake.untouched(), "mutant: a token that appears in an argument is refused before the command runs");
+        try check(!r.ok and has(r.text, "with the token in its arguments") and w.fake.git_log.items.len == 0 and w.fake.untouched(), "defect: a token that appears in an argument is refused before the command runs");
     }
     {
         const w = try World.init(a);
@@ -665,7 +665,7 @@ test "bump-internal: a token in an argument, and a work directory that is not em
         try w.tmp.dir.makePath("wd");
         try w.tmp.dir.writeFile(.{ .sub_path = "wd/leftover", .data = "x" });
         const r = w.go();
-        try check(!r.ok and has(r.text, "is not empty") and w.fake.clones() == 0 and w.fake.untouched(), "mutant: the work directory is not empty is refused before the clone");
+        try check(!r.ok and has(r.text, "is not empty") and w.fake.clones() == 0 and w.fake.untouched(), "defect: the work directory is not empty is refused before the clone");
     }
 }
 

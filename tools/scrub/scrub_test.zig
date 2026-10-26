@@ -1,4 +1,4 @@
-//! scrub.zig: each detector goes red on a planted defect and stays green on the text it must allow. The words that are banned are
+//! scrub.zig: each detector goes red on a known defect and stays green on the text it must allow. The words that are banned are
 //! spelled in parts, so this file does not hold them.
 const std = @import("std");
 const S = @import("scrub.zig");
@@ -27,7 +27,7 @@ fn bad(a: std.mem.Allocator, text: []const u8) !usize {
     return n;
 }
 
-test "scrub: a planted personal name is a hit, in either case, only as a word" {
+test "scrub: a faulty personal name is a hit, in either case, only as a word" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -38,7 +38,7 @@ test "scrub: a planted personal name is a hit, in either case, only as a word" {
     try t.expectEqual(@as(usize, 0), try bad(a, "radix and badiness and the admiral\n"));
 }
 
-test "scrub: a planted date before 2026-09-01 is a hit in every spelling; later dates and plain numbers are not" {
+test "scrub: a faulty date before 2026-09-01 is a hit in every spelling; later dates and plain numbers are not" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();

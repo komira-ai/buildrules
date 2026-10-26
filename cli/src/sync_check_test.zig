@@ -79,7 +79,7 @@ test "check: an edited Cargo.lock is stale, and both hashes are printed" {
     try t.expect(kit.contains(r.err, "buildrules sync"));
 }
 
-test "check: a member's Cargo.toml edited without a sync is stale (the planted-dependency case)" {
+test "check: a member's Cargo.toml edited without a sync is stale (the faulty-dependency case)" {
     const h = try synced();
     defer h.destroy();
     try h.put("crates/hello/Cargo.toml", try std.mem.concat(h.a(), u8, &.{ fx.hello_cargo, "\n[dependencies]\nitoa = \"1\"\n" }));

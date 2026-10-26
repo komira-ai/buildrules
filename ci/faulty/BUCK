@@ -10,12 +10,12 @@ load("@buildrules//rules/rust:cargo.bzl", "cargo_table_check")
 load("@buildrules//rules/rust:defs.bzl", "rust_library", "rust_test")
 load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "ZIG_CC_TARGET")
 load("@buildrules//rules/rust:toolchain.bzl", "rust_toolchain")
-load(":fixture.bzl", "planted_mojo_exe", "planted_mojo_toolchain")
+load(":fixture.bzl", "faulty_mojo_exe", "faulty_mojo_toolchain")
 
 # Bad inputs for the checks and markers of the rules. Each target below is a rule given an input its action must refuse, so its build must be red: an action
 # that wrote its output and exited 0 on a failure (a marker that exists after a failed test, a comparison that is never made) would leave the target green.
 # They are excluded from the wildcard build (ci/all.bzl), and `buck2 bxl //ci:negative.bxl:check` (a part of //ci:completeness.bxl:check) builds each,
-# requires the refusal and its reason, and requires its control, the same rule on a good input, to build (ci/negative.bzl, `planted_problems`). The checks
+# requires the refusal and its reason, and requires its control, the same rule on a good input, to build (ci/negative.bzl, `faulty_problems`). The checks
 # themselves are tested in rules/check; this holds that each rule calls them as a check.
 
 # run_check: the program prints `hello, world`. (Control: //examples/hello:hello_runs.)
@@ -63,14 +63,14 @@ cargo_table_check(
     name = "table_of_other_bytes",
     files = [":empty.txt"],
     hashes = ["0000000000000000000000000000000000000000000000000000000000000000"],
-    names = ["ci/planted/empty.txt"],
+    names = ["ci/faulty/empty.txt"],
 )
 
 cargo_table_check(
     name = "table_in_sync",
     files = [":empty.txt"],
     hashes = [EMPTY_SHA256],
-    names = ["ci/planted/empty.txt"],
+    names = ["ci/faulty/empty.txt"],
     visibility = ["//ci:"],
 )
 
@@ -106,9 +106,9 @@ rust_library(
 )
 
 # The run of a Mojo test that fails (the program exits 2), with a stand-in for the compiler. The real runs, which pass, are the tests of //ci:mojo.
-planted_mojo_exe(name = "mojo_test_exe")
+faulty_mojo_exe(name = "mojo_test_exe")
 
-planted_mojo_toolchain(name = "mojo_toolchain")
+faulty_mojo_toolchain(name = "mojo_toolchain")
 
 mojo_test_run_rule(
     name = "mojo_test_that_fails",
@@ -123,7 +123,7 @@ mojo_test_run_rule(
 native_static(
     name = "native_good",
     srcs = ["native/good.c"],
-    soname = "libplanted_good.a",
+    soname = "libfaulty_good.a",
     validate = False,
     visibility = ["//ci:"],
 )
@@ -131,21 +131,21 @@ native_static(
 native_static(
     name = "native_with_an_undefined_symbol",
     srcs = ["native/undefined.c"],
-    soname = "libplanted_undefined.a",
+    soname = "libfaulty_undefined.a",
     validate = False,
 )
 
 native_static(
     name = "native_newer_than_the_floor",
     srcs = ["native/newer_than_floor.c"],
-    soname = "libplanted_newer.a",
+    soname = "libfaulty_newer.a",
     validate = False,
 )
 
 native_static(
     name = "native_with_debug_info",
     srcs = ["native/debug_info.c"],
-    soname = "libplanted_debug.a",
+    soname = "libfaulty_debug.a",
     validate = False,
 )
 

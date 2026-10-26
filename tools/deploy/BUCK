@@ -114,7 +114,7 @@ zig_test(
     visibility = ["//ci:"],
 )
 
-# tap against the fake gh and git, with planted defects it must refuse: the pull request the tap's guard admits, monotonic, idempotent, no force-push.
+# tap against the fake gh and git, with known defects it must refuse: the pull request the tap's guard admits, monotonic, idempotent, no force-push.
 zig_test(
     name = "tap_driver",
     exec_compatible_with = LINUX_X86_64,

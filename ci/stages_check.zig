@@ -1,5 +1,5 @@
-//! The beta workflow (.github/workflows/beta.yml) is what RELEASING.md says it is. A pure function of the text, so each rule is tested against planted text
-//! (a synthetic copy of the workflow, so a mutant is red for its own rule) as well as against the real file (the zig_test's `data`). The rules shared with the
+//! The beta workflow (.github/workflows/beta.yml) is what RELEASING.md says it is. A pure function of the text, so each rule is tested against faulty text
+//! (a synthetic copy of the workflow, so a variant is red for its own rule) as well as against the real file (the zig_test's `data`). The rules shared with the
 //! other workflows (actions pinned by commit, local mode on every buck2 command, the pinned install) are workflow_check.zig's; the job parser is release_check.zig's.
 //!
 //!  - the triggers: a call from the release (`workflow_call`) and nothing else, so no pull request runs the beta: it is the beta stage of the release, after the merge; a token with read access, and `id-token: write` in the farm leg alone;
@@ -319,8 +319,8 @@ fn real(a: std.mem.Allocator) !Real {
     return .{ .wf = try work(a, ".github/workflows/beta.yml"), .ds = try work(a, "tools/buck2"), .langs = try directoryLangs(a, try work(a, "beta/check.zig")) };
 }
 
-// The planted-defect tests run on this text and not on the real beta.yml: every mutant anchors on text this file itself holds, so it cannot fail with
-// `MutantDidNotApply` because the real workflow was reworded, and each red run is the rule under test ("the synthetic workflow has no finding" first).
+// The faulty-defect tests run on this text and not on the real beta.yml: every variant anchors on text this file itself holds, so it cannot fail with
+// `DefectDidNotApply` because the real workflow was reworded, and each red run is the rule under test ("the synthetic workflow has no finding" first).
 const fixture_wf =
     \\name: beta
     \\
@@ -635,15 +635,15 @@ fn fx() Real {
 }
 
 fn mutate(a: std.mem.Allocator, wf: []const u8, from: []const u8, to: []const u8) ![]u8 {
-    const i = std.mem.indexOf(u8, wf, from) orelse return error.MutantDidNotApply;
+    const i = std.mem.indexOf(u8, wf, from) orelse return error.DefectDidNotApply;
     return std.mem.concat(a, u8, &.{ wf[0..i], to, wf[i + from.len ..] });
 }
 
 /// As `mutate`, within the job `job` (the first `from` after its header).
 fn mutateIn(a: std.mem.Allocator, wf: []const u8, job: []const u8, from: []const u8, to: []const u8) ![]u8 {
     const header = try std.fmt.allocPrint(a, "\n  {s}:\n", .{job});
-    const at = std.mem.indexOf(u8, wf, header) orelse return error.MutantDidNotApply;
-    const i = std.mem.indexOfPos(u8, wf, at, from) orelse return error.MutantDidNotApply;
+    const at = std.mem.indexOf(u8, wf, header) orelse return error.DefectDidNotApply;
+    const i = std.mem.indexOfPos(u8, wf, at, from) orelse return error.DefectDidNotApply;
     return std.mem.concat(a, u8, &.{ wf[0..i], to, wf[i + from.len ..] });
 }
 
@@ -654,7 +654,7 @@ fn expectFinding(a: std.mem.Allocator, r: Real, wf: []const u8, needle: []const 
     }
     std.debug.print("expected a finding with `{s}`, got {d}:\n", .{ needle, f.items.len });
     for (f.items) |m| std.debug.print("  {s}\n", .{m});
-    return error.MutantSurvived;
+    return error.DefectSurvived;
 }
 
 test "the real beta workflow has no findings" {
@@ -668,7 +668,7 @@ test "the real beta workflow has no findings" {
     try t.expectEqual(@as(usize, 0), f.items.len);
 }
 
-test "the synthetic workflow has no finding, so every mutant below is red for its own rule" {
+test "the synthetic workflow has no finding, so every variant below is red for its own rule" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();

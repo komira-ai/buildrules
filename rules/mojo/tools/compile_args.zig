@@ -385,7 +385,7 @@ fn withBase(comptime extra: []const []const u8, comptime tail: []const []const u
 }
 
 // Catches: a required flag read from the wrong option, or a relative
-// directory not made absolute against $PWD. Mutant: drop the abspath.
+// directory not made absolute against $PWD. Defect caught: drop the abspath.
 test "options: each flag, relative dirs made absolute against PWD" {
     var p = tryParse(withBase(&.{ "--runpath=$ORIGIN/x", "--source-root=src", "--ld-debug-output=ld/trace" }, &.{ "build", "a.mojo", "-o", "out" }));
     defer p.deinit();
@@ -402,7 +402,7 @@ test "options: each flag, relative dirs made absolute against PWD" {
     try testing.expectEqual(@as(usize, 4), o.mojo_args.len);
 }
 
-// Catches: options accepted only in one order. Mutant: require --compiler first.
+// Catches: options accepted only in one order. Defect caught: require --compiler first.
 test "options: any order" {
     var p = tryParse(&.{ "--watchdog-idle-secs=7", "--zig=z", "--link-tail=-lm", "--cc-target=t", "--compiler=/c", "--", "precompile", "-o", "o" });
     defer p.deinit();
@@ -413,7 +413,7 @@ test "options: any order" {
 }
 
 // Catches: repeated --link-tail keeping one value, or reordering them.
-// Mutant planted: keep the first --link-tail only.
+// Defect caught: keep the first --link-tail only.
 test "options: repeated --link-tail accumulates in order" {
     var p = tryParse(withBase(&.{ "--link-tail=libb.a", "--link-tail=-lc++", "--link-tail=liba.a" }, &.{ "build", "-o", "o" }));
     defer p.deinit();
@@ -450,7 +450,7 @@ fn expectRefused(args: []const []const u8, want: []const u8) !void {
 }
 
 // Catches: compiler arguments taken without the `--` separator, or an
-// unknown option passed on. Mutant: treat an unknown option as the start of
+// unknown option passed on. Defect caught: treat an unknown option as the start of
 // the compiler arguments.
 test "options: missing -- and unknown options are refused" {
     try expectRefused(&(base ++ [_][]const u8{ "build", "-o", "o" }), "expected -- before compiler arguments");
@@ -473,7 +473,7 @@ test "options: macOS flags are refused on Linux" {
 }
 
 // Catches: a run path that names a directory outside the binary's own.
-// Mutant planted: accept `$ORIGINx` (a prefix test without the slash).
+// Defect caught: accept `$ORIGINx` (a prefix test without the slash).
 test "runpath: $ORIGIN and $ORIGIN/x pass; /abs and $ORIGINx are refused" {
     try testing.expect(runpathOk("$ORIGIN"));
     try testing.expect(runpathOk("$ORIGIN/x"));
@@ -496,7 +496,7 @@ test "runpath: macOS spells $ORIGIN as @loader_path" {
 }
 
 // Catches: a malformed knob read as some number, a zero sample (a division
-// by zero), or a value past u32 wrapping. Mutant planted: accept sample 0.
+// by zero), or a value past u32 wrapping. Defect caught: accept sample 0.
 test "watchdog knobs: 0 turns it off; 5m, empty, sample 0 and 4294967296 are refused" {
     {
         var p = tryParse(withBase(&.{ "--watchdog-idle-secs=0", "--watchdog-sample-secs=1" }, &.{ "build", "-o", "o" }));
@@ -517,8 +517,8 @@ test "watchdog knobs: 0 turns it off; 5m, empty, sample 0 and 4294967296 are ref
     try testing.expectEqual(@as(u32, 4294967295), (try p.result).idle_secs);
 }
 
-// Catches: the wrong argument checked after the compiler exits. Mutant
-// planted: the first -o wins.
+// Catches: the wrong argument checked after the compiler exits. Variant
+// faulty: the first -o wins.
 test "-o: none, one, two (last wins), -o last" {
     try testing.expect(findOutput(&.{ "build", "a.mojo" }) == null);
     try testing.expectEqualStrings("x", findOutput(&.{ "build", "-o", "x" }).?);
@@ -531,7 +531,7 @@ test "-o: none, one, two (last wins), -o last" {
 }
 
 // Catches: a source prefix stripped where the compiler rejects the flag
-// (`precompile`, `doc`) or put in the wrong place. Mutant planted: insert
+// (`precompile`, `doc`) or put in the wrong place. Defect caught: insert
 // for every subcommand.
 test "strip prefix: build inserts after the subcommand; precompile and doc do not" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -560,7 +560,7 @@ test "strip prefix: build inserts after the subcommand; precompile and doc do no
 // Catches: a precompile run in the action directory (the .mojoc records the
 // staged buck-out path), its output or a dependency directory left relative
 // to a directory the compiler no longer runs in, or the package named by its
-// staged path. Mutants planted, one per build: drop the -o abspath; drop the
+// staged path. Variants faulty, one per build: drop the -o abspath; drop the
 // basename rewrite (both red here; the second also red in
 // tests//functional/mojoc_path:same_bytes).
 test "precompile with a source root: runs in the root's parent, package by basename, -o and -I absolute" {
@@ -584,7 +584,7 @@ test "precompile with a source root: runs in the root's parent, package by basen
 
 // Catches: the compiler moved for a compile that names no source root, or
 // for `build` and `doc` (their paths stay relative to the action directory).
-// Mutant planted: runDir ignores the subcommand.
+// Defect caught: runDir ignores the subcommand.
 test "runDir: null without a source root, and for build and doc" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -652,7 +652,7 @@ fn expectRefusedMacos(args: []const []const u8, want: []const u8) !void {
 
 // Catches: a macOS flag read from the wrong option, hosts not accumulated in
 // order, a relative compiler directory left relative, or the run path given
-// to dyld in its Linux spelling. Mutant planted: keep the last --macos-host only.
+// to dyld in its Linux spelling. Defect caught: keep the last --macos-host only.
 test "macOS options: each flag; hosts accumulate in order; the run path in dyld's spelling" {
     var p = tryParseMacos(macWithBase(&.{ "--macos-host=15.0-fedcba9876543210", "--runpath=$ORIGIN/../lib", "--source-root=src", "--link-tail=liba.a", "--link-tail=-lc++" }, &.{ "build", "a.mojo", "-o", "out" }));
     defer p.deinit();
@@ -681,7 +681,7 @@ test "macOS options: each flag; hosts accumulate in order; the run path in dyld'
 // Catches: a macOS precompile left in the action directory (its .mojoc
 // records the staged buck-out path), or its -o and -I made absolute against
 // something other than the action directory (MacosOptions.common dropping
-// pwd). Mutant planted: common() sets .pwd = "" (red: -o and -I lose /wd).
+// pwd). Defect caught: common() sets .pwd = "" (red: -o and -I lose /wd).
 test "macOS options: precompile with a source root runs in the root's parent, as on Linux" {
     var p = tryParseMacos(macWithBase(&.{"--source-root=stage/src/pkg"}, &.{ "precompile", "-Iinc/d", "stage/src/pkg", "-o", "out/pkg.mojoc" }));
     defer p.deinit();
@@ -694,7 +694,7 @@ test "macOS options: precompile with a source root runs in the root's parent, as
 }
 
 // Catches: a compile that may run on any host (an action key that names no
-// host toolchain). Mutant planted: accept an empty host list.
+// host toolchain). Defect caught: accept an empty host list.
 test "macOS options: no --macos-host, or an empty one, is refused" {
     try expectRefusedMacos(&.{ "--compiler=tc", "--deployment-target=11.0", "--", "build", "-o", "o" }, "no --macos-host");
     try expectRefusedMacos(macWithBase(&.{"--macos-host="}, &.{ "build", "-o", "o" }), "an empty --macos-host");
@@ -716,7 +716,7 @@ test "macOS options: Linux flags are refused; a missing required flag is a usage
 }
 
 // Catches: a bundle (a Linux-only shape) built on macOS, or a C-ABI library
-// that names itself for dyld refused. Mutant planted: drop the
+// that names itself for dyld refused. Defect caught: drop the
 // -install_name test (every shared-lib refused).
 test "macOS options: shared-lib without -install_name is refused; with it, accepted" {
     try expectRefusedMacos(macWithBase(&.{}, &.{ "build", "--emit", "shared-lib", "x.mojo", "-o", "o" }), "bundles are linux only");

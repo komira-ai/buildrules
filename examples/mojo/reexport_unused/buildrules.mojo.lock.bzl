@@ -33,14 +33,14 @@ GRAPH_JSON = r'''{
       "kind": "lib",
       "root": "examples/mojo/reexport_unused/src/reexport_unused",
       "srcs": [
-        {"path": "examples/mojo/reexport_unused/src/reexport_unused/__init__.mojo", "sha256": "e1ab35241dc6239ec15614fd475ad33f6cce78510f85ec5b964b1bc378166aa9"},
+        {"path": "examples/mojo/reexport_unused/src/reexport_unused/__init__.mojo", "sha256": "4c3e5135ba6d42174d9993f0b7e8f8e301550a4d8253dd99e9aa9fc9cdc1da64"},
         {"path": "examples/mojo/reexport_unused/src/reexport_unused/ops.mojo", "sha256": "76c1fc6ce2110f2e9aed0d1a38ab3374aa73b7886cdb7c8d70db165c68331083"}
       ],
       "deps": [],
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["reexport_unused.mojoc"],
-      "key": "083e7cf349ec2fcc4faef697408b31a6e83ed5f6fff2066430eb6539b6551125"
+      "key": "b7bf04fea6b259f405d07a2ee2f1e27c8bdef79157424858902451df89e9bc87"
     },
     {
       "id": "reexport_unused@0.1.0#mojo1.0.0/test:examples/mojo/reexport_unused/tests/test_ops.mojo",
@@ -54,7 +54,7 @@ GRAPH_JSON = r'''{
       "natives": [],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_ops.pass"],
-      "key": "4cd965fbdf58174df2715f2d21f828fc34aea6fef0dc3312ec59ad73eec4269d"
+      "key": "9b83b06c66166a401fc2990200f8ab10e2910ae1415d660e9043e4d036102a20"
     }
   ]
 }

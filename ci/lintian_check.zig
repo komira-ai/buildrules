@@ -133,7 +133,7 @@ fn real(a: std.mem.Allocator) !Real {
 }
 
 fn mutate(a: std.mem.Allocator, text: []const u8, from: []const u8, to: []const u8) ![]u8 {
-    const i = std.mem.indexOf(u8, text, from) orelse return error.MutantDidNotApply;
+    const i = std.mem.indexOf(u8, text, from) orelse return error.DefectDidNotApply;
     return std.mem.concat(a, u8, &.{ text[0..i], to, text[i + from.len ..] });
 }
 
@@ -147,7 +147,7 @@ fn expectFinding(a: std.mem.Allocator, r: Real, wf: []const u8, ci: []const u8, 
     try t.expectEqualStrings(needle, seen);
 }
 
-fn expectMutant(a: std.mem.Allocator, r: Real, from: []const u8, to: []const u8, needle: []const u8) !void {
+fn expectDefect(a: std.mem.Allocator, r: Real, from: []const u8, to: []const u8, needle: []const u8) !void {
     try expectFinding(a, r, try mutate(a, r.wf, from, to), r.ci, r.rel, needle);
 }
 
@@ -179,12 +179,12 @@ test "a trigger a change can start is found" {
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectMutant(a, r, "on:\n  schedule:", "on:\n  pull_request:\n  schedule:", "triggers are not exactly");
-    try expectMutant(a, r, "on:\n  schedule:", "on:\n  pull_request:\n  schedule:", "pull request trigger");
-    try expectMutant(a, r, "on:\n  schedule:", "on:\n  push:\n  schedule:", "triggers are not exactly");
-    try expectMutant(a, r, "  workflow_dispatch:\n", "", "triggers are not exactly");
-    try expectMutant(a, r, "\"41 5 * * *\"", "\"41 5 * * 1\"", "is not daily");
-    try expectMutant(a, r, "  schedule:\n    - cron: \"41 5 * * *\"\n", "  schedule:\n", "no `schedule` with a cron");
+    try expectDefect(a, r, "on:\n  schedule:", "on:\n  pull_request:\n  schedule:", "triggers are not exactly");
+    try expectDefect(a, r, "on:\n  schedule:", "on:\n  pull_request:\n  schedule:", "pull request trigger");
+    try expectDefect(a, r, "on:\n  schedule:", "on:\n  push:\n  schedule:", "triggers are not exactly");
+    try expectDefect(a, r, "  workflow_dispatch:\n", "", "triggers are not exactly");
+    try expectDefect(a, r, "\"41 5 * * *\"", "\"41 5 * * 1\"", "is not daily");
+    try expectDefect(a, r, "  schedule:\n    - cron: \"41 5 * * *\"\n", "  schedule:\n", "no `schedule` with a cron");
 }
 
 test "a token with more than the contents, or a job that is not alone, is found" {
@@ -192,10 +192,10 @@ test "a token with more than the contents, or a job that is not alone, is found"
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectMutant(a, r, "permissions:\n  contents: read\n\nconcurrency", "permissions:\n  contents: write\n\nconcurrency", "not exactly one top-level");
-    try expectMutant(a, r, "    timeout-minutes: 120\n", "    timeout-minutes: 120\n    permissions:\n      id-token: write\n", "`id-token` is present");
-    try expectMutant(a, r, "    timeout-minutes: 120\n", "    timeout-minutes: 120\n    environment: release\n", "`environment:` is present");
-    try expectMutant(a, r, "\njobs:\n", "\njobs:\n  other:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ./buck2 kill\n", "not exactly one");
+    try expectDefect(a, r, "permissions:\n  contents: read\n\nconcurrency", "permissions:\n  contents: write\n\nconcurrency", "not exactly one top-level");
+    try expectDefect(a, r, "    timeout-minutes: 120\n", "    timeout-minutes: 120\n    permissions:\n      id-token: write\n", "`id-token` is present");
+    try expectDefect(a, r, "    timeout-minutes: 120\n", "    timeout-minutes: 120\n    environment: release\n", "`environment:` is present");
+    try expectDefect(a, r, "\njobs:\n", "\njobs:\n  other:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ./buck2 kill\n", "not exactly one");
 }
 
 test "an action not pinned by commit, a buck2 that drifted, or a build outside local mode is found" {
@@ -203,11 +203,11 @@ test "an action not pinned by commit, a buck2 that drifted, or a build outside l
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectMutant(a, r, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4", "not pinned to a full commit");
-    try expectMutant(a, r, "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "uses: someone/else@3d3c42e5aac5ba805825da76410c181273ba90b1", "not allowed");
-    try expectMutant(a, r, "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n", "      - run: true\n", "no `uses:` line found");
-    try expectMutant(a, r, "1268fce33fb6", "0268fce33fb6", "sha256 pinned");
-    try expectMutant(a, r, "build --console simple -c buildrules_re.mode=local --out ci-channels", "build --console simple --out ci-channels", "does not pass `-c buildrules_re.mode=local`");
+    try expectDefect(a, r, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4", "not pinned to a full commit");
+    try expectDefect(a, r, "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "uses: someone/else@3d3c42e5aac5ba805825da76410c181273ba90b1", "not allowed");
+    try expectDefect(a, r, "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n", "      - run: true\n", "no `uses:` line found");
+    try expectDefect(a, r, "1268fce33fb6", "0268fce33fb6", "sha256 pinned");
+    try expectDefect(a, r, "build --console simple -c buildrules_re.mode=local --out ci-channels", "build --console simple --out ci-channels", "does not pass `-c buildrules_re.mode=local`");
 }
 
 test "a lintian that cannot fail, or that runs twice, is found" {
@@ -215,9 +215,9 @@ test "a lintian that cannot fail, or that runs twice, is found" {
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectMutant(a, r, "lintian --fail-on error --tag-display-limit 0", "lintian --tag-display-limit 0", "lintian command is not");
-    try expectMutant(a, r, "        run: lintian --fail-on error", "        run: lintian --fail-on error --tag-display-limit 0 ci-debs/buildrules_0.0.0_amd64.deb && lintian --fail-on error", "lintian command is not");
-    try expectMutant(a, r, "      - name: lintian finds no error, every tag printed\n        run: " ++ lintian_cmd ++ "\n", "", "run 0 times");
+    try expectDefect(a, r, "lintian --fail-on error --tag-display-limit 0", "lintian --tag-display-limit 0", "lintian command is not");
+    try expectDefect(a, r, "        run: lintian --fail-on error", "        run: lintian --fail-on error --tag-display-limit 0 ci-debs/buildrules_0.0.0_amd64.deb && lintian --fail-on error", "lintian command is not");
+    try expectDefect(a, r, "      - name: lintian finds no error, every tag printed\n        run: " ++ lintian_cmd ++ "\n", "", "run 0 times");
 }
 
 test "the unpinned tool in the pull-request check or in the release is found" {

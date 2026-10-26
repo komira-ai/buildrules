@@ -183,7 +183,7 @@ The call is `uses: ./.github/workflows/site-publish.yml`, which for a run from `
 (steps 0 to 4, run by an administrator of the repository and of the AWS account: the environment, the zone, the stack and three variables of the environment `prod`); step 5 there is a manual run of `site` with `claims_only`, which prints the claims of the token
 (never the token) to compare with the role's `sub`. **Until the setup is done the workflows deploy nothing and fail nothing**: with no environment `prod` the plan job gives a notice, with a variable of it
 empty the publish job gives a notice, and both end green, so a release is never made red by the site. `ci/site_check.zig` (part of `//ci:workflow`) holds both files to this, to the triggers (no pull request, no push), to
-the one place the token is held, to the environment and workflow file that `infra/site/lib/config.ts` makes the role trust, to the masks, to the order of the uploads, and plants a defect for each.
+the one place the token is held, to the environment and workflow file that `infra/site/lib/config.ts` makes the role trust, to the masks, to the order of the uploads, and injects a defect for each.
 
 ## The version
 
@@ -227,7 +227,7 @@ A third (`same_tests_as` of the same rule) requires each cross executable to wai
 
 `//cli:release_binaries` copies the three into one directory, `<release target>/buildrules` for each (`cli/release.bzl`), so that `build-cli` and the second build of `verify` are one command each
 (`buck2 build --out DIR //cli:release_binaries`); `//cli:header_unit` holds each file of the directory to the header of its path. `zig_exe_target_test` takes `same_tests_as` as a required
-attribute (no default), and `ci/negative` holds a planted copy of a program with other tests that the rule must refuse. `tools/release` packages them (`binaries.zig`); the release workflow calls it as follows.
+attribute (no default), and `ci/negative` holds a faulty copy of a program with other tests that the rule must refuse. `tools/release` packages them (`binaries.zig`); the release workflow calls it as follows.
 
 - `release package --version V --target T --binary PATH --license PATH --out DIR --exec native|none` writes `buildrules-cli-V-T.tar.gz` holding `buildrules-cli-V-T/buildrules` (0755)
   and `LICENSE`, every entry with time 0 and the tool's own gzip, so the same inputs make the same bytes. The name keeps the tarball apart from the source archive
@@ -365,7 +365,7 @@ gh attestation verify buildrules-cli-0.0.1-linux-x86_64.tar.gz --repo OWNER/REPO
 `sudo apt install buildrules` from the apt repository, or `sudo apt install ./buildrules_0.0.1_amd64.deb` (`arm64` on Arm) with the file of a release, checked as above. `--version` prints `buildrules <version>`, the number of the release. The program is static, so it needs nothing else on the machine. The macOS program
 is not code-signed or notarised, and the release is not a promise that it runs: the user beta walks the linux-x86_64 program only (see "The command-line binaries").
 
-The same steps are the install script, `site/static/install.sh`, which the site serves as `https://buildrules.dev/install.sh` once it is published: `curl -fsSL https://buildrules.dev/install.sh | sh` picks the tarball of the machine (Linux x86_64 and arm64, macOS arm64; an Intel Mac is refused by name before any request), checks it against `SHA256SUMS`, and installs `~/.buildrules/bin/buildrules` (`--prefix DIR` for another place, `--version V` for another release). `--verify` also runs `cosign verify-blob` with the tarball's `.sigstore.json` bundle, the identity of the release workflow on `refs/heads/main` and the Actions issuer, and stops if `cosign` is not installed. The sha256 check proves the tarball is the one `SHA256SUMS` lists from the same place; `--verify` proves who signed it; neither is a promise about macOS code signing. `tools/install` tests the script as a build action against fake releases over loopback and plants a defect for each of its checks (`buck2 build //tools/install:install_script_test`).
+The same steps are the install script, `site/static/install.sh`, which the site serves as `https://buildrules.dev/install.sh` once it is published: `curl -fsSL https://buildrules.dev/install.sh | sh` picks the tarball of the machine (Linux x86_64 and arm64, macOS arm64; an Intel Mac is refused by name before any request), checks it against `SHA256SUMS`, and installs `~/.buildrules/bin/buildrules` (`--prefix DIR` for another place, `--version V` for another release). `--verify` also runs `cosign verify-blob` with the tarball's `.sigstore.json` bundle, the identity of the release workflow on `refs/heads/main` and the Actions issuer, and stops if `cosign` is not installed. The sha256 check proves the tarball is the one `SHA256SUMS` lists from the same place; `--verify` proves who signed it; neither is a promise about macOS code signing. `tools/install` tests the script as a build action against fake releases over loopback and injects a defect for each of its checks (`buck2 build //tools/install:install_script_test`).
 ## The tag ruleset
 
 A ruleset on the repository lets only one GitHub App, the release bot (the repository owner's release bot, installed on this repository), create, update or delete a

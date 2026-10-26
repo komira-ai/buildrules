@@ -22,7 +22,7 @@ _SRCS = [
 ]
 
 # Every rule of the version scheme, the gzip (decoded by the standard library, and a pinned digest), the tar reader, the SHA256SUMS and
-# release-asset rules, and each step against a fake `git` and `gh`: the tests plant a defect for every check the steps make.
+# release-asset rules, and each step against a fake `git` and `gh`: the tests inject a defect for every check the steps make.
 # Read by the buildrules.dev site tests (site/BUCK), which check the Releases section against these.
 export_file(
     name = "cmds.zig",

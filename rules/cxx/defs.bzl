@@ -261,7 +261,7 @@ def _c_check_impl(ctx):
         category = "c_check",
     )
     if not ctx.attrs.validate:
-        # The run alone, `out` as the output: a failure of it is an action failure, which a bxl can observe (ci/planted); the result below is a dynamic output,
+        # The run alone, `out` as the output: a failure of it is an action failure, which a bxl can observe (ci/faulty); the result below is a dynamic output,
         # whose failure is an error of the whole bxl.
         return [DefaultInfo(default_output = out)]
     result = ctx.actions.declare_output(ctx.label.name + ".c_check.json")
@@ -282,7 +282,7 @@ c_check = rule(
     attrs = {
         "exe": attrs.dep(providers = [RunInfo]),
         "expected_stdout": attrs.string(),
-        # False: no validation, the target is the run of `check expect` alone (the cases of ci/planted build it so).
+        # False: no validation, the target is the run of `check expect` alone (the cases of ci/faulty build it so).
         "validate": attrs.bool(default = True),
         "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
     },

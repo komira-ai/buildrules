@@ -1,7 +1,7 @@
-"""The planted defects of ci/negative must stay red (and the Mojo gate, `gate_problems`, below): what the check holds them to (ci/negative.bxl, and ci/completeness.bxl, which the public CI runs).
+"""The known defects of ci/negative must stay red (and the Mojo gate, `gate_problems`, below): what the check holds them to (ci/negative.bxl, and ci/completeness.bxl, which the public CI runs).
 
 A wildcard build skips the fixture (it is compatible only with the platform it breaks on), so nothing else notices if it turns green. `negative_problems`
-analyses it on that platform and reports every way it is not red for the reason it plants. The control (`v3_test_with_isa_property`: the same test run with
+analyses it on that platform and reports every way it is not red for the reason it carries. The control (`v3_test_with_isa_property`: the same test run with
 the one line the fixture leaves out) must analyse on the same platform, so the fixture is known to be red for that line and not for some other reason.
 Make the fixture valid (give it `exec_compatible_with = test_exec_compatible_with()`) and the check reports "analysed"; break the control and it reports the
 control's own error. ci/negative_check.zig holds the wiring of this file to the fixtures, in //ci:all.
@@ -20,7 +20,7 @@ CONTROL = "//ci/negative:v3_test_with_isa_property"
 # What the rule says when a test built for x86-64-v3 is given an execution platform that lacks it (rules/rust/test_run.bzl).
 REASON = "built for ISA x86-64-v3 but its execution platform reports ISA="
 
-# More fixtures that must stay red, each for the reason it plants: (label, platform it is analysed on, text the failure must hold). The ci/negative ones are
+# More fixtures that must stay red, each for the reason it carries: (label, platform it is analysed on, text the failure must hold). The ci/negative ones are
 # compatible only with the platform they are analysed on (so a wildcard build skips them, and ci/all.bzl lists them in EXCLUDED); ci/negative_check.zig holds the names
 # to ci/negative/BUCK and ci/all.bzl. The reasons are Buck2's own words for a dependency of the wrong kind, and the rules' for the rest (rules/zig/checks.bzl,
 # rules/coverage/checks.bzl, rules/mojo/unit.bzl).
@@ -48,16 +48,16 @@ def _analyse(ctx, label, platform = PLATFORM):
     return ctx.lazy.analysis(node).catch().resolve()
 
 def negative_problems(ctx):
-    """Every way the planted defect is not red for its reason, or its control does not analyse: a list of strings, empty when all is as planted."""
+    """Every way the known defect is not red for its reason, or its control does not analyse: a list of strings, empty when all is as faulty."""
     problems = []
 
-    planted = _analyse(ctx, FIXTURE)
-    if planted.is_ok():
-        problems.append("{} analysed on {}: the planted defect is no longer red".format(FIXTURE, PLATFORM))
+    faulty = _analyse(ctx, FIXTURE)
+    if faulty.is_ok():
+        problems.append("{} analysed on {}: the known defect is no longer red".format(FIXTURE, PLATFORM))
     else:
-        why = str(planted.unwrap_err())
+        why = str(faulty.unwrap_err())
         if REASON not in why:
-            problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(FIXTURE, PLATFORM, REASON, why))
+            problems.append("{} is red on {}, but not for the reason it carries (expected \"{}\"): {}".format(FIXTURE, PLATFORM, REASON, why))
 
     control = _analyse(ctx, CONTROL)
     if not control.is_ok():
@@ -66,10 +66,10 @@ def negative_problems(ctx):
     for label, platform, reason in CASES:
         got = _analyse(ctx, label, platform)
         if got.is_ok():
-            problems.append("{} analysed on {}: the planted defect is no longer red".format(label, platform))
+            problems.append("{} analysed on {}: the known defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
-            problems.append("{} is red on {}, but not for the reason it plants (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + subdir_problems(ctx) + gate_problems(ctx) + planted_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + test_defines_problems(ctx)
+            problems.append("{} is red on {}, but not for the reason it carries (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
+    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + test_defines_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
@@ -82,14 +82,14 @@ COVERAGE_REDS = [
 ]
 
 def coverage_red_problems(ctx):
-    """Every way a coverage fixture is not red for its reason: a list of strings, empty when all is as planted."""
+    """Every way a coverage fixture is not red for its reason: a list of strings, empty when all is as faulty."""
     problems = []
     for label, reason in COVERAGE_REDS:
         built, failed = _built_with_why(ctx, label)
         if not failed:
-            problems.append("{} built ({} artifact(s)): the planted defect is no longer red".format(label, built))
+            problems.append("{} built ({} artifact(s)): the known defect is no longer red".format(label, built))
         elif reason not in failed:
-            problems.append("{} is red, but not for the reason it plants (expected \"{}\"): {}".format(label, reason, failed))
+            problems.append("{} is red, but not for the reason it carries (expected \"{}\"): {}".format(label, reason, failed))
     return problems
 
 # A package has a `:coverage_floor` exactly when it has a coverage_floor.txt beside its BUCK file (rules/mojo/defs.bzl): a package without one has the targets it
@@ -307,7 +307,7 @@ def _built(ctx, label):
     return built, failed
 
 def gate_problems(ctx):
-    """Every way the Mojo gate is not held: a list of strings, empty when all is as planted."""
+    """Every way the Mojo gate is not held: a list of strings, empty when all is as faulty."""
     problems = []
     built, failed = _built(ctx, GATE_GREEN)
     if failed or not built:
@@ -340,7 +340,7 @@ def gate_problems(ctx):
             problems.append("{}:lib_ungated depends on {}:lib_ungated: that bypasses the tests of {}".format(user, dep, dep))
     return problems
 
-# The checks and markers of the rules (ci/planted/BUCK): each rule runs `check` (rules/check) to compare, hash, copy or run a test, and writes its output
+# The checks and markers of the rules (ci/faulty/BUCK): each rule runs `check` (rules/check) to compare, hash, copy or run a test, and writes its output
 # only when that passed. For each rule, a bad input the action must refuse (the build is red), and a control, the same rule on a good input, that must
 # build (so the refusal is for the input and not for something else). The Mojo test run has no control here: its stand-in program cannot pass,
 # and the real runs are built by //ci:mojo.
@@ -348,18 +348,18 @@ def gate_problems(ctx):
 # Each row is (target that must be refused, control or None, the text its refusal must hold). The text is what `check` says when it ran the right command
 # and the check failed, so a command line `check` itself refuses (a wrong option, a missing program) does not satisfy it. `check marker` says
 # `TEST FAILED: ` only after it started the test, and that is what the Mojo test run (which has no control) is held to.
-PLANTED = [
-    ("//ci/planted:run_check_of_other_stdout", "//examples/hello:hello_runs", "run_check: expected output equal to 'not what it prints' but"),
-    ("//ci/planted:c_check_of_other_stdout", "//ci/planted:c_check_of_its_stdout", "c_check: expected output equal to 'not what it prints' but"),
-    ("//ci/planted:mojo_same_of_other_bytes", "//ci/mojo_gate:consumer_of_green", "differ at byte 1"),
-    ("//ci/planted:table_of_other_bytes", "//ci/planted:table_in_sync", "STALE ci/planted/empty.txt"),
-    ("//ci/planted:rust_toolchain_of_other_version", "toolchains//:rust", "rust_toolchain: expected output starting with 'rustc 0.0.0 (' but"),
-    ("//ci/planted:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
-    ("//ci/planted:lib_behind_a_failing_test", "//examples/hello:hello_lib", "this test fails by design"),
-    ("//ci/planted:mojo_test_that_fails", None, "check marker: TEST FAILED: "),
-    ("//ci/planted:native_with_an_undefined_symbol", "//ci/planted:native_good", "undefined symbol: planted_missing_helper"),
-    ("//ci/planted:native_newer_than_the_floor", "//ci/planted:native_good", "undefined symbol: arc4random"),
-    ("//ci/planted:native_with_debug_info", "//ci/planted:native_good", "member debug_info.c.pic.o has 1 debug section(s), first .debug_planted"),
+FAULTY = [
+    ("//ci/faulty:run_check_of_other_stdout", "//examples/hello:hello_runs", "run_check: expected output equal to 'not what it prints' but"),
+    ("//ci/faulty:c_check_of_other_stdout", "//ci/faulty:c_check_of_its_stdout", "c_check: expected output equal to 'not what it prints' but"),
+    ("//ci/faulty:mojo_same_of_other_bytes", "//ci/mojo_gate:consumer_of_green", "differ at byte 1"),
+    ("//ci/faulty:table_of_other_bytes", "//ci/faulty:table_in_sync", "STALE ci/faulty/empty.txt"),
+    ("//ci/faulty:rust_toolchain_of_other_version", "toolchains//:rust", "rust_toolchain: expected output starting with 'rustc 0.0.0 (' but"),
+    ("//ci/faulty:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
+    ("//ci/faulty:lib_behind_a_failing_test", "//examples/hello:hello_lib", "this test fails by design"),
+    ("//ci/faulty:mojo_test_that_fails", None, "check marker: TEST FAILED: "),
+    ("//ci/faulty:native_with_an_undefined_symbol", "//ci/faulty:native_good", "undefined symbol: faulty_missing_helper"),
+    ("//ci/faulty:native_newer_than_the_floor", "//ci/faulty:native_good", "undefined symbol: arc4random"),
+    ("//ci/faulty:native_with_debug_info", "//ci/faulty:native_good", "member debug_info.c.pic.o has 1 debug section(s), first .debug_faulty"),
     # The data and the variables of a Mojo test (ci/mojo_data/BUCK): the stand-in test reads what is staged and says which of its expectations failed.
     # The control of each is the run that stages everything the probe expects.
     ("//ci/mojo_data:run_red_content", "//ci/mojo_data:run_green", "data_probe: greeting.txt holds other data"),
@@ -382,19 +382,19 @@ def _failures(ctx, label):
             text += str(f) + "\n"
     return text
 
-def planted_problems(ctx):
+def faulty_problems(ctx):
     """Every way a check or marker does not refuse its bad input for its reason, or its control is not green: a list of strings, empty when all hold."""
     problems = []
-    for planted, control, reason in PLANTED:
-        built, failed = _built(ctx, planted)
+    for faulty, control, reason in FAULTY:
+        built, failed = _built(ctx, faulty)
         if not failed:
-            problems.append("{} built ({} artifact(s)): the check it plants is gone, a failure leaves the target green".format(planted, built))
-        elif reason not in _failures(ctx, planted):
-            problems.append("{} is red, but not for the reason it plants (expected \"{}\"): {}".format(planted, reason, _failures(ctx, planted)))
+            problems.append("{} built ({} artifact(s)): the check it carries is gone, a failure leaves the target green".format(faulty, built))
+        elif reason not in _failures(ctx, faulty):
+            problems.append("{} is red, but not for the reason it carries (expected \"{}\"): {}".format(faulty, reason, _failures(ctx, faulty)))
         if control:
             built, failed = _built(ctx, control)
             if failed or not built:
-                problems.append("{} (the control of {}) must build, and it built {} artifact(s) and failed {}".format(control, planted, built, failed))
+                problems.append("{} (the control of {}) must build, and it built {} artifact(s) and failed {}".format(control, faulty, built, failed))
     return problems + test_command_problems(ctx)
 
 # The command `buck2 test` runs for a test (its ExternalRunnerTestInfo): `check run`, the start options, then `--` and the program. No build action of CI runs it,
@@ -416,7 +416,7 @@ TEST_COMMANDS = [
     ("//examples/p4ws/crates/probe_ok:probe_ok-0.1.0_2662e7548e", [
         _CARGO_START + "\"--\", <build artifact",
     ], _CARGO_ENV, ["CARGO_TARGET_TMPDIR"], ["test"], ["hidden=[", "src/lib.rs"]),
-    ("//ci/planted:mojo_test_that_fails", [
+    ("//ci/faulty:mojo_test_that_fails", [
         "\"run\", \"--ld-library-path\", cmd_args(<build artifact check",
         "\"/lib\", delimiter=\"\"), \"--private-scratch\", \"--\", <build artifact check",
     ], [], [], ["test", "mojo"], ["hidden=[<build artifact check"]),

@@ -1,6 +1,6 @@
 //! The `unpack_macos` job of .github/workflows/ci.yml does what it is for: GitHub's macos-14 runner builds `unpack` with the pinned zig 0.15.2 for macOS, runs its unit
 //! tests, and unpacks the REAL darwin zig 0.12.0 tarball, comparing the tree with the system tar's and running the zig it made. The job's urls and digests are the ones in
-//! rules/pins/hosts.bzl (a job that fetched another file would prove nothing about the pinned one). A pure function of the two texts, tested against planted text.
+//! rules/pins/hosts.bzl (a job that fetched another file would prove nothing about the pinned one). A pure function of the two texts, tested against faulty text.
 const std = @import("std");
 const t = std.testing;
 
@@ -150,7 +150,7 @@ fn free(f: *Findings) void {
 }
 
 fn mutate(text: []const u8, from: []const u8, to: []const u8) ![]u8 {
-    const at = std.mem.indexOf(u8, text, from) orelse return error.MutantAnchorMissing;
+    const at = std.mem.indexOf(u8, text, from) orelse return error.DefectAnchorMissing;
     return std.mem.concat(ta, u8, &.{ text[0..at], to, text[at + from.len ..] });
 }
 

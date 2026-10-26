@@ -1,5 +1,5 @@
 //! The public CI workflow (.github/workflows/ci.yml) is what docs/contract.md section 14 says it is. A pure function per rule, so each
-//! rule is tested against planted text as well as against the real files (the zig_test's `data`, under BUILDRULES_TEST_WORK).
+//! rule is tested against faulty text as well as against the real files (the zig_test's `data`, under BUILDRULES_TEST_WORK).
 //!
 //! What the rules catch:
 //!  - an action referenced by a tag or branch (a moved tag changes what runs with the repository's token): every `uses:` is an
@@ -641,15 +641,15 @@ fn real(a: std.mem.Allocator) !Real {
     return .{ .wf = try work(a, ".github/workflows/ci.yml"), .ds = try work(a, "tools/buck2"), .cb = try work(a, "ci/BUCK") };
 }
 
-/// `wf` with the first `from` replaced by `to`; fails the test if `from` is absent (a mutant that changes nothing proves nothing).
+/// `wf` with the first `from` replaced by `to`; fails the test if `from` is absent (a variant that changes nothing proves nothing).
 fn mutate(a: std.mem.Allocator, wf: []const u8, from: []const u8, to: []const u8) ![]u8 {
-    const i = std.mem.indexOf(u8, wf, from) orelse return error.MutantDidNotApply;
+    const i = std.mem.indexOf(u8, wf, from) orelse return error.DefectDidNotApply;
     return std.mem.concat(a, u8, &.{ wf[0..i], to, wf[i + from.len ..] });
 }
 
 /// As `mutate`, at the last occurrence (the code, where a comment above also names the text).
 fn mutateLast(a: std.mem.Allocator, wf: []const u8, from: []const u8, to: []const u8) ![]u8 {
-    const i = std.mem.lastIndexOf(u8, wf, from) orelse return error.MutantDidNotApply;
+    const i = std.mem.lastIndexOf(u8, wf, from) orelse return error.DefectDidNotApply;
     return std.mem.concat(a, u8, &.{ wf[0..i], to, wf[i + from.len ..] });
 }
 
@@ -660,14 +660,14 @@ fn expectFinding(a: std.mem.Allocator, r: Real, wf: []const u8, needle: []const 
     }
     std.debug.print("expected a finding with `{s}`, got {d}:\n", .{ needle, f.items.len });
     for (f.items) |m| std.debug.print("  {s}\n", .{m});
-    return error.MutantSurvived;
+    return error.DefectSurvived;
 }
 
 
 // ---- synthetic fixtures -------------------------------------------------------------------------------------------------------------------
 //
-// The planted-defect tests below run on this text and not on the real ci.yml: every mutant anchors on text this file itself holds, so it cannot fail
-// with `MutantDidNotApply` because the real workflow was reworded, and each red run is the rule under test (the test of the unmutated fixture
+// The faulty-defect tests below run on this text and not on the real ci.yml: every variant anchors on text this file itself holds, so it cannot fail
+// with `DefectDidNotApply` because the real workflow was reworded, and each red run is the rule under test (the test of the unmutated fixture
 // first requires that it has no finding at all). The real workflow is checked by "the real workflow has no findings" alone.
 
 const fixture_wf =
@@ -757,7 +757,7 @@ fn fx(a: std.mem.Allocator) !Real {
     return .{ .wf = fixture_wf, .ds = fixture_ds, .cb = fixture_cb };
 }
 
-test "the synthetic fixture has no finding, so every mutant below is red for its own rule" {
+test "the synthetic fixture has no finding, so every variant below is red for its own rule" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -820,7 +820,7 @@ test "a broader token, a fork-code trigger or a secret is found" {
     try expectFinding(a, r, try mutate(a, r.wf, "permissions:\n  contents: read\n", ""), "permissions");
     try expectFinding(a, r, try mutate(a, r.wf, "  pull_request:", "  pull_request_target:"), "pull_request_target");
     try expectFinding(a, r, try mutate(a, r.wf, "persist-credentials: false", "token: ${{ secrets.X }}"), "secret");
-    // mutants: this workflow declares an environment, the release one or another
+    // defect: this workflow declares an environment, the release one or another
     try expectFinding(a, r, try mutate(a, r.wf, "runs-on: ubuntu-latest", "runs-on: ubuntu-latest\n    environment: release"), "declares an `environment:`");
     try expectFinding(a, r, try mutate(a, r.wf, "runs-on: ubuntu-latest", "runs-on: ubuntu-latest\n    environment: prod"), "declares an `environment:`");
 }

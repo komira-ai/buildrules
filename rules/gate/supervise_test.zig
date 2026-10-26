@@ -107,7 +107,7 @@ fn capKillsHog(paced: bool) !void {
     try std.testing.expect(!kit.exists(try e.pidFile("passed")));
 }
 
-// M2, M3. Mutants: `>=` for `>` (not caught here: the sums are far from
+// M2, M3. Defect caught: `>=` for `>` (not caught here: the sums are far from
 // the cap; see the boundary test below), spare C (the single-process hog
 // survives its cap: exit 0 after 30 s), or print the cap's line before
 // the banner.
@@ -141,7 +141,7 @@ test "M3 cap: a test under its cap passes" {
 }
 
 // M2: the cap counts the test and every descendant. Neither process is over
-// the cap alone (16 and 24 MiB under 32); together they are. Mutants: sum
+// the cap alone (16 and 24 MiB under 32); together they are. Defect caught: sum
 // the test's own memory only (`rss(pids[0..1])`), or take the largest
 // process instead of the sum (both runs end by the guard release, status 0).
 test "M2 cap: a test whose child pushes the tree's total over the cap is killed (137) with the MEMORY CAP line" {
@@ -199,7 +199,7 @@ test "M3 cap: a test exactly at its cap is not over it" {
     try std.testing.expect(contains(r2.err, "MEMORY CAP: killed //x:y at 32 MiB resident, over its cap of 32 MiB\n"));
 }
 
-// M5: after C exits, its group is killed. Mutant: no group kill after the
+// M5: after C exits, its group is killed. Defect caught: no group kill after the
 // exit (the daemonized child lives on).
 test "M5 a child left in the group by a passing test is killed when the test exits" {
     const e = try Env.init();
@@ -233,7 +233,7 @@ fn blindTable(alloc: std.mem.Allocator) ?proctab.Table {
     return .{ .procs = out.items };
 }
 
-// M4. Mutant: accept a reading that does not show the tool's own pid (the
+// M4. Defect caught: accept a reading that does not show the tool's own pid (the
 // blind case runs uncapped and ends by the guard release, status 0), or kill
 // at the second failed reading (the run with two failures ends 2, not 0).
 test "M4 unreadable: three failed readings kill the group and exit 2; two do not; a blind one counts" {
@@ -297,7 +297,7 @@ fn d3Setup() void {
     supervise.plat.kill = kit.loggingKill;
 }
 
-// D3 (change 2: everything below the tool, C included, is killed). Mutant:
+// D3 (change 2: everything below the tool, C included, is killed). Defect caught:
 // spare C (the status is not 137), print the line first, or fire at 1999 (or
 // at any reading) instead of at the limit.
 test "D3 deadline: a sleeper past its limit is killed (137), the banner, then the TEST TIME LIMIT line" {
@@ -361,7 +361,7 @@ fn deadClock() ?u64 {
     return null;
 }
 
-// D5. Mutant: ignore the clock's failure (the test runs without its limit
+// D5. Defect caught: ignore the clock's failure (the test runs without its limit
 // and ends by the guard release, status 0).
 test "D5 timer: a clock that fails gives exit 2 and the D5 message" {
     const e = try Env.init();
@@ -385,7 +385,7 @@ test "D5 timer: a clock that fails gives exit 2 and the D5 message" {
     try std.testing.expectEqual(@as(u8, 2), r2.status);
 }
 
-// M5, D6. Mutant: exit 0 on a signal (or leave the session running).
+// M5, D6. Defect caught: exit 0 on a signal (or leave the session running).
 test "M5 D6 signals: SIGTERM and SIGINT kill the session and exit 143 and 130" {
     const e = try Env.init();
     defer e.deinit();
@@ -398,7 +398,7 @@ test "M5 D6 signals: SIGTERM and SIGINT kill the session and exit 143 and 130" {
     }
 }
 
-// M6. Mutant: the tether inside C's session (the tree kill or the group
+// M6. Defect caught: the tether inside C's session (the tree kill or the group
 // kill reaches it), or no tether.
 test "M6 tether: SIGKILL to the tool ends the session" {
     const e = try Env.init();
@@ -427,7 +427,7 @@ fn recordingKill(pid: sys.pid_t, sig: u8) void {
     sys.kill(pid, sig);
 }
 
-// 2.1 step 4. Mutant: reap C before its group is killed (its /proc entry is
+// 2.1 step 4. Defect caught: reap C before its group is killed (its /proc entry is
 // gone, so its group id could already be another process's). Linux only:
 // macOS has no waitid(WNOWAIT), so there C is reaped (waitpid) and its group
 // killed right after (supervise.zig, `exited`).
@@ -456,7 +456,7 @@ fn c1Setup() void {
     supervise.plat.kill = kit.settlingKill;
 }
 
-// C1. Mutant: kill the leader only (the daemonized sleeper survives, and
+// C1. Defect caught: kill the leader only (the daemonized sleeper survives, and
 // the scan reports it), or kill the group at 1999.
 test "C1 coverage limit: the whole group is killed, exit 1, the log tail and the COVERAGE RUN FAILED text" {
     const e = try Env.init();
@@ -535,7 +535,7 @@ fn setupNoProc() void {
 }
 
 // A platform with no process table (neither /proc nor libproc), through
-// the platform interface. Mutant: run a capped test uncapped where there is
+// the platform interface. Defect caught: run a capped test uncapped where there is
 // no table.
 test "no process table: a cap is refused with exit 2; the deadline group-kills and still prints the banner" {
     const e = try Env.init();
@@ -561,7 +561,7 @@ test "no process table: a cap is refused with exit 2; the deadline group-kills a
 // The real table of this platform (/proc on Linux, libproc on macOS), read
 // as the cap reads it: a forked child holding 32 MiB of touched memory is
 // below this process, the tree's sum counts it, and once it has exited
-// (unreaped) it is a zombie with no tree. Mutants (macOS): the parent pid
+// (unreaped) it is a zombie with no tree. Variants (macOS): the parent pid
 // read from the wrong field (the child is not below this process), the
 // virtual size for the resident one (the sum is gigabytes), or a zombie
 // read as alive.

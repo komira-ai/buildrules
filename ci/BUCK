@@ -286,7 +286,7 @@ group(name = "crates", deps = [
 
 # The public CI workflow (.github/workflows/ci.yml, docs/contract.md section 14): the pinned actionlint accepts it, and ci/workflow_check.zig
 # checks what actionlint does not know about this repository (actions pinned by commit, read-only token, local mode, every promised target,
-# the buck2 release of tools/buck2). Each rule of the check is itself tested against planted text.
+# the buck2 release of tools/buck2). Each rule of the check is itself tested against faulty text.
 actionlint_check(
     name = "workflow_lint",
     exec_compatible_with = LINUX_X86_64,
@@ -307,7 +307,7 @@ zig_test(
 
 # The release workflow (.github/workflows/release.yml, RELEASING.md): actionlint accepts it (above), and ci/release_check.zig holds it to its write
 # scopes and their exact conditions, the order publish <- verify <- archive <- tag <- gamma <- beta <- gate, pinned actions and local mode. It reuses the rules of
-# workflow_check.zig and plants a defect for each of its own.
+# workflow_check.zig and injects a defect for each of its own.
 zig_test(
     name = "release_check",
     exec_compatible_with = LINUX_X86_64,
@@ -324,7 +324,7 @@ zig_test(
 
 # The beta workflow (.github/workflows/beta.yml, RELEASING.md): actionlint accepts it (above), and ci/stages_check.zig holds it to its triggers, its token (the farm
 # leg's `id-token` alone), the legs (the languages of beta/, the planned Mojo, arm and macos jobs, the farm job that runs only with FARM_ADDRESS), local mode, and
-# the pinned farm-connect action. It reuses the rules of workflow_check.zig and the job parser of release_check.zig, and plants a defect for each of its own.
+# the pinned farm-connect action. It reuses the rules of workflow_check.zig and the job parser of release_check.zig, and injects a defect for each of its own.
 zig_test(
     name = "stages_check",
     exec_compatible_with = LINUX_X86_64,
@@ -344,7 +344,7 @@ zig_test(
 # The site workflows (.github/workflows/site.yml and site-publish.yml, RELEASING.md "The site"): actionlint accepts them (above), and ci/site_check.zig holds them to the
 # triggers, the tip-of-main guard, the fail-safe when the environment or its variables are absent, the one job that holds the token (declaring the environment and the
 # workflow file that infra/site/lib/config.ts makes the role trust), no third-party action, the masks, the upload commands and the smoke test. It reuses the rules of
-# workflow_check.zig and plants a defect for each of its own.
+# workflow_check.zig and injects a defect for each of its own.
 zig_test(
     name = "site_check",
     exec_compatible_with = LINUX_X86_64,
@@ -364,7 +364,7 @@ zig_test(
 # The advisory workflow (.github/workflows/advisories.yml): actionlint accepts it (above), and ci/advisories_check.zig holds it to a schedule and a manual trigger and nothing else
 # (never a pull request or a push), its read-only token plus issues write in the one job, no third-party action, the OSV-Scanner release of rules/pins/pins.bzl (url and
 # sha256 compared with the table, and the file the farm fetched hashed against the workflow's sha256), and report-only: a finding never fails the job. It reuses the
-# rules of workflow_check.zig and the job parser of release_check.zig, and plants a defect for each of its own.
+# rules of workflow_check.zig and the job parser of release_check.zig, and injects a defect for each of its own.
 zig_test(
     name = "advisories_check",
     exec_compatible_with = LINUX_X86_64,
@@ -441,7 +441,7 @@ zig_test(
 
 # The hosts of the pinned downloads (docs/pins.md, "Mirrors"): ci/pin_mirrors_check.zig requires every pin table's URL to be on github.com (the busybox mirror is a release asset of this
 # repository, uploaded by tools/held/mirror-busybox.sh) or its host to be listed in the check with the reason it has no mirror yet. It reads the text of the tables and the held script and
-# plants a defect for each of its rules.
+# injects a defect for each of its rules.
 zig_test(
     name = "pin_mirrors_check",
     exec_compatible_with = LINUX_X86_64,
@@ -464,7 +464,7 @@ zig_test(
 )
 
 # The no-shell lint (ci/no_shell_check.zig): the build rules are leaving busybox and every shell, and this keeps a new use from coming in while they go. Its unit tests
-# plant each defect and its green controls; `no_shell` runs the check over every package's files (the `scrub_files` of each, as the scrub does) against
+# inject each defect and its green controls; `no_shell` runs the check over every package's files (the `scrub_files` of each, as the scrub does) against
 # ci/no_shell_allow.tsv. A package missing its `scrub_files()` is not read: add its label here (the scrub has the same list).
 zig_test(
     name = "no_shell_unit",
@@ -491,7 +491,7 @@ no_shell(
         "//ci/mojo_data:scrub_files",
         "//ci/mojo_gate:scrub_files",
         "//ci/negative:scrub_files",
-        "//ci/planted:scrub_files",
+        "//ci/faulty:scrub_files",
         "//ci:scrub_files",
         "//cli:scrub_files",
         "//docs:scrub_files",
@@ -706,9 +706,9 @@ group(name = "all", deps = [
     "//ci/cargo_run:bin_test",
     "//ci/mojo_data:run_green",
     "//ci/mojo_data:run_green_installed",
-    "//ci/planted:c_check_of_its_stdout",
-    "//ci/planted:native_good",
-    "//ci/planted:table_in_sync",
+    "//ci/faulty:c_check_of_its_stdout",
+    "//ci/faulty:native_good",
+    "//ci/faulty:table_in_sync",
     "//examples/mojo/copy_of_cshim:same_bytes",
     ":workflow",
     ":mojo_tables",
@@ -779,7 +779,7 @@ group(name = "all", deps = [
     "//examples/p4ws/crates/probe_ok:probe_ok-0.1.0_35cff8487e",
 ])
 
-# Read by //ci/negative:negative_check, which holds the planted defect's files to each other.
+# Read by //ci/negative:negative_check, which holds the known defect's files to each other.
 export_file(
     name = "negative.bzl",
     src = "negative.bzl",
@@ -815,7 +815,7 @@ zig_coverage(
 )
 
 # The `unpack_macos` job of ci.yml (tools/bootstrap): GitHub's macos-14 runner builds the program, runs its tests and unpacks the real darwin zig tarball; ci/unpack_macos_check.zig
-# holds the job's urls and digests to rules/pins/hosts.bzl and every step of it to its text, and plants a defect for each.
+# holds the job's urls and digests to rules/pins/hosts.bzl and every step of it to its text, and injects a defect for each.
 zig_test(
     name = "unpack_macos_check",
     exec_compatible_with = LINUX_X86_64,

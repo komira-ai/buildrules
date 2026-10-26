@@ -1,5 +1,5 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
-load("@buildrules//ci/planted:fixture.bzl", "planted_mojo_toolchain")
+load("@buildrules//ci/faulty:fixture.bzl", "faulty_mojo_toolchain")
 load("@buildrules//rules:isa.bzl", "test_exec_compatible_with")
 load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe")
@@ -14,7 +14,7 @@ load(":fixture.bzl", "probe_test")
 #
 # green  `run_green` stages all three and builds. //ci:all builds it, and it is the control of every red below.
 # red    each of the others changes one thing, and its run must FAIL for the reason the probe gives. They are excluded from the wildcard build (ci/all.bzl), and
-#        `buck2 bxl //ci:negative.bxl:check` builds each and requires the failure and the reason (ci/negative.bzl, `planted_problems`):
+#        `buck2 bxl //ci:negative.bxl:check` builds each and requires the failure and the reason (ci/negative.bzl, `faulty_problems`):
 #          run_red_content        `greeting.txt` is another file: what the test reads is what was staged, not something else
 #          run_red_env            PROBE_MODE is another value
 #          run_red_no_program     `bin/hello` is not staged
@@ -28,7 +28,7 @@ zig_exe(
 
 probe_test(name = "probe_test", program = ":probe")
 
-planted_mojo_toolchain(name = "toolchain")
+faulty_mojo_toolchain(name = "toolchain")
 
 export_file(name = "greeting.txt", src = "greeting.txt", visibility = ["PUBLIC"])
 

@@ -179,10 +179,10 @@ describe('C and C++', () => {
     const table = WHY.blocks.find((b) => b.kind === 'table' && b.head[0] === 'Gate') as Extract<Block, { kind: 'table' }>;
     expect(table.rows.map((r) => r[0].replace(/`/g, ''))).toEqual(gates);
   });
-  test('the planted defects: the document lists as many as the pages say', () => {
-    const rows = repoFile('docs/cxx_mutants.md').split('\n').filter((l) => /^\| \d+ \|/.test(l));
+  test('the known defects: the document lists as many as the pages say', () => {
+    const rows = repoFile('docs/cxx_defects.md').split('\n').filter((l) => /^\| \d+ \|/.test(l));
     expect(rows).toHaveLength(6);
-    for (const [who, t] of ALL.filter(([w]) => /why/i.test(w))) expect({ who, six: t.includes('six planted defects') }).toEqual({ who, six: true });
+    for (const [who, t] of ALL.filter(([w]) => /why/i.test(w))) expect({ who, six: t.includes('six known defects') }).toEqual({ who, six: true });
   });
 });
 

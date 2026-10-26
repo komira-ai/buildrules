@@ -1,6 +1,6 @@
 //! No pinned download depends on a host other than github.com without saying so. buck2's `download_file` takes one URL, so a pin whose upstream is down cannot fall back:
 //! a pin is either hosted on github.com (a release asset of this repository, or an upstream that is itself a GitHub release), or its host is listed in `allow` below with the reason
-//! it is not mirrored yet. A pure function of the text of the pin tables (the zig_test's `data`, under BUILDRULES_TEST_WORK), tested against planted text.
+//! it is not mirrored yet. A pure function of the text of the pin tables (the zig_test's `data`, under BUILDRULES_TEST_WORK), tested against faulty text.
 //!
 //! What the rules catch:
 //!  - a `https://` URL in the code of a pin table (comment lines are not read, so a row may name its upstream) whose host is not github.com and not in `allow`
@@ -180,9 +180,9 @@ fn realFiles(a: std.mem.Allocator) ![]File {
     return out;
 }
 
-/// `text` with the first `from` replaced by `to`; fails the test if `from` is absent (a mutant that changes nothing proves nothing).
+/// `text` with the first `from` replaced by `to`; fails the test if `from` is absent (a variant that changes nothing proves nothing).
 fn mutate(a: std.mem.Allocator, text: []const u8, from: []const u8, to: []const u8) ![]u8 {
-    const i = std.mem.indexOf(u8, text, from) orelse return error.MutantDidNotApply;
+    const i = std.mem.indexOf(u8, text, from) orelse return error.DefectDidNotApply;
     return std.mem.concat(a, u8, &.{ text[0..i], to, text[i + from.len ..] });
 }
 
@@ -193,7 +193,7 @@ fn expectFinding(a: std.mem.Allocator, files: []const File, script: []const u8, 
     }
     std.debug.print("expected a finding with `{s}`, got {d}:\n", .{ needle, f.items.len });
     for (f.items) |m| std.debug.print("  {s}\n", .{m});
-    return error.MutantSurvived;
+    return error.DefectSurvived;
 }
 
 /// `files` with `files[i].text` replaced.
@@ -236,7 +236,7 @@ test "the reader is not blind: github.com is read, busybox.net only in a comment
     try t.expectEqualStrings("c.example", h.items[1]);
 }
 
-test "mutant: the busybox pin points back at busybox.net" {
+test "defect: the busybox pin points back at busybox.net" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -249,7 +249,7 @@ test "mutant: the busybox pin points back at busybox.net" {
     }
 }
 
-test "mutant: a new pin on a host that is neither github.com nor listed" {
+test "defect: a new pin on a host that is neither github.com nor listed" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -290,7 +290,7 @@ test "a github.com release needs no entry, and a comment is never read" {
     try t.expectEqual(@as(usize, 0), f.items.len);
 }
 
-test "mutant: the allow list is wrong" {
+test "defect: the allow list is wrong" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -307,7 +307,7 @@ test "mutant: the allow list is wrong" {
     try expectFinding(a, files, script, allow[1..], "a download from ziglang.org");
 }
 
-test "mutant: the busybox rows disagree or lose their provenance" {
+test "defect: the busybox rows disagree or lose their provenance" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -319,7 +319,7 @@ test "mutant: the busybox rows disagree or lose their provenance" {
     try expectFinding(a, nocomment, script, &allow, "rules/pins/pins.bzl: the busybox row does not name its upstream");
 }
 
-test "mutant: the held script drifts" {
+test "defect: the held script drifts" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -334,7 +334,7 @@ test "mutant: the held script drifts" {
     try expectFinding(a, files, noapply, &allow, "no --apply");
 }
 
-test "mutant: the upload names the asset by label or by another basename" {
+test "defect: the upload names the asset by label or by another basename" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -349,7 +349,7 @@ test "mutant: the upload names the asset by label or by another basename" {
     try expectFinding(a, files, try std.mem.replaceOwned(u8, a, script, "gh release upload", "gh release up"), &allow, "no gh release upload line");
 }
 
-test "mutant: a curl of the held script without a time limit" {
+test "defect: a curl of the held script without a time limit" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();

@@ -336,7 +336,7 @@ A developer reproduces one cell by hand with a target platform: `buck2 build --t
 buildrules//platforms:linux_x86_64_rust_1_85_0 //examples/hello:hello_runs`. A Rust version added to `pins.bzl` needs its
 `rust_version` constraint (platforms/BUCK builds it from the table) and a line in `rules/matrix.bzl` (refused at load otherwise).
 
-`ci/negative` holds planted defects that must stay RED; it is compatible only with the platform it breaks on, so `//ci:matrix`
+`ci/negative` holds known defects that must stay RED; it is compatible only with the platform it breaks on, so `//ci:matrix`
 and wildcard builds skip it.
 
 ## 11. ISA levels and platforms **[chosen]**
@@ -765,7 +765,7 @@ mojo_package(
   is empty or holds a space, a control character or a non-ASCII character (a value is one line of the toolchain file and one argument of the compiler); a `test_layout` that is neither `default` nor `installed`; with the installed layout, a source of the test or of the
   library in `bin/` or `share/`. `mojo_test_run_rule` and `mojo_cov_run_rule` (`data`, `test_env`, `test_layout`) repeat the checks on their own arguments.
 - **Proof.** `ci/mojo_data` runs a stand-in test (a program that reads the staged file by a relative path, checks the working directory against `BUILDRULES_TEST_DATA`, checks a variable, and starts a staged program) with the
-  Mojo test run rule, without a compiler: green when everything is staged, and red, for its reason, with other content, another variable value, no program, and a program without the executable bit (`ci/negative.bzl`, `PLANTED`).
+  Mojo test run rule, without a compiler: green when everything is staged, and red, for its reason, with other content, another variable value, no program, and a program without the executable bit (`ci/negative.bzl`, `FAULTY`).
   `examples/mojo/testdata` is the real thing: a package whose tests read a golden file, a third-party file, a library source and a variable, and start a program, in `:ci` and in `:coverage`.
   The same probe, told to expect the installed layout, is green in `ci/mojo_data:run_green_installed` (it finds itself at `<root>/bin/<name>`, the data at `<root>/share`, the root as its working directory) and red, for its reason, when the run
   is the default layout, when a default-layout probe is run installed, and when `share/greeting.txt` is missing or has other content; it also checks the private `TMPDIR`, `TEST_TMPDIR` and `HOME` in every run. `examples/mojo/installed` is the real
@@ -935,7 +935,7 @@ and checked against their sha256, with the same command lines and inputs as on a
 `x86-64-v3` tests need a CPU with AVX2, BMI1/BMI2, FMA and MOVBE (the CI workflow checks `/proc/cpuinfo` first). Action cache keys do not depend on the mode.
 
 The public CI (`.github/workflows/ci.yml`) builds `//ci:all` this way on `ubuntu-latest`. `//ci:all` is every target of the tree except the ones `ci/all.bzl` lists with a reason each: the refusal fixtures
-(`probe_env`, `probe_tree`, `probe_usr`, and the `:coverage` of `cnative`, `probe_sys` and `base_sys`, which are red by design) and `ci/negative` (a planted defect that a wildcard build skips; the completeness check analyses it on the platform it breaks on and fails unless it is red for the reason it plants, `ci/negative.bzl`). Before it builds, the workflow runs
+(`probe_env`, `probe_tree`, `probe_usr`, and the `:coverage` of `cnative`, `probe_sys` and `base_sys`, which are red by design) and `ci/negative` (a known defect that a wildcard build skips; the completeness check analyses it on the platform it breaks on and fails unless it is red for the reason it carries, `ci/negative.bzl`). Before it builds, the workflow runs
 `buck2 bxl //ci:completeness.bxl:check`, which fails and names every target of `//...` and `crates//...` that is in the closure of neither `//ci:all` nor `//ci:mojo` and is not excluded, so a new target cannot go unbuilt.
 `//ci:all` also builds `//ci:floors`: the Zig tests of each package run again under kcov and with LLVM's block counters, and the Node tests under `jest --coverage`, and each package's lines and branches
 are held to their `coverage_floor.txt` as a minimum (a fall below it fails; above it passes with a hint that the floor may be raised); `rules/coverage/README.md` says what is measured and what is not.

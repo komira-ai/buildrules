@@ -69,7 +69,7 @@ test "modular.cfg: every token replaced by the compiler directory" {
 }
 
 // Catches: a rendering that leaves a token unrendered and is used anyway.
-// Mutant planted: skip the surviving-token check.
+// Defect caught: skip the surviving-token check.
 test "modular.cfg: a token surviving rendering is refused" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -81,7 +81,7 @@ test "modular.cfg: a token surviving rendering is refused" {
 
 // Catches: a shared_libs line naming the sandbox's lib/ reaching every
 // built binary, or a package that asks for another run path used anyway
-// (design item 10). Mutant planted: accept two shared_libs lines.
+// (design item 10). Defect caught: accept two shared_libs lines.
 test "modular.cfg (macOS): shared_libs zero, one wrong, two, right" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
