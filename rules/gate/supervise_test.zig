@@ -276,22 +276,13 @@ test "M4 unreadable: three failed readings kill the group and exit 2; two do not
     try std.testing.expect(contains(r3.err, "mem_cap: cannot read the process tree"));
 }
 
-// The supervisor's clock is the test's: a reading per supervisor tick, from
-// the script, and nothing is waited for. Frozen at the start of the run, a
-// limit cannot pass.
-const frozen_clock = [_]u64{0};
-
-fn frozen() void {
-    kit.useClock(&frozen_clock, 0);
-}
-
-// D2. Defect caught: waiting for the limit before returning the status (the clock is
-// frozen, so the limit never comes: the run ends by the clock guard, status
+// D2. Defect caught: waiting for the limit before returning the status (a run starts on a clock
+// that stays at the start, so the limit never comes: the run ends by the clock guard, status
 // 251).
 test "D2 prompt exit: exit 7 under a 30 s limit is the run's status, and the limit has not fired" {
     const e = try Env.init();
     defer e.deinit();
-    const r = try kit.runGate(e.a, e.dir, try e.args("exit", &.{ "--deadline-s", "30", "--runner-timeout-s", "90", "--arg", "7" }), .{ .setup = frozen });
+    const r = try kit.runGate(e.a, e.dir, try e.args("exit", &.{ "--deadline-s", "30", "--runner-timeout-s", "90", "--arg", "7" }), .{});
     try std.testing.expectEqual(@as(u8, 7), r.status);
     try std.testing.expect(!contains(r.err, "TEST TIME LIMIT"));
 }
@@ -624,4 +615,47 @@ test "the process table of this platform: a child's pages count toward its paren
     try std.testing.expectEqual(@as(i64, me), seen[0]);
     try std.testing.expectEqual(@as(i64, me), seen[1]);
     try std.testing.expectEqual(@as(?u8, 137), sys.waitpid(pid, false));
+}
+
+// C's exit that its parent is not shown yet (a tracer holds it back; the pidfd says it is gone). The test stands
+// in for the tracer with an exit probe that shows nothing for its first calls.
+var probe_calls: u32 = 0;
+var probe_raise: bool = false;
+const probe_quiet_calls = 6;
+
+fn quietProbe(pid: sys.pid_t) ?u8 {
+    probe_calls += 1;
+    if (probe_raise and probe_calls == 1) posix.raise(posix.SIG.TERM) catch {};
+    if (probe_calls <= probe_quiet_calls) return null;
+    return sys.exitedNoReap(pid);
+}
+
+const hold_clock = [_]u64{ 0, 1000 };
+
+fn holdLimitSetup() void {
+    kit.useClock(&hold_clock, 0);
+    supervise.plat.kill = kit.loggingKill;
+    supervise.plat.exited_now = quietProbe;
+}
+
+fn holdSignalSetup() void {
+    probe_raise = true;
+    supervise.plat.exited_now = quietProbe;
+}
+
+// Defect caught: a supervisor that waits for the exit that is not shown yet (the limit never fires and the group is
+// never killed while C's exit is held back).
+test "D7 exit not shown yet: the limit still passes and the group is still killed while C's exit is held back" {
+    const e = try Env.init();
+    defer e.deinit();
+    const r = try kit.runGate(e.a, e.dir, try e.args("exit", &.{ "--deadline-s", "1", "--runner-timeout-s", "61", "--arg", "0" }), .{ .setup = holdLimitSetup });
+    try std.testing.expect(contains(r.err, "at clock 1000"));
+}
+
+// Defect caught: a supervisor that waits for the exit that is not shown yet (a signal waits for it).
+test "D7 exit not shown yet: a signal that arrives meanwhile is still handled" {
+    const e = try Env.init();
+    defer e.deinit();
+    const r = try kit.runGate(e.a, e.dir, try e.args("exit", &.{ "--mem-cap-mib", "512", "--arg", "0" }), .{ .setup = holdSignalSetup });
+    try std.testing.expectEqual(@as(u8, 143), r.status);
 }

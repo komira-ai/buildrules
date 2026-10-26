@@ -248,11 +248,10 @@ test "a pipe is readable once it has data or has ended, and not before" {
     try std.testing.expect(!sys.readable(-1));
 }
 
-// The supervisor takes C's exit from waitid, and from the pidfd when waitid shows nothing although the pidfd says C is
-// gone (a coverage tool that traces C holds its exit back from its parent): it waits for waitid then, where it used to
-// go round its loop, reading the clock, until the tracer let go. Here the pidfd is readable and waitid shows nothing
-// because the child has already been reaped: the call returns at once with nothing, it does not wait.
-test "a child's exit: seen by waitid, or by its pidfd with waitid showing nothing; without a pidfd, by waitid alone" {
+// The supervisor takes C's exit from waitid. When the pidfd says C is gone and waitid shows nothing (a coverage tool
+// that traces C holds its exit back from its parent) it notes that and shows no exit; it never waits. Here the pidfd is
+// readable and waitid shows nothing because the child has already been reaped.
+test "a child's exit: shown by waitid; gone by its pidfd but not shown is noted and not waited for" {
     if (!sys.is_linux) return error.SkipZigTest;
     const gate = try posix.pipe();
     const pid = try posix.fork();
@@ -267,18 +266,20 @@ test "a child's exit: seen by waitid, or by its pidfd with waitid showing nothin
     var fd = supervise.Child{ .c = pid, .q = 0, .tether_w = -1, .pidfd = sys.pidfdOpen(pid) };
     try std.testing.expect(fd.pidfd != null);
     defer posix.close(fd.pidfd.?);
-    // Running: neither sees an exit.
     try std.testing.expectEqual(@as(?u8, null), supervise.exited(&bare));
     try std.testing.expectEqual(@as(?u8, null), supervise.exited(&fd));
-    // Gone (the gate is closed): both see the status, and the child is still there to be reaped.
+    try std.testing.expect(!fd.gone_unreported);
     posix.close(gate[1]);
-    try std.testing.expectEqual(@as(?u8, 7), sys.waitExitedNoReap(pid));
+    var seen: ?u8 = null;
+    while (seen == null) seen = sys.exitedNoReap(pid);
     try std.testing.expectEqual(@as(?u8, 7), supervise.exited(&bare));
     try std.testing.expectEqual(@as(?u8, 7), supervise.exited(&fd));
     try std.testing.expectEqual(@as(?u8, 7), sys.waitpid(pid, false));
-    // Reaped: the pidfd stays readable and waitid has nothing to show; neither call waits.
+    // Reaped: the pidfd stays readable and waitid shows nothing.
     try std.testing.expectEqual(@as(?u8, null), supervise.exited(&bare));
+    try std.testing.expect(!bare.gone_unreported);
     try std.testing.expectEqual(@as(?u8, null), supervise.exited(&fd));
+    try std.testing.expect(fd.gone_unreported);
 }
 
 test "a directory that cannot be made is an error, not a retry: a missing parent is FileNotFound for one directory and for a list" {

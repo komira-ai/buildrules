@@ -230,8 +230,9 @@ fn markSurvived() void {
 // ---- the manual clock and the events that stand in for waiting -------------
 
 /// The clock every `runGate` run starts with: always the start of the run, so no limit passes however slowly the
-/// run goes, and no reading is counted (unlike `manualClock`).
+/// run goes. Its readings are counted by the guard, like `manualClock`'s: a run that never ends still fails fast.
 fn frozenClock() ?u64 {
+    guardReads();
     return 0;
 }
 
