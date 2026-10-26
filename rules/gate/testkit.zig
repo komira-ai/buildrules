@@ -165,6 +165,32 @@ pub fn runInlineWith(alloc: std.mem.Allocator, gate_alloc: std.mem.Allocator, cw
     return .{ .status = status, .out = try readFile(alloc, out_path), .err = try readFile(alloc, err_path), .ms = 0 };
 }
 
+const darwin_wait = struct {
+    extern "c" fn waitid(idtype: c_int, id: c_int, info: *align(8) [128]u8, options: c_int) c_int;
+};
+
+/// Blocks until child `pid` has exited, without reaping it: it is then a
+/// zombie (waitid WEXITED | WNOWAIT), whatever the machine's speed. This is
+/// the progress event the process-table tests wait on instead of polling.
+pub fn waitZombie(pid: i32) !void {
+    var info: [128]u8 align(8) = [_]u8{0} ** 128;
+    while (true) {
+        if (sys.is_linux) {
+            const rc = sys.linux.waitid(.PID, pid, @ptrCast(&info), sys.linux.W.EXITED | sys.linux.W.NOWAIT);
+            switch (sys.linux.E.init(rc)) {
+                .SUCCESS => return,
+                .INTR => continue,
+                else => return error.WaitFailed,
+            }
+        } else {
+            // P_PID = 1, WEXITED = 0x4, WNOWAIT = 0x20 (macOS <sys/wait.h>).
+            if (darwin_wait.waitid(1, pid, &info, 0x4 | 0x20) == 0) return;
+            if (std.c._errno().* == @intFromEnum(posix.E.INTR)) continue;
+            return error.WaitFailed;
+        }
+    }
+}
+
 /// Whether `pid` is alive and not a zombie (a zombie has exited).
 pub fn alive(pid: i32) bool {
     if (sys.is_darwin) return proctab_darwin.alive(pid);

@@ -176,19 +176,26 @@ test "the members of a process group: a live member is listed with its name, a z
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
+    const go = try posix.pipe();
+    // The child holds still by reading `hold`, which this process never writes: it ends only when killed.
+    const hold = try posix.pipe();
     const pid = try posix.fork();
     if (pid == 0) {
+        posix.close(go[0]);
+        posix.close(hold[1]);
         sys.setsid();
-        sys.sleepMs(30_000);
+        sys.writeAll(go[1], "s");
+        var held: [1]u8 = undefined;
+        _ = sys.readFull(hold[0], &held);
         posix.exit(0);
     }
-    // The child leads a group of its own once it has called setsid.
+    posix.close(go[1]);
+    posix.close(hold[0]);
+    defer posix.close(hold[1]);
+    // The child leads a group of its own once it has called setsid; it says so when it has.
+    var b: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 1), sys.readFull(go[0], &b));
     var members = proctab.groupMembers(a, pid).?;
-    var k: u32 = 0;
-    while (k < 500 and members.len == 0) : (k += 1) {
-        sys.sleepMs(10);
-        members = proctab.groupMembers(a, pid).?;
-    }
     try std.testing.expectEqual(@as(usize, 1), members.len);
     try std.testing.expectEqual(pid, members[0].pid);
     try std.testing.expect(members[0].state != 'Z' and members[0].state != 'X');
@@ -203,11 +210,8 @@ test "the members of a process group: a live member is listed with its name, a z
 
     // Dead but not reaped is a zombie, which is not a member.
     sys.kill(pid, posix.SIG.KILL);
-    k = 0;
-    while (k < 500 and members.len != 0) : (k += 1) {
-        sys.sleepMs(10);
-        members = proctab.groupMembers(a, pid).?;
-    }
+    try kit.waitZombie(pid);
+    members = proctab.groupMembers(a, pid).?;
     try std.testing.expectEqual(@as(usize, 0), members.len);
     try std.testing.expectEqual(@as(?u8, 137), sys.waitpid(pid, false));
     // No process leads a group with this id.

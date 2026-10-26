@@ -465,17 +465,23 @@ test "the process table of this platform: a child's pages count toward its paren
     defer arena.deinit();
     const a = arena.allocator();
     const go = try posix.pipe();
+    // The child holds still by reading `hold`, which this process never writes: it ends only when killed.
+    const hold = try posix.pipe();
     const pid = try posix.fork();
     if (pid == 0) {
         posix.close(go[0]);
+        posix.close(hold[1]);
         const mem = std.heap.page_allocator.alloc(u8, 32 << 20) catch posix.exit(99);
         var i: usize = 0;
         while (i < mem.len) : (i += 4096) mem[i] = 1;
         sys.writeAll(go[1], "r");
-        sys.sleepMs(30_000);
+        var held: [1]u8 = undefined;
+        _ = sys.readFull(hold[0], &held);
         posix.exit(0);
     }
     posix.close(go[1]);
+    posix.close(hold[0]);
+    defer posix.close(hold[1]);
     var b: [1]u8 = undefined;
     try std.testing.expectEqual(@as(usize, 1), sys.readFull(go[0], &b));
     const me = sys.getpid();
@@ -492,13 +498,10 @@ test "the process table of this platform: a child's pages count toward its paren
     try std.testing.expect(kit.alive(pid));
 
     sys.kill(pid, posix.SIG.KILL);
-    var gone = false;
-    var k: u32 = 0;
-    while (k < 200 and !gone) : (k += 1) {
-        sys.sleepMs(10);
-        const t2 = proctab.read(a).?;
-        gone = if (t2.find(pid)) |p| p.state == 'Z' else true;
-    }
+    // Block until the kernel reports the child exited (it stays unreaped, so a zombie): no polling budget.
+    try kit.waitZombie(pid);
+    const t2 = proctab.read(a).?;
+    const gone = if (t2.find(pid)) |p| p.state == 'Z' else true;
     try std.testing.expect(gone);
     try std.testing.expect(!kit.alive(pid));
     try std.testing.expectEqual(@as(?[]i32, null), proctab.read(a).?.tree(a, pid));
