@@ -249,9 +249,18 @@ zig_exe(
 zig_test(
     name = "cov_summary_unit",
     exec_compatible_with = LINUX_X86_64,
-    imports = ["tools/cov_summary.zig", "tools/branch_lcov.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig", "tools/mojo_decl.zig"],
+    imports = ["tools/cov_summary.zig", "tools/branch_lcov.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig", "tools/mojo_decl.zig", "tools/cov_unmeasured.zig"],
     src = "tools/cov_summary_test.zig",
     busybox = _BB,
+    zig = _ZIG,
+)
+
+# The sources a package lists as unmeasured (cov_unmeasured.zig): the file's grammar, each refusal, and the figure with and without the file.
+zig_test(
+    name = "cov_unmeasured_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["tools/cov_unmeasured.zig", "tools/cov_summary.zig", "tools/branch_lcov.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig", "tools/mojo_decl.zig"],
+    src = "tools/cov_unmeasured_test.zig",
     zig = _ZIG,
 )
 
@@ -286,7 +295,7 @@ zig_test(
 zig_test(
     name = "uncompiled_fixtures_unit",
     exec_compatible_with = LINUX_X86_64,
-    imports = ["tools/cov_summary.zig", "tools/branch_lcov.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig", "tools/mojo_decl.zig"],
+    imports = ["tools/cov_summary.zig", "tools/branch_lcov.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig", "tools/mojo_decl.zig", "tools/cov_unmeasured.zig"],
     src = "tools/uncompiled_fixtures_test.zig",
     zig = _ZIG,
 )
@@ -295,7 +304,7 @@ zig_test(
 zig_test(
     name = "branch_lcov_unit",
     exec_compatible_with = LINUX_X86_64,
-    imports = ["tools/branch_lcov.zig", "tools/cov_summary.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig", "tools/mojo_decl.zig"],
+    imports = ["tools/branch_lcov.zig", "tools/cov_summary.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig", "tools/mojo_decl.zig", "tools/cov_unmeasured.zig"],
     src = "tools/branch_lcov_test.zig",
     zig = _ZIG,
 )
@@ -303,9 +312,9 @@ zig_test(
 zig_exe(
     name = "cov_summary",
     exec_compatible_with = LINUX_X86_64,
-    imports = ["tools/branch_lcov.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig", "tools/mojo_decl.zig"],
+    imports = ["tools/branch_lcov.zig", "tools/mojo_src.zig", "tools/mojo_calls.zig", "tools/mojo_gate.zig", "tools/mojo_decl.zig", "tools/cov_unmeasured.zig"],
     src = "tools/cov_summary.zig",
-    unit_tests = [":cov_summary_unit", ":branch_lcov_unit", ":mojo_src_unit", ":mojo_calls_unit", ":mojo_gate_unit", ":uncompiled_fixtures_unit", _ZIG_VERSION],
+    unit_tests = [":cov_summary_unit", ":branch_lcov_unit", ":mojo_src_unit", ":mojo_calls_unit", ":mojo_gate_unit", ":uncompiled_fixtures_unit", ":cov_unmeasured_unit", _ZIG_VERSION],
     busybox = _BB,
     zig = _ZIG,
     visibility = ["PUBLIC"],
@@ -417,6 +426,7 @@ zig_coverage(
         ":mojo_calls_unit",
         ":mojo_gate_unit",
         ":uncompiled_fixtures_unit",
+        ":cov_unmeasured_unit",
         ":kcov_build_unit",
         ":zig_cover_unit",
         ":cov_floor_unit",
@@ -432,6 +442,7 @@ zig_coverage(
         "mojo_src.zig",
         "mojo_calls.zig",
         "mojo_gate.zig",
+        "cov_unmeasured.zig",
         "mojo_decl.zig",
         "kcov_build.zig",
         "zig_cover.zig",

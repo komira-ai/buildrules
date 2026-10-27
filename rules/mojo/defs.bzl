@@ -18,6 +18,10 @@ One line per package. The targets come from the package's unit graph, which `bui
                 `[branches_of_tests]` and `[branches_uncompiled]` are the parts); `:coverage[excluded_uncompiled]` lists what the call evidence and the
                 platform gate left out of those lines (rules/coverage/tools/mojo_calls.zig, mojo_gate.zig). The instrumented link of a test gets the test's native libraries as its ordinary link does.
                 A package whose tests run in the installed layout (`test_layout = "installed"`) has them too: the instrumented binary is run from the installed tree, as the kcov run is.
+                A source of the library that kcov cannot record (every function of it `@always_inline("nodebug")`; any other source is refused) is named with its reason in `coverage_unmeasured.txt` beside the
+                BUCK file: it is printed as `unmeasured: <path>: <reason>`, left out of the line and branch totals and the floor, and refused when a report names it
+                (rules/coverage/README.md, "Unmeasured sources")
+
     :coverage_floor  only if the package has a `coverage_floor.txt` beside its BUCK file: green while `:coverage` is at least that floor (`lines NN.NN`, and
                 `branches NN.NN` when `coverage.txt` has branch rows; below it: "coverage fell"; at or above it passes, and above it prints "you may raise the
                 floor to X"), the check of every other package's floor (rules/coverage/README.md, "The floor")
@@ -334,6 +338,9 @@ def native_wiring(unit, prebuilt_packages, user_natives, here, refuse = fail, bu
 
 COVERAGE_FLOOR_FILE = "coverage_floor.txt"
 
+# The sources of the package that kcov cannot record, one per line with the reason (rules/coverage/tools/cov_unmeasured.zig); an input of `:coverage`.
+COVERAGE_UNMEASURED_FILE = "coverage_unmeasured.txt"
+
 def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
     """Green only while the `coverage.txt` of `coverage` (a mojo_package's `:coverage`) is at least the figures of the file `floor` (`lines NN.NN`):
     lower fails with "coverage fell", at or above passes, and above prints "you may raise the floor to NN.NN" (rules/coverage/tools/cov_floor.zig). `mojo_package` makes
@@ -434,7 +441,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     # lays out this package's files with the workspace of every path dependency, flat, each file at its path from the repository root.
     mojo_workspace_rule(
         name = name_once("workspace"),
-        files = glob([_join(project, "**/*")], exclude = [_join(project, n) for n in ["BUCK", "buildrules.mojo.bzl", "buildrules.mojo.lock.bzl", COVERAGE_FLOOR_FILE]]),
+        files = glob([_join(project, "**/*")], exclude = [_join(project, n) for n in ["BUCK", "buildrules.mojo.bzl", "buildrules.mojo.lock.bzl", COVERAGE_FLOOR_FILE, COVERAGE_UNMEASURED_FILE]]),
         members = sorted({l[:-len(":lib")] + ":workspace": True for l in member_libs.values() if l != None}.keys()),
         visibility = ["PUBLIC"],
     )
@@ -821,8 +828,13 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             cov_srcs[_join(here_repo, in_package(own_lib["root"]), s["path"][len(own_lib["root"]) + 1:])] = _join(project, in_package(s["path"]))
         for ts in test_sources:
             cov_srcs[_join(here_repo, ts)] = _join(project, ts)
+    unmeasured = _join(project, COVERAGE_UNMEASURED_FILE)
+    # The file is passed whenever it exists: a package with no library or no test makes a `:coverage` that fails analysis naming it, so the file is never ignored silently.
+    has_unmeasured = bool(glob([unmeasured]))
     mojo_cov_summary_rule(
         name = name_once("coverage"),
+        unmeasured = unmeasured if has_unmeasured else None,
+        unmeasured_root = here_repo,
         branches = branches,
         check = ":check",
         expect = [_join(here_repo, in_package(own_lib["root"]), s["path"][len(own_lib["root"]) + 1:]) for s in own_lib["srcs"]] if own_lib and covs else [],

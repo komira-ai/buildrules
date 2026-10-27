@@ -270,7 +270,7 @@ test "cov_summary: a source no report names is refused, and so is a report that 
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        try proc.expectRefusal("no arguments", try summaryRun(a, &tmp, null, &.{}), 2, &.{"usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... [--src <path>=<file>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] [--uncompiled-report <file>] <report.xml>..."});
+        try proc.expectRefusal("no arguments", try summaryRun(a, &tmp, null, &.{}), 2, &.{"usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... [--src <path>=<file>]... [--unmeasured <dir>=<file>] [--uncompiled-lines <file>] [--uncompiled-branches <file>] [--uncompiled-report <file>] <report.xml>..."});
         try proc.expectRefusal("an unknown option", try summaryRun(a, &tmp, REPORT, &.{ "--bogus", "report.xml" }), 2, &.{"cov_summary: unknown option --bogus"});
     }
 }

@@ -270,6 +270,8 @@ pub const Fn = struct {
     end: usize,
     lines: []usize,
     kind: Kind = .plain,
+    /// A decorator line right above it is `@always_inline("nodebug")`: the compiler emits no debug line for it, so kcov cannot record it.
+    nodebug: bool = false,
     arms: []const usize = &.{},
     arm_blocks: []const []const usize = &.{},
 };
@@ -388,6 +390,7 @@ pub fn declaredFunctions(a: Alloc, text: []const u8) ![]Fn {
         }
         f.lines = try own.toOwnedSlice(a);
         f.kind = if (decoratedInline(ls, f.line - 1)) .always_inline else .plain;
+        f.nodebug = decoratedNodebug(ls, f.line - 1);
         try computeArms(a, ls, f);
     }
     return fns;
@@ -405,6 +408,23 @@ fn decoratedInline(ls: []const Line, def_idx: usize) bool {
         if (std.mem.startsWith(u8, c, "@always_inline")) found = true;
     }
     return found;
+}
+
+/// Whether a decorator line in the run just above the `def` at 0-based index `def_idx` is `@always_inline("nodebug")` (spaces allowed inside the
+/// parentheses; any other decorator may stand beside it).
+fn decoratedNodebug(ls: []const Line, def_idx: usize) bool {
+    var d = def_idx;
+    while (d > 0) {
+        d -= 1;
+        const c = codeOf(ls[d]);
+        if (!ls[d].code or ls[d].in_string or !std.mem.startsWith(u8, c, "@")) break;
+        const head = "@always_inline";
+        if (!std.mem.startsWith(u8, c, head)) continue;
+        const rest = std.mem.trim(u8, c[head.len..], " \t");
+        if (rest.len < 2 or rest[0] != '(' or rest[rest.len - 1] != ')') continue;
+        if (std.mem.eql(u8, std.mem.trim(u8, rest[1 .. rest.len - 1], " \t"), "\"nodebug\"")) return true;
+    }
+    return false;
 }
 
 /// Whether `code` is an `elif` or an `else` (the word, then not an identifier byte): a compile-time chain goes on (decls.mojo:371-384).
