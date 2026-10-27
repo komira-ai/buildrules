@@ -922,6 +922,8 @@ the lockfile's `os`/`cpu`/`libc` and nothing finer.
 
 `[buildrules_re] mode` (`-c buildrules_re.mode=...` or the root cell's `.buckconfig.local`) picks the executor of the execution platforms (`rules/platforms.bzl`).
 
+Every key of `[buildrules_re]` (`mode`, `linux_arm64_enabled`, the property sets, `darwin_macos_hosts`, `macos_library_dirs`) is read from the root cell's configuration, in every rule and macro that reads one, and not from the cell that evaluates the file: a repository that consumes buildrules through a cell of another repository sets them in that repository's root `.buckconfig` or `.buckconfig.local` and its platforms see them. Local mode's refusal reads `[buck2_re_client] engine_address` and `cas_address` from the root cell too, because that section is Buck2's own client configuration, which Buck2 takes from the root cell. For a repository that is its own root nothing changes. `ci/root_keys.bxl` holds this at analysis with `ci/rootcell`, a cell whose configuration has no such section.
+
 | mode | meaning | refused when |
 |---|---|---|
 | `remote` (default, also when unset) | every action runs on the farm named by `[buck2_re_client]`; worker properties come from `[buildrules_re] linux_x86_64_properties` | the property set is missing (the platform fails to load, with a message naming the file to copy and the opt-in below) |

@@ -18,6 +18,11 @@
 
 Any other value of `mode` is refused.
 
+Every key of `[buildrules_re]` (`mode`, `linux_arm64_enabled`, the property sets, `darwin_macos_hosts`, `macos_library_dirs`) is read from the ROOT cell's configuration
+(`read_root_config`), never from the cell that evaluates the file: when a repository that consumes buildrules is itself a cell of another repository, or a package of a
+nested cell loads these rules, they all see the one set of values the root cell's .buckconfig and .buckconfig.local hold. `[buck2_re_client]`, which local mode
+checks, is Buck2's own client configuration and is read from the root cell too.
+
 Other hosts (remote mode). The Mojo rules run their actions on the execution platform of the target platform's kind (rules/mojo/exec.bzl), because a Mojo
 compile cannot target another platform than the one it runs on. A farm that has workers of such a kind says so with one more key each, read like
 `linux_x86_64_properties` (the exact worker property set, passed through unchanged):
@@ -44,7 +49,7 @@ and the `exec_isa` constraint of its level in its configuration; only an action 
 load("//rules/core:platform.bzl", "by_os_cpu")
 
 def _mode():
-    mode = read_config("buildrules_re", "mode", "remote").strip()
+    mode = read_root_config("buildrules_re", "mode", "remote").strip()
     if mode not in ("remote", "local"):
         fail("`[buildrules_re] mode` is `{}`: it is `remote` (the default) or `local`.".format(mode))
     return mode
@@ -52,7 +57,7 @@ def _mode():
 def _refuse_local_beside_remote(key):
     """Local mode is for a machine with no farm. A configured endpoint or property set says there is one."""
     for section, name in [("buck2_re_client", "engine_address"), ("buck2_re_client", "cas_address"), ("buildrules_re", key)]:
-        if read_config(section, name, "").strip():
+        if read_root_config(section, name, "").strip():
             fail(("`[buildrules_re] mode = local` but `[{}] {}` is set: a remote-execution setup is configured, " +
                   "and a machine that has one does not run actions locally. Remove one of the two.").format(section, name))
 
@@ -77,7 +82,7 @@ _LINUX_ARM64_WAITING = "buildrules//platforms:skipped_waiting_on_linux_arm64_har
 
 def linux_arm64_enabled():
     """True when `[buildrules_re] linux_arm64_enabled` is `true`. Absent or `false`: off (linux arm64 farm hardware is not racked yet). Anything else is refused."""
-    v = read_config("buildrules_re", "linux_arm64_enabled", "false").strip().lower()
+    v = read_root_config("buildrules_re", "linux_arm64_enabled", "false").strip().lower()
     if v not in ("true", "false"):
         fail("`[buildrules_re] linux_arm64_enabled` is `{}`: it is `true` or `false` (absent = false).".format(v))
     return v == "true"
@@ -94,13 +99,13 @@ def linux_arm64_gate():
 
 def exec_platform_ready(host):
     """True when an execution platform of `host` (`linux-aarch64`, `macos-aarch64`) is registered by this configuration: its key is set (remote mode) or the
-    machine running buck2 is of that kind (local mode). Read when a package is loaded, from the cell of the BUCK file: the root cell's .buckconfig.local.
+    machine running buck2 is of that kind (local mode). Read when a package is loaded, from the root cell's configuration (.buckconfig, .buckconfig.local), whichever cell the package is in.
     linux-aarch64 is never ready while `linux_arm64_enabled` is off."""
     if host == "linux-aarch64" and not linux_arm64_enabled():
         return False
     if _mode() == "local":
         return host_name() == host
-    return bool(read_config("buildrules_re", EXTRA_HOST_KEYS[host], "").strip())
+    return bool(read_root_config("buildrules_re", EXTRA_HOST_KEYS[host], "").strip())
 
 def exec_platform_missing(host, who):
     """The refusal of `who` on a target platform of `host` whose execution platform is not registered, or "" when it is."""
@@ -116,7 +121,7 @@ def exec_platform_missing(host, who):
             "of that kind is registered. Set it in .buckconfig.local to the exact worker property set of the {} workers of the farm (docs/contract.md, section 14).").format(who, host, key, host)
 
 def _properties(key):
-    raw = (read_config("buildrules_re", key, "")).strip()
+    raw = (read_root_config("buildrules_re", key, "")).strip()
     if not raw:
         fail(("`[buildrules_re] {}` is not set. Copy .buckconfig.local.example to " +
               ".buckconfig.local and fill in the remote-execution endpoint and worker " +

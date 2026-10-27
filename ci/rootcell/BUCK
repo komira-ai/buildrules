@@ -1,0 +1,23 @@
+load("@buildrules//rules:platforms.bzl", "buildrules_execution_platforms", "exec_platform_missing", "exec_platform_ready", "linux_arm64_enabled", "linux_arm64_gate")
+load(":probe.bzl", "probe")
+
+# This package is loaded in a cell whose own configuration has no `[buildrules_re]` section (ci/root_keys.bxl). Every key buildrules reads is the root cell's, so the
+# execution platforms registered here and the answers of the helpers below are those of the root cell.
+buildrules_execution_platforms(
+    name = "exec",
+    linux_x86_64 = "buildrules//platforms:linux_x86_64",
+    host_platforms = {
+        "linux-aarch64": "buildrules//platforms:linux_aarch64",
+        "macos-aarch64": "buildrules//platforms:macos_aarch64",
+    },
+    visibility = ["PUBLIC"],
+)
+
+probe(
+    name = "probe",
+    linux_arm64_enabled = str(linux_arm64_enabled()),
+    linux_arm64_gate = str(linux_arm64_gate()),
+    linux_aarch64_ready = str(exec_platform_ready("linux-aarch64")),
+    macos_aarch64_missing = exec_platform_missing("macos-aarch64", "probe"),
+    macos_aarch64_ready = str(exec_platform_ready("macos-aarch64")),
+)
