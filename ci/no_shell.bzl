@@ -1,7 +1,7 @@
 """The no-shell lint as a build action: the allow-list and every package's files in, a report out (ci/no_shell_check.zig)."""
 
 # A cell other than the root one lives in a directory of the repository.
-_CELL_DIR = {"buildrules": "", "toolchains": "toolchains/", "crates": "examples/crates/", "rootcell": "ci/rootcell/"}
+CELL_DIR = {"buildrules": "", "toolchains": "toolchains/", "crates": "examples/crates/", "rootcell": "ci/rootcell/"}
 
 def _impl(ctx):
     out = ctx.actions.declare_output("no_shell_report.txt")
@@ -9,7 +9,7 @@ def _impl(ctx):
     for r in ctx.attrs.require:
         args.add("--require", r)
     for dep in ctx.attrs.packages:
-        where = _CELL_DIR[dep.label.cell] + (dep.label.package + "/" if dep.label.package else "")
+        where = CELL_DIR[dep.label.cell] + (dep.label.package + "/" if dep.label.package else "")
         for f in dep[DefaultInfo].default_outputs:
             args.add(where + f.short_path, f)
     ctx.actions.run(args, category = "no_shell")
