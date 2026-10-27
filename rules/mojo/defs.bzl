@@ -176,26 +176,41 @@ def _within(path):
             out.append(p)
     return "/".join(out)
 
-def member_label(here, uid, package, root, base, refuse = fail):
+def member_label(here, uid, package, root, base, refuse = fail, manifest_dirs = None):
     """The target of a path dependency's library, `//<its directory>:lib`, from the `root` of its unit (the graph's, relative to `base`, the directory
     its paths start at: the package's own for a mopm without --workspace-root, the repository root with it). The directory is derived from the
     repository path of the root, so a package next to this one (a sibling) is named like one below it. A root outside the repository root has no
     target, a library that is not at `<dir>/src/<package>` is not a package's library, and one whose directory is `here`, the package that imports it, would
     be that package's own `:lib` (a cycle through its tests): all refused (`refuse` is `fail` in a build; a test passes a recorder,
-    rules/rust/refusal.bzl), with None as the answer."""
+    rules/rust/refusal.bzl), with None as the answer.
+
+    A library that is not at `<dir>/src/<package>` (a package whose `mopm.toml` says `[targets] lib = { path = "generated/<name>" }`) is named by its
+    manifest: `manifest_dirs` are the repository paths of the directories whose `mopm.toml` the table records (`manifest_directories`), and the
+    package's directory is the longest of them that holds the root. The `src/<package>` form, when the root has it, is read as before."""
     repo_root = _within(_join(base, root)) if not root.startswith("/") else None
     if repo_root == None:
         refuse("{}: {} lives in {}, which is outside the repository root: a path dependency must be a directory below the root that holds .buckconfig".format(here, uid, root))
         return None
     suffix = "src/" + package
-    if repo_root != suffix and not repo_root.endswith("/" + suffix):
-        refuse("{}: {} lives in {}, not <dir>/{}: a workspace member's library must be its package directory's src/<name>".format(here, uid, repo_root, suffix))
+    directory = None
+    if repo_root == suffix or repo_root.endswith("/" + suffix):
+        directory = repo_root[:-len(suffix)].rstrip("/")
+    else:
+        for d in (manifest_dirs or []):
+            if (d == "" or repo_root == d or repo_root.startswith(d + "/")) and (directory == None or len(d) > len(directory)):
+                directory = d
+    if directory == None:
+        refuse("{}: {} lives in {}, not <dir>/{} and below no directory whose mopm.toml the table records: a workspace member's library must be its package directory's src/<name>, or below the directory of its own mopm.toml (`[targets] lib = {{ path = ... }}`)".format(here, uid, repo_root, suffix))
         return None
-    directory = repo_root[:-len(suffix)].rstrip("/")
     if directory == here:
         refuse("{}: {} lives in {}, the directory of the package that imports it: its library would be this package's own :lib, which waits for the tests that import it. A path dependency must be a package of its own (a directory with its own BUCK file and mopm.toml), not the importing package itself".format(here, uid, repo_root))
         return None
     return "//" + directory + ":lib"
+
+def manifest_directories(table, pkg_dir):
+    """The repository paths of the directories that hold a `mopm.toml` the table records (`MANIFEST_SHA256`, whose keys are relative to the package's
+    directory `pkg_dir`): the package directories of the path dependencies, and this package's own."""
+    return sorted({_norm(_join(pkg_dir, k)).rpartition("/")[0]: True for k in table["MANIFEST_SHA256"].keys() if k.split("/")[-1] == "mopm.toml"}.keys())
 
 def _relative(frm, to):
     """The path to the directory `to` from the directory `frm`, both repository paths without a leading slash (`..` for each part of `frm` that `to` does not share)."""
@@ -416,10 +431,11 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     # The path dependencies of the graph (libraries of other packages that mopm read from a directory): the target of each one's library. A dependency
     # may be below this package or next to it; the directory comes from its root, a path from the repository root (`graph_from` is where the graph's paths
     # start: the root when mopm was given --workspace-root, else the package).
+    manifest_dirs = manifest_directories(table, pkg_dir)
     member_libs = {}
     for mu in graph["units"]:
         if mu["kind"] == "lib" and mu["package"] != root and not is_native_unit(mu["id"]):
-            member_libs[mu["id"]] = member_label(here, mu["id"], mu["package"], mu["root"], graph_from)
+            member_libs[mu["id"]] = member_label(here, mu["id"], mu["package"], mu["root"], graph_from, manifest_dirs = manifest_dirs)
 
     # :table, the check that the committed graph is what the pinned mopm prints now (rules/mojo/check.bzl). mopm reads the whole workspace, so `:workspace`
     # lays out this package's files with the workspace of every path dependency, flat, each file at its path from the repository root.

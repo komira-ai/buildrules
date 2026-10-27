@@ -4,6 +4,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("//rules/mojo:defs.bzl", "check_toolchain_file_present", "check_toolchain_file_recorded", "graph_path_in_package", "member_label", "native_wiring")
 load("//rules/mojo:unit.bzl", "check_closure_ids", "cov_link_natives")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
+load(":generated.bzl", "generated_member_below_the_package_is_named_by_its_manifest_directory", "generated_sibling_is_named_by_its_manifest_directory", "longest_manifest_directory_wins", "manifest_directories_are_those_of_the_recorded_manifests", "src_name_is_read_before_the_manifests")
 load(":natives.bzl", "BUILT", "BUILT_UNIT", "PREBUILT", "UNIT", "USER", "built_natives_are_the_targets_of_their_units", "native_includes_are_below_the_package_in_both_bases", "native_includes_default_to_the_header_directories_below_the_package", "native_units_are_told_by_their_id", "own_natives", "reversed_graph_is_reversed", "wiring_is_as_the_graph_says")
 load(":siblings.bzl", "graph_paths_below_the_package", "nested_member_keeps_its_target", "sibling_is_named_by_its_directory", "sibling_with_a_path_up_is_named_by_its_directory", "workspace_is_flat_at_repository_paths")
 load("//rules/mojo:sync.bzl", "sync_packages", "sync_stage_tree")
@@ -182,6 +183,52 @@ refusal_test(name = "workspace_holds_every_file_at_its_repository_path", refusal
 _r13, _f13 = recording()
 graph_paths_below_the_package(_f13)
 refusal_test(name = "graph_paths_are_read_from_the_base_the_table_says", refusals = _r13, none = True, visibility = ["PUBLIC"])
+
+# A library that is not at <dir>/src/<name> (`[targets] lib = { path = "generated/<name>" }`) is named by the directory of its own mopm.toml.
+_r14, _f14 = recording()
+generated_sibling_is_named_by_its_manifest_directory(_f14)
+refusal_test(name = "generated_sibling_is_named_by_its_manifest_directory", refusals = _r14, none = True, visibility = ["PUBLIC"])
+
+_r15, _f15 = recording()
+generated_member_below_the_package_is_named_by_its_manifest_directory(_f15)
+refusal_test(name = "generated_member_below_the_package_is_named_by_its_manifest_directory", refusals = _r15, none = True, visibility = ["PUBLIC"])
+
+_r16, _f16 = recording()
+longest_manifest_directory_wins(_f16)
+refusal_test(name = "longest_manifest_directory_wins", refusals = _r16, none = True, visibility = ["PUBLIC"])
+
+_r17, _f17 = recording()
+src_name_is_read_before_the_manifests(_f17)
+refusal_test(name = "src_name_is_read_before_the_manifests", refusals = _r17, none = True, visibility = ["PUBLIC"])
+
+_r18, _f18 = recording()
+manifest_directories_are_those_of_the_recorded_manifests(_f18)
+refusal_test(name = "manifest_directories_are_those_of_the_recorded_manifests", refusals = _r18, none = True, visibility = ["PUBLIC"])
+
+# A library below no directory with a recorded mopm.toml, below only a directory whose name merely starts like one, or in the importing package's own directory, is refused.
+refuses(
+    name = "member_below_no_recorded_manifest_is_refused",
+    check = member_label,
+    args = ["src/codec", "json@1.0.0#mojo1.0.0/lib", "json", "lib/generated/json", ""],
+    kwargs = {"manifest_dirs": ["src/codec", "src/json"]},
+    contains = ["lib/generated/json", "below no directory whose mopm.toml the table records"],
+)
+
+refuses(
+    name = "member_below_a_directory_that_only_starts_like_a_manifest_directory_is_refused",
+    check = member_label,
+    args = ["src/codec", "json@1.0.0#mojo1.0.0/lib", "json", "src/json/generated/json", ""],
+    kwargs = {"manifest_dirs": ["src/codec", "src/js"]},
+    contains = ["below no directory whose mopm.toml the table records"],
+)
+
+refuses(
+    name = "generated_member_in_the_importing_packages_directory_is_refused",
+    check = member_label,
+    args = ["src/codec", "json@1.0.0#mojo1.0.0/lib", "json", "src/codec/generated/json", ""],
+    kwargs = {"manifest_dirs": ["src/codec"]},
+    contains = ["this package's own :lib", "a package of its own"],
+)
 
 # A path dependency outside the repository root has no target: refused, naming it and the root.
 refuses(
