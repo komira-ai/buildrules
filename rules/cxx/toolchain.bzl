@@ -111,7 +111,8 @@ def _zig_cxx_toolchain_impl(ctx):
         link_libraries_locally = False,
         link_style = LinkStyle("static_pic"),
         link_weight = 1,
-        linker = cxx,
+        # A macOS arm64 target gets no linker: the toolchain compiles and archives for it, and a link would write a linux program.
+        linker = _refusal(bb, "a linker for macOS") if ctx.attrs.macos else cxx,
         # --strip-debug: zig cc assembles the C runtime start-up objects (crti, crtn, start) at LINK time with default debug info (`-g0` is a compile flag), and
         # the DWARF stamps DW_AT_comp_dir with the action's absolute working directory, so a binary would depend on the path it was linked in (examples/cxx).
         linker_flags = cmd_args("-target", target, "-Wl,--strip-debug"),

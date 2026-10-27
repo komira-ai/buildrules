@@ -9,8 +9,13 @@ the macro:
     it was before macOS arm64 was supported: no flag of the macOS target is on it.
 
 `native_macos_problems` is a part of ci/negative.bxl, which the public CI runs as a part of ci/completeness.bxl.
+
+The toolchain's linker follows the same platform: on macOS arm64 it is a refusal (the toolchain links no executable or shared library for it, and a link would write a linux program), on linux x86_64 it is zig's `c++`.
 """
 
+load("@prelude//cxx:cxx_toolchain_types.bzl", "CxxToolchainInfo")
+
+TOOLCHAIN = "toolchains//:cxx"
 TARGET = "//examples/mojo/member_native_macos/cshim:native_shim_cxx"
 
 # (target platform, the compiler triple its C is built for, the CPU flag the compile must carry last, the flags that must not be on it)
@@ -74,4 +79,12 @@ def native_macos_problems(ctx):
                 problems.append("{}: the C compile carries {}, which belongs to the other kind of platform: {}".format(who, a, flags))
         if archive == None or "ar" not in archive or not archive[1].endswith("/zig"):
             problems.append("{}: the archive is not written by the pinned zig's ar: {}".format(who, archive))
+        tc = ctx.configured_targets(TOOLCHAIN, target_platform = platform)
+        if tc == None:
+            problems.append("{}: the toolchain {} is incompatible with the platform".format(who, TOOLCHAIN))
+            continue
+        linker = str(ctx.analysis(tc).providers()[CxxToolchainInfo].linker_info.linker)
+        refused = "is not provided" in linker
+        if refused != triple.startswith("aarch64-macos"):
+            problems.append("{}: the linker is {}, but it must be {}: {}".format(who, "a refusal" if refused else "a real one", "a refusal" if triple.startswith("aarch64-macos") else "a real one", linker))
     return problems

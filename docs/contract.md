@@ -790,7 +790,7 @@ come out of their `.conda` files, with no `natives` in its BUCK file: `examples/
 in either BUCK file; `cshim:conda` packs the archive and `cshim:conda_holds` requires the `.conda` to hold the bytes of `:native_shim`; `examples/mojo/copy_of_cshim:same_bytes` builds the same C at another path and requires the
 same archive bytes. `examples/mojo/member_native_macos` is those two members again at mopm 0.0.73, whose lock has a graph for `osx-arm64`: built for macOS arm64 their tests run on the macOS worker with the shim's archive in the link, and `ci/native_macos.bzl` (a part of `ci/negative.bxl`) holds from the configured targets that the shim is compiled for `aarch64-macos` on macOS arm64 and for `x86_64-linux-gnu.2.34` on linux x86_64. The proofs and their `Commands:` lines are in the commit message of the branch `mojo`.
 
-Limits: linux x86-64 only; one Mojo version (mopm pins one); the coverage is line coverage of what the compiler emitted code for (a function no test reaches emits none, so the percentage is an
+Limits: linux x86-64 only (macOS arm64 builds Mojo units, and a member's static native library; no coverage, no other C or C++); one Mojo version (mopm pins one); the coverage is line coverage of what the compiler emitted code for (a function no test reaches emits none, so the percentage is an
 upper bound); a workspace member's native library is static (a `shared` one is refused by mopm); the archive's undefined-symbol check knows the C library only by `floor_symbols.txt`, so a call to a symbol
 that list lacks is refused until it is added there (`native_archive` takes `allow`, but a manifest has no field for it); `mopm unit test` and the supervisor, a published mopm release, and Arm are not covered.
 

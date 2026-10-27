@@ -146,6 +146,8 @@ pub fn members(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.
         if (bsd_name) |bn| {
             if (!std.mem.startsWith(u8, bn, "__.SYMDEF"))
                 out.push(.{ .name = bn, .data = body, .time = trim(h[16..28]), .owner = trim(h[28..34]), .group = trim(h[34..40]) });
+        } else if (std.mem.startsWith(u8, raw, "__.SYMDEF")) {
+            // A BSD symbol table whose name fits the field is written without `#1/N`.
         } else if (std.mem.eql(u8, raw, "//")) {
             long = data;
         } else if (!std.mem.eql(u8, raw, "/") and !std.mem.eql(u8, raw, "/SYM64/")) {

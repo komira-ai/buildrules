@@ -379,3 +379,32 @@ test "check: every allocation failing in turn is an error, for a Mach-O library 
         try t.expect(i < 5000);
     }
 }
+
+test "members: a symbol table whose name fits the header field (no #1/N) is not a member, and a short object name is read as it is" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var out = std.ArrayList(u8).empty;
+    try out.appendSlice(a, "!<arch>\n");
+    // `__.SYMDEF SORTED` is 16 bytes: it fits the field, so a writer may leave out `#1/N`.
+    inline for (.{ "__.SYMDEF SORTED", "__.SYMDEF" }) |name| {
+        try field(&out, a, name, 16);
+        try field(&out, a, "0", 12);
+        try field(&out, a, "0", 6);
+        try field(&out, a, "0", 6);
+        try field(&out, a, "644", 8);
+        try field(&out, a, "4", 10);
+        try out.appendSlice(a, "`\n\x00\x00\x00\x00");
+    }
+    try field(&out, a, "a.o", 16);
+    try field(&out, a, "0", 12);
+    try field(&out, a, "0", 6);
+    try field(&out, a, "0", 6);
+    try field(&out, a, "644", 8);
+    try field(&out, a, "4", 10);
+    try out.appendSlice(a, "`\nabcd");
+    const ms = try A.members(a, out.items);
+    try t.expectEqual(@as(usize, 1), ms.len);
+    try t.expectEqualStrings("a.o", ms[0].name);
+    try t.expectEqualStrings("abcd", ms[0].data);
+}
