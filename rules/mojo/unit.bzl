@@ -20,6 +20,7 @@ load("//rules/rust:providers.bzl", "ExecIsaInfo")
 load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoTestRunInfo", "MojoToolchainInfo")
 load("//rules/core:hang_limit.bzl", "HANG_LIMIT_S", "check_hang_limit", "hang_limit_args")
 load("//rules/core:test_runtime.bzl", "check_data_destinations", "macos_library_dirs")
+load(":system_libs.bzl", "MojoSystemLibInfo", "lib_dir_args")
 load(":test_data.bzl", "DATA_ENV", "LAYOUT_DEFAULT", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_env", "check_test_layout")
 
 # `-c buildrules.unit_nonce=N` changes every unit action's key without changing any input the compiler sees: the compile
@@ -38,6 +39,9 @@ _MACOS_LIBRARY_DIRS = macos_library_dirs(read_root_config("buildrules_re", "maco
 
 def _file(dep):
     return dep[DefaultInfo].default_outputs[0]
+
+# The `mojo_system_lib` targets of the libraries a test loads (rules/mojo/system_libs.bzl), the same attribute on the test run, the kcov run and the branch-coverage run.
+_SYSTEM_LIBS_ATTR = attrs.list(attrs.dep(providers = [MojoSystemLibInfo]), default = [])
 
 # The package's `:check` (rules/mojo/check.bzl) as the validation of a step: a build of the step is red if the table is stale.
 _CHECK_ATTR = attrs.option(attrs.dep(), default = None)
@@ -284,6 +288,9 @@ def _test_run_impl(ctx):
     libs = cmd_args(compiler, "/lib", delimiter = "")
     data_dir = _data_dir(ctx)
     start = _start_options(ctx, data_dir)
+
+    # The system libraries the unit graph pins for this test (system_libs.bzl): on its library path, after the compiler's lib on Linux, first in dyld's fallback path on macOS.
+    start = start + lib_dir_args(ctx.attrs.system_libs)
     if _MACOS_LIBRARY_DIRS and "-macos" in ctx.attrs.toolchain[MojoToolchainInfo].cc_target:
         start = ["--macos-library-dirs", _MACOS_LIBRARY_DIRS] + start
     marker = ctx.actions.declare_output(ctx.label.name + ".passed")
@@ -325,6 +332,9 @@ mojo_test_run_rule = rule(
         # BUILDRULES_TEST_DATA (test_data.bzl). A target's default output is staged with the executable bit it has.
         "data": attrs.dict(attrs.string(), attrs.source(), default = {}),
         "required_isa": attrs.string(default = ""),
+        # The shared libraries the test opens by their bare names, as the unit graph's `loads` names them (rules/mojo/system_libs.bzl): each directory is put on the
+        # library path of the run, in this order.
+        "system_libs": _SYSTEM_LIBS_ATTR,
         # The variables the test is given besides its own: `{NAME: value}`.
         "test_env": attrs.dict(attrs.string(), attrs.string(), default = {}),
         # `default` or `installed` (test_data.bzl): where the test runs. The installed layout is a fresh root per test, the binary at `<root>/bin/<exe>`,
@@ -437,6 +447,7 @@ def _cov_run_impl(ctx):
         cmd.add("--data-env", DATA_ENV)
     for name in sorted(ctx.attrs.test_env.keys()):
         cmd.add("--env", "{}={}".format(name, ctx.attrs.test_env[name]))
+    cmd.add(lib_dir_args(ctx.attrs.system_libs))
     for m in ctx.attrs.maps:
         cmd.add("--map", m)
     for i in ctx.attrs.includes:
@@ -462,6 +473,8 @@ mojo_cov_run_rule = rule(
         "required_isa": attrs.string(default = ""),
         "runner": attrs.exec_dep(default = "buildrules//rules/coverage:cov_run", providers = [RunInfo]),
         "share": attrs.dict(attrs.string(), attrs.source()),
+        # The system libraries of the test run (rules/mojo/system_libs.bzl), on the library path of the run under kcov as well.
+        "system_libs": _SYSTEM_LIBS_ATTR,
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
     },
@@ -598,6 +611,9 @@ def _branch_run_impl(ctx):
     if libs:
         cmd.add("--lib-dir", libs[DefaultInfo].default_outputs[0])
 
+    # The system libraries of the test run (rules/mojo/system_libs.bzl), after those.
+    cmd.add(lib_dir_args(ctx.attrs.system_libs))
+
     if installed:
         cmd.add("--installed")
         if data_dir:
@@ -622,6 +638,8 @@ mojo_cov_branch_run_rule = rule(
         "pgo": attrs.dep(),
         "required_isa": attrs.string(default = ""),
         "share": attrs.dict(attrs.string(), attrs.source()),
+        # The system libraries of the test run (rules/mojo/system_libs.bzl), on the library path of the instrumented binary's run.
+        "system_libs": _SYSTEM_LIBS_ATTR,
         "test_env": attrs.dict(attrs.string(), attrs.string(), default = {}),
         "test_layout": attrs.string(default = LAYOUT_DEFAULT),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),

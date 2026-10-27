@@ -180,6 +180,25 @@ test "parseGraph: the fixture, and the leniencies: missing optional fields are e
     try t.expectEqualStrings("ok", s.units[2].srcs[0].path);
 }
 
+// Defect caught: a graph of format 3 (system libraries a test loads) refused by the command that writes the table, so a package that names one could not be synced.
+test "parseGraph: formats 1, 2 and 3 are read, and a format 3 graph's system libraries and `loads` do not stop it" {
+    var e = Env.init();
+    defer e.deinit();
+    const a = e.a();
+    for ([_][]const u8{ "1", "2", "3" }) |n| {
+        var d = Diag.init(a);
+        const text = try std.fmt.allocPrint(a, "{{\"unit_graph\": {s}, \"package\": \"p@1.0.0\", \"toolchain\": {{}}, \"units\": []}}", .{n});
+        const g = try lockm.parseGraph(a, "g", text, &d);
+        try t.expectEqualStrings("p@1.0.0", g.package);
+    }
+    var d = Diag.init(a);
+    const three = "{\"unit_graph\": 3, \"package\": \"p@1.0.0\", \"toolchain\": {}, \"system_libs\": [{\"name\": \"libsqlite\", \"sha256\": \"x\"}], " ++
+        "\"units\": [{\"id\": \"u\", \"kind\": \"test\", \"loads\": [\"libsqlite\"], \"srcs\": [{\"path\": \"t.mojo\", \"sha256\": \"h\"}]}]}";
+    const g = try lockm.parseGraph(a, "g", three, &d);
+    try t.expectEqual(@as(usize, 1), g.units.len);
+    try t.expectEqualStrings("t.mojo", g.units[0].srcs[0].path);
+}
+
 test "parseGraph: a graph that is not mopm's format is refused, one reason each" {
     var e = Env.init();
     defer e.deinit();
@@ -189,8 +208,9 @@ test "parseGraph: a graph that is not mopm's format is refused, one reason each"
         .{ .text = "[]", .needle = "the unit graph is not a JSON object" },
         .{ .text = "\"x\"", .needle = "the unit graph is not a JSON object" },
         .{ .text = "{}", .needle = "no `unit_graph` format number" },
-        .{ .text = "{\"unit_graph\": 3}", .needle = "unit_graph format is not 1 or 2" },
-        .{ .text = "{\"unit_graph\": 0}", .needle = "unit_graph format is not 1 or 2" },
+        .{ .text = "{\"unit_graph\": 4}", .needle = "unit_graph format is not 1, 2 or 3" },
+        .{ .text = "{\"unit_graph\": 4}", .needle = "update buildrules" },
+        .{ .text = "{\"unit_graph\": 0}", .needle = "unit_graph format is not 1, 2 or 3" },
         .{ .text = "{\"unit_graph\": \"1\"}", .needle = "unit_graph format is not 1" },
         .{ .text = "{\"unit_graph\": 1}", .needle = "no `toolchain` object" },
         .{ .text = "{\"unit_graph\": 1, \"toolchain\": 5}", .needle = "no `toolchain` object" },

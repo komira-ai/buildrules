@@ -75,6 +75,7 @@ load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/cxx:native.bzl", "native_static")
 load(":pack.bzl", "mojo_conda")
+load(":system_libs.bzl", _check_graph_format = "check_graph_format", _check_loads = "check_loads", _check_same_system_libs = "check_same_system_libs", _compile_format = "compile_format", _mojo_system_lib = "mojo_system_lib_rule", _system_libs_of = "system_libs_of")
 load(":subdirs.bzl", "BASE_SUBDIR", "by_subdir", "check_same_units", "subdir_suffix", "table_graphs", "unsupported_platform")
 load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
@@ -111,6 +112,7 @@ mojo_group = gated(_group)
 mojo_prebuilt_rule = gated(_prebuilt)
 mojo_test_run_rule = gated(_test_run)
 mojo_unit_rule = gated(_unit)
+mojo_system_lib_rule = gated(_mojo_system_lib)
 
 SCHEMA = 1
 
@@ -258,17 +260,17 @@ def _check_table(t):
     if t.get("SCHEMA") != SCHEMA:
         fail("buildrules.mojo.lock.bzl has SCHEMA {} but these rules read {}: run `buildrules mojo sync` with a matching buildrules".format(t.get("SCHEMA"), SCHEMA))
     g = t["GRAPH"]
-    if g["unit_graph"] not in (1, 2):
-        fail("the committed unit graph is format {}; these rules read formats 1 and 2 (2 adds the native unit of a member's own library)".format(g["unit_graph"]))
+    _check_graph_format("the committed unit graph", g["unit_graph"])
     if g["mojo"] != t["MOJO"] or g["toolchain"]["mojo"] != t["MOJO"]:
         fail("the table says Mojo {} but its unit graph is for Mojo {}: run `buildrules mojo sync`".format(t["MOJO"], g["mojo"]))
     if g["toolchain"]["closure_sha256"] != t["CLOSURE_SHA256"]:
         fail("the table records toolchain closure {} but its unit graph pins {}: the file was edited by hand; run `buildrules mojo sync`".format(t["CLOSURE_SHA256"], g["toolchain"]["closure_sha256"]))
     graphs = table_graphs(t)
     check_same_units(graphs)
+    _check_same_system_libs(graphs, BASE_SUBDIR)
     for sd, x in sorted(graphs.items()):
-        if x["unit_graph"] not in (1, 2):
-            fail("the committed unit graph of {} is format {}; these rules read formats 1 and 2".format(sd, x["unit_graph"]))
+        _check_graph_format("the committed unit graph of {}".format(sd), x["unit_graph"])
+        _check_loads("the committed unit graph of {}".format(sd), x, _system_libs_of("the committed unit graph of {}".format(sd), x))
         if x["mojo"] != t["MOJO"] or x["toolchain"]["mojo"] != t["MOJO"]:
             fail("the table says Mojo {} but its unit graph of {} is for Mojo {}: run `buildrules mojo sync`".format(t["MOJO"], sd, x["mojo"]))
         if x["toolchain"].get("subdir", BASE_SUBDIR) != sd:
@@ -464,14 +466,15 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         for i in sorted(_closure(us, uid) + [uid] + [b for b in wanted.keys() if b in us]):
             u = us[i]
             if i == uid or is_native_unit(i):
-                u = {k: v for k, v in u.items() if k != "key"}
+                # `loads` is for the test run, not for the compile: `mopm unit build` is given the unit without it (and the compile's own bytes do not move with a pin).
+                u = {k: v for k, v in u.items() if k not in ("key", "loads")}
                 if profile and i == uid:
                     u["profile"] = profile
             else:
                 u = {k: v for k, v in u.items() if k in _DEP_FIELDS}
             cut.append(u)
         return json.encode({
-            "unit_graph": g["unit_graph"],
+            "unit_graph": _compile_format(g["unit_graph"]),
             "package": g["package"],
             "mojo": g["mojo"],
             "toolchain": g["toolchain"],
@@ -633,6 +636,38 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
 
     # What the rules below look a test's data up by: the path the graph gives the test.
     staged = {test_graph_of[t]: staged_by_test[t] for t in test_sources}
+
+    # The system libraries the graphs pin for the tests to load (rules/mojo/system_libs.bzl): one pinned `.conda` per subdir and entry, and `:syslib_<name>`, its shared
+    # libraries unpacked. A test is given the targets of its `loads`; the coverage runs, which are linux-64 builds, are given the linux-64 file whatever the target platform.
+    system_libs = {sd: _system_libs_of(here, graphs[sd]) for sd in subdirs}
+    syslib_label = {}
+    syslib_cov_label = {}
+    for n in sorted(system_libs[BASE_SUBDIR].keys()):
+        archives = {}
+        for sd in subdirs:
+            e = system_libs[sd][n]
+            fname = "syslib_" + n + ".conda" + ("" if sd == BASE_SUBDIR else "_" + subdir_suffix(sd))
+            pinned_file(name = name_once(fname), url = mapped_url(e["url"]), sha256 = e["sha256"], size_bytes = e["size"])
+            archives[sd] = ":" + fname
+        mojo_system_lib_rule(
+            name = name_once("syslib_" + n),
+            archive = by_subdir(graphs, archives),
+            package = n,
+            exec_compatible_with = LINUX_X86_64,
+            visibility = visibility,
+        )
+        syslib_label[n] = ":syslib_" + n
+        syslib_cov_label[n] = syslib_label[n]
+        if len(subdirs) > 1:
+            mojo_system_lib_rule(
+                name = name_once("syslib_" + n + "__" + subdir_suffix(BASE_SUBDIR)),
+                archive = archives[BASE_SUBDIR],
+                package = n,
+                exec_compatible_with = LINUX_X86_64,
+                visibility = visibility,
+            )
+            syslib_cov_label[n] = ":syslib_" + n + "__" + subdir_suffix(BASE_SUBDIR)
+
     for uid in sorted(units.keys()):
         u = units[uid]
         kind = u["kind"]
@@ -679,6 +714,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 test_layout = test_layout,
                 test_hang_limit_s = hang_limit_of(test_hang_limit_s, in_package(units[uid]["srcs"][0]["path"])),
                 required_isa = required_isa(),
+                system_libs = [syslib_label[n] for n in u.get("loads", [])],
                 toolchain = toolchain,
                 exec_compatible_with = test_exec(),
                 visibility = visibility,
@@ -719,6 +755,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 must_contain = _join(here_repo, test_src),
                 required_isa = required_isa(),
                 share = share,
+                system_libs = [syslib_cov_label[n] for n in u.get("loads", [])],
                 toolchain = toolchain_base,
                 exec_compatible_with = test_exec_compatible_with(),
                 visibility = visibility,
@@ -754,6 +791,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                     pgo = ":" + stem + "__pgo",
                     required_isa = required_isa(),
                     share = share,
+                    system_libs = [syslib_cov_label[n] for n in u.get("loads", [])],
                     test_env = test_env,
                     test_layout = test_layout,
                     toolchain = toolchain_base,

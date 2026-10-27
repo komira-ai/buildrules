@@ -231,8 +231,8 @@ pub fn parseGraph(a: std.mem.Allocator, name: []const u8, text: []const u8, diag
         diag.add("{s}: the unit graph has no `unit_graph` format number", .{name});
         return error.Invalid;
     };
-    if (version != .integer or (version.integer != 1 and version.integer != 2)) {
-        diag.add("{s}: unit_graph format is not 1 or 2 (this buildrules reads 1, and 2, which adds the native unit of a member's own library)", .{name});
+    if (version != .integer or version.integer < 1 or version.integer > 3) {
+        diag.add("{s}: unit_graph format is not 1, 2 or 3 (this buildrules reads 1, 2, which adds the native unit of a member's own library, and 3, which adds the system libraries a test loads); a newer format needs a newer buildrules: update buildrules", .{name});
         return error.Invalid;
     }
     const pkg = str(field(o, "package") orelse .null) orelse "";

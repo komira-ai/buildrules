@@ -349,3 +349,42 @@ test "stage: a tree that holds a bin or a share is refused, and the run's direct
     var it = parent.iterate();
     try t.expect((try it.next()) == null);
 }
+
+// Defect caught: a --lib-dir dropped, put before the compiler's lib (a pinned library shadowing the compiler runtime) or in another order, an empty one accepted,
+// or a run without the option getting a different library path than it had.
+test "--lib-dir: repeatable, kept in order, empty is refused; testEnv puts each after the compiler's lib, and none leaves the variable as it was" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var d: []const u8 = "";
+    const r = try C.parse(a, try args(a, &.{ "--lib-dir", "/n/one", "--lib-dir", "/n/two" }), &d);
+    try t.expectEqual(@as(usize, 2), r.lib_dirs.len);
+    try t.expectEqualStrings("/n/one", r.lib_dirs[0]);
+    try t.expectEqualStrings("/n/two", r.lib_dirs[1]);
+    const env = try C.testEnv(a, r, "/real/compiler", "/real/share", null);
+    try t.expectEqualStrings("/real/compiler/lib:/n/one:/n/two", env.get("LD_LIBRARY_PATH").?);
+    try t.expectEqual(@as(u32, 2), env.count());
+    try t.expectError(error.Usage, C.parse(a, try args(a, &.{ "--lib-dir", "" }), &d));
+    try t.expectEqualStrings("--lib-dir needs a directory", d);
+    try t.expectError(error.Usage, C.parse(a, try args(a, &.{"--lib-dir"}), &d));
+    try t.expectEqualStrings("--lib-dir needs a value", d);
+}
+
+test "realDirs: each --lib-dir made absolute in order; one that is not there is named" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("one");
+    try tmp.dir.makePath("two");
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    var bad: []const u8 = "";
+    const got = try C.realDirs(a, tmp.dir, &.{ "two", "one" }, &bad);
+    try t.expectEqual(@as(usize, 2), got.len);
+    try t.expectEqualStrings(try std.fs.path.join(a, &.{ root, "two" }), got[0]);
+    try t.expectEqualStrings(try std.fs.path.join(a, &.{ root, "one" }), got[1]);
+    try t.expectError(error.FileNotFound, C.realDirs(a, tmp.dir, &.{ "one", "missing" }, &bad));
+    try t.expectEqualStrings("missing", bad);
+    try t.expectEqual(@as(usize, 0), (try C.realDirs(a, tmp.dir, &.{}, &bad)).len);
+}

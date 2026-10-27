@@ -36,7 +36,7 @@ zig_module(
 # when it is given a hang limit (`--hang-limit-s`): one supervisor for the gate and for this, and no second one.
 _MODULES = [":install_root", "//rules/gate:supervise"]
 
-_TESTS = ["check", "cmds", "files", "hang", "install_root", "isa", "oom", "runspec"]
+_TESTS = ["check", "cmds", "files", "hang", "install_root", "isa", "oom", "runspec", "runspec_libdir"]
 
 [
     zig_test(

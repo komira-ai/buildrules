@@ -11,6 +11,7 @@ load(":sync.bzl", "packages_are_normalized", "stage_holds_the_workspaces_and_the
 load(":subdirs.bzl", "LINUX_64", "LINUX_AARCH64", "OSX_ARM64", "a_table_with_graphs_per_subdir_is_read_as_it_is", "a_table_with_graphs_per_subdir_refuses_the_platforms_it_has_none_for", "a_table_with_the_linux_64_graph_alone_is_refused_on_arm_only", "a_table_without_graphs_per_subdir_has_the_linux_64_graph_alone", "every_vocabulary_of_a_subdir_chooses_its_value", "graph_with_a_unit_more", "graph_with_other_dependencies", "same_units_in_every_graph", "the_graph_of_a_single_subdir_gives_the_value_itself", "toolchain_rows_are_told_by_their_key")
 load("//rules/mojo:subdirs.bzl", "table_graphs")
 load(":test_data_targets.bzl", "test_data_targets")
+load(":system_libs.bzl", "a_graph_without_loads_needs_no_pin", "a_format_above_three_is_refused", "a_format_that_is_no_number_is_refused", "a_library_a_unit_loads_and_the_graph_does_not_pin_is_refused", "a_library_a_unit_loads_is_pinned", "a_library_pinned_twice_is_refused", "a_slice_for_the_compile_is_never_above_format_two", "a_subdir_that_pins_another_library_is_refused", "a_subdir_whose_unit_loads_another_library_is_refused", "an_entry_with_a_short_sha256_is_refused", "an_entry_without_a_size_is_refused", "loads_in_an_older_graph_are_refused", "pinned_system_libs_are_read_by_name", "subdirs_that_pin_the_same_libraries_are_accepted", "system_libs_in_an_older_graph_are_refused", "the_formats_of_the_rules_are_accepted")
 
 _NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.48\"", "mojo = \"1.0.0\""]
 
@@ -382,3 +383,86 @@ refuses(
     args = [],
     contains = ["the unit graph of linux-aarch64 does not name the units of the graph of linux-64"],
 )
+
+# The system libraries a graph of format 3 pins for the tests to load (rules/mojo/system_libs.bzl, docs/contract.md section 12.11; the checks are in tests/system_libs.bzl).
+accepts(name = "graph_formats_1_to_3_are_accepted", check = the_formats_of_the_rules_are_accepted, args = [])
+
+refuses(
+    name = "graph_format_4_is_refused",
+    check = a_format_above_three_is_refused,
+    args = [],
+    contains = ["the committed unit graph is format 4", "formats 1 to 3", "update buildrules"],
+)
+
+refuses(
+    name = "graph_format_that_is_no_number_is_refused",
+    check = a_format_that_is_no_number_is_refused,
+    args = [],
+    contains = ["is not a format number", "run `buildrules mojo sync`"],
+)
+
+accepts(name = "system_libs_are_read_by_name", check = pinned_system_libs_are_read_by_name, args = [])
+
+refuses(
+    name = "system_lib_entry_without_a_size_is_refused",
+    check = an_entry_without_a_size_is_refused,
+    args = [],
+    contains = ["a `system_libs` entry lacks size"],
+)
+
+refuses(
+    name = "system_lib_entry_with_a_short_sha256_is_refused",
+    check = an_entry_with_a_short_sha256_is_refused,
+    args = [],
+    contains = ["system_libs libsqlite", "`sha256` must be 64 lower-case hex digits"],
+)
+
+refuses(
+    name = "system_lib_pinned_twice_is_refused",
+    check = a_library_pinned_twice_is_refused,
+    args = [],
+    contains = ["`system_libs` pins libsqlite twice"],
+)
+
+refuses(
+    name = "system_libs_of_an_older_graph_are_refused",
+    check = system_libs_in_an_older_graph_are_refused,
+    args = [],
+    contains = ["a graph of format 2 has `system_libs`", "format 3 key"],
+)
+
+accepts(name = "libraries_a_unit_loads_are_pinned", check = a_library_a_unit_loads_is_pinned, args = [])
+
+refuses(
+    name = "library_a_unit_loads_and_the_graph_does_not_pin_is_refused",
+    check = a_library_a_unit_loads_and_the_graph_does_not_pin_is_refused,
+    args = [],
+    contains = ["p@1.0.0#mojo1.0.0/test:t loads the system library libzlib", "does not pin", "mopm lock"],
+)
+
+refuses(
+    name = "loads_of_an_older_graph_are_refused",
+    check = loads_in_an_older_graph_are_refused,
+    args = [],
+    contains = ["has `loads` in a graph of format 2", "format 3 key"],
+)
+
+accepts(name = "graph_without_loads_needs_no_pin", check = a_graph_without_loads_needs_no_pin, args = [])
+
+accepts(name = "subdirs_pinning_the_same_libraries_are_accepted", check = subdirs_that_pin_the_same_libraries_are_accepted, args = [])
+
+refuses(
+    name = "subdir_pinning_another_library_is_refused",
+    check = a_subdir_that_pins_another_library_is_refused,
+    args = [],
+    contains = ["the unit graph of osx-arm64 pins the system libraries [\"libsqlite\"] and the graph of linux-64 pins [\"libsqlite\", \"libzlib\"]"],
+)
+
+refuses(
+    name = "subdir_whose_unit_loads_another_library_is_refused",
+    check = a_subdir_whose_unit_loads_another_library_is_refused,
+    args = [],
+    contains = ["the unit graph of osx-arm64 names other system libraries for a unit than the graph of linux-64"],
+)
+
+accepts(name = "compile_slice_is_never_above_format_two", check = a_slice_for_the_compile_is_never_above_format_two, args = [])
