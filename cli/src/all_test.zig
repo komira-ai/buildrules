@@ -27,6 +27,7 @@ test {
     _ = @import("init_test.zig");
     _ = @import("lockreaders_test.zig");
     _ = @import("mojo_cmd_test.zig");
+    _ = @import("mojo_generated_test.zig");
     _ = @import("mojo_lock_test.zig");
     _ = @import("mojo_subdir_test.zig");
     _ = @import("mojo_toolchains_test.zig");

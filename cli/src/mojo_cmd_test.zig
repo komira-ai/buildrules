@@ -617,7 +617,7 @@ test "the BUCK export of mopm-toolchain.toml fails the load, with the file and a
 
 // ---- more of sync and check: arguments, discovery, failures of the programs it runs, path dependencies --------------------
 
-fn sha256Hex(h: *kit.Harness, bytes: []const u8) ![]const u8 {
+pub fn sha256Hex(h: *kit.Harness, bytes: []const u8) ![]const u8 {
     return ctxm.sha256Hex(h.a(), bytes);
 }
 
@@ -805,8 +805,9 @@ const util_graph_unit =
     "      \"outputs\": [\"util.mojoc\"],\n" ++
     "      \"key\": \"@KEY@\"\n" ++
     "    },\n";
-/// Units of other shapes, on one line each (not in mopm's layout, which the committed form leaves alone): only a library of another package whose
-/// root ends in `src/<its name>` after a directory is a path dependency.
+/// Units of other shapes, on one line each (not in mopm's layout, which the committed form leaves alone): only a library of another package, in a
+/// directory of its own (`src/<its name>` below it, or below the nearest directory with a mopm.toml: mojo_generated_test.zig), is a path dependency.
+/// Each of these is in the importing package's own directory, or is not a library.
 const odd_units =
     "    {\"package\": \"base\", \"kind\": \"lib\", \"root\": \"../base2/src/base\"}, " ++
     "{\"package\": \"vendored\", \"kind\": \"test\", \"root\": \"../v/src/vendored\"}, " ++
@@ -816,12 +817,12 @@ const odd_units =
     "{\"id\": \"reg@1.0.0#mojo1.0.0/lib\", \"package\": \"reg\", \"kind\": \"prebuilt\"}, " ++
     "{\"id\": \"bare@1.0.0#mojo1.0.0/lib\", \"package\": \"bare\", \"kind\": \"lib\"},\n";
 
-const util_src = "def util() -> Int:\n    return 1\n";
+pub const util_src = "def util() -> Int:\n    return 1\n";
 const base_key = "c35bac7771b58268a8da642c068d5a26fba08d652a1bea867fe87d7e8ecedc2d";
 
 /// mopm's graph for `base` when it imports `util` (whose source is `src`, its key `key`): `base`'s library imports it, so its key (mopm hashes the keys
 /// below a unit) is `base_key` with `key` appended. `root` and `path` are as mopm prints them; `prefix` goes before the paths of `base` itself.
-fn memberGraph(h: *kit.Harness, src: []const u8, key: []const u8, root: []const u8, path: []const u8, prefix: []const u8) ![]const u8 {
+pub fn memberGraph(h: *kit.Harness, src: []const u8, key: []const u8, root: []const u8, path: []const u8, prefix: []const u8) ![]const u8 {
     const a = h.a();
     var unit = try std.mem.replaceOwned(u8, a, util_graph_unit, "@ROOT@", root);
     unit = try std.mem.replaceOwned(u8, a, unit, "@PATH@", path);
@@ -855,7 +856,7 @@ test "sync and check: a package the graph imports from a sibling directory has i
     try t.expectEqual(@as(u8, 0), r.code);
     const lock = h.read("pkgs/base/buildrules.mojo.lock.bzl");
     try t.expect(kit.contains(lock, "\"../util/mopm.toml\": \""));
-    // Only the library of another package whose root ends in src/<its name> after a directory is a member.
+    // Only the library of another package that is in a directory of its own is a member.
     try t.expect(!kit.contains(lock, "\"../base2/mopm.toml\""));
     try t.expect(!kit.contains(lock, "\"../v/mopm.toml\""));
     try t.expect(!kit.contains(lock, "\"../elsewhere"));
