@@ -264,3 +264,44 @@ test "every allocation failing in turn is an error, never a wrong graph" {
     }
     return error.SweepDidNotEnd;
 }
+
+// A format 3 graph (docs/contract.md, section 12.11): a top-level `system_libs` array of objects at the indentation of the units, and `loads` on a unit. Defect caught:
+// the layout of the array taken for a unit block (a graph with a member refused as "a layout this function does not know"), the entries edited or dropped, the
+// `loads` of a unit lost.
+const system_libs =
+    \\  "system_libs": [
+    \\    {
+    \\      "name": "libsqlite",
+    \\      "version": "3.54.1",
+    \\      "build": "h0737f62_101",
+    \\      "url": "https://conda.anaconda.org/conda-forge/linux-64/libsqlite-3.54.1-h0737f62_101.conda",
+    \\      "sha256": "c294029f893d05286f1061bbab85b820f1eea73dd859af4bcc619197bcc34810",
+    \\      "size": 980491
+    \\    }
+    \\  ],
+    \\
+;
+
+test "a format 3 graph with a path dependency: the system_libs array is not a unit and is kept, wherever it stands, and loads stay" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const base = try graph(a, "ss", "kk", "aakey");
+    const with_loads = try std.mem.replaceOwned(u8, a, base, "      \"natives\": [],\n      \"profile\": {\"opt\": 1, \"assert\": \"all\", \"debug\": false},\n      \"outputs\": [\"app.mojoc\"],", "      \"natives\": [],\n      \"loads\": [\"libsqlite\"],\n      \"profile\": {\"opt\": 1, \"assert\": \"all\", \"debug\": false},\n      \"outputs\": [\"app.mojoc\"],");
+    try t.expect(has(with_loads, "\"loads\""));
+    const before = try std.mem.replaceOwned(u8, a, with_loads, "  \"units\": [\n", system_libs ++ "  \"units\": [\n");
+    const tail = try std.fmt.allocPrint(a, "    }}\n  ],\n{s}\n}}\n", .{std.mem.trimRight(u8, system_libs, ",\n")});
+    const after = try std.mem.replaceOwned(u8, a, with_loads, "    }\n  ]\n}\n", tail);
+    for ([_][]const u8{ before, after }) |g| {
+        const got = try N.identityOnly(a, g);
+        // the member's source and key are gone, as without the array
+        try t.expect(!has(got, "\"util/src/util/__init__.mojo\""));
+        try t.expect(!has(got, "\"key\": \"kk\""));
+        // the entry is exactly what mopm printed, and the unit's loads are there
+        try t.expect(has(got, "      \"sha256\": \"c294029f893d05286f1061bbab85b820f1eea73dd859af4bcc619197bcc34810\",\n      \"size\": 980491\n    }\n"));
+        try t.expect(has(got, "\"loads\": [\"libsqlite\"],"));
+        const parsed = try std.json.parseFromSliceLeaky(std.json.Value, a, got, .{});
+        try t.expectEqual(@as(usize, 1), parsed.object.get("system_libs").?.array.items.len);
+        try t.expectEqual(@as(usize, 4), parsed.object.get("units").?.array.items.len);
+    }
+}

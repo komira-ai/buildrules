@@ -7,10 +7,13 @@
 //! usage: conda_unpack <package.conda> <out_dir> [--keep <member>]...
 //!            [--lib <library.conda> <member>]...
 //!        conda_unpack --only-libs <out_dir> (--lib <library.conda> <member>)...
+//!        conda_unpack --all-libs <library.conda> <out_dir>
 //!
 //! The second form writes only the `--lib` members (and CLOSURE_MANIFEST):
 //! shared libraries from pinned packages for a tool that is not the Mojo
-//! compiler.
+//! compiler. The third writes every shared library of the package's `lib/`
+//! (links written as copies) flat into <out_dir>: what a test run puts on its
+//! library path for a `system_libs` pin (conda_libs.zig has the rules).
 //!
 //! A `.conda` file is a zip holding `pkg-*.tar.zst` (the payload) and
 //! `info-*.tar.zst` (metadata). This tool needs nothing from the host: it is a
@@ -43,6 +46,7 @@
 //! Exit status 2 on any malformed or unexpected input.
 
 const std = @import("std");
+const conda_libs = @import("conda_libs.zig");
 
 /// The window the zstd frames of a conda package may use (the decoder refuses a
 /// frame whose window does not fit; conda-forge packages use far smaller ones).
@@ -322,6 +326,11 @@ pub fn main() !void {
 
     const args = try std.process.argsAlloc(a);
     if (args.len >= 2 and std.mem.eql(u8, args[1], "--only-libs")) return onlyLibs(a, args);
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "--all-libs")) {
+        var why: []const u8 = "";
+        conda_libs.run(a, std.fs.cwd(), args[2..], &why) catch |e| fail("{s}", .{if (why.len != 0) why else @errorName(e)});
+        return;
+    }
     const usage = "usage: conda_unpack <package.conda> <out_dir> [--keep <member>]... [--lib <library.conda> <member>]...";
     if (args.len < 3) fail(usage, .{});
     // `--keep <member>`: one more package member to extract.

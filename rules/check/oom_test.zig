@@ -22,6 +22,9 @@ test "run: every allocation of the option handling and the preparation, failed i
     try sweepTool(&c, &.{ "run", "--clear-env", "--env", "A=1", "--env", "B=2" }, &.{"true"}, outs);
     try sweepTool(&c, &.{ "run", "--scratch", "s", "--dir", "D=sub/x", "--dir", "R=.", "--tmpdir", "--cwd-env", "R" }, &.{"true"}, outs);
     try sweepTool(&c, &.{ "run", "--ld-library-path", "lib", "--abs", "REL", "--abs-prefix", "PFX_", "--mkdir-env", "REL", "--cwd", "sub" }, &.{"true"}, outs);
+    try sweepTool(&c, &.{ "run", "--ld-library-path", "lib", "--lib-dir", "libs/one", "--lib-dir", "/abs/two" }, &.{"true"}, outs);
+    try sweepTool(&c, &.{ "run", "--lib-dir", "libs/one" }, &.{"true"}, outs);
+    try sweepTool(&c, &.{ "run", "--lib-dir", "" }, &.{"true"}, outs);
     try sweepTool(&c, &.{ "run", "--env", "BAD" }, &.{"true"}, outs);
     try sweepTool(&c, &.{ "run", "--dir", "BAD" }, &.{"true"}, outs);
     try sweepTool(&c, &.{ "run", "--bogus" }, &.{"true"}, outs);
