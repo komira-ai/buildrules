@@ -12,6 +12,7 @@ export const remote: Page = {
     h2('Without a farm: local mode'),
     p('`[buildrules_re] mode` is `remote` (the default, also when unset) or `local`; any other value is refused. Pass `-c buildrules_re.mode=local` (or set it in `.buckconfig.local`) to run every action on the machine running Buck2, for example on a CI runner. It is refused when `[buck2_re_client] engine_address` or `cas_address`, or `linux_x86_64_properties`, is also set, so a machine that has a farm cannot slip into running locally.'),
     p('Local mode is hermetic in what it runs, not in where: the tools are the same pinned toolchains, downloaded by Buck2 and checked against their sha256, with the same command lines and inputs as on a farm. The machine supplies Buck2, its kernel and its CPU; the CPU-level platforms run on that CPU, so a test built for `x86-64-v3` needs a CPU with AVX2, BMI1/BMI2, FMA and MOVBE. Cache keys do not depend on the mode.'),
+    p('Every `[buildrules_re]` key, and `[buck2_re_client]` `engine_address` and `cas_address`, is read from the root cell\'s configuration, whichever cell loads the rules: a repository that is itself a cell of another repository takes these settings from that repository\'s `.buckconfig` and `.buckconfig.local`, not from its own.'),
     h2('Connect a farm'),
     p('`buildrules init` writes `.buckconfig.local.example` and adds `.buckconfig.local` to `.gitignore`. Copy the example and fill it in:'),
     code(
