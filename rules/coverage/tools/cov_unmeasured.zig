@@ -10,10 +10,10 @@
 //! the entry went stale when the tool began recording it), and a source with no statement at all (a re-export file, which `:coverage` lists 0/0 already), a path starting with `/`, and a source
 //! that kcov can record. A source is accepted only if every function or method it defines is `@always_inline("nodebug")` and it defines one, and outside the bodies of those
 //! functions it holds nothing but declarations (`strictScan`): no `;` and no backslash outside a string or comment anywhere; each statement outside a body is exactly one of an
-//! import, an `alias` / `comptime` constant with no `(` in it, a `struct` / `trait` header with nothing after its colon, a field `var NAME: Type` with no initializer, a decorator
-//! (`@always_inline("nodebug")`, `@fieldwise_init`, `@value`, `@register_passable`, `@deprecated`), a docstring, a `def` / `fn` whose whole body is `...`, or `pass`, and anything else is
-//! refused naming its line. In a nodebug function the words `fn`, `def` and `lambda` are refused unless the `def` starts a nested nodebug function the lister (mojo_src) also found. A
-//! `@fieldwise_init` or `@value` struct is accepted: its synthesized methods have no source line for kcov to record. Fail-closed: a source that only looks like a declaration is refused.
+//! import (plain dotted names, `as`, `from ... import`, one pair of parentheses; a byte of 128 or more is part of a name, so a look-alike blank ends nothing), an `alias` / `comptime` constant with no `(` in it, a `struct` / `trait` header with nothing after its colon, a field `var NAME: Type` with no initializer, a decorator
+//! (`@always_inline("nodebug")`, `@fieldwise_init`, `@value`, `@register_passable`, `@deprecated`), a docstring, a `def` / `fn` whose whole body is `...` and whose signature has no `=`, or `pass`, and anything else is
+//! refused naming its line. In a nodebug function the words `fn`, `def` and `lambda` are refused (in the signature too, so an `fn`-typed parameter is refused; and in a format string whose literal has a `{`) unless the `def` starts a nested nodebug function the lister (mojo_src) also found. A file indented with both tabs and spaces, and a body line that dedents to no enclosing level, are refused. A
+//! `@fieldwise_init` or `@value` struct is accepted by decision: its synthesized methods are assumed to have no source line for kcov to record (a build does not check it). Fail-closed: a source that only looks like a declaration is refused.
 //! The first TAB or two-space run splits the line, whichever comes first, so a TAB inside the reason stays in it.
 
 const std = @import("std");
@@ -104,7 +104,7 @@ const Stmt = struct { line: usize, indent: usize, raw: []const u8, col: []const 
 const Split = union(enum) { stmts: []const Stmt, stray: Stray };
 
 fn isIdentByte(c: u8) bool {
-    return std.ascii.isAlphanumeric(c) or c == '_';
+    return std.ascii.isAlphanumeric(c) or c == '_' or c >= 128;
 }
 
 /// Whether the word `w` stands in `code` between non-identifier bytes.
@@ -146,6 +146,11 @@ fn splitStatements(a: std.mem.Allocator, text_in: []const u8) !Split {
     var start: usize = 0;
     var indent: usize = 0;
     var lineno: usize = 0;
+    var str_start: usize = 0;
+    var fstr = false;
+    var fbrace = false;
+    var tabs = false;
+    var spaces = false;
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |phys| {
         lineno += 1;
@@ -156,6 +161,7 @@ fn splitStatements(a: std.mem.Allocator, text_in: []const u8) !Split {
             const c = ln[i];
             if (quote != 0) {
                 try raw.append(a, c);
+                if (fstr and c == '{') fbrace = true;
                 if (c == '\\') {
                     if (i + 1 < ln.len) try raw.append(a, ln[i + 1]) else escaped_end = true;
                     i += 2;
@@ -164,12 +170,14 @@ fn splitStatements(a: std.mem.Allocator, text_in: []const u8) !Split {
                 if (c == quote) {
                     if (!triple) {
                         quote = 0;
-                        try col.append(a, '"');
+                        try endString(a, &col, raw.items[str_start..], fstr and fbrace);
+                        fstr = false;
                     } else if (i + 2 < ln.len and ln[i + 1] == c and ln[i + 2] == c) {
                         try raw.appendSlice(a, ln[i + 1 .. i + 3]);
                         quote = 0;
                         triple = false;
-                        try col.append(a, '"');
+                        try endString(a, &col, raw.items[str_start..], fstr and fbrace);
+                        fstr = false;
                         i += 3;
                         continue;
                     }
@@ -192,11 +200,17 @@ fn splitStatements(a: std.mem.Allocator, text_in: []const u8) !Split {
                 open = true;
                 start = lineno;
                 indent = std.mem.indexOfNone(u8, ln, " \t") orelse 0;
+                if (std.mem.indexOfScalar(u8, ln[0..indent], '\t') != null) tabs = true;
+                if (std.mem.indexOfScalar(u8, ln[0..indent], ' ') != null) spaces = true;
+                if (tabs and spaces) return bad(lineno, "is indented with tabs in one place and spaces in another");
             }
             if (c == '"' or c == '\'') {
                 quote = c;
                 triple = i + 2 < ln.len and ln[i + 1] == c and ln[i + 2] == c;
                 const n: usize = if (triple) 3 else 1;
+                fstr = formatPrefix(col.items);
+                fbrace = false;
+                str_start = raw.items.len;
                 try raw.appendSlice(a, ln[i .. i + n]);
                 i += n;
                 continue;
@@ -230,6 +244,21 @@ fn splitStatements(a: std.mem.Allocator, text_in: []const u8) !Split {
     }
     if (open) return bad(start, "starts a string or a bracket that never closes");
     return .{ .stmts = try out.toOwnedSlice(a) };
+}
+
+/// Whether the letters just before a string's opening quote (at most two, as in `f`, `rf`, `tr`) include `f` or `t`: a format string, whose `{ }` hold code.
+fn formatPrefix(col: []const u8) bool {
+    var n: usize = 0;
+    var fmt = false;
+    while (n < col.len and n < 3 and std.ascii.isAlphabetic(col[col.len - 1 - n])) : (n += 1) {
+        if (std.ascii.toLower(col[col.len - 1 - n]) == 'f' or std.ascii.toLower(col[col.len - 1 - n]) == 't') fmt = true;
+    }
+    return n <= 2 and fmt;
+}
+
+/// A string's mark in the code text: one `"`, so a word inside it is no word; but a format string with a `{` keeps its text, because the braces hold code.
+fn endString(a: std.mem.Allocator, col: *std.ArrayList(u8), literal: []const u8, keep: bool) !void {
+    if (keep) try col.appendSlice(a, literal) else try col.append(a, '"');
 }
 
 const Deco = enum { nodebug, listed, other };
@@ -304,8 +333,45 @@ fn constantDecl(c: []const u8) bool {
     return std.mem.indexOfScalar(u8, after, '=') != null;
 }
 
+/// A dotted name: `NAME(.NAME)*`, each NAME of identifier bytes (a byte of 128 or more counts as one, so no space of another script passes as a blank).
+fn dottedName(s: []const u8, relative: bool) bool {
+    var t = s;
+    if (relative) t = std.mem.trimLeft(u8, t, ".");
+    if (t.len == 0) return relative and s.len > 0;
+    var it = std.mem.splitScalar(u8, t, '.');
+    while (it.next()) |part| if (!isName(part)) return false;
+    return true;
+}
+
+fn importItem(item_in: []const u8, relative: bool) bool {
+    const item = std.mem.trim(u8, item_in, " \x0c");
+    if (std.mem.indexOf(u8, item, " as ")) |at| {
+        return dottedName(std.mem.trim(u8, item[0..at], " \x0c"), relative) and isName(std.mem.trim(u8, item[at + 4 ..], " \x0c"));
+    }
+    return dottedName(item, relative);
+}
+
+fn importList(list_in: []const u8, relative: bool) bool {
+    var list = std.mem.trim(u8, list_in, " \x0c");
+    if (list.len == 0) return false;
+    if (list[0] == '(') {
+        if (list[list.len - 1] != ')') return false;
+        list = std.mem.trim(u8, list[1 .. list.len - 1], " \x0c,");
+        if (list.len == 0) return false;
+    }
+    var it = std.mem.splitScalar(u8, list, ',');
+    while (it.next()) |item| if (!importItem(item, relative)) return false;
+    return true;
+}
+
+/// `import NAME(.NAME)*( as NAME)?(, ...)*` or `from NAME(.NAME)* import NAME( as NAME)?(, ...)*` (leading dots allowed after `from`, the names of the second
+/// form may stand in one pair of parentheses): plain names only, so no call, no other statement and no byte that merely looks like a blank can follow.
 fn importDecl(c: []const u8) bool {
-    return startsWord(c, "import") or startsWord(c, "from");
+    if (startsWord(c, "import")) return importList(c["import".len..], false);
+    if (!startsWord(c, "from")) return false;
+    const rest = c["from".len..];
+    const at = std.mem.indexOf(u8, rest, " import ") orelse return false;
+    return dottedName(std.mem.trim(u8, rest[0..at], " \x0c"), true) and importList(rest[at + " import ".len ..], false);
 }
 
 /// `struct` or `trait`, a header whose first colon outside brackets is its last byte and which names no function value.
@@ -333,13 +399,14 @@ const what_decl = "is not one of the declarations a nodebug-only source may hold
 /// and no backslash anywhere; each statement is exactly one of an import, an `alias` / `comptime` constant without a call, a `struct` / `trait` header with
 /// nothing after its colon, a field `var NAME: Type` with no initializer, a decorator of `decorator`, a docstring (a string literal alone), a `def` / `fn`
 /// whose whole body is `...`, or `pass`; nothing else. In a body (the lines of the function after its header, and the header's own line after its
-/// signature), the words `fn`, `def` and `lambda` are refused unless the `def` starts a nested nodebug function the lister (`fns`) also found.
+/// signature), the words `fn`, `def` and `lambda` are refused (in the signature too, so an `fn`-typed parameter is refused; and in a format string whose literal has a `{`) unless the `def` starts a nested nodebug function the lister (`fns`) also found.
 fn strictScan(a: std.mem.Allocator, text: []const u8, fns: []const mojo_src.Fn) !?Stray {
     const ss = switch (try splitStatements(a, text)) {
         .stmts => |s| s,
         .stray => |s| return s,
     };
     var body_indent: ?usize = null;
+    var stack = std.ArrayList(usize).empty;
     var pending = false;
     var i: usize = 0;
     while (i < ss.len) : (i += 1) {
@@ -347,6 +414,15 @@ fn strictScan(a: std.mem.Allocator, text: []const u8, fns: []const mojo_src.Fn) 
         const c = s.col;
         if (body_indent) |bi| {
             if (s.indent > bi) {
+                var popped = false;
+                while (stack.items[stack.items.len - 1] > s.indent) {
+                    stack.items.len -= 1;
+                    popped = true;
+                }
+                if (stack.items[stack.items.len - 1] < s.indent) {
+                    if (popped) return .{ .line = s.line, .what = "dedents to a level no enclosing block of the function has" };
+                    try stack.append(a, s.indent);
+                }
                 if (c[0] == '@') {
                     if (try decorator(a, s) == .nodebug) pending = true;
                     continue;
@@ -378,6 +454,7 @@ fn strictScan(a: std.mem.Allocator, text: []const u8, fns: []const mojo_src.Fn) 
             const kw: usize = if (startsWord(c, "def")) 3 else 2;
             if (functionWord(c[kw..])) return .{ .line = s.line, .what = "makes a function value in a function header" };
             if (bodyIsEllipsis(ss, i)) {
+                if (std.mem.indexOfScalar(u8, c, '=') != null) return .{ .line = s.line, .what = "has a default value in a def that has no body" };
                 if (colonAt(c)) |at| {
                     if (std.mem.trim(u8, c[at + 1 ..], " ").len == 0) i += 1;
                 }
@@ -385,6 +462,8 @@ fn strictScan(a: std.mem.Allocator, text: []const u8, fns: []const mojo_src.Fn) 
             }
             if (was and listerHas(fns, s.line)) {
                 body_indent = s.indent;
+                stack.clearRetainingCapacity();
+                try stack.append(a, s.indent);
                 continue;
             }
             return .{ .line = s.line, .what = "defines a function that is not an @always_inline(\"nodebug\") one the lister found" };
