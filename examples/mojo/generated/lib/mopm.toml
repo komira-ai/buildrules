@@ -1,0 +1,8 @@
+[package]
+name = "gen_lib"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[targets]
+lib = { path = "generated/gen_lib" }
+tests = ["tests"]

@@ -1,0 +1,19 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:pack.bzl", "mojo_conda_holds")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A library whose sources are committed generator output: its mopm.toml names the library `generated/gen_lib` (`[targets] lib = { path = "generated/gen_lib" }`),
+# not `src/gen_lib`. The rule reads the sources and the name of the module from the graph; the tests are the package's own `tests/test_*.mojo`.
+mojo_package(path = ".", conda = True)
+
+# `:conda` is `mopm pack` of this package: the module is `gen_lib`, from the directory `generated/gen_lib`.
+mojo_conda_holds(
+    name = "conda_holds",
+    conda = ":conda",
+    package = "gen_lib",
+    sole = True,
+    depends = [],
+    visibility = ["//ci:"],
+)
+
+scrub_files()

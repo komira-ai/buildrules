@@ -1,0 +1,11 @@
+[package]
+name = "gen_user"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[dependencies]
+gen_lib = { path = "../lib", version = "0.1" }
+
+[targets]
+lib = { path = "src/gen_user" }
+tests = ["tests"]

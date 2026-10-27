@@ -500,10 +500,27 @@ fn graphBase(pkg: []const u8, rooted: bool) []const u8 {
     return if (rooted) "" else pkg;
 }
 
+/// The directory of the package whose library is at `repo_root` (a repository path): the one above `src/<name>` when the library is there, else the nearest
+/// directory, the library's own included, that holds a `mopm.toml` (a library `[targets] lib = { path = "generated/<name>" }` is below its package's
+/// directory), or null when there is none. The repository root is the empty string.
+fn memberDirOf(ctx: *Ctx, repo_root: []const u8, package: []const u8) !?[]const u8 {
+    const a = ctx.a;
+    const suffix = try std.fmt.allocPrint(a, "src/{s}", .{package});
+    if (std.mem.eql(u8, repo_root, suffix)) return "";
+    if (std.mem.endsWith(u8, repo_root, suffix) and repo_root[repo_root.len - suffix.len - 1] == '/') return repo_root[0 .. repo_root.len - suffix.len - 1];
+    var dir = repo_root;
+    while (true) {
+        if (ctx.exists(try join(a, dir, "mopm.toml"))) return dir;
+        if (dir.len == 0) return null;
+        dir = std.fs.path.dirname(dir) orelse "";
+    }
+}
+
 /// The member directories (relative to `pkg`) the root package's graph imports: the libraries that are not the root's own. A member that lives
 /// outside the repository root (its root, put next to the graph's base, leaves it) is no directory a Buck2 target can name: `outside` is then the
 /// sentence that says so, and the member is not in the answer.
-fn memberDirs(a: std.mem.Allocator, g: lockm.Graph, pkg: []const u8, rooted: bool, outside: *?[]const u8) ![]const []const u8 {
+fn memberDirs(ctx: *Ctx, g: lockm.Graph, pkg: []const u8, rooted: bool, outside: *?[]const u8) ![]const []const u8 {
+    const a = ctx.a;
     var out = std.ArrayList([]const u8).empty;
     const root_name = packageName(g);
     for (g.units) |u| {
@@ -513,11 +530,7 @@ fn memberDirs(a: std.mem.Allocator, g: lockm.Graph, pkg: []const u8, rooted: boo
             if (outside.* == null) outside.* = try std.fmt.allocPrint(a, "{s} lives in {s}, which is outside the repository root: a path dependency must be a directory below the root that holds .buckconfig", .{ u.id, u.root });
             continue;
         }
-        const suffix = try std.fmt.allocPrint(a, "src/{s}", .{u.package});
-        const dir: []const u8 = if (std.mem.eql(u8, repo_root, suffix)) "" else blk: {
-            if (!std.mem.endsWith(u8, repo_root, suffix) or repo_root[repo_root.len - suffix.len - 1] != '/') continue;
-            break :blk repo_root[0 .. repo_root.len - suffix.len - 1];
-        };
+        const dir = (try memberDirOf(ctx, repo_root, u.package)) orelse continue;
         const rel = try relFrom(a, pkg, dir);
         if (rel.len == 0) continue;
         try out.append(a, rel);
@@ -633,7 +646,7 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
         const th = (try sha256Of(ctx, tc.at_root)).?;
         try ms.append(a, .{ .path = tc.rel_to_pkg, .sha256 = th });
         var outside: ?[]const u8 = null;
-        const dirs = try memberDirs(a, g, pkg, rooted, &outside);
+        const dirs = try memberDirs(ctx, g, pkg, rooted, &outside);
         if (outside) |why_not| {
             code |= ctx.fail("{s}: {s}", .{ pkg, why_not });
             continue;
@@ -881,7 +894,7 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
         if (lockm.manifestHash(l, need) == null) stale(ctx, bad, "{s} does not record {s}: {s}", .{ lock_path, need, fix });
     }
     var outside: ?[]const u8 = null;
-    for (try memberDirs(a, g, pkg, rooted, &outside)) |md| {
+    for (try memberDirs(ctx, g, pkg, rooted, &outside)) |md| {
         const rel = try join(a, md, "mopm.toml");
         if (lockm.manifestHash(l, rel) == null) stale(ctx, bad, "{s} is a path dependency's manifest the table does not know: {s}", .{ rel, fix });
     }
