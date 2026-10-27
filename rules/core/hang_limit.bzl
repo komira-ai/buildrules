@@ -9,7 +9,7 @@ Every welded Mojo test action carries it, the same contract in these rules and i
     and was stopped; a test never waits on time, so this means it hung (an event that never came)`, with the test's label. The action stays red: no marker is written.
 
 The actions that carry it are the ones whose marker welds `:lib`: the test run of `mojo_test_run_rule` (`check marker`, rules/check) and the gated run of
-`gate mojo` (rules/gate). The coverage runs are not welded and do not carry it.
+`gate mojo` (rules/gate). The coverage runs are not welded and do not carry it; they have no limit of their own, and a coverage run that hangs is ended by the executor's timeout.
 """
 
 # The default, in seconds, of every welded Mojo test action.

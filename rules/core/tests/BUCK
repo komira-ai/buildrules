@@ -5,7 +5,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("//rules/core:hang_limit.bzl", "HANG_LIMIT_S", "check_hang_limit", "check_hang_limits", "hang_limit_args", "hang_limit_flags", "hang_limit_of")
 load("//rules/core:pinned_file.bzl", "check_pinned")
 load("//rules/core:rerun.bzl", "parse_rerun")
-load("//rules/core:test_runtime.bzl", "check_data_destinations", "env_args", "macos_library_dirs")
+load("//rules/core:test_runtime.bzl", "check_data_destinations", "env_args", "gate_mojo", "macos_library_dirs")
 load("//rules/core:url_map.bzl", "map_url")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/rust:refusal.bzl", "accepts", "refuses")
@@ -132,6 +132,8 @@ _ALL.append(refuses("hang_limit_of_a_test_with_a_bad_value_is_refused", check_ha
 
 _ALL.append(refuses("hang_limits_that_are_not_a_dict_are_refused", check_hang_limits, ["//t:t", 60, _TESTS], ["test_hang_limit_s must be a dict"]))
 
+_TC = struct(gate = "gate", busybox = "bb", compiler = "compiler")
+
 # The default is half an hour, a test's own entry wins over `*`, and `*` over the default; the options are the ones `check marker` and `gate mojo` read.
 [
     fail("{} is {}, not {}".format(what, repr(got), repr(want)))
@@ -143,6 +145,11 @@ _ALL.append(refuses("hang_limits_that_are_not_a_dict_are_refused", check_hang_li
         ("hang_limit_of with the entry of another test", hang_limit_of({"tests/test_b.mojo": 7200}, "tests/test_a.mojo"), 1800),
         ("hang_limit_args", hang_limit_args("//t:t", 90), ["--hang-limit-s", "90", "--hang-label", "//t:t"]),
         ("hang_limit_flags", hang_limit_flags(90), ["--hang-limit-s", "90"]),
+        # The command of `gate mojo` a consumer's rule builds: the limit is on it by default, the target's own wins, and None (a coverage run) leaves it off.
+        ("gate_mojo by default", "\"--hang-limit-s\", \"1800\"" in str(gate_mojo(_TC, "//t:t", "t", "m")), True),
+        ("gate_mojo with a limit", "\"--hang-limit-s\", \"90\"" in str(gate_mojo(_TC, "//t:t", "t", "m", test_hang_limit_s = 90)), True),
+        ("gate_mojo with a limit, the default", "\"--hang-limit-s\", \"1800\"" in str(gate_mojo(_TC, "//t:t", "t", "m", test_hang_limit_s = 90)), False),
+        ("gate_mojo without a limit", "--hang-limit-s" in str(gate_mojo(_TC, "//t:t", "t", "m", test_hang_limit_s = None)), False),
     ]
     if got != want
 ]

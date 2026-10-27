@@ -721,7 +721,7 @@ did not finish at all, and the limit is never evidence that a test is slow. The 
   value that is not a positive whole number, is refused when the package loads). Raise it for a test that is genuinely long; never lower it to make a test pass.
 - **Which actions.** The ones whose marker welds `:lib`: the test run (`check marker`, `--hang-limit-s N --hang-label LABEL`) and, in a consumer's rules, the gated run
   (`gate mojo --hang-limit-s N`). The command of `buck2 test` is not welded and has the test runner's own timeout; the coverage runs (the kcov run and the branch run, which
-  run the same test again) are not welded either and are not held to it by this limit. The compile of the test has its own watchdog.
+  run the same test again) are not welded either and are not given it: they have no limit of their own in these rules, and a coverage run that hangs is ended by the executor's timeout (the welded run of the same test is stopped first, so `:lib` is red regardless). The compile of the test has its own watchdog.
 - **On expiry** the whole process group of the test is killed (`SIGKILL`; a child or a grandchild the test left is in it), the status is `125`, and stderr gets exactly one line
   that starts `hang limit:`: `hang limit: <test> did not finish within <N> s and was stopped; a test never waits on time, so this means it hung (an event that never came)`. `<test>` is the label of the test
   run, as the rule prints it (`buildrules//examples/mojo/x:test_x`). The action stays red like any failing test: no marker, no `PASS` line, and the library stays unbuildable;

@@ -107,9 +107,9 @@ rust_library(
 )
 
 # The run of a Mojo test that fails (the program exits 2), with a stand-in for the compiler. The real runs, which pass, are the tests of //ci:mojo.
-faulty_mojo_exe(name = "mojo_test_exe")
+faulty_mojo_exe(name = "mojo_test_exe", visibility = ["//ci/negative:"])
 
-faulty_mojo_toolchain(name = "mojo_toolchain")
+faulty_mojo_toolchain(name = "mojo_toolchain", visibility = ["//ci/negative:"])
 
 mojo_test_run_rule(
     name = "mojo_test_that_fails",

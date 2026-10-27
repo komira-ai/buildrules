@@ -33,6 +33,7 @@ CASES = [
     ("//ci/negative:cross_exe_with_other_tests", PLATFORM, "waits for the unit tests"),
     ("//ci/negative:mojo_instrumented_link_without_a_native_the_unit_links", PLATFORM, "the unit links the native library libbase_sys.a and the instrumented link of its branch coverage is not given it"),
     ("//ci/negative:mojo_instrumented_link_with_a_needed_archive_before_its_user", PLATFORM, "libbase_sys.a is linked before libprobe_sys.a, which needs it"),
+    ("//ci/negative:mojo_test_run_with_a_zero_hang_limit", PLATFORM, "test_hang_limit_s 0 is not a positive whole number of seconds"),
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys/base_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
@@ -262,6 +263,8 @@ HANG_LIMIT_OVERRIDES = {
 }
 HANG_LIMIT_FIXTURES = {
     "//ci/faulty:mojo_test_that_hangs": "1",
+    # A run declared directly, with no limit said: the attribute's own default (rules/mojo/unit.bzl), which `mojo_package` does not pass through here.
+    "//ci/faulty:mojo_test_that_fails": "1800",
 }
 
 def _cmd_tokens(action):
