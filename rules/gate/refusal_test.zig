@@ -79,6 +79,11 @@ test "mojo: the limits that go together, and the ones that cannot" {
     try e.refuses("a runner timeout with no deadline", try mojo(e.a, null, &.{ "--runner-timeout-s", "90" }), 2, "test_deadline: usage error: --deadline-s and --runner-timeout-s go together\n");
     try e.refuses("a limit with no report", try mojo(e.a, null, &.{ "--limit-s", "5" }), 2, "gate_runner: usage error: --limit-s and --limit-report go together\n");
     try e.refuses("a report with no limit", try mojo(e.a, null, &.{ "--limit-report", "coverage" }), 2, "gate_runner: usage error: --limit-s and --limit-report go together\n");
+    try e.refuses("a hang limit and a coverage limit", try mojo(e.a, null, &.{ "--hang-limit-s", "30", "--limit-s", "5", "--limit-report", "coverage" }), 2, "gate_runner: usage error: --limit-s and --hang-limit-s are two limits\n");
+    for ([_][]const u8{ "0", "030", "-1", "1.5", "ten", "" }) |bad| {
+        const msg = try std.fmt.allocPrint(e.a, "hang_limit: REFUSING: the limit '{s}' is not a positive whole number of seconds\n", .{bad});
+        try e.refuses(bad, try mojo(e.a, null, &.{ "--hang-limit-s", bad }), 2, msg);
+    }
     try e.refuses("a deadline and a coverage limit", try mojo(e.a, null, &.{ "--deadline-s", "30", "--runner-timeout-s", "90", "--limit-s", "5", "--limit-report", "coverage" }), 2, "gate_runner: usage error: --limit-s and --deadline-s are two limits\n");
 }
 

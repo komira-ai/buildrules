@@ -4,13 +4,13 @@ What a rule's build action runs instead of a shell script, as one static Zig exe
 `rust_test` and the Rust test runs (`test_run`, the welded copy), the pinned `rustc --version` and the cargo table check; ci/faulty holds that each is
 red when its check fails. Every command writes its output
 file only when it succeeded, and whole (a temporary file renamed into place). Exit status: 0 done; 1 the check failed; 2 the command line is
-wrong; for `run` and `marker` the program's own status (127 not there, 126 not runnable, 128+signal when a signal ended it).
+wrong; for `run` and `marker` the program's own status (127 not there, 126 not runnable, 128+signal when a signal ended it); 125 for a `marker` test stopped by its hang limit).
 
 | command | what it does |
 |---|---|
 | `run [OPTIONS] -- PROGRAM [ARG]...` | starts the program in a prepared environment and exits with its status. `--refuse MESSAGE` starts nothing: it writes the message and exits 2 (the stand-in for a tool a toolchain does not provide). |
 | `expect --want TEXT --out FILE [--prefix] [--name NAME] [OPTIONS] -- PROGRAM...` | the program's stdout, without trailing newlines, equals TEXT (or starts with it); then FILE holds it and a newline. |
-| `marker --out FILE [--capture] [--stamp TEXT \| --stamp-log] [OPTIONS] -- PROGRAM...` | runs a test; FILE is written only if it passed. `--capture` holds the output back and writes it to stdout if the test failed. |
+| `marker --out FILE [--capture] [--stamp TEXT \| --stamp-log] [--hang-limit-s N --hang-label L] [OPTIONS] -- PROGRAM...` | runs a test; FILE is written only if it passed. `--capture` holds the output back and writes it to stdout if the test failed. `--hang-limit-s N --hang-label L` stops a test that has not finished within N seconds, with its whole process group (the supervisor of `gate mojo`), and exits 125 with the line `hang limit: L did not finish within N s and was stopped; a test never waits on time, so this means it hung (an event that never came)` (docs/contract.md, section 12.8); not with `--capture`. |
 | `digest [--out FILE] [--stamp TEXT] (EXPECTED FILE NAME)...` | each file hashes to `sha256:<hex>`, `sha512:<hex>` or an integrity string `sha512-<base64>`. |
 | `same --out FILE [--stamp TEXT] A B` | the two files are the same bytes; the first difference is named. |
 | `copy SOURCE DESTINATION` | a file copied with its permission bits, whole or not at all. |

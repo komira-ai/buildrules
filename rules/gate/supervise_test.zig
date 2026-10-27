@@ -659,3 +659,104 @@ test "D7 exit not shown yet: a signal that arrives meanwhile is still handled" {
     const r = try kit.runGate(e.a, e.dir, try e.args("exit", &.{ "--mem-cap-mib", "512", "--arg", "0" }), .{ .setup = holdSignalSetup });
     try std.testing.expectEqual(@as(u8, 143), r.status);
 }
+
+// ---- H1-H3: the hang limit of a welded test (`--hang-limit-s`, docs/contract.md section 12.8) ------------------------------------------------
+//
+// The limit is a number of seconds and no test below waits for one to pass: the supervisor's clock reads a script (kit.useClock), and the fixtures block
+// until they are killed.
+
+const banner125 = "GATED TEST FAILED: //x:y (exit 125)\n";
+const hang_line_2 = "hang limit: //x:y did not finish within 2 s and was stopped; a test never waits on time, so this means it hung (an event that never came)\n";
+const hang_line_1 = "hang limit: //x:y did not finish within 1 s and was stopped; a test never waits on time, so this means it hung (an event that never came)\n";
+
+// The limit of 2 s passes between the readings 1999 and 2000, once both processes of the fixture exist; the group kill waits for the group to be gone so
+// the scan for survivors sees its effect.
+const h_clock = [_]u64{ 0, 1999, 2000 };
+
+fn hSetup() void {
+    kit.useClock(&h_clock, 2);
+    supervise.plat.kill = kit.settlingKill;
+}
+
+// H1, H2, H3. Defect caught: kill the program alone (the child it started survives; the pids are read back), kill at 1999 or at any reading but the limit's,
+// leave the status as the kill's 137, write the marker, say the hang line twice or before the banner, or say the test was slow.
+test "H1-H3 hang limit: the whole group is killed at the limit, exit 125, no marker, the banner, then the one hang line" {
+    const e = try Env.init();
+    defer e.deinit();
+    const f = try e.pidFile("h1.pids");
+    const r = try kit.runGate(e.a, e.dir, try e.args("spawnwait", &.{ "--hang-limit-s", "2", "--arg", f }), .{ .setup = hSetup });
+    try std.testing.expectEqual(@as(u8, 125), r.status);
+    try std.testing.expect(before(r.err, banner125, hang_line_2));
+    try std.testing.expect(std.mem.endsWith(u8, r.err, hang_line_2));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, r.err, "hang limit:"));
+    try std.testing.expect(!contains(r.err, "slow"));
+    try std.testing.expect(!contains(r.err, "survived the kill"));
+    try std.testing.expect(!contains(r.err, "TEST TIME LIMIT"));
+    try std.testing.expect(!contains(r.err, "COVERAGE RUN FAILED"));
+    try std.testing.expect(contains(r.err, try kit.killLine(e.a, posix.SIG.KILL, true, 2000)));
+    try std.testing.expect(!contains(r.err, "at clock 1999"));
+    try kit.expectKilled(r, try kit.pidsFrom(e.a, f, 2));
+    try std.testing.expect(!kit.exists(try e.pidFile("passed")));
+}
+
+// H1. Defect caught: a test that exits by itself before its limit is given the hang verdict, or its marker is not written, or the limit's line is said anyway
+// (the clock stays at the start, so the limit never comes; the run ends by the clock guard, status 251, if the test is waited for wrongly).
+test "H1 hang limit: a test that finishes within it keeps its status and its marker, and the limit says nothing" {
+    const e = try Env.init();
+    defer e.deinit();
+    const r7 = try kit.runGate(e.a, e.dir, try e.args("exit", &.{ "--hang-limit-s", "1800", "--arg", "7" }), .{});
+    try std.testing.expectEqual(@as(u8, 7), r7.status);
+    try std.testing.expect(!contains(r7.err, "hang limit"));
+    try std.testing.expect(contains(r7.err, "GATED TEST FAILED: //x:y (exit 7)\n"));
+    try std.testing.expect(!kit.exists(try e.pidFile("passed")));
+    const r0 = try kit.runGate(e.a, e.dir, try e.args("exit", &.{ "--hang-limit-s", "1800", "--arg", "0" }), .{});
+    try std.testing.expectEqual(@as(u8, 0), r0.status);
+    try std.testing.expectEqualStrings("", r0.err);
+    try std.testing.expectEqualStrings("PASS //x:y\n", try kit.readFile(e.a, try e.pidFile("passed")));
+}
+
+// H1. Defect caught: the scan for survivors is not run for a hang (a process left in the group is not reported), or the report is the hang line again (two
+// lines start with `hang limit:`), or it changes the status.
+test "H1 hang limit: a process that survives the kill is named on a line of its own, and the verdict is still the one hang line, exit 125" {
+    const e = try Env.init();
+    defer e.deinit();
+    const surv = struct {
+        fn s() void {
+            kit.useClock(&c1_short_clock, 0);
+            supervise.plat.group_members = fakeSurvivor;
+        }
+    }.s;
+    const r = try kit.runGate(e.a, e.dir, try e.args("held", &.{ "--hang-limit-s", "1" }), .{ .setup = surv });
+    try std.testing.expectEqual(@as(u8, 125), r.status);
+    try std.testing.expect(contains(r.err, "gate_runner: after the hang limit, processes of //x:y survived the kill of its process group "));
+    try std.testing.expect(contains(r.err, "(pid state comm: 4242 S stuck;)"));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, r.err, "hang limit:"));
+    try std.testing.expect(std.mem.endsWith(u8, r.err, hang_line_1));
+}
+
+// H2. Defect caught: the longer of the two limits runs (the test is stopped at 30 s and not at 2), or a tie goes to the hang limit, or the limit that did not run
+// is reported. With both, the shorter one runs, and a tie is the time limit's.
+test "hang limit and time limit: the shorter runs, and a tie is the time limit's" {
+    const e = try Env.init();
+    defer e.deinit();
+    // The hang limit is the shorter: the group kill, 125, the hang line, and nothing of the time limit.
+    const f1 = try e.pidFile("h2a.pids");
+    const a = try kit.runGate(e.a, e.dir, try e.args("spawnwait", &.{ "--hang-limit-s", "2", "--deadline-s", "30", "--runner-timeout-s", "90", "--arg", f1 }), .{ .setup = hSetup });
+    try std.testing.expectEqual(@as(u8, 125), a.status);
+    try std.testing.expect(contains(a.err, hang_line_2));
+    try std.testing.expect(!contains(a.err, "TEST TIME LIMIT"));
+    try kit.expectKilled(a, try kit.pidsFrom(e.a, f1, 2));
+    // The time limit is the shorter: the tree kill, 137, its line, and no hang line.
+    const f2 = try e.pidFile("h2b.pids");
+    const b = try kit.runGate(e.a, e.dir, try e.args("spawnwait", &.{ "--hang-limit-s", "30", "--deadline-s", "2", "--runner-timeout-s", "62", "--arg", f2 }), .{ .setup = d3Setup });
+    try std.testing.expectEqual(@as(u8, 137), b.status);
+    try std.testing.expect(contains(b.err, "TEST TIME LIMIT: killed //x:y after 2 s, under the test runner's timeout of 62 s (buildrules.test_timeout_s)\n"));
+    try std.testing.expect(!contains(b.err, "hang limit"));
+    try kit.expectKilled(b, try kit.pidsFrom(e.a, f2, 2));
+    // The same limit twice: the time limit's.
+    const f3 = try e.pidFile("h2c.pids");
+    const c = try kit.runGate(e.a, e.dir, try e.args("spawnwait", &.{ "--hang-limit-s", "2", "--deadline-s", "2", "--runner-timeout-s", "62", "--arg", f3 }), .{ .setup = d3Setup });
+    try std.testing.expectEqual(@as(u8, 137), c.status);
+    try std.testing.expect(contains(c.err, "TEST TIME LIMIT: killed //x:y after 2 s"));
+    try std.testing.expect(!contains(c.err, "hang limit"));
+}

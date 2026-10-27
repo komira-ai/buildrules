@@ -13,6 +13,8 @@ mojo_package(
         "BR_TEST_LEVEL": 3,
         "BR_TEST_NAME": "probe",
     },
+    # The hang limit of the test run (rules/core/hang_limit.bzl): the default is 1800 s; this test says another, which //ci:negative.bxl holds on the command of its run.
+    test_hang_limit_s = {"tests/test_defines_on.mojo": 2400},
 )
 
 scrub_files()

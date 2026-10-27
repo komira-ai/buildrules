@@ -149,3 +149,20 @@ test "isa runs the disassembler by its path and reports from what it prints" {
     try t.expect(std.mem.indexOf(u8, none.stderr, "would die with SIGILL") != null);
     try t.expect(!c.exists("r2"));
 }
+
+// The hang limit as the shipped process does it, on the real clock: a program that cannot finish (it sleeps a day) is stopped at a limit of one second. The case
+// asserts the verdict only (the status, the two lines, no file), never how long it took; hang_test.zig holds the same verdict in-process with the clock replaced,
+// and that the whole group is killed.
+test "marker --hang-limit-s stops a program that cannot finish: status 125, no file, TEST FAILED and the hang line" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    const tb = c.toolbox;
+    const r = try run(&c, &.{ "marker", "--out", "h", "--hang-limit-s", "1", "--hang-label", "//pkg:t", "--", tb, "sleep", "1d" }, &.{});
+    try expectRun(r, 125, "");
+    const want = try std.fmt.allocPrint(c.alloc(), "check marker: TEST FAILED: {s}\nhang limit: //pkg:t did not finish within 1 s and was stopped; a test never waits on time, so this means it hung (an event that never came)\n", .{tb});
+    try t.expectEqualStrings(want, r.stderr);
+    try t.expect(!c.exists("h"));
+    // and one that finishes passes as before
+    try expectRun(try run(&c, &.{ "marker", "--out", "m", "--hang-limit-s", "1800", "--hang-label", "//pkg:t", "--", tb, "true" }, &.{}), 0, "");
+    try t.expectEqualStrings("passed\n", try c.read("m"));
+}

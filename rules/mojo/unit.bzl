@@ -18,6 +18,7 @@ load("//rules:isa.bzl", "isa_satisfies")
 load("//rules/coverage/branch:llvm_branch.bzl", "CovBranchInfo", "RAW_PROFILE_VERSION")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
 load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoTestRunInfo", "MojoToolchainInfo")
+load("//rules/core:hang_limit.bzl", "HANG_LIMIT_S", "check_hang_limit", "hang_limit_args")
 load("//rules/core:test_runtime.bzl", "check_data_destinations", "macos_library_dirs")
 load(":test_data.bzl", "DATA_ENV", "LAYOUT_DEFAULT", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_env", "check_test_layout")
 
@@ -286,8 +287,14 @@ def _test_run_impl(ctx):
     if _MACOS_LIBRARY_DIRS and "-macos" in ctx.attrs.toolchain[MojoToolchainInfo].cc_target:
         start = ["--macos-library-dirs", _MACOS_LIBRARY_DIRS] + start
     marker = ctx.actions.declare_output(ctx.label.name + ".passed")
+
+    # The hang limit (rules/core/hang_limit.bzl): every welded test run carries it, so a test that hangs is stopped and red, whatever the executor's own timeout.
+    # Only the welded run: the command of `buck2 test` below is the runner's to time out.
+    where = str(ctx.label.raw_target())
+    check_hang_limit(where, ctx.attrs.test_hang_limit_s)
+    hang = hang_limit_args(where, ctx.attrs.test_hang_limit_s)
     ctx.actions.run(
-        cmd_args(check, "marker", "--out", marker.as_output(), "--ld-library-path", libs, start, "--", info.exe, hidden = [info.dir]),
+        cmd_args(check, "marker", "--out", marker.as_output(), "--ld-library-path", libs, start, hang, "--", info.exe, hidden = [info.dir]),
         category = ctx.attrs.category,
         identifier = ctx.label.name,
         env = {"BUILDRULES_UNIT_NONCE": _NONCE},
@@ -311,6 +318,9 @@ mojo_test_run_rule = rule(
         "check": _CHECK_ATTR,
         "bin": attrs.dep(providers = [MojoExeInfo]),
         "category": attrs.string(default = "mojo_test"),
+        # The longest the test run may take before it is stopped as hung (rules/core/hang_limit.bzl): positive whole seconds. Raise it for a test that is
+        # genuinely long; never lower it to make a test pass.
+        "test_hang_limit_s": attrs.int(default = HANG_LIMIT_S),
         # The files the test reads, `{staged path: file or target}`: copied to a directory that is the test's working directory and is named by
         # BUILDRULES_TEST_DATA (test_data.bzl). A target's default output is staged with the executable bit it has.
         "data": attrs.dict(attrs.string(), attrs.source(), default = {}),

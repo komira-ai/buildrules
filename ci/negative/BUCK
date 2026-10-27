@@ -7,7 +7,7 @@ load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test")
 load("@buildrules//rules/cxx:defs.bzl", "checked_cxx_library")
 load("@buildrules//rules/node:defs.bzl", "npm_tarball")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage_rule")
-load("@buildrules//rules/mojo:unit.bzl", "mojo_cov_pgo_rule")
+load("@buildrules//rules/mojo:unit.bzl", "mojo_cov_pgo_rule", "mojo_test_run_rule")
 
 # The control of the bxl check (ci/negative.bzl) on the fixture below: the same run of the same test, with the one line the fixture leaves out. It must analyse, on the platform the
 # fixture does not, or the fixture could be red for another reason.
@@ -144,3 +144,14 @@ mojo_cov_pgo_rule(
 )
 
 scrub_files()
+
+# The hang limit of a test run is a positive whole number of seconds (rules/core/hang_limit.bzl, `check_hang_limit`, called by rules/mojo/unit.bzl): 0 is refused when the
+# rule is analysed, naming the attribute. Faulty: the stand-in test run of ci/faulty with `test_hang_limit_s = 0`. Delete the call in the rule and this analyses.
+mojo_test_run_rule(
+    name = "mojo_test_run_with_a_zero_hang_limit",
+    bin = "//ci/faulty:mojo_test_exe",
+    toolchain = "//ci/faulty:mojo_toolchain",
+    test_hang_limit_s = 0,
+    exec_compatible_with = test_exec_compatible_with(),
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)

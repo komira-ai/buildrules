@@ -10,6 +10,7 @@ load("@buildrules//rules/rust:cargo.bzl", "cargo_table_check")
 load("@buildrules//rules/rust:defs.bzl", "rust_library", "rust_test")
 load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "ZIG_CC_TARGET")
 load("@buildrules//rules/rust:toolchain.bzl", "rust_toolchain")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe")
 load(":fixture.bzl", "faulty_mojo_exe", "faulty_mojo_toolchain")
 
 # Bad inputs for the checks and markers of the rules. Each target below is a rule given an input its action must refuse, so its build must be red: an action
@@ -106,14 +107,32 @@ rust_library(
 )
 
 # The run of a Mojo test that fails (the program exits 2), with a stand-in for the compiler. The real runs, which pass, are the tests of //ci:mojo.
-faulty_mojo_exe(name = "mojo_test_exe")
+faulty_mojo_exe(name = "mojo_test_exe", visibility = ["//ci/negative:"])
 
-faulty_mojo_toolchain(name = "mojo_toolchain")
+faulty_mojo_toolchain(name = "mojo_toolchain", visibility = ["//ci/negative:"])
 
 mojo_test_run_rule(
     name = "mojo_test_that_fails",
     bin = ":mojo_test_exe",
     toolchain = ":mojo_toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
+# The run of a Mojo test that hangs: the program blocks forever (it reads a pipe nobody writes). Its hang limit is one second (`test_hang_limit_s`, rules/core/hang_limit.bzl):
+# the run must be stopped at it, red, with the hang-limit verdict and not a pass or a time-out of the executor. Only the verdict is held, never the time it took.
+zig_exe(
+    name = "hang",
+    src = "hang.zig",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+faulty_mojo_exe(name = "mojo_hang_exe", program = ":hang")
+
+mojo_test_run_rule(
+    name = "mojo_test_that_hangs",
+    bin = ":mojo_hang_exe",
+    toolchain = ":mojo_toolchain",
+    test_hang_limit_s = 1,
     exec_compatible_with = test_exec_compatible_with(),
 )
 

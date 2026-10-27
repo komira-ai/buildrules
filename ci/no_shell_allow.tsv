@@ -10,7 +10,7 @@ ci/workflow_check.zig	shell-word	7
 ci/workflow_lint.bzl	busybox	4
 ci/workflow_lint.bzl	heredoc	1
 rules/core/test_runtime.bzl	busybox	2
-rules/core/tests/BUCK	busybox	1
+rules/core/tests/BUCK	busybox	2
 rules/core/url_map.bzl	busybox	1
 rules/coverage/BUCK	busybox	24
 rules/coverage/tests/BUCK	busybox	1

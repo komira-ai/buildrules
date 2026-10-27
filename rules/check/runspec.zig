@@ -21,6 +21,10 @@
 //! path of `root/share`, and the working directory is `root` unless --cwd or --cwd-env says another.
 //! The program runs in the directory --cwd names (made absolute), or --cwd-env's variable names, or the working directory. It is never looked
 //! for in a PATH: its name must contain a `/`, and a relative one is made absolute first, so it is found whatever the directory it runs in.
+//! --hang-limit-s N --hang-label L (`marker` only, both or neither, not with --capture): the test is run under the supervisor of `gate mojo` (rules/gate,
+//! supervise.zig) with a hang limit: a test that has not finished within N seconds is stopped (SIGKILL to its whole process group, a grandchild included),
+//! the status is 125, and the line `hang limit: L did not finish within N s and was stopped; a test never waits on time, so this means it hung (an event that never came)` is said (docs/contract.md,
+//! section 12.8). L is the test's label as the rule prints it. The test's stdin is empty then, and its output goes where the process's does.
 //! --scratch NAME makes the private scratch directory the --dir variables are in: `$BUCK_SCRATCH_PATH/NAME` (made absolute) or, when the
 //! process has no scratch path, `.buildrules_NAME` in the working directory. It is emptied before the run and removed after it.
 
@@ -31,6 +35,7 @@ const Io = common.Io;
 const Alloc = common.Alloc;
 const Oom = common.Oom;
 const ir = @import("install_root");
+const supervise = @import("supervise");
 
 pub const Kind = enum { run, marker, expect };
 
@@ -58,6 +63,8 @@ pub const Spec = struct {
     capture: bool = false,
     stamp: ?[]const u8 = null,
     stamp_log: bool = false,
+    hang_limit_s: ?u64 = null,
+    hang_label: ?[]const u8 = null,
     want: ?[]const u8 = null,
     prefix: bool = false,
     name: ?[]const u8 = null,
@@ -92,6 +99,8 @@ const Options = enum {
     @"--capture",
     @"--stamp",
     @"--stamp-log",
+    @"--hang-limit-s",
+    @"--hang-label",
     @"--want",
     @"--prefix",
     @"--name",
@@ -104,7 +113,7 @@ fn belongs(opt: Options) u8 {
         .@"--refuse" => R,
         .@"--clear-env", .@"--tmpdir", .@"--scratch", .@"--ld-library-path", .@"--macos-library-dirs", .@"--cwd", .@"--cwd-env", .@"--env", .@"--dir", .@"--abs", .@"--abs-prefix", .@"--mkdir-env", .@"--private-scratch", .@"--installed", .@"--install-share", .@"--share-env" => R | M | E,
         .@"--out" => M | E,
-        .@"--capture", .@"--stamp", .@"--stamp-log" => M,
+        .@"--capture", .@"--stamp", .@"--stamp-log", .@"--hang-limit-s", .@"--hang-label" => M,
         .@"--want", .@"--prefix", .@"--name" => E,
     };
 }
@@ -169,6 +178,11 @@ pub fn parse(io: Io, sub: []const u8, kind: Kind, args: []const []const u8) Oom!
             .@"--capture" => spec.capture = true,
             .@"--stamp" => spec.stamp = value,
             .@"--stamp-log" => spec.stamp_log = true,
+            .@"--hang-limit-s" => spec.hang_limit_s = positive(value) orelse {
+                io.say(sub, &.{ "--hang-limit-s ", value, ": expected a positive whole number of seconds" });
+                return null;
+            },
+            .@"--hang-label" => spec.hang_label = value,
             .@"--want" => spec.want = value,
             .@"--prefix" => spec.prefix = true,
             .@"--name" => spec.name = value,
@@ -179,7 +193,22 @@ pub fn parse(io: Io, sub: []const u8, kind: Kind, args: []const []const u8) Oom!
     spec.abs = abs.items;
     spec.abs_prefix = abs_prefix.items;
     spec.mkdir_env = mkdir_env.items;
+    if ((spec.hang_limit_s == null) != (spec.hang_label == null)) {
+        io.say(sub, &.{"--hang-limit-s and --hang-label go together: the limit and the label the verdict names"});
+        return null;
+    }
+    if (spec.hang_limit_s != null and spec.capture) {
+        io.say(sub, &.{"--hang-limit-s does not go with --capture: the supervised test writes where the process does"});
+        return null;
+    }
     return spec;
+}
+
+/// A positive whole number of decimal digits with no sign and no leading zero; null otherwise.
+fn positive(s: []const u8) ?u64 {
+    if (s.len == 0 or s[0] == '0') return null;
+    for (s) |c| if (c < '0' or c > '9') return null;
+    return std.fmt.parseInt(u64, s, 10) catch null;
 }
 
 /// A program ready to start: what `prepare` made.
@@ -412,7 +441,14 @@ fn makeAbsolute(a: Alloc, env: *std.process.EnvMap, here: []const u8, name: []co
 }
 
 /// What a started program did: its exit status, and what it wrote when that was captured.
-pub const Outcome = struct { code: u8, stdout: []const u8 = "", stderr: []const u8 = "" };
+pub const Outcome = struct {
+    code: u8,
+    stdout: []const u8 = "",
+    stderr: []const u8 = "",
+    /// What a program stopped by its hang limit adds to stderr after `TEST FAILED` (the code is then `supervise.hang_status`): a line naming the processes that survived
+    /// the kill, if any did, and the hang line; newline-ended lines, or empty.
+    verdict: []const u8 = "",
+};
 
 pub const Mode = enum {
     /// stdin, stdout and stderr are the process's own.
@@ -442,6 +478,55 @@ pub fn start(io: Io, sub: []const u8, p: Prepared, mode: Mode) Outcome {
             return .{ .code = common.statusOf(r.term), .stdout = r.stdout, .stderr = r.stderr };
         },
     }
+}
+
+/// The `NAME=VALUE` entries of `env` as the null-terminated list `execve` takes, one entry for each variable of the map.
+pub fn environmentEntries(a: Alloc, env: *const std.process.EnvMap) Oom![:null]?[*:0]const u8 {
+    const entries = try a.allocSentinel(?[*:0]const u8, env.count(), null);
+    var it = env.iterator();
+    var k: usize = 0;
+    while (it.next()) |kv| : (k += 1) {
+        const entry = try std.fmt.allocPrint(a, "{s}={s}", .{ kv.key_ptr.*, kv.value_ptr.* });
+        entries[k] = (try a.dupeZ(u8, entry)).ptr;
+    }
+    return entries;
+}
+
+/// Starts the program under the supervisor with a hang limit of `limit_s` seconds and waits. The program's stdout and stderr are the process's own; its stdin is
+/// empty. A program that cannot be started is 127 or 126 as in `start`. A program still running at the limit is stopped with its whole process group and the
+/// outcome has the status 125 and, as its `verdict`, the lines to say after `TEST FAILED`: the processes that survived the kill if any did, then the hang line
+/// for the test called `label`. A signal to this process ends the program's group and is 128 and the signal; a clock that cannot be read is 1.
+pub fn startLimited(io: Io, sub: []const u8, p: Prepared, limit_s: u64, label: []const u8) Oom!Outcome {
+    const a = io.a;
+    const argv = try a.allocSentinel(?[*:0]const u8, p.argv.len, null);
+    for (p.argv, 0..) |arg, i| argv[i] = (try a.dupeZ(u8, arg)).ptr;
+    const envp = try environmentEntries(a, &p.env);
+    const cwd = try a.dupeZ(u8, p.cwd);
+    const spec: supervise.Spec = .{
+        .path = argv[0].?,
+        .argv = argv.ptr,
+        .envp = envp.ptr,
+        .cwd = cwd.ptr,
+        .stdout_fd = std.posix.STDOUT_FILENO,
+        .stderr_fd = std.posix.STDERR_FILENO,
+        .limit = .{ .group_ms = limit_s *| 1000 },
+    };
+    // A failure of the system to start the supervisor's processes (a pipe, a fork); a program that is not there is the child's exit 127, which the supervisor reports.
+    const o = supervise.run(a, spec) catch |err| return notStarted(io, sub, p, err);
+    if (o.signal != 0) return .{ .code = 128 +| o.signal };
+    if (o.timer_failed) {
+        io.say(sub, &.{ "the clock cannot be read, so ", p.argv[0], " could not be held to its hang limit and was not left running" });
+        return .{ .code = 1 };
+    }
+    if (!o.limit_hit) return .{ .code = o.status };
+    var verdict = common.Buf{ .a = a };
+    if (o.survivors.len > 0) {
+        try verdict.add("check marker: after the hang limit, processes of the test survived the kill of its process group (pid state comm:");
+        for (o.survivors) |m| try verdict.add(try std.fmt.allocPrint(a, " {d} {c} {s};", .{ m.pid, m.state, m.comm }));
+        try verdict.add("); they are killed now\n");
+    }
+    try verdict.add(try supervise.hangLine(a, label, limit_s));
+    return .{ .code = supervise.hang_status, .verdict = verdict.items };
 }
 
 fn notStarted(io: Io, sub: []const u8, p: Prepared, err: anyerror) Outcome {
