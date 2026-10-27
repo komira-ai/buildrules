@@ -45,6 +45,14 @@ MojoNativeArchiveInfo = provider(fields = {
     "archives": provider_field(dict),
 })
 
+# The directories of the shared libraries a package pins for its tests to load (its unit graph's `system_libs`, `mojo_system_lib`, rules/mojo/system_libs.bzl), which an adopted
+# label hands to a dependent that still runs its tests through other rules: that dependent's test opens the same libraries by their bare names. One directory per pinned
+# package, in the graph's order (by name); each holds the package's shared libraries flat. A package that pins none has an empty list. Directories only, never a tset
+# (facebook/buck2#683).
+MojoSystemLibsInfo = provider(fields = {
+    "dirs": provider_field(list),
+})
+
 # A compiled test or binary: the unit's output directory (the executable and lib/ with its native libraries).
 MojoExeInfo = provider(fields = {
     "id": provider_field(str),

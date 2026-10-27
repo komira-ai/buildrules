@@ -6,7 +6,10 @@ load("@buildrules//rules/core:pinned_file.bzl", "pinned_file")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/mojo:system_libs.bzl", "mojo_system_lib_rule")
 load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
+load("@buildrules//rules/mojo:unit.bzl", "mojo_gated_lib_rule")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe")
+load("@buildrules//ci/mojo_gate:fixture.bzl", "gate_fixture_lib")
+load(":fixture.bzl", "exported_system_lib")
 
 # The system libraries a Mojo test is given (rules/mojo/system_libs.bzl, docs/contract.md section 12.11), proven without a Mojo compiler. The two packages are the real
 # conda-forge files the example package examples/mojo/load_native pins for linux-64 (libsqlite and libzlib, which it needs); `mojo_system_lib` unpacks each with
@@ -19,6 +22,10 @@ load("@buildrules//rules/zig:zig.bzl", "zig_exe")
 #        `buck2 bxl //ci:negative.bxl:check` builds each and requires the failure and the reason (ci/negative.bzl, `faulty_problems`):
 #          run_red_no_system_libs   the run is given none: a library the worker does not have is not found (the defect a test without this wiring has)
 #          run_red_one_missing      the run is given libsqlite and not libzlib: what that library needs is not found either, so every package of `loads` counts
+#
+# The label that adopts a package (a label that adopts a package for rules of another repository) hands a dependent the directories `:lib` exports as `MojoSystemLibsInfo`. `run_green_via_lib` is given the two
+# directories a gated library with `system_libs = [":libsqlite", ":libzlib"]` lists and must find what `run_green` finds; `run_red_via_lib_without` is given the ones of a gated
+# library with none, and must fail for the library it did not find (the defect a package whose `:lib` forgot its pins has).
 zig_exe(
     name = "probe",
     src = "probe.zig",
@@ -85,6 +92,51 @@ mojo_test_run_rule(
     name = "run_red_one_missing",
     bin = ":probe_test",
     system_libs = [":libsqlite"],
+    test_env = _NEEDS,
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
+gate_fixture_lib(name = "compiled", package = "pinned")
+
+mojo_gated_lib_rule(
+    name = "lib_exports",
+    lib = ":compiled",
+    package = "pinned",
+    system_libs = [":libsqlite", ":libzlib"],
+    exec_compatible_with = LINUX_X86_64,
+)
+
+mojo_gated_lib_rule(
+    name = "lib_exports_none",
+    lib = ":compiled",
+    package = "pinned",
+    exec_compatible_with = LINUX_X86_64,
+)
+
+exported_system_lib(name = "via_lib_0", lib = ":lib_exports", index = 0)
+
+exported_system_lib(name = "via_lib_1", lib = ":lib_exports", index = 1)
+
+exported_system_lib(name = "via_none_0", lib = ":lib_exports_none", index = 0)
+
+exported_system_lib(name = "via_none_1", lib = ":lib_exports_none", index = 1)
+
+mojo_test_run_rule(
+    name = "run_green_via_lib",
+    bin = ":probe_test",
+    system_libs = [":via_lib_0", ":via_lib_1"],
+    test_env = _NEEDS,
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+    visibility = ["//ci:"],
+)
+
+# Red by design: the directories of a gated library that exports none.
+mojo_test_run_rule(
+    name = "run_red_via_lib_without",
+    bin = ":probe_test",
+    system_libs = [":via_none_0", ":via_none_1"],
     test_env = _NEEDS,
     toolchain = ":toolchain",
     exec_compatible_with = test_exec_compatible_with(),

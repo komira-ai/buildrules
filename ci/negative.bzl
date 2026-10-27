@@ -444,6 +444,8 @@ FAULTY = [
     # The system libraries a Mojo test is given (ci/mojo_syslibs/BUCK): the stand-in test looks for library files in the directories of its library path after the compiler's.
     ("//ci/mojo_syslibs:run_red_no_system_libs", "//ci/mojo_syslibs:run_green", "system_probe: no directory after the compiler's lib on LD_LIBRARY_PATH holds libsqlite3.so.0"),
     ("//ci/mojo_syslibs:run_red_one_missing", "//ci/mojo_syslibs:run_green", "system_probe: no directory after the compiler's lib on LD_LIBRARY_PATH holds libz.so.1"),
+    # The directories a gated library exports for the label that adopts its package: a library that exports none leaves the run without them.
+    ("//ci/mojo_syslibs:run_red_via_lib_without", "//ci/mojo_syslibs:run_green_via_lib", "system_probe: no directory after the compiler's lib on LD_LIBRARY_PATH holds libsqlite3.so.0"),
 ]
 
 def _failures(ctx, label):

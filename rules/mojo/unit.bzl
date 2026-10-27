@@ -17,7 +17,7 @@ A unit's output directory is the action's single output. A library's `.mojoc` is
 load("//rules:isa.bzl", "isa_satisfies")
 load("//rules/coverage/branch:llvm_branch.bzl", "CovBranchInfo", "RAW_PROFILE_VERSION")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
-load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoTestRunInfo", "MojoToolchainInfo")
+load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoSystemLibsInfo", "MojoTestRunInfo", "MojoToolchainInfo")
 load("//rules/core:hang_limit.bzl", "HANG_LIMIT_S", "check_hang_limit", "hang_limit_args")
 load("//rules/core:test_runtime.bzl", "check_data_destinations", "macos_library_dirs")
 load(":system_libs.bzl", "MojoSystemLibInfo", "lib_dir_args")
@@ -367,6 +367,9 @@ def _gated_lib_impl(ctx):
         MojoLibInfo(id = lib.id, mojoc = out, closure = closure, ids = lib.ids),
         # The libraries are not behind the tests: they are inputs of the library's own compile and of its tests, which `out` waits for.
         MojoNativeArchiveInfo(sonames = natives.sonames, archives = natives.archives),
+        # The pinned system libraries are no input of the library's bytes either: a dependent that runs its tests through other rules is given the directories
+        # (rules/mojo/system_libs.bzl), so its tests find the libraries this package's own tests find.
+        MojoSystemLibsInfo(dirs = [l[MojoSystemLibInfo].dir for l in ctx.attrs.system_libs]),
     ])
 
 # The library as the world sees it (`:lib`): the compiled library (`:lib_ungated`, which the package's own tests import) behind the
@@ -377,6 +380,8 @@ mojo_gated_lib_rule = rule(
         "check": _CHECK_ATTR,
         "lib": attrs.dep(providers = [MojoLibInfo]),
         "package": attrs.string(),
+        # Every `mojo_system_lib` the package's unit graph pins, handed on as `MojoSystemLibsInfo` (not an input of the gated file).
+        "system_libs": _SYSTEM_LIBS_ATTR,
         "test_runs": attrs.list(attrs.dep(providers = [MojoTestRunInfo]), default = []),
         "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check_for_host", providers = [RunInfo]),
     },
