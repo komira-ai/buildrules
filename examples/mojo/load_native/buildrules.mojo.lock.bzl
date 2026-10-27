@@ -70,7 +70,7 @@ GRAPH_JSON = r'''{
       "kind": "lib",
       "root": "examples/mojo/load_native/src/load_native",
       "srcs": [
-        {"path": "examples/mojo/load_native/src/load_native/__init__.mojo", "sha256": "5731ca87b67a2b6aa40e0c019afdb9a8d8751f150078eb66b3ae324c936fb44f"}
+        {"path": "examples/mojo/load_native/src/load_native/__init__.mojo", "sha256": "15d06fc92dfbf1d7ec6fe9ab0b3b38e7b4c251d18f78848de67f680c726fbe68"}
       ],
       "deps": [],
       "natives": [],
@@ -168,7 +168,7 @@ GRAPH_JSON_OSX_ARM64 = r'''{
       "kind": "lib",
       "root": "examples/mojo/load_native/src/load_native",
       "srcs": [
-        {"path": "examples/mojo/load_native/src/load_native/__init__.mojo", "sha256": "5731ca87b67a2b6aa40e0c019afdb9a8d8751f150078eb66b3ae324c936fb44f"}
+        {"path": "examples/mojo/load_native/src/load_native/__init__.mojo", "sha256": "15d06fc92dfbf1d7ec6fe9ab0b3b38e7b4c251d18f78848de67f680c726fbe68"}
       ],
       "deps": [],
       "natives": [],
