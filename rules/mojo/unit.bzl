@@ -726,7 +726,7 @@ def _cov_summary_impl(ctx):
     for e in ctx.attrs.expect:
         cmd.add("--expect", e)
     # The source behind each expected path, so a source the report omits for having no executable line (a re-export `__init__.mojo`) can be told
-    # from one the report missed (cov_summary.zig, hasNoStatements). The package's tests are given too, under their repository paths: their hit
+    # from one the report missed (mojo_decl.zig, hasNoStatements). The package's tests are given too, under their repository paths: their hit
     # lines are the calls that tell an inlined function from one nobody calls (mojo_calls.zig); they are not in `expect`, so nothing of them is counted.
     for path, src in ctx.attrs.srcs.items():
         cmd.add("--src", cmd_args(path, src, delimiter = "="))
