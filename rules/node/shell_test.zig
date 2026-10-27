@@ -100,6 +100,35 @@ test "what a shell would act on is refused, with where" {
 
 const tartest = @import("tartest.zig");
 
+test "an empty command name is refused where it stands; an empty later word is an argument" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const why = "an empty command name (`''` or `\"\"` where the program goes)";
+    const cases = [_]struct { script: []const u8, at: usize }{
+        .{ .script = "'' x", .at = 0 },
+        .{ .script = "\"\" x", .at = 0 },
+        .{ .script = "''", .at = 0 },
+        .{ .script = "  '' x", .at = 2 },
+        .{ .script = "A=1 '' x", .at = 4 },
+        .{ .script = "a && \"\" x", .at = 5 },
+    };
+    for (cases) |c| {
+        const bad = try refused(a, c.script);
+        try std.testing.expectEqual(c.at, bad.at);
+        try std.testing.expectEqualStrings(why, bad.why);
+    }
+    const good = try ok(a, "x '' y");
+    try std.testing.expectEqual(@as(usize, 1), good.len);
+    try std.testing.expectEqual(@as(usize, 3), good[0].argv.len);
+    try std.testing.expectEqualStrings("x", good[0].argv[0]);
+    try std.testing.expectEqualStrings("", good[0].argv[1]);
+    try std.testing.expectEqualStrings("y", good[0].argv[2]);
+    const env_empty = try ok(a, "A='' x");
+    try std.testing.expectEqualStrings("", env_empty[0].env[0][1]);
+    try std.testing.expectEqualStrings("x", env_empty[0].argv[0]);
+}
+
 test "each refusal says what the shell would have done" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
