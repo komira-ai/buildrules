@@ -1,4 +1,4 @@
-"""The system libraries a Mojo test is given, held on the real example package (examples/mojo/load_native; rules/mojo/system_libs.bzl, docs/contract.md section 12.10).
+"""The system libraries a Mojo test is given, held on the real example package (examples/mojo/load_native; rules/mojo/system_libs.bzl, docs/contract.md section 12.11).
 
 The graph of the package is written by hand in format 3: each test unit names the libraries it `loads`, and the graph pins each as `system_libs`. What `mojo_package` must do
 with that is held here at analysis, without running anything: the run of each test, its kcov run and its branch run pass `--lib-dir <directory of the library>` once for every

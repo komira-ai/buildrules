@@ -1,6 +1,6 @@
 //! conda_libs: every shared library in the `lib/` directory of a `.conda` package, written flat into a directory (`conda_unpack --all-libs <package.conda> <out_dir>`).
 //!
-//! This is what a test run puts on its library path for a package that the unit graph's `system_libs` pins (docs/contract.md, section 12.10): a program that opens
+//! This is what a test run puts on its library path for a package that the unit graph's `system_libs` pins (docs/contract.md, section 12.11): a program that opens
 //! `libsqlite3.so.0` or `libsqlite3.dylib` by its bare name finds the pinned file, whatever the worker has.
 //!
 //! What is written, and what is not:

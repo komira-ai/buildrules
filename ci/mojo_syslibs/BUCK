@@ -8,7 +8,7 @@ load("@buildrules//rules/mojo:system_libs.bzl", "mojo_system_lib_rule")
 load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe")
 
-# The system libraries a Mojo test is given (rules/mojo/system_libs.bzl, docs/contract.md section 12.10), proven without a Mojo compiler. The two packages are the real
+# The system libraries a Mojo test is given (rules/mojo/system_libs.bzl, docs/contract.md section 12.11), proven without a Mojo compiler. The two packages are the real
 # conda-forge files the example package examples/mojo/load_native pins for linux-64 (libsqlite and libzlib, which it needs); `mojo_system_lib` unpacks each with
 # `conda_unpack --all-libs`; `mojo_test_run_rule` runs a stand-in "test", the system probe (probe.zig), with those directories as `system_libs`. The probe passes only if
 # every library file named in PROBE_NEEDS is a regular ELF file in a directory of LD_LIBRARY_PATH after the compiler's lib.

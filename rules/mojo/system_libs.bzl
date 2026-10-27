@@ -1,4 +1,4 @@
-"""The system libraries a Mojo test loads at run time (docs/contract.md, section 12.10).
+"""The system libraries a Mojo test loads at run time (docs/contract.md, section 12.11).
 
 A package that opens a library by its bare name (`mode = "load"` in `[native-dependencies]`, `dlopen("libsqlite3.so.0")`) links nothing, so the compile never needs it;
 the test run does. mopm's unit graph of format 3 pins each such library as an entry of its top-level `system_libs`, and names on every test and binary unit the

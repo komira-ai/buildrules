@@ -1,7 +1,7 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load(":buildrules.mojo.bzl", "mojo_package")
 
-# The proof of the system libraries a test loads (rules/mojo/system_libs.bzl, docs/contract.md section 12.10). Two tests open shared libraries by their bare names:
+# The proof of the system libraries a test loads (rules/mojo/system_libs.bzl, docs/contract.md section 12.11). Two tests open shared libraries by their bare names:
 # `test_load_sqlite` SQLite (a Linux farm worker has none), `test_load_brotli` Brotli's decoder (neither a Linux worker nor a macOS one without a Homebrew directory in
 # `macos_library_dirs` has it), and the unit graph pins both for linux-64 and osx-arm64, each with the libraries it needs. The test runs, their kcov runs and their
 # branch runs are given those directories on the library path; the compiles are not.

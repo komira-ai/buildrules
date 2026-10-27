@@ -1,5 +1,5 @@
 //! system_probe: a stand-in for a compiled Mojo test that opens shared libraries by their bare names. The fixtures of ci/mojo_syslibs run it as the test, so the system
-//! libraries a test is given (rules/mojo/system_libs.bzl, docs/contract.md section 12.10) are proven end to end without a Mojo compiler: the pinned `.conda` is downloaded,
+//! libraries a test is given (rules/mojo/system_libs.bzl, docs/contract.md section 12.11) are proven end to end without a Mojo compiler: the pinned `.conda` is downloaded,
 //! `conda_unpack --all-libs` unpacks it, and `check run` puts the directory on LD_LIBRARY_PATH, where a bare name resolves.
 //!
 //! PROBE_NEEDS is a comma-separated list of the library file names the test opens. The probe passes only when each of them is a regular, non-empty ELF file in one of the

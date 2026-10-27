@@ -265,7 +265,7 @@ test "every allocation failing in turn is an error, never a wrong graph" {
     return error.SweepDidNotEnd;
 }
 
-// A format 3 graph (docs/contract.md, section 12.10): a top-level `system_libs` array of objects at the indentation of the units, and `loads` on a unit. Defect caught:
+// A format 3 graph (docs/contract.md, section 12.11): a top-level `system_libs` array of objects at the indentation of the units, and `loads` on a unit. Defect caught:
 // the layout of the array taken for a unit block (a graph with a member refused as "a layout this function does not know"), the entries edited or dropped, the
 // `loads` of a unit lost.
 const system_libs =
