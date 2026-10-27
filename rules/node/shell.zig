@@ -35,18 +35,21 @@ fn isName(s: []const u8) bool {
 pub fn parse(a: std.mem.Allocator, script: []const u8) !Result {
     var cmds = std.ArrayList(Command).empty;
     var words = std.ArrayList([]const u8).empty;
+    // where each word of `words` begins, to name the place of a refusal
+    var starts = std.ArrayList(usize).empty;
     var i: usize = 0;
     while (true) {
         while (i < script.len and isBlank(script[i])) i += 1;
         if (i >= script.len or (script[i] == '&' and i + 1 < script.len and script[i + 1] == '&')) {
             const is_and = i < script.len;
-            const r = try finish(a, &words, &cmds, i);
+            const r = try finish(a, &words, &starts, &cmds, i);
             if (r) |bad| return .{ .refused = bad };
             if (!is_and) break;
             i += 2;
             continue;
         }
         // one word
+        const word_at = i;
         var w = std.ArrayList(u8).empty;
         while (i < script.len and !isBlank(script[i])) {
             const c = script[i];
@@ -99,6 +102,7 @@ pub fn parse(a: std.mem.Allocator, script: []const u8) !Result {
             }
         }
         try words.append(a, try w.toOwnedSlice(a));
+        try starts.append(a, word_at);
     }
     return .{ .ok = try cmds.toOwnedSlice(a) };
 }
@@ -121,7 +125,7 @@ fn refusal(c: u8) []const u8 {
 
 /// Turns the words collected so far into a command (leading assignments split off); a refusal
 /// when there is no command.
-fn finish(a: std.mem.Allocator, words: *std.ArrayList([]const u8), cmds: *std.ArrayList(Command), at: usize) !?Refusal {
+fn finish(a: std.mem.Allocator, words: *std.ArrayList([]const u8), starts: *std.ArrayList(usize), cmds: *std.ArrayList(Command), at: usize) !?Refusal {
     var env = std.ArrayList([2][]const u8).empty;
     var n: usize = 0;
     while (n < words.items.len) : (n += 1) {
@@ -131,7 +135,9 @@ fn finish(a: std.mem.Allocator, words: *std.ArrayList([]const u8), cmds: *std.Ar
         try env.append(a, .{ w[0..eq], w[eq + 1 ..] });
     }
     if (n == words.items.len) return .{ .at = at, .why = "an empty command (or only assignments) around `&&`" };
+    if (words.items[n].len == 0) return .{ .at = starts.items[n], .why = "an empty command name (`''` or `\"\"` where the program goes)" };
     try cmds.append(a, .{ .env = try env.toOwnedSlice(a), .argv = try a.dupe([]const u8, words.items[n..]) });
     words.clearRetainingCapacity();
+    starts.clearRetainingCapacity();
     return null;
 }
