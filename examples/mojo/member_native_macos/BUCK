@@ -1,0 +1,20 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:sync.bzl", "mojo_sync")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# `examples/mojo/member_native` at mopm 0.0.73, whose unit graphs have a macOS arm64 subdir: cshim_user -> cshim, two members, cshim with a C shim of its own
+# (`[native.shim]`). Built for macOS arm64 the shim is compiled by the pinned zig for that target, archived, and linked into the tests of both members on the
+# macOS worker (docs/contract.md, section 12); built for linux x86_64 it is what `member_native` builds. This package's tests link cshim's archive without a line in this file.
+mojo_package(path = ".")
+
+# `buildrules mojo sync` as a farm action (rules/mojo/sync.bzl): `buck2 run //examples/mojo/member_native_macos:sync` writes the lock and the glue.
+mojo_sync(
+    name = "sync",
+    committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
+    files = [],
+    mopm = "0.0.73",
+    visibility = ["//ci:"],
+    workspaces = [":workspace"],
+)
+
+scrub_files()

@@ -21,7 +21,9 @@ directory, thin LTO) are off, so none is on the path of a compile, an archive or
 one fails with `cxx toolchain: <tool> is not provided` instead of searching the worker for it.
 
 zig's clang targets `target` (a glibc-versioned triple, default x86_64-linux-gnu.2.34: the floor the Rust rules
-link to) and `target_cpu` whatever worker runs it, and compiles with `-g0`: debug info would record the
+link to) and `target_cpu` whatever worker runs it, and compiles with `-g0`. For a macOS arm64 target platform it targets `aarch64-macos` at zig's generic
+arm64 CPU instead (the `macos` attribute, set by a `select` on the target platform): the same zig, on the same linux x86_64 execution platform, writes the object files
+and the static archive of a member's native library; no executable or shared library is linked for macOS: debug info would record the
 action's working directory. Compiles are position-independent (`-fPIC`), so one archive serves static and
 static-pic links. The C++ standard library is zig's libc++, linked statically.
 """
@@ -44,7 +46,7 @@ load(
 load("@prelude//cxx:headers.bzl", "HeaderMode")
 load("@prelude//linking:link_info.bzl", "LinkStyle")
 load("@prelude//python_bootstrap:python_bootstrap.bzl", "PythonBootstrapToolchainInfo")
-load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/core:platform.bzl", "LINUX_X86_64", "by_os_cpu")
 
 def _refusal(bb, what):
     # A tool the toolchain does not provide. It is still a declared input (the busybox), so reaching it
@@ -68,8 +70,11 @@ def _zig_cxx_toolchain_impl(ctx):
     cc = _zig_tool(launcher, zig, "cc")
     cxx = _zig_tool(launcher, zig, "c++")
 
-    # Flags every compile gets, before the target's own.
-    base = ["-target", ctx.attrs.target, "-mcpu=" + ctx.attrs.target_cpu.replace("-", "_"), "-fPIC", "-g0"]
+    # Flags every compile gets, before the target's own. A macOS arm64 target (`macos`) compiles for `macos_target` at zig's generic arm64 CPU; every other
+    # target is the linux one, as it was.
+    target = ctx.attrs.macos_target if ctx.attrs.macos else ctx.attrs.target
+    cpu = "generic" if ctx.attrs.macos else ctx.attrs.target_cpu.replace("-", "_")
+    base = ["-target", target, "-mcpu=" + cpu, "-fPIC", "-g0"]
     c_info = CCompilerInfo(
         compiler = cc,
         compiler_type = "clang",
@@ -106,10 +111,11 @@ def _zig_cxx_toolchain_impl(ctx):
         link_libraries_locally = False,
         link_style = LinkStyle("static_pic"),
         link_weight = 1,
-        linker = cxx,
+        # A macOS arm64 target gets no linker: the toolchain compiles and archives for it, and a link would write a linux program.
+        linker = _refusal(bb, "a linker for macOS") if ctx.attrs.macos else cxx,
         # --strip-debug: zig cc assembles the C runtime start-up objects (crti, crtn, start) at LINK time with default debug info (`-g0` is a compile flag), and
         # the DWARF stamps DW_AT_comp_dir with the action's absolute working directory, so a binary would depend on the path it was linked in (examples/cxx).
-        linker_flags = cmd_args("-target", ctx.attrs.target, "-Wl,--strip-debug"),
+        linker_flags = cmd_args("-target", target, "-Wl,--strip-debug"),
         object_file_extension = "o",
         shlib_interfaces = ShlibInterfacesMode("disabled"),
         shared_dep_runtime_ld_flags = [],
@@ -177,6 +183,10 @@ zig_cxx_toolchain = rule(
         "cxx_compiler_flags": attrs.list(attrs.string(), default = []),
         # A `zig_exe` of rules/cxx/zig_cc_launcher.zig.
         "launcher": attrs.exec_dep(),
+        # True when the target platform is macOS arm64 (a `select` in `cxx_toolchains`): the compile then targets `macos_target`, and `target` and `target_cpu` are not used.
+        "macos": attrs.bool(default = False),
+        # zig target triple of a macOS arm64 target: the C is cross-compiled by the pinned zig on the (linux) execution platform of this toolchain.
+        "macos_target": attrs.string(default = "aarch64-macos"),
         # zig target triple, with the glibc floor, e.g. x86_64-linux-gnu.2.34.
         "target": attrs.string(),
         # zig's -mcpu without the dashes' meaning: `x86-64` is zig's baseline x86_64, `x86-64-v3` AVX2.
@@ -216,7 +226,7 @@ def cxx_toolchains(
         launcher = "buildrules//rules/cxx:zig_cc_launcher"):
     """Declare `:cxx`, `:cxx_no_default_deps` and `:python_bootstrap` in the calling package.
 
-    Linux x86_64 only (v0). `target_cpu` is the CPU every compile targets, whatever worker runs it:
+    Linux x86_64, and macOS arm64 for a static C library (`native_static`; the zig cross-compiles it). `target_cpu` is the CPU every compile targets, whatever worker runs it:
     the default is zig's baseline x86_64, so the result runs on any x86_64 worker.
     """
     zig_cxx_toolchain(
@@ -226,7 +236,9 @@ def cxx_toolchains(
         target = target,
         target_cpu = target_cpu,
         zig = zig,
-        target_compatible_with = LINUX_X86_64,
+        macos = by_os_cpu({"macos_aarch64": True, "DEFAULT": False}),
+        # Linux x86_64 as before, and macOS arm64: the pinned zig (running on the linux execution platform) cross-compiles C for it.
+        target_compatible_with = by_os_cpu({"macos_aarch64": [], "DEFAULT": LINUX_X86_64}),
         exec_compatible_with = LINUX_X86_64,
         visibility = ["PUBLIC"],
     )

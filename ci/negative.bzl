@@ -9,6 +9,7 @@ control's own error. ci/negative_check.zig holds the wiring of this file to the 
 
 load("//examples/mojo/sys_app:buildrules.mojo.lock.bzl", SYS_APP_GRAPH = "GRAPH")
 load("//examples/mojo/ws:buildrules.mojo.lock.bzl", WS_GRAPH = "GRAPH")
+load(":native_macos.bzl", "native_macos_problems")
 load(":subdirs.bzl", "subdir_problems", UNSUPPORTED_SUBDIR_PLATFORM = "UNSUPPORTED", UNSUPPORTED_SUBDIR_PLATFORMS = "UNSUPPORTED_PLATFORMS")
 load("//examples/mojo/member_native:buildrules.mojo.lock.bzl", MEMBER_NATIVE_GRAPH = "GRAPH")
 load("//examples/mojo/member_native/cshim:buildrules.mojo.lock.bzl", CSHIM_GRAPH = "GRAPH")
@@ -73,7 +74,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the known defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it carries (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + test_defines_problems(ctx)
+    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + test_defines_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.

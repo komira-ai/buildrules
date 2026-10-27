@@ -4,14 +4,16 @@
 //!
 //! A static library a Mojo package ships is linked into other people's programs, so it is held to what a library must be:
 //!
-//!  - an archive of 64-bit little-endian ELF relocatable objects, nothing else;
+//!  - an archive of 64-bit little-endian ELF relocatable objects, or of 64-bit little-endian Mach-O relocatable objects (a library built for macOS arm64:
+//!    BSD-style member names, `__.SYMDEF` as the symbol table), nothing else and not both;
 //!  - deterministic: every member header has time, owner and group 0, and the members are in the order of their names;
-//!  - hermetic: no object has a `.debug_*` section and no byte of the archive holds the absolute path of the directory it was built in
+//!  - hermetic: no object has a `.debug_*` section (a Mach-O object: a `__DWARF` section or a debug-map symbol) and no byte of the archive holds the absolute path of the directory it was built in
 //!    (`hermetic.zig`, the check of the C++ rules, applied to each member);
 //!  - at the glibc floor: no object needs a glibc symbol version newer than `--max-glibc` (`floor.zig`, applied to each member). A relocatable
-//!    object records no version of its own, so the floor of an archive is mostly held by the next rule;
+//!    object records no version of its own, so the floor of an archive is mostly held by the next rule. A Mach-O object has no such floor;
 //!  - closed: every undefined global symbol is defined by the archive itself, by a `--needs` archive, by the C library at the floor or by the
-//!    compiler runtime (`floor_symbols.txt`), or is named by an `--allow`. A weak undefined symbol resolves to zero and is not a defect.
+//!    compiler runtime (`floor_symbols.txt`; for Mach-O objects `floor_symbols_macos.txt`, libSystem, by the C name: the symbol's leading underscore is
+//!    removed), or is named by an `--allow`. A weak undefined symbol resolves to zero and is not a defect.
 //!    Whatever else is undefined is named: it is a symbol the final link will not find.
 //!
 //! Writes a validation result (`{"version":1,"data":{"status",...}}`) and exits 0 when every rule holds; exits 1 after writing "failure" when
@@ -26,8 +28,9 @@ const hermetic = @import("cxx_hermetic");
 const floor = @import("cxx_floor");
 
 pub const floor_symbols = @embedFile("floor_symbols.txt");
+pub const floor_symbols_macos = @embedFile("floor_symbols_macos.txt");
 
-pub const Error = error{ NotArchive, Truncated, BadHeader, NotElf64, NotRelocatable };
+pub const Error = error{ NotArchive, Truncated, BadHeader, NotElf64, NotMacho64, NotRelocatable };
 
 pub const Member = struct {
     name: []const u8,
@@ -113,7 +116,8 @@ fn rd(comptime T: type, b: []const u8, off: usize) Error!T {
 }
 
 /// The object members of an `ar` archive, in file order. The symbol table (`/`, `/SYM64/`) and the long-name table (`//`) are not members.
-/// BSD-style names (`#1/N`) are refused: the C++ toolchain writes the GNU format.
+/// BSD-style names (`#1/N`: the name is the first N bytes of the member's data, padded with NULs) are read, and the BSD symbol tables (`__.SYMDEF`,
+/// `__.SYMDEF SORTED`, `__.SYMDEF_64`) are not members: the toolchain writes the GNU format for ELF objects and the BSD one for Mach-O.
 pub fn members(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.Error)![]const Member {
     if (!std.mem.startsWith(u8, b, "!<arch>\n")) return error.NotArchive;
     var oom = false;
@@ -131,7 +135,20 @@ pub fn members(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.
         off = start + size;
         if (size & 1 == 1 and off < b.len) off += 1;
         const raw = trim(h[0..16]);
-        if (std.mem.eql(u8, raw, "//")) {
+        var body = data;
+        var bsd_name: ?[]const u8 = null;
+        if (std.mem.startsWith(u8, raw, "#1/")) {
+            const n = std.fmt.parseInt(usize, raw[3..], 10) catch return error.BadHeader;
+            if (n > data.len) return error.BadHeader;
+            bsd_name = std.mem.sliceTo(data[0..n], 0);
+            body = data[n..];
+        }
+        if (bsd_name) |bn| {
+            if (!std.mem.startsWith(u8, bn, "__.SYMDEF"))
+                out.push(.{ .name = bn, .data = body, .time = trim(h[16..28]), .owner = trim(h[28..34]), .group = trim(h[34..40]) });
+        } else if (std.mem.startsWith(u8, raw, "__.SYMDEF")) {
+            // A BSD symbol table whose name fits the field is written without `#1/N`.
+        } else if (std.mem.eql(u8, raw, "//")) {
             long = data;
         } else if (!std.mem.eql(u8, raw, "/") and !std.mem.eql(u8, raw, "/SYM64/")) {
             var name = raw;
@@ -140,8 +157,6 @@ pub fn members(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.
                 if (at >= long.len) return error.BadHeader;
                 const end = std.mem.indexOfScalarPos(u8, long, at, '\n') orelse long.len;
                 name = std.mem.trimRight(u8, long[at..end], "/");
-            } else if (std.mem.startsWith(u8, raw, "#1/")) {
-                return error.BadHeader;
             } else {
                 name = std.mem.trimRight(u8, raw, "/");
             }
@@ -208,6 +223,140 @@ pub fn symbols(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.
     return .{ .defined = def.items.items, .undef = und.items.items };
 }
 
+const macho_magic: u32 = 0xfeedfacf;
+
+/// True when `b` starts as a 64-bit little-endian Mach-O file.
+pub fn isMacho(b: []const u8) bool {
+    return b.len >= 4 and get(u32, b, 0) == macho_magic;
+}
+
+/// What a Mach-O relocatable object holds that a native library must not: the first debug section or debug-map symbol, and how many there are.
+pub const MachoDebug = struct { count: usize, first: []const u8 };
+
+/// The load commands of the Mach-O object `b`, checked to lie inside the file; `cmd` and `at` of each go to `visit`.
+fn machoCommands(b: []const u8, ctx: anytype, comptime visit: fn (@TypeOf(ctx), u32, usize, u32) Error!void) Error!void {
+    if (!isMacho(b) or b.len < 32) return error.NotMacho64;
+    if (get(u32, b, 12) != 1) return error.NotRelocatable; // MH_OBJECT
+    const ncmds: usize = get(u32, b, 16);
+    const sizeofcmds: usize = get(u32, b, 20);
+    if (b.len - 32 < sizeofcmds) return error.Truncated;
+    var at: usize = 32;
+    var i: usize = 0;
+    while (i < ncmds) : (i += 1) {
+        if (at + 8 > 32 + sizeofcmds) return error.Truncated;
+        const cmd = get(u32, b, at);
+        const size: usize = get(u32, b, at + 4);
+        if (size < 8 or at + size > 32 + sizeofcmds) return error.Truncated;
+        try visit(ctx, cmd, at, @intCast(size));
+        at += size;
+    }
+}
+
+const LC_SYMTAB: u32 = 0x2;
+const LC_SEGMENT_64: u32 = 0x19;
+
+const DebugScan = struct {
+    b: []const u8,
+    out: *MachoDebug,
+
+    fn visit(self: DebugScan, cmd: u32, at: usize, size: u32) Error!void {
+        const b = self.b;
+        if (cmd == LC_SEGMENT_64) {
+            if (size < 72) return error.Truncated;
+            const nsects: usize = get(u32, b, at + 64);
+            if (nsects > (size - 72) / 80) return error.Truncated;
+            var k: usize = 0;
+            while (k < nsects) : (k += 1) {
+                const sec = at + 72 + k * 80;
+                if (std.mem.eql(u8, std.mem.sliceTo(b[sec + 16 ..][0..16], 0), "__DWARF")) {
+                    if (self.out.count == 0) self.out.first = std.mem.sliceTo(b[sec..][0..16], 0);
+                    self.out.count += 1;
+                }
+            }
+        } else if (cmd == LC_SYMTAB) {
+            const t = try symtabOf(b, at, size);
+            var k: usize = 0;
+            while (k < t.nsyms) : (k += 1) {
+                // N_STAB: a debug-map entry, which names the object file and the directory the compiler ran in.
+                if (b[t.off + k * 16 + 4] & 0xe0 != 0) {
+                    if (self.out.count == 0) self.out.first = "(a debug-map symbol)";
+                    self.out.count += 1;
+                }
+            }
+        }
+    }
+};
+
+const Symtab = struct { off: usize, nsyms: usize, strs: []const u8 };
+
+/// The symbol table and the string table that `LC_SYMTAB` at `at` names, both checked to lie inside the file.
+fn symtabOf(b: []const u8, at: usize, size: u32) Error!Symtab {
+    if (size < 24) return error.Truncated;
+    const off: usize = get(u32, b, at + 8);
+    const nsyms: usize = get(u32, b, at + 12);
+    const str_off: usize = get(u32, b, at + 16);
+    const str_size: usize = get(u32, b, at + 20);
+    if (off > b.len or (b.len - off) / 16 < nsyms) return error.Truncated;
+    if (str_off > b.len or b.len - str_off < str_size) return error.Truncated;
+    return .{ .off = off, .nsyms = nsyms, .strs = b[str_off..][0..str_size] };
+}
+
+/// The debug sections and debug-map symbols of a Mach-O relocatable object (`count` 0: none).
+pub fn machoDebug(b: []const u8) Error!MachoDebug {
+    var d = MachoDebug{ .count = 0, .first = "" };
+    try machoCommands(b, DebugScan{ .b = b, .out = &d }, DebugScan.visit);
+    return d;
+}
+
+const SymScan = struct {
+    b: []const u8,
+    def: *Acc([]const u8),
+    und: *Acc([]const u8),
+
+    fn visit(self: SymScan, cmd: u32, at: usize, size: u32) Error!void {
+        if (cmd != LC_SYMTAB) return;
+        const b = self.b;
+        const t = try symtabOf(b, at, size);
+        var k: usize = 0;
+        while (k < t.nsyms) : (k += 1) {
+            const e = t.off + k * 16;
+            const typ = b[e + 4];
+            // Not a debug-map entry, and an external one (a local symbol is not visible to the final link).
+            if (typ & 0xe0 != 0 or typ & 0x01 == 0) continue;
+            const strx: usize = get(u32, b, e);
+            if (strx >= t.strs.len) continue;
+            var name = std.mem.sliceTo(t.strs[strx..], 0);
+            // The C name: Mach-O puts one underscore before it.
+            if (name.len != 0 and name[0] == '_') name = name[1..];
+            if (name.len == 0) continue;
+            const kind = typ & 0x0e;
+            const desc = get(u16, b, e + 6);
+            const value = get(u64, b, e + 8);
+            // N_UNDF with a value is a common symbol: a definition. N_ABS, N_SECT and N_INDR define the name.
+            if (kind != 0 or value != 0) {
+                self.def.push(name);
+            } else if (desc & 0x40 == 0) { // N_WEAK_REF: resolves to zero, not a defect
+                self.und.push(name);
+            }
+        }
+    }
+};
+
+/// The external symbols of one Mach-O relocatable object, by their C names (the leading underscore removed): `defined` and `undef` as `symbols` does.
+pub fn machoSymbols(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.Error)!Syms {
+    var oom = false;
+    var def = Acc([]const u8){ .a = a, .oom = &oom };
+    var und = Acc([]const u8){ .a = a, .oom = &oom };
+    try machoCommands(b, SymScan{ .b = b, .def = &def, .und = &und }, SymScan.visit);
+    if (oom) return error.OutOfMemory;
+    return .{ .defined = def.items.items, .undef = und.items.items };
+}
+
+/// The symbols of one object of either format.
+fn objectSymbols(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.Error)!Syms {
+    return if (isMacho(b)) machoSymbols(a, b) else symbols(a, b);
+}
+
 fn lessThan(_: void, x: []const u8, y: []const u8) bool {
     return std.mem.lessThan(u8, x, y);
 }
@@ -247,6 +396,9 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
 
     var defined = Set.init(a, &oom);
     var undef = Acc([]const u8){ .a = a, .oom = &oom };
+    var undef_macho = Acc([]const u8){ .a = a, .oom = &oom };
+    // The object format of the library is the one of its first object: a member of the other is a finding.
+    var macho_lib: ?bool = null;
     var prev: []const u8 = "";
     for (ms) |m| {
         if (!std.mem.eql(u8, m.time, "0") or !std.mem.eql(u8, m.owner, "0") or !std.mem.eql(u8, m.group, "0"))
@@ -254,7 +406,24 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
         if (prev.len != 0 and std.mem.lessThan(u8, m.name, prev))
             say(&f, "{s}: member {s} comes after {s}: the members are not in the order of their names", .{ name, m.name, prev });
         prev = m.name;
-        if (hermetic.debugSections(a, m.data)) |dbg| {
+        if (isMacho(m.data)) {
+            if (macho_lib == null) macho_lib = true;
+            if (macho_lib.? == false) say(&f, "{s}: member {s} is a Mach-O object in a library of ELF objects", .{ name, m.name });
+            if (machoDebug(m.data)) |dbg| {
+                if (dbg.count != 0)
+                    say(&f, "{s}: member {s} has {d} debug section(s), first {s}: the compile directory is in them (compile with -g0)", .{ name, m.name, dbg.count, dbg.first });
+            } else |e| {
+                blame(&f, e, "{s}: member {s} is not a relocatable Mach-O object: {s}", .{ name, m.name, @errorName(e) });
+            }
+            if (machoSymbols(a, m.data)) |s| {
+                for (s.defined) |d| defined.add(d);
+                for (s.undef) |u| undef_macho.push(u);
+            } else |e| {
+                blame(&f, e, "{s}: member {s} is not a relocatable Mach-O object: {s}", .{ name, m.name, @errorName(e) });
+            }
+        } else if (hermetic.debugSections(a, m.data)) |dbg| {
+            if (macho_lib == null) macho_lib = false;
+            if (macho_lib.? == true) say(&f, "{s}: member {s} is an ELF object in a library of Mach-O objects", .{ name, m.name });
             if (dbg.len != 0)
                 say(&f, "{s}: member {s} has {d} debug section(s), first {s}: the compile directory is in them (compile with -g0)", .{ name, m.name, dbg.len, dbg[0] });
             if (floor.newest(m.data)) |v| {
@@ -268,25 +437,38 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
                 blame(&f, e, "{s}: member {s} is not a relocatable object: {s}", .{ name, m.name, @errorName(e) });
             }
         } else |e| {
-            blame(&f, e, "{s}: member {s} is not a 64-bit little-endian ELF object: {s}", .{ name, m.name, @errorName(e) });
+            blame(&f, e, "{s}: member {s} is not a 64-bit little-endian ELF or Mach-O object: {s}", .{ name, m.name, @errorName(e) });
         }
     }
     if (o.dir.len != 0 and hermetic.mentions(b, o.dir))
         say(&f, "{s} contains the absolute path of the directory it was built in ({s})", .{ name, o.dir });
 
-    // What the library may leave to the final link.
+    // What the library may leave to the final link: the C library of the platform its objects are for, the compiler runtime, and what the author allows
+    // or a `needs` library defines.
     var known = Set.init(a, &oom);
+    var known_macho = Set.init(a, &oom);
     var lines = std.mem.splitScalar(u8, floor_symbols, '\n');
     while (lines.next()) |l| {
         const t = std.mem.trim(u8, l, " \r");
         if (t.len != 0 and t[0] != '#') known.add(t);
     }
-    for (o.allow) |s| known.add(s);
+    lines = std.mem.splitScalar(u8, floor_symbols_macos, '\n');
+    while (lines.next()) |l| {
+        const t = std.mem.trim(u8, l, " \r");
+        if (t.len != 0 and t[0] != '#') known_macho.add(t);
+    }
+    for (o.allow) |s| {
+        known.add(s);
+        known_macho.add(s);
+    }
     for (o.needs) |nb| {
         if (members(a, nb)) |nms| {
             for (nms) |m| {
-                if (symbols(a, m.data)) |s| {
-                    for (s.defined) |d| known.add(d);
+                if (objectSymbols(a, m.data)) |s| {
+                    for (s.defined) |d| {
+                        known.add(d);
+                        known_macho.add(d);
+                    }
                 } else |e| lost(e, &oom);
             }
         } else |e| lost(e, &oom);
@@ -296,6 +478,12 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
         if (!(defined.m.contains(u) or known.m.contains(u) or seen.m.contains(u))) {
             seen.add(u);
             say(&f, "{s}: undefined symbol: {s} (not defined by this library, a `needs` library, the C library at the floor or the compiler runtime)", .{ name, u });
+        }
+    }
+    for (undef_macho.items.items) |u| {
+        if (!(defined.m.contains(u) or known_macho.m.contains(u) or seen.m.contains(u))) {
+            seen.add(u);
+            say(&f, "{s}: undefined symbol: {s} (not defined by this library, a `needs` library, libSystem or the compiler runtime)", .{ name, u });
         }
     }
 
@@ -430,4 +618,5 @@ pub fn main() !void {
 
 test {
     _ = @import("archive_test.zig");
+    _ = @import("archive_macho_test.zig");
 }

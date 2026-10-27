@@ -6,10 +6,10 @@ const A = @import("archive.zig");
 
 const t = std.testing;
 
-const Sym = struct { name: []const u8, kind: enum { def, undef, weak_undef, local } };
+pub const Sym = struct { name: []const u8, kind: enum { def, undef, weak_undef, local } };
 
 /// A relocatable ELF64 object: .symtab (null symbol, then `syms`), .strtab, .shstrtab, and one empty section per `sections` name.
-fn object(a: std.mem.Allocator, syms: []const Sym, sections: []const []const u8) ![]u8 {
+pub fn object(a: std.mem.Allocator, syms: []const Sym, sections: []const []const u8) ![]u8 {
     var str = std.ArrayList(u8).empty;
     try str.append(a, 0);
     var tab = std.ArrayList(u8).empty;
@@ -86,7 +86,7 @@ fn object(a: std.mem.Allocator, syms: []const Sym, sections: []const []const u8)
     return b;
 }
 
-const Entry = struct { name: []const u8, data: []const u8, time: []const u8 = "0" };
+pub const Entry = struct { name: []const u8, data: []const u8, time: []const u8 = "0" };
 
 fn field(o: *std.ArrayList(u8), a: std.mem.Allocator, s: []const u8, width: usize) !void {
     try o.appendSlice(a, s);
@@ -94,7 +94,7 @@ fn field(o: *std.ArrayList(u8), a: std.mem.Allocator, s: []const u8, width: usiz
 }
 
 /// A GNU `ar` archive: a symbol table member, a long-name table when a name needs one, and `entries`.
-fn archive(a: std.mem.Allocator, entries: []const Entry) ![]u8 {
+pub fn archive(a: std.mem.Allocator, entries: []const Entry) ![]u8 {
     var o = std.ArrayList(u8).empty;
     try o.appendSlice(a, "!<arch>\n");
     try member(&o, a, "/", "\x00\x00\x00\x00", "0");
@@ -327,7 +327,7 @@ test "an archive of no object, a member that is not an object, a file that is no
     try t.expect(hasFinding(try A.check(a, "libx.a", empty, .{}), "an empty library"));
     const text = try archive(a, &.{.{ .name = "a.o", .data = "just text" }});
     const r = try A.check(a, "libx.a", text, .{});
-    try t.expect(hasFinding(r, "member a.o is not a 64-bit little-endian ELF object"));
+    try t.expect(hasFinding(r, "member a.o is not a 64-bit little-endian ELF or Mach-O object"));
     try t.expect(hasFinding(try A.check(a, "libx.a", "plain", .{}), "is not an archive of objects I can read: NotArchive"));
     const o = try object(a, &.{.{ .name = "f", .kind = .def }}, &.{});
     const b = try archive(a, &.{.{ .name = "a.o", .data = o }});
