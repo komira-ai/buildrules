@@ -63,6 +63,19 @@ test "parse: a path listed twice is refused" {
     try t.expectEqualStrings("coverage_unmeasured.txt:3: src/p/a.mojo is listed twice", try refusedParse(a, "src/p/a.mojo\tone\nsrc/p/b.mojo\ttwo\nsrc/p/a.mojo\tthree\n"));
 }
 
+test "parse: the first separator of either kind splits, so a TAB inside the reason stays in the reason" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const es = try parsed(a, "src/p/a.mojo  why\tnot a split\nsrc/p/b.mojo\twhy  not a split\nsrc/p/c.mojo \t  mixed\n");
+    try t.expectEqualStrings("src/p/a.mojo", es[0].path);
+    try t.expectEqualStrings("why\tnot a split", es[0].reason);
+    try t.expectEqualStrings("src/p/b.mojo", es[1].path);
+    try t.expectEqualStrings("why  not a split", es[1].reason);
+    try t.expectEqualStrings("src/p/c.mojo", es[2].path);
+    try t.expectEqualStrings("mixed", es[2].reason);
+}
+
 const lib_a = "pkg/src/p/a.mojo";
 const lib_b = "pkg/src/p/b.mojo";
 const expect = [_][]const u8{ lib_a, lib_b };
@@ -124,6 +137,95 @@ test "resolve: a source with no statement is refused: it is 0/0 already" {
     const a = arena.allocator();
     const m = refusal(try resolved(a, "src/p/b.mojo\twhy\n", "pkg", &.{lib_a}, &.{lib_b}));
     try t.expectEqualStrings("coverage_unmeasured.txt: src/p/b.mojo has no statement, so `:coverage` lists it 0/0 and there is nothing to be unmeasured: remove the entry", m);
+}
+
+test "resolve: a path that starts with a slash is refused before it is joined" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const m = refusal(try resolved(a, "/src/p/b.mojo\twhy\n", "pkg", &.{lib_a}, &.{}));
+    try t.expectEqualStrings("coverage_unmeasured.txt: /src/p/b.mojo is an absolute path: write it relative to the package", m);
+    // At the repository root too, where the join would have passed it through unchanged.
+    try t.expectEqualStrings("coverage_unmeasured.txt: /pkg/src/p/b.mojo is an absolute path: write it relative to the package", refusal(try U.resolve(a, "coverage_unmeasured.txt", try parsed(a, "/pkg/src/p/b.mojo\twhy\n"), "", &expect, &.{lib_a}, &.{})));
+}
+
+// ---- only a source kcov cannot record is accepted: every function is @always_inline("nodebug") ----
+
+const NB = "@always_inline(\"nodebug\")\n";
+
+var source_of_b: []const u8 = "";
+
+fn readB(_: std.mem.Allocator, p: []const u8) []const u8 {
+    return if (std.mem.eql(u8, p, "list.txt")) "src/p/b.mojo  reason\n" else source_of_b;
+}
+
+fn noStmts(_: []const u8) bool {
+    return false;
+}
+
+/// The refusal of listing `src/p/b.mojo` with this source, or "accepted".
+fn listed(a: std.mem.Allocator, src: []const u8) ![]const u8 {
+    source_of_b = src;
+    const srcs = [_][2][]const u8{ .{ lib_a, "a" }, .{ lib_b, "b" } };
+    return refusal(try U.load(a, "pkg", "list.txt", &expect, &.{lib_a}, &srcs, readB, noStmts));
+}
+
+fn nodebugRefusal(a: std.mem.Allocator, name: []const u8, line: usize) ![]const u8 {
+    return std.fmt.allocPrint(a, "list.txt: src/p/b.mojo listed as unmeasured but {s} at line {d} is not @always_inline(\"nodebug\"): kcov can record it; test it instead", .{ name, line });
+}
+
+test "load: an ordinary function is refused: kcov can record it" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings(try nodebugRefusal(a, "f", 1), try listed(a, "def f(x: Int) -> Int:\n    return x\n"));
+}
+
+test "load: a file of nodebug inline functions only is accepted, other decorators and a stack of them beside the one included" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings("accepted", try listed(a, NB ++ "def f(x: Int) -> Int:\n    return x\n"));
+    try t.expectEqualStrings("accepted", try listed(a, "@always_inline( \"nodebug\" )\ndef f(x: Int) -> Int:\n    return x\n\n" ++ NB ++ "def g(x: Int) -> Int:\n    return x\n"));
+    try t.expectEqualStrings("accepted", try listed(a, "@deprecated\n" ++ NB ++ "@parameter\ndef f(x: Int) -> Int:\n    return x\n"));
+    try t.expectEqualStrings("accepted", try listed(a, NB ++ "@deprecated(\"old\")\nfn f(x: Int) -> Int:\n    return x\n"));
+    // A method of a struct is a function of the file: this one is inlined too.
+    try t.expectEqualStrings("accepted", try listed(a, "struct S:\n    " ++ "@always_inline(\"nodebug\")\n    def m(self) -> Int:\n        return 1\n"));
+}
+
+test "load: one ordinary function among nodebug ones refuses the entry, naming it and its line" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings(try nodebugRefusal(a, "slow", 6), try listed(a, NB ++ "def fast(x: Int) -> Int:\n    return x\n\n\ndef slow(x: Int) -> Int:\n    return x\n"));
+    // A method without the decorator in a struct whose other method has it.
+    try t.expectEqualStrings(try nodebugRefusal(a, "n", 6), try listed(a, "struct S:\n    @always_inline(\"nodebug\")\n    def m(self) -> Int:\n        return 1\n\n    def n(self) -> Int:\n        return 2\n"));
+}
+
+test "load: @always_inline without nodebug is refused, and so is any other argument" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings(try nodebugRefusal(a, "f", 2), try listed(a, "@always_inline\ndef f(x: Int) -> Int:\n    return x\n"));
+    try t.expectEqualStrings(try nodebugRefusal(a, "f", 2), try listed(a, "@always_inline(\"builtin\")\ndef f(x: Int) -> Int:\n    return x\n"));
+    // The decorator above another function's does not carry over.
+    try t.expectEqualStrings(try nodebugRefusal(a, "g", 5), try listed(a, NB ++ "def f(x: Int) -> Int:\n    return x\n\ndef g(x: Int) -> Int:\n    return x\n"));
+}
+
+test "load: a signature over several lines is read whole" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const sig = "def f(\n    x: Int,\n    y: Int,\n) -> Int:\n    return x + y\n";
+    try t.expectEqualStrings("accepted", try listed(a, NB ++ sig));
+    try t.expectEqualStrings(try nodebugRefusal(a, "f", 1), try listed(a, sig));
+}
+
+test "load: a file with statements but no function is refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings("list.txt: src/p/b.mojo listed as unmeasured but it defines no @always_inline(\"nodebug\") function: kcov can record it; test it instead", try listed(a, "comptime N = 3\nvar x = 1\n"));
 }
 
 // ---- the step as cov_summary runs it: the figure, with and without the file ----

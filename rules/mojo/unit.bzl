@@ -717,6 +717,9 @@ mojo_cov_branch_classify_rule = rule(
 )
 
 def _cov_summary_impl(ctx):
+    if ctx.attrs.unmeasured and not (ctx.attrs.reports and ctx.attrs.expect):
+        fail("{}: {} exists but this package has no library or no test, so it makes no coverage and no source can be unmeasured: remove the file, or add the library and tests".format(ctx.label, ctx.attrs.unmeasured.short_path))
+        fail("{}: {} exists but this package has no library or no test, so it makes no coverage and nothing can be unmeasured: remove the file, or add what the package lacks (this package has no test, so there is no coverage to measure, or no library source to measure)".format(ctx.label, ctx.attrs.unmeasured.short_path))
     if not ctx.attrs.reports:
         fail("{}: this package has no test, so there is no coverage to measure: add a test file (tests/test_*.mojo) or do not build :coverage".format(ctx.label))
     out = ctx.actions.declare_output("coverage.txt")

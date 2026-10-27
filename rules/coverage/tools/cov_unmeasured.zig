@@ -7,9 +7,12 @@
 //! The file: one entry per line, `<source path relative to the package>`, then a TAB or two spaces, then the reason (not empty). A blank line and a line
 //! whose first character is `#` are skipped. Refused, with the line or the path named: a line with no reason, a path listed twice, a path that is not a
 //! library source of the package (no such file, or a test or another file), a path some report names ("listed as unmeasured but measured: remove the entry":
-//! the entry went stale when the tool began recording it), and a source with no statement at all (a re-export file, which `:coverage` lists 0/0 already).
+//! the entry went stale when the tool began recording it), and a source with no statement at all (a re-export file, which `:coverage` lists 0/0 already), a path starting with `/`, and a source
+//! that kcov can record: every function or method it defines must be `@always_inline("nodebug")` (other decorators may stand beside it), and it must define one.
+//! The first TAB or two-space run splits the line, whichever comes first, so a TAB inside the reason stays in it.
 
 const std = @import("std");
+const mojo_src = @import("mojo_src.zig");
 
 pub const Entry = struct { path: []const u8, reason: []const u8 };
 
@@ -25,9 +28,12 @@ pub fn parse(a: std.mem.Allocator, name: []const u8, text: []const u8) !Parsed {
         const line = std.mem.trimRight(u8, raw, " \t\r");
         const lead = std.mem.trimStart(u8, line, " \t");
         if (lead.len == 0 or lead[0] == '#') continue;
-        const cut = std.mem.indexOfScalar(u8, line, '\t') orelse std.mem.indexOf(u8, line, "  ") orelse
+        // The first separator of either kind ends the path: a TAB inside the reason stays in the reason.
+        const tab = std.mem.indexOfScalar(u8, line, '\t');
+        const sp2 = std.mem.indexOf(u8, line, "  ");
+        const cut = (if (tab != null and sp2 != null) @min(tab.?, sp2.?) else tab orelse sp2) orelse
             return .{ .refused = try std.fmt.allocPrint(a, "{s}:{d}: `{s}` has no reason: write `<source path>`, a TAB or two spaces, and why kcov cannot record it", .{ name, n, line }) };
-        const path = line[0..cut];
+        const path = std.mem.trimEnd(u8, line[0..cut], " \t");
         const reason = std.mem.trim(u8, line[cut..], " \t");
         const no_path = std.mem.trim(u8, path, " \t").len == 0;
         if (no_path or reason.len == 0) return .{ .refused = try std.fmt.allocPrint(a, "{s}:{d}: `{s}` has no {s}: write `<source path>`, a TAB or two spaces, and why kcov cannot record it", .{ name, n, line, if (no_path) "path" else "reason" }) };
@@ -57,6 +63,7 @@ pub fn resolve(a: std.mem.Allocator, name: []const u8, entries: []const Entry, r
     var listing = std.ArrayList(u8).empty;
     var gone = std.ArrayList([]const u8).empty;
     for (entries) |e| {
+        if (e.path[0] == '/') return .{ .refused = try std.fmt.allocPrint(a, "{s}: {s} is an absolute path: write it relative to the package", .{ name, e.path }) };
         const repo = if (root.len == 0) e.path else try std.fs.path.join(a, &.{ root, e.path });
         if (!contains(expect, repo)) return .{ .refused = try std.fmt.allocPrint(a, "{s}: {s} is not a library source of the package (no such file, or a test or another file): remove the entry", .{ name, e.path }) };
         if (contains(reported, repo)) return .{ .refused = try std.fmt.allocPrint(a, "{s}: {s} listed as unmeasured but measured: remove the entry", .{ name, e.path }) };
@@ -67,6 +74,17 @@ pub fn resolve(a: std.mem.Allocator, name: []const u8, entries: []const Entry, r
     if (entries.len != 0) try listing.print(a, "unmeasured total {d} files: left out of the line and branch totals and the floors\n", .{entries.len});
     for (expect) |x| if (!contains(gone.items, x)) try left.append(a, x);
     return .{ .ok = .{ .expect = try left.toOwnedSlice(a), .listing = try listing.toOwnedSlice(a) } };
+}
+
+/// Why the source `text` of an entry is not unrecordable, or null when every function it defines is `@always_inline("nodebug")` (other decorators may
+/// stand beside it) and it defines one: the first function that is not, or a file with no function at all, is the refusal.
+fn recordable(a: std.mem.Allocator, name: []const u8, path: []const u8, text: []const u8) !?[]const u8 {
+    const fns = try mojo_src.declaredFunctions(a, text);
+    for (fns) |f| {
+        if (!f.nodebug) return try std.fmt.allocPrint(a, "{s}: {s} listed as unmeasured but {s} at line {d} is not @always_inline(\"nodebug\"): kcov can record it; test it instead", .{ name, path, f.name, f.line });
+    }
+    if (fns.len == 0) return try std.fmt.allocPrint(a, "{s}: {s} listed as unmeasured but it defines no @always_inline(\"nodebug\") function: kcov can record it; test it instead", .{ name, path });
+    return null;
 }
 
 /// The whole step of a summary: reads the file `path`, checks it (`resolve`) and reads the sources behind `srcs` (expected path, then the file to read) for
@@ -86,6 +104,17 @@ pub fn load(
     const name = std.fs.path.basename(path);
     return switch (try parse(a, name, read(a, path))) {
         .refused => |m| .{ .refused = m },
-        .entries => |es| try resolve(a, name, es, root, expect, reported, empty.items),
+        .entries => |es| {
+            const r = try resolve(a, name, es, root, expect, reported, empty.items);
+            if (r == .refused) return r;
+            for (es) |e| {
+                const repo = if (root.len == 0) e.path else try std.fs.path.join(a, &.{ root, e.path });
+                for (srcs) |s| {
+                    if (!std.mem.eql(u8, s[0], repo)) continue;
+                    if (try recordable(a, name, e.path, read(a, s[1]))) |m| return .{ .refused = m };
+                }
+            }
+            return r;
+        },
     };
 }

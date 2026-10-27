@@ -18,7 +18,7 @@ One line per package. The targets come from the package's unit graph, which `bui
                 `[branches_of_tests]` and `[branches_uncompiled]` are the parts); `:coverage[excluded_uncompiled]` lists what the call evidence and the
                 platform gate left out of those lines (rules/coverage/tools/mojo_calls.zig, mojo_gate.zig). The instrumented link of a test gets the test's native libraries as its ordinary link does.
                 A package whose tests run in the installed layout (`test_layout = "installed"`) has them too: the instrumented binary is run from the installed tree, as the kcov run is.
-                A source of the library that kcov cannot record (all of it `@always_inline("nodebug")`, say) is named with its reason in `coverage_unmeasured.txt` beside the
+                A source of the library that kcov cannot record (every function of it `@always_inline("nodebug")`; any other source is refused) is named with its reason in `coverage_unmeasured.txt` beside the
                 BUCK file: it is printed as `unmeasured: <path>: <reason>`, left out of the line and branch totals and the floor, and refused when a report names it
                 (rules/coverage/README.md, "Unmeasured sources")
 
@@ -829,9 +829,11 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         for ts in test_sources:
             cov_srcs[_join(here_repo, ts)] = _join(project, ts)
     unmeasured = _join(project, COVERAGE_UNMEASURED_FILE)
+    # The file is passed whenever it exists: a package with no library or no test makes a `:coverage` that fails analysis naming it, so the file is never ignored silently.
+    has_unmeasured = bool(glob([unmeasured]))
     mojo_cov_summary_rule(
         name = name_once("coverage"),
-        unmeasured = unmeasured if own_lib and covs and glob([unmeasured]) else None,
+        unmeasured = unmeasured if has_unmeasured else None,
         unmeasured_root = here_repo,
         branches = branches,
         check = ":check",

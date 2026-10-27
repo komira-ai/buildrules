@@ -90,6 +90,16 @@ test "a path listed twice and an entry without a reason are refused" {
     try refused("blank reason", "src/p/b.mojo\t  \n", INLINED, "coverage_unmeasured.txt:1: `src/p/b.mojo` has no reason");
 }
 
+test "an entry for a source with a function kcov can record is refused, whatever else the file has" {
+    try refused("ordinary", "src/p/b.mojo\twhy\n", CODE, "coverage_unmeasured.txt: src/p/b.mojo listed as unmeasured but f at line 1 is not @always_inline(\"nodebug\"): kcov can record it; test it instead");
+    try refused("mixed", "src/p/b.mojo\twhy\n", INLINED ++ "\ndef h(x: Int) -> Int:\n    return x\n", "but h at line 5 is not @always_inline(\"nodebug\")");
+    try refused("inline only", "src/p/b.mojo\twhy\n", "@always_inline\ndef g(x: Int) -> Int:\n    return x\n", "but g at line 2 is not @always_inline(\"nodebug\")");
+}
+
+test "an absolute path is refused" {
+    try refused("absolute", "/src/p/b.mojo\twhy\n", INLINED, "coverage_unmeasured.txt: /src/p/b.mojo is an absolute path");
+}
+
 test "an entry for a source with no statement is refused: it is listed 0/0 already" {
     try refused("a re-export", "src/p/b.mojo\twhy\n", "from .a import f\n", "coverage_unmeasured.txt: src/p/b.mojo has no statement");
 }
