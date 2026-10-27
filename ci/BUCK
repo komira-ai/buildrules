@@ -560,8 +560,6 @@ no_shell(
         "//examples/mojo/sibfake/chain/a:scrub_files",
         "//examples/mojo/sibfake/chain/b:scrub_files",
         "//examples/mojo/sibfake/chain/c:scrub_files",
-    "//examples/mojo/generated/lib:scrub_files",
-    "//examples/mojo/generated/user:scrub_files",
         "//examples/mojo/generated/lib:scrub_files",
         "//examples/mojo/generated/user:scrub_files",
         "//examples/mojo/sibfake/diamond/bottom:scrub_files",
