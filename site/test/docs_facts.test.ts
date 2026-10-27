@@ -205,7 +205,13 @@ describe('instruction-set levels', () => {
 describe('where actions run', () => {
   const plat = repoFile('rules/platforms.bzl');
   test('remote is the default, local is refused beside a farm, any other value is refused', () => {
-    expect(plat).toContain('read_config("buildrules_re", "mode", "remote")');
+    expect(plat).toContain('read_root_config("buildrules_re", "mode", "remote")');
+    // every key is read from the root cell, never the evaluating cell, and the page says so
+    expect(plat).not.toMatch(/\bread_config\(/);
+    expect(plat).toContain('read_root_config(section, name, "")');
+    expect(plat).toContain('read_root_config("buildrules_re", "linux_arm64_enabled", "false")');
+    expect(plat).toContain('is read from the ROOT cell');
+    expect(pageText(page('/remote-execution/')).replace(/\s+/g, ' ')).toContain("is read from the root cell's configuration, whichever cell loads the rules");
     expect(plat).toContain('if mode not in ("remote", "local")');
     for (const key of ['engine_address', 'cas_address']) expect(plat).toContain(`"${key}"`);
     expect(plat).toContain('_refuse_local_beside_remote("linux_x86_64_properties")');

@@ -6,6 +6,8 @@
   buildrules = .
   # A workspace with crates.io dependencies, as a repository of its own: its generated glue is exactly what `buildrules sync` writes.
   crates = examples/crates
+  # A cell inside the repository whose own configuration has no [buildrules_re] keys (ci/root_keys.bxl).
+  rootcell = ci/rootcell
   prelude = prelude
   # The prelude's convention: the `toolchains` cell belongs to the repository at the
   # project root. Here it is the directory toolchains/, one macro call.

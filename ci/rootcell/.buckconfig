@@ -1,0 +1,4 @@
+# A cell inside the repository whose configuration holds NO `[buildrules_re]` keys: ci/root_keys.bxl evaluates buildrules' rules from here with the keys set in the
+# root cell only, as a repository does that consumes buildrules from a cell of another repository. It declares no cells: the root cell's [cells] is the one in force.
+[buildfile]
+  name = BUCK

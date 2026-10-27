@@ -65,6 +65,11 @@ jobs:
       - name: Mojo actions on Arm are refused without workers (linux arm64 switch on)
         run: ./buck2 bxl -c buildrules_re.mode=local -c buildrules_re.linux_arm64_enabled=true //ci:exec_select.bxl:check -- --state absent_enabled
 
+      # Every [buildrules_re] key is read from the root cell, whichever cell loads the rules: ci/rootcell is a cell with no such section, and the linux arm64 switch
+      # is set for the root cell alone (ci/root_keys.bzl). The states with property sets (remote mode) need no farm either, and are in the header of ci/root_keys.bxl.
+      - name: The root cell's keys are seen from another cell
+        run: ./buck2 bxl -c buildrules_re.mode=local -c buildrules//buildrules_re.linux_arm64_enabled=true //ci:root_keys.bxl:check -- --state local
+
       # //ci:mojo is not built: its packages need a package channel, which is fetched through
       # buildrules.url_map from a mirror a public runner does not have (docs/contract.md section 14).
       - name: Build and test

@@ -1,0 +1,30 @@
+# Every `[buildrules_re]` key is read from the ROOT cell (rules/platforms.bzl), whichever cell loads the rules. ci/rootcell is a cell of this repository whose own .buckconfig has no
+# such section; the keys are set for the root cell only (`-c buildrules//buildrules_re.<key>=...`: a plain `-c` would reach every cell and hide a read from the wrong one).
+# ci/root_keys.bzl says what is held. The values are placeholders and nothing runs:
+#
+#   buck2 bxl -c buildrules//buildrules_re.mode=remote -c buildrules//buildrules_re.linux_arm64_enabled=true \
+#     -c buildrules//buildrules_re.linux_x86_64_properties=OSFamily=Linux,ISA=x86-64,pool=analysis-only \
+#     -c buildrules//buildrules_re.linux_aarch64_properties=OSFamily=Linux,ISA=aarch64,pool=analysis-only \
+#     -c buildrules//buildrules_re.macos_aarch64_properties=OSFamily=macOS,ISA=aarch64,pool=analysis-only \
+#     //ci:root_keys.bxl:check
+#
+# The public CI runs the `local` state, where the root cell alone turns the linux arm64 switch on:
+#
+#   buck2 bxl -c buildrules_re.mode=local -c buildrules//buildrules_re.linux_arm64_enabled=true //ci:root_keys.bxl:check -- --state local
+#
+# (--state off, the second command of the workflow: the root cell sets the linux x86_64 and macOS sets and leaves the linux arm64 switch off.)
+
+load("@buildrules//ci:root_keys.bzl", "root_key_problems")
+
+def _impl(ctx):
+    problems = root_key_problems(ctx, ctx.cli_args.state)
+    if problems:
+        fail("ci/root_keys ({}): {} problem(s):\n  ".format(ctx.cli_args.state, len(problems)) + "\n  ".join(problems))
+    ctx.output.print("ok ({}): a cell with no [buildrules_re] section sees the root cell's keys".format(ctx.cli_args.state))
+
+check = bxl_main(
+    impl = _impl,
+    cli_args = {
+        "state": cli_args.enum(["on", "off", "local"]),
+    },
+)
