@@ -8,10 +8,12 @@
 //!   cov_run --kcov <dir> --normalize <exe> --compiler <dir> --binary <file> --share <dir> --out <report.xml>
 //!           [--map <share-relative dir>=<repository dir>]... --must-contain <repository path>
 //!           [--include <share-relative path>]... [--refuse-in-binary <text>]... [--env NAME=VALUE]... [--data-env NAME]
-//!           [--private-scratch [--installed [--data <dir>]]]
+//!           [--private-scratch [--installed [--data <dir>]]] [--lib-dir <dir>]...
 //!
 //!   --kcov      the kcov distribution (bin/kcov, lib/libgcc_s.so.1); it is run in place
 //!   --compiler  the compiler closure; its lib/ is on LD_LIBRARY_PATH (the test binary loads libKGENCompilerRTShared.so from it)
+//!   --lib-dir   a directory of shared libraries the test opens by their bare names (a `system_libs` pin of the unit graph); each is made absolute and follows the
+//!               compiler's lib/ on LD_LIBRARY_PATH, in the order given. Without one the variable is the compiler's lib/ alone
 //!   --binary    the test, with its native libraries in lib/ beside it (its runpath is $ORIGIN/lib)
 //!   --share     the tree of copies the line tables' names resolve in; kcov's working directory
 //!   --map       a directory of the tree and the repository directory it copies (both end in `/`): the report's absolute names are
@@ -48,6 +50,8 @@ pub const Args = struct {
     maps: []const Map = &.{},
     includes: []const []const u8 = &.{},
     refuse: []const []const u8 = &.{},
+    /// Each --lib-dir, in order (as given by `parse`; absolute by the time `testEnv` is given them).
+    lib_dirs: []const []const u8 = &.{},
     /// `NAME=VALUE` entries of the test's environment.
     env: []const []const u8 = &.{},
     /// The variable that holds the absolute path of `share`, or empty.
@@ -74,6 +78,7 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, diag: *[]const u8) 
     var includes = std.ArrayList([]const u8).empty;
     var refuse = std.ArrayList([]const u8).empty;
     var envs = std.ArrayList([]const u8).empty;
+    var lib_dirs = std.ArrayList([]const u8).empty;
     var i: usize = 0;
     while (i < argv.len) {
         const flag = argv[i];
@@ -137,6 +142,12 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, diag: *[]const u8) 
                 return error.Usage;
             }
             try envs.append(a, v);
+        } else if (std.mem.eql(u8, flag, "--lib-dir")) {
+            if (v.len == 0) {
+                diag.* = "--lib-dir needs a directory";
+                return error.Usage;
+            }
+            try lib_dirs.append(a, v);
         } else if (std.mem.eql(u8, flag, "--data-env")) {
             if (v.len == 0 or std.mem.indexOfScalar(u8, v, '=') != null or ownEnv(v)) {
                 diag.* = try std.fmt.allocPrint(a, "--data-env {s} is not a variable name cov_run may set", .{v});
@@ -177,6 +188,7 @@ pub fn parse(a: std.mem.Allocator, argv: []const []const u8, diag: *[]const u8) 
     r.includes = try includes.toOwnedSlice(a);
     r.refuse = try refuse.toOwnedSlice(a);
     r.env = try envs.toOwnedSlice(a);
+    r.lib_dirs = try lib_dirs.toOwnedSlice(a);
     return r;
 }
 
@@ -194,7 +206,9 @@ fn ownEnv(name: []const u8) bool {
 /// same files; with `--installed` the tree's `share/`), and, with a private scratch directory, TMPDIR and TEST_TMPDIR (its `tmp`) and HOME (its `home`).
 pub fn testEnv(a: std.mem.Allocator, r: Args, compiler: []const u8, data: []const u8, scratch: ?ir.Scratch) !std.process.EnvMap {
     var env = std.process.EnvMap.init(a);
-    try env.put("LD_LIBRARY_PATH", try std.fs.path.join(a, &.{ compiler, "lib" }));
+    var ld = try std.fs.path.join(a, &.{ compiler, "lib" });
+    for (r.lib_dirs) |d| ld = try std.fmt.allocPrint(a, "{s}:{s}", .{ ld, d });
+    try env.put("LD_LIBRARY_PATH", ld);
     try env.put("PATH", "/usr/bin:/bin");
     for (r.env) |entry| {
         const eq = std.mem.indexOfScalar(u8, entry, '=') orelse continue;
@@ -292,6 +306,16 @@ fn run(a: std.mem.Allocator, argv: []const []const u8, cwd: ?[]const u8, env: *s
     };
 }
 
+/// `dirs` as absolute paths of existing directories, in order; on an error `bad.*` is the one that could not be resolved.
+pub fn realDirs(a: std.mem.Allocator, cwd: std.fs.Dir, dirs: []const []const u8, bad: *[]const u8) ![]const []const u8 {
+    const out = try a.alloc([]const u8, dirs.len);
+    for (dirs, out) |d, *o| o.* = cwd.realpathAlloc(a, d) catch |e| {
+        bad.* = d;
+        return e;
+    };
+    return out;
+}
+
 pub fn main() !void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
@@ -318,6 +342,8 @@ pub fn main() !void {
     std.fs.cwd().makePath(work) catch |e| die(1, "cannot create {s}: {s}", .{ work, @errorName(e) });
     const work_abs = try std.fs.cwd().realpathAlloc(a, work);
     var rr = r;
+    var bad_dir: []const u8 = "";
+    rr.lib_dirs = realDirs(a, std.fs.cwd(), r.lib_dirs, &bad_dir) catch |e| die(2, "cannot resolve --lib-dir {s}: {s}", .{ bad_dir, @errorName(e) });
     rr.kcov = kcov_dir;
     if (r.data.len > 0) rr.data = std.fs.cwd().realpathAlloc(a, r.data) catch |e| die(2, "cannot resolve --data {s}: {s}", .{ r.data, @errorName(e) });
     // The private directories go in the action's scratch path, else TMPDIR, else /tmp (the one rule `check` has).

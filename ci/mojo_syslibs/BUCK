@@ -1,0 +1,93 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//ci/faulty:fixture.bzl", "faulty_mojo_toolchain")
+load("@buildrules//ci/mojo_data:fixture.bzl", "probe_test")
+load("@buildrules//rules:isa.bzl", "test_exec_compatible_with")
+load("@buildrules//rules/core:pinned_file.bzl", "pinned_file")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/mojo:system_libs.bzl", "mojo_system_lib_rule")
+load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe")
+
+# The system libraries a Mojo test is given (rules/mojo/system_libs.bzl, docs/contract.md section 12.11), proven without a Mojo compiler. The two packages are the real
+# conda-forge files the example package examples/mojo/load_native pins for linux-64 (libsqlite and libzlib, which it needs); `mojo_system_lib` unpacks each with
+# `conda_unpack --all-libs`; `mojo_test_run_rule` runs a stand-in "test", the system probe (probe.zig), with those directories as `system_libs`. The probe passes only if
+# every library file named in PROBE_NEEDS is a regular ELF file in a directory of LD_LIBRARY_PATH after the compiler's lib.
+#
+# green  `run_green` is given both packages and the probe needs `libsqlite3.so.0` and `libsqlite3.so` (both links of the package, written as copies) and `libz.so.1`.
+#        //ci:all builds it, and it is the control of every red below.
+# red    each of the others changes one thing, and its run must FAIL for the reason the probe gives. They are excluded from the wildcard build (ci/all.bzl), and
+#        `buck2 bxl //ci:negative.bxl:check` builds each and requires the failure and the reason (ci/negative.bzl, `faulty_problems`):
+#          run_red_no_system_libs   the run is given none: a library the worker does not have is not found (the defect a test without this wiring has)
+#          run_red_one_missing      the run is given libsqlite and not libzlib: what that library needs is not found either, so every package of `loads` counts
+zig_exe(
+    name = "probe",
+    src = "probe.zig",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+probe_test(name = "probe_test", program = ":probe")
+
+faulty_mojo_toolchain(name = "toolchain")
+
+pinned_file(
+    name = "libsqlite.conda",
+    url = "https://conda.anaconda.org/conda-forge/linux-64/libsqlite-3.54.1-h0737f62_101.conda",
+    sha256 = "c294029f893d05286f1061bbab85b820f1eea73dd859af4bcc619197bcc34810",
+    size_bytes = 980491,
+)
+
+pinned_file(
+    name = "libzlib.conda",
+    url = "https://conda.anaconda.org/conda-forge/linux-64/libzlib-1.3.2-h25fd6f3_3.conda",
+    sha256 = "eb8a0db0aa570124f7d2a93d7c7f596e3390df5e047818d873baad32985fc736",
+    size_bytes = 63713,
+)
+
+mojo_system_lib_rule(
+    name = "libsqlite",
+    archive = ":libsqlite.conda",
+    package = "libsqlite",
+    exec_compatible_with = LINUX_X86_64,
+    visibility = ["//ci:"],
+)
+
+mojo_system_lib_rule(
+    name = "libzlib",
+    archive = ":libzlib.conda",
+    package = "libzlib",
+    exec_compatible_with = LINUX_X86_64,
+    visibility = ["//ci:"],
+)
+
+_NEEDS = {"PROBE_NEEDS": "libsqlite3.so.0,libsqlite3.so,libz.so.1"}
+
+mojo_test_run_rule(
+    name = "run_green",
+    bin = ":probe_test",
+    system_libs = [":libsqlite", ":libzlib"],
+    test_env = _NEEDS,
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+    visibility = ["//ci:"],
+)
+
+# Red by design: no system library, as a test run without the wiring.
+mojo_test_run_rule(
+    name = "run_red_no_system_libs",
+    bin = ":probe_test",
+    test_env = _NEEDS,
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
+# Red by design: libsqlite alone, without the library it needs.
+mojo_test_run_rule(
+    name = "run_red_one_missing",
+    bin = ":probe_test",
+    system_libs = [":libsqlite"],
+    test_env = _NEEDS,
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+)
+
+scrub_files()

@@ -7,5 +7,6 @@ test {
     _ = @import("hang_test.zig");
     _ = @import("isa_test.zig");
     _ = @import("oom_test.zig");
+    _ = @import("runspec_libdir_test.zig");
     _ = @import("runspec_test.zig");
 }

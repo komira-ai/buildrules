@@ -1,0 +1,20 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:sync.bzl", "mojo_sync")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A library with one source kcov records no line of (`fast.mojo`: every function is `@always_inline("nodebug")`, so the compiler gives its code no line table) and the file
+# that lists it with its reason, `coverage_unmeasured.txt`. `:coverage` accepts the source because it is listed, prints it as `unmeasured: <path>: <reason>` and leaves it out of the
+# totals and the floor (rules/coverage/tools/cov_unmeasured.zig; ../unmeasured_test.zig).
+mojo_package(path = ".")
+
+# `buildrules mojo sync` as a farm action (rules/mojo/sync.bzl): `buck2 run //examples/mojo/unmeasured:sync` writes the two files a sync writes.
+mojo_sync(
+    name = "sync",
+    committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
+    files = ["//examples/mojo:mopm-toolchain.toml"],
+    mopm = "0.0.48",
+    visibility = ["//ci:"],
+    workspaces = [":workspace"],
+)
+
+scrub_files()

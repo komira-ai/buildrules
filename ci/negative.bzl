@@ -10,6 +10,7 @@ control's own error. ci/negative_check.zig holds the wiring of this file to the 
 load("//examples/mojo/sys_app:buildrules.mojo.lock.bzl", SYS_APP_GRAPH = "GRAPH")
 load("//examples/mojo/ws:buildrules.mojo.lock.bzl", WS_GRAPH = "GRAPH")
 load(":native_macos.bzl", "native_macos_problems")
+load(":system_libs.bzl", "system_libs_problems")
 load(":subdirs.bzl", "subdir_problems", UNSUPPORTED_SUBDIR_PLATFORM = "UNSUPPORTED", UNSUPPORTED_SUBDIR_PLATFORMS = "UNSUPPORTED_PLATFORMS")
 load("//examples/mojo/member_native:buildrules.mojo.lock.bzl", MEMBER_NATIVE_GRAPH = "GRAPH")
 load("//examples/mojo/member_native/cshim:buildrules.mojo.lock.bzl", CSHIM_GRAPH = "GRAPH")
@@ -34,7 +35,8 @@ CASES = [
     ("//ci/negative:mojo_instrumented_link_without_a_native_the_unit_links", PLATFORM, "the unit links the native library libbase_sys.a and the instrumented link of its branch coverage is not given it"),
     ("//ci/negative:mojo_instrumented_link_with_a_needed_archive_before_its_user", PLATFORM, "libbase_sys.a is linked before libprobe_sys.a, which needs it"),
     ("//ci/negative:mojo_test_run_with_a_zero_hang_limit", PLATFORM, "test_hang_limit_s 0 is not a positive whole number of seconds"),
-    ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
+    # A package that lists sources in coverage_unmeasured.txt but makes no coverage (no test here): refused at analysis naming the file, never ignored (rules/mojo/unit.bzl).
+    ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "coverage_unmeasured.txt exists but this package has no library or no test"),
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys/base_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     # A sibling whose table names another version of the library than the one next to it is (rules/mojo/unit.bzl, `check_closure_ids`).
@@ -75,7 +77,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the known defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it carries (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + test_defines_problems(ctx) + hang_limit_problems(ctx)
+    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + test_defines_problems(ctx) + hang_limit_problems(ctx) + system_libs_problems(ctx, GATE_PLATFORM)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
@@ -107,6 +109,7 @@ COVERAGE_FLOOR_PACKAGES = [
     ("//examples/mojo/test_defines", False),
     ("//examples/mojo/branch_shapes", True),
     ("//examples/mojo/reexport_unused", False),
+    ("//examples/mojo/unmeasured", True),
     ("//examples/mojo/copy_of_base", False),
     ("//examples/mojo/sys_app", True),
     ("//examples/mojo/ws", False),
@@ -144,6 +147,7 @@ BRANCH_PACKAGES = [
     ("//examples/mojo/uncompiled", "test_doubled", True),
     ("//examples/mojo/uncompiled_lean", "test_doubled", True),
     ("//examples/mojo/uncompiled_gate", "test_entry", True),
+    ("//examples/mojo/unmeasured", "test_unmeasured", True),
     ("//examples/mojo/sibfake/chain/a", "test_chain_a", True),
     ("//examples/mojo/sibfake/chain/b", "test_chain_b", True),
     ("//examples/mojo/sibfake/chain/c", "test_chain_c", True),
@@ -158,6 +162,8 @@ BRANCH_PACKAGES = [
     ("//examples/mojo/installed", "test_installed_layout", True),
     ("//examples/mojo/member_native", "test_cshim_user", True),
     ("//examples/mojo/member_native/cshim", "test_cshim", True),
+    ("//examples/mojo/load_native", "test_load_sqlite", True),
+    ("//examples/mojo/load_native", "test_load_brotli", True),
 ]
 
 # The packages whose tests link native libraries, with their committed graphs: what `__pgo` is held to (`native_link_problems`).
@@ -435,6 +441,9 @@ FAULTY = [
     ("//ci/mojo_data:run_red_default_probe_in_installed_layout", "//ci/mojo_data:run_green", "is not BUILDRULES_TEST_DATA"),
     ("//ci/mojo_data:run_red_installed_no_greeting", "//ci/mojo_data:run_green_installed", "data_probe: cannot read share/greeting.txt: FileNotFound"),
     ("//ci/mojo_data:run_red_installed_content", "//ci/mojo_data:run_green_installed", "data_probe: share/greeting.txt holds other data"),
+    # The system libraries a Mojo test is given (ci/mojo_syslibs/BUCK): the stand-in test looks for library files in the directories of its library path after the compiler's.
+    ("//ci/mojo_syslibs:run_red_no_system_libs", "//ci/mojo_syslibs:run_green", "system_probe: no directory after the compiler's lib on LD_LIBRARY_PATH holds libsqlite3.so.0"),
+    ("//ci/mojo_syslibs:run_red_one_missing", "//ci/mojo_syslibs:run_green", "system_probe: no directory after the compiler's lib on LD_LIBRARY_PATH holds libz.so.1"),
 ]
 
 def _failures(ctx, label):
@@ -498,6 +507,12 @@ TEST_COMMANDS = [
         "\"--private-scratch\", \"--installed\", \"--install-share\", <build artifact",
         "\"--share-env\", \"BUILDRULES_TEST_DATA\"",
         "\"PROBE_LAYOUT=installed\"",
+    ], [], [], ["test", "mojo"], ["hidden=["]),
+    # A Mojo test given system libraries: one `--lib-dir <directory>` each, in the order of the list (libsqlite, then libzlib), after the private scratch's option and
+    # before the `--` that starts the program; each directory is an input of the command.
+    ("//ci/mojo_syslibs:run_green", [
+        "\"--private-scratch\", \"--env\", \"PROBE_NEEDS=libsqlite3.so.0,libsqlite3.so,libz.so.1\", \"--lib-dir\", <build artifact lib bound to buildrules//ci/mojo_syslibs:libsqlite (",
+        ">, \"--lib-dir\", <build artifact lib bound to buildrules//ci/mojo_syslibs:libzlib (",
     ], [], [], ["test", "mojo"], ["hidden=["]),
 ]
 

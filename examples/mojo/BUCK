@@ -73,4 +73,19 @@ zig_test(
     visibility = ["//ci:"],
 )
 
+# What `:coverage` does with a source kcov cannot record and the package lists in coverage_unmeasured.txt (unmeasured_test.zig): `unmeasured` has `fast.mojo`, every function of which
+# is `@always_inline("nodebug")` and which no report names; it is listed with its reason and is in no total, and the package's floor holds the rest.
+zig_test(
+    name = "unmeasured",
+    exec_compatible_with = LINUX_X86_64,
+    src = "unmeasured_test.zig",
+    data = {
+        "coverage.txt": "//examples/mojo/unmeasured:coverage",
+        "reports_of_tests.xml": "//examples/mojo/unmeasured:coverage[reports_of_tests]",
+        "uncompiled.cobertura.xml": "//examples/mojo/unmeasured:coverage[reports_uncompiled]",
+    },
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["//ci:"],
+)
+
 scrub_files()

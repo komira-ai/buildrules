@@ -12,6 +12,9 @@
 //!
 //! The edit is made on the lines of mopm's layout (a unit is a block opened by `    {` and closed by `    }`, its fields at six spaces), and the result is
 //! parsed again: a layout this function does not know is an error, never a graph that quietly keeps what it should have dropped.
+//!
+//! Only the blocks of the `"units": [` array are units. A format 3 graph also has a top-level `"system_libs": [` array (the pinned system libraries of the subdir)
+//! whose entries are objects at the same indentation; they are no unit, hold no source and no key, and are kept as they are, wherever the array stands.
 
 const std = @import("std");
 
@@ -23,6 +26,7 @@ const id_prefix = "      \"id\": \"";
 const srcs_prefix = "      \"srcs\": [";
 const key_prefix = "      \"key\": ";
 const srcs_end = "      ]";
+const units_array = "  \"units\": [";
 
 fn str(v: ?std.json.Value) ?[]const u8 {
     const x = v orelse return null;
@@ -114,8 +118,11 @@ pub fn identityOnly(a: std.mem.Allocator, graph: []const u8) Error![]const u8 {
 
     var out = std.ArrayList([]const u8).empty;
     var i: usize = 0;
+    var in_units = true;
     while (i < all.len) {
-        if (!std.mem.eql(u8, all[i], unit_open)) {
+        // A top-level array opens at two spaces (`  "<name>": [`): the units array, or another one (`system_libs`) whose blocks are not units.
+        if (std.mem.startsWith(u8, all[i], "  \"") and std.mem.endsWith(u8, all[i], "\": [")) in_units = std.mem.eql(u8, all[i], units_array);
+        if (!in_units or !std.mem.eql(u8, all[i], unit_open)) {
             try out.append(a, all[i]);
             i += 1;
             continue;

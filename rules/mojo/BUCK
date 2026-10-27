@@ -82,15 +82,26 @@ alias(
     visibility = ["PUBLIC"],
 )
 
+# `conda_unpack --all-libs`: every shared library of a package's lib/ (conda_libs.zig), behind its unit tests. The rest of conda_unpack (the compiler closure) has no unit test.
+zig_test(
+    name = "conda_libs_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "tools/conda_libs_test.zig",
+    imports = ["tools/conda_libs.zig", "tools/prebuilt_unpack.zig"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
 # conda_unpack (a newer copy than rules/zig's: zstd windows, CLOSURE_MANIFEST): unpacks the compiler closure.
 zig_exe(
     name = "conda_unpack",
     target = _HOST_TARGET,
     exec_compatible_with = LINUX_X86_64,
     src = "tools/conda_unpack.zig",
+    imports = ["tools/conda_libs.zig", "tools/prebuilt_unpack.zig"],
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
-    unit_tests = ["buildrules//rules/pins:zig_next_version"],
+    unit_tests = [":conda_libs_unit", "buildrules//rules/pins:zig_next_version"],
     visibility = ["PUBLIC"],
 )
 

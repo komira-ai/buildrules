@@ -30,7 +30,17 @@ zig_test(
     zig = "buildrules//rules/pins:zig_next",
 )
 
+# `cov_summary --unmeasured` as a process: the file of sources kcov cannot record, accepted, and each refusal of it.
+zig_test(
+    name = "coverage_unmeasured_refuse",
+    exec_compatible_with = LINUX_X86_64,
+    src = "unmeasured_refuse_test.zig",
+    deps = ["//rules/core/tests:refusal_proc"],
+    env_tools = {"COV_SUMMARY": "//rules/coverage:cov_summary"},
+    zig = "buildrules//rules/pins:zig_next",
+)
+
 # Every refusal of this package, for //ci:refusals.
-group(name = "all", deps = _ALL + [":coverage_tools_refuse"], visibility = ["PUBLIC"])
+group(name = "all", deps = _ALL + [":coverage_tools_refuse", ":coverage_unmeasured_refuse"], visibility = ["PUBLIC"])
 
 scrub_files()

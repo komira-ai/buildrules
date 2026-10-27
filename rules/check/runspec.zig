@@ -10,6 +10,10 @@
 //!   5. --ld-library-path DIR: LD_LIBRARY_PATH (DYLD_LIBRARY_PATH on macOS, whose loader reads no other) is DIR made absolute (it replaces, it does not append);
 //!      --macos-library-dirs DIRS (colon separated, absolute): on macOS DYLD_FALLBACK_LIBRARY_PATH is DIRS followed by `/usr/local/lib:/usr/lib`, so a library the
 //!      program opens by its bare name (`dlopen("liblz4.dylib")`) is found in them; without the option, or on another system, the variable is not set;
+//!      --lib-dir DIR (repeatable, needs --ld-library-path): a directory of shared libraries the program opens by their bare names, each made absolute. On Linux
+//!      they follow DIR in LD_LIBRARY_PATH, in the order given (the compiler's own libraries are found first). On macOS they come first in DYLD_FALLBACK_LIBRARY_PATH,
+//!      before --macos-library-dirs and dyld's defaults (a fallback, so an operating system library is not shadowed and a bare name still resolves), and
+//!      DYLD_LIBRARY_PATH is DIR alone. Without the option the environment is exactly what it is without this paragraph;
 //!   6. each --abs NAME and --abs-prefix PREFIX: a variable that is set to a relative path is made absolute against the working directory
 //!      (every variable whose name starts with PREFIX, for --abs-prefix);
 //!   7. each --mkdir-env NAME: the directory NAME names is made, with its parents.
@@ -47,6 +51,7 @@ pub const Spec = struct {
     scratch: ?[]const u8 = null,
     ld_library_path: ?[]const u8 = null,
     macos_library_dirs: ?[]const u8 = null,
+    lib_dirs: []const []const u8 = &.{},
     cwd: ?[]const u8 = null,
     cwd_env: ?[]const u8 = null,
     sets: []const []const u8 = &.{},
@@ -84,6 +89,7 @@ const Options = enum {
     @"--scratch",
     @"--ld-library-path",
     @"--macos-library-dirs",
+    @"--lib-dir",
     @"--cwd",
     @"--cwd-env",
     @"--env",
@@ -111,7 +117,7 @@ const Options = enum {
 fn belongs(opt: Options) u8 {
     return switch (opt) {
         .@"--refuse" => R,
-        .@"--clear-env", .@"--tmpdir", .@"--scratch", .@"--ld-library-path", .@"--macos-library-dirs", .@"--cwd", .@"--cwd-env", .@"--env", .@"--dir", .@"--abs", .@"--abs-prefix", .@"--mkdir-env", .@"--private-scratch", .@"--installed", .@"--install-share", .@"--share-env" => R | M | E,
+        .@"--clear-env", .@"--tmpdir", .@"--scratch", .@"--ld-library-path", .@"--macos-library-dirs", .@"--lib-dir", .@"--cwd", .@"--cwd-env", .@"--env", .@"--dir", .@"--abs", .@"--abs-prefix", .@"--mkdir-env", .@"--private-scratch", .@"--installed", .@"--install-share", .@"--share-env" => R | M | E,
         .@"--out" => M | E,
         .@"--capture", .@"--stamp", .@"--stamp-log", .@"--hang-limit-s", .@"--hang-label" => M,
         .@"--want", .@"--prefix", .@"--name" => E,
@@ -133,6 +139,7 @@ pub fn parse(io: Io, sub: []const u8, kind: Kind, args: []const []const u8) Oom!
     var abs = common.Strings{ .a = io.a };
     var abs_prefix = common.Strings{ .a = io.a };
     var mkdir_env = common.Strings{ .a = io.a };
+    var lib_dirs = common.Strings{ .a = io.a };
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--")) {
@@ -163,6 +170,13 @@ pub fn parse(io: Io, sub: []const u8, kind: Kind, args: []const []const u8) Oom!
             .@"--scratch" => spec.scratch = value,
             .@"--ld-library-path" => spec.ld_library_path = value,
             .@"--macos-library-dirs" => spec.macos_library_dirs = value,
+            .@"--lib-dir" => {
+                if (value.len == 0) {
+                    io.say(sub, &.{"--lib-dir is empty"});
+                    return null;
+                }
+                try lib_dirs.add(value);
+            },
             .@"--cwd" => spec.cwd = value,
             .@"--cwd-env" => spec.cwd_env = value,
             .@"--env" => try sets.add(value),
@@ -193,6 +207,7 @@ pub fn parse(io: Io, sub: []const u8, kind: Kind, args: []const []const u8) Oom!
     spec.abs = abs.items;
     spec.abs_prefix = abs_prefix.items;
     spec.mkdir_env = mkdir_env.items;
+    spec.lib_dirs = lib_dirs.items;
     if ((spec.hang_limit_s == null) != (spec.hang_label == null)) {
         io.say(sub, &.{"--hang-limit-s and --hang-label go together: the limit and the label the verdict names"});
         return null;
@@ -248,6 +263,10 @@ pub fn prepare(io: Io, sub: []const u8, spec: Spec) Oom!Preparation {
     }
     if (spec.installed and !spec.private_scratch) {
         io.say(sub, &.{"--installed needs --private-scratch: the installed layout is made in it"});
+        return .{ .fail = 2 };
+    }
+    if (spec.lib_dirs.len > 0 and spec.ld_library_path == null) {
+        io.say(sub, &.{"--lib-dir needs --ld-library-path: the directories are added to the library path it sets"});
         return .{ .fail = 2 };
     }
     if ((spec.install_share != null or spec.share_env != null) and !spec.installed) {
@@ -320,21 +339,51 @@ pub fn libraryPathVar(os: std.Target.Os.Tag) []const u8 {
 /// worth searching (HOME is the run's empty directory).
 pub const dyld_default_dirs = "/usr/local/lib:/usr/lib";
 
-/// DYLD_FALLBACK_LIBRARY_PATH for a program of `os`: the consumer's directories `dirs` followed by `dyld_default_dirs` (setting the variable replaces dyld's
-/// default, so the defaults are listed again); null on every system but macOS, and when no directory is given (dyld's own default then applies).
-pub fn fallbackLibraryPath(a: Alloc, os: std.Target.Os.Tag, dirs: ?[]const u8) Oom!?[]const u8 {
-    const d = dirs orelse return null;
-    if (os != .macos or d.len == 0) return null;
-    return try std.fmt.allocPrint(a, "{s}:{s}", .{ d, dyld_default_dirs });
+/// The non-empty entries of `head` and then of `tail`, joined by `:`, in one allocation.
+fn joinColon(a: Alloc, head: []const []const u8, tail: []const []const u8) Oom![]u8 {
+    var n: usize = 0;
+    for ([_][]const []const u8{ head, tail }) |part| {
+        for (part) |e| {
+            if (e.len > 0) n += e.len + 1;
+        }
+    }
+    const out = try a.alloc(u8, n -| 1);
+    var at: usize = 0;
+    for ([_][]const []const u8{ head, tail }) |part| {
+        for (part) |e| {
+            if (e.len == 0) continue;
+            if (at > 0) {
+                out[at] = ':';
+                at += 1;
+            }
+            @memcpy(out[at..][0..e.len], e);
+            at += e.len;
+        }
+    }
+    return out;
 }
 
 /// Step 5 for a program of `os`: the library path variable holds `dir` (absolute), and on macOS, given `macos_dirs`, so does DYLD_FALLBACK_LIBRARY_PATH.
 pub fn setLibraryEnv(a: Alloc, env: *std.process.EnvMap, os: std.Target.Os.Tag, dir: []const u8, macos_dirs: ?[]const u8) Oom!void {
-    try putEnv(env, libraryPathVar(os), dir);
-    if (try fallbackLibraryPath(a, os, macos_dirs)) |v| {
+    try setLibraryEnvWith(a, env, os, dir, macos_dirs, &.{});
+}
+
+/// `setLibraryEnv` with `lib_dirs` (absolute, in the order given): the shared libraries a program opens by bare name. Linux: LD_LIBRARY_PATH is `dir` and then
+/// each of them. macOS: DYLD_LIBRARY_PATH is `dir` alone, and DYLD_FALLBACK_LIBRARY_PATH is each of them, then `macos_dirs`, then dyld's defaults (setting the
+/// variable replaces dyld's own default, so the defaults are listed again); it is not set when there is neither a `lib_dirs` nor a `macos_dirs`, so dyld's
+/// own default applies. With no `lib_dirs` this is `setLibraryEnv`.
+pub fn setLibraryEnvWith(a: Alloc, env: *std.process.EnvMap, os: std.Target.Os.Tag, dir: []const u8, macos_dirs: ?[]const u8, lib_dirs: []const []const u8) Oom!void {
+    if (os != .macos) {
+        const v = try joinColon(a, &.{dir}, lib_dirs);
         defer a.free(v);
-        try putEnv(env, "DYLD_FALLBACK_LIBRARY_PATH", v);
+        return putEnv(env, libraryPathVar(os), v);
     }
+    try putEnv(env, libraryPathVar(os), dir);
+    const own = macos_dirs orelse "";
+    if (lib_dirs.len == 0 and own.len == 0) return;
+    const v = try joinColon(a, lib_dirs, &.{ own, dyld_default_dirs });
+    defer a.free(v);
+    try putEnv(env, "DYLD_FALLBACK_LIBRARY_PATH", v);
 }
 
 /// The steps after the scratch directory: --dir, --tmpdir, --ld-library-path, the absolute variables, --mkdir-env, the working directory and
@@ -371,7 +420,11 @@ fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom
         try putEnv(&p.env, "TEST_TMPDIR", s.tmp);
         try putEnv(&p.env, "HOME", s.home);
     }
-    if (spec.ld_library_path) |dir| try setLibraryEnv(a, &p.env, builtin.os.tag, try common.absolute(a, here, dir), spec.macos_library_dirs);
+    if (spec.ld_library_path) |dir| {
+        var libs = common.Strings{ .a = a };
+        for (spec.lib_dirs) |d| try libs.add(try common.absolute(a, here, d));
+        try setLibraryEnvWith(a, &p.env, builtin.os.tag, try common.absolute(a, here, dir), spec.macos_library_dirs, libs.items);
+    }
     for (spec.abs) |name| try makeAbsolute(a, &p.env, here, name);
     for (spec.abs_prefix) |prefix| {
         var names = common.Strings{ .a = a };
