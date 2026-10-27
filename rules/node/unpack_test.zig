@@ -138,3 +138,89 @@ test "unpackTgz: an entry that needs a file to be a directory, or a directory to
     var d = try tmp.dir.openDir("d", .{});
     d.close();
 }
+
+test "unpackTgz: a gzip trailer that does not state the CRC-32 of the tar is refused, and so is a flipped data byte" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const x = arena.allocator();
+    const z = try tartest.tgz(x, "p", "1.0.0", &.{.{ .name = "package/a", .data = "0123456789" }});
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // the trailer is the CRC-32 (four bytes) and then the length (four bytes)
+    for (0..4) |i| {
+        const bad = try x.dupe(u8, z);
+        bad[bad.len - 8 + i] ^= 0x01;
+        try std.testing.expectError(error.GzipCrcMismatch, unpack.unpackTgz(tmp.dir, bad));
+    }
+    // a stored block's data is the tar's bytes: one of them changed, with the trailer as it was
+    const bad = try x.dupe(u8, z);
+    const at = std.mem.indexOf(u8, bad, "0123456789").?;
+    bad[at] = 'X';
+    try std.testing.expectError(error.GzipCrcMismatch, unpack.unpackTgz(tmp.dir, bad));
+}
+
+test "unpackTgz: a gzip trailer that does not state the length of the tar is refused" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const x = arena.allocator();
+    const z = try tartest.tgz(x, "p", "1.0.0", &.{.{ .name = "package/a", .data = "0123456789" }});
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    for (0..4) |i| {
+        const bad = try x.dupe(u8, z);
+        bad[bad.len - 4 + i] ^= 0x01;
+        try std.testing.expectError(error.GzipSizeMismatch, unpack.unpackTgz(tmp.dir, bad));
+    }
+}
+
+test "unpackTgz: a stream of several deflate blocks, whose file is larger than the readers' buffers, is accepted whole and refused with one changed byte" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const x = arena.allocator();
+    const big = try x.alloc(u8, 200 * 1024 + 17);
+    for (big, 0..) |*b, i| b.* = @truncate(i *% 31 +% (i >> 8));
+    const z = try tartest.tgz(x, "p", "1.0.0", &.{.{ .name = "package/big.bin", .data = big }});
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const st = try unpack.unpackTgz(tmp.dir, z);
+    try std.testing.expectEqual(@as(usize, 2), st.files);
+    const got = try tmp.dir.readFileAlloc(a, "big.bin", big.len + 1);
+    defer a.free(got);
+    try std.testing.expectEqualSlices(u8, big, got);
+    // the last byte of the file, far into the stream
+    const bad = try x.dupe(u8, z);
+    const at = std.mem.lastIndexOf(u8, bad, big[big.len - 64 ..]).?;
+    bad[at + 63] ^= 0x80;
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    try std.testing.expectError(error.GzipCrcMismatch, unpack.unpackTgz(tmp2.dir, bad));
+}
+
+test "unpackTgz: a trailer cut at any byte is refused" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const z = try tartest.tgz(arena.allocator(), "p", "1.0.0", &.{.{ .name = "package/a", .data = "0123456789" }});
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    for (1..9) |cut| try std.testing.expectError(error.CorruptGzip, unpack.unpackTgz(tmp.dir, z[0 .. z.len - cut]));
+}
+
+test "Summing: a read of no bytes is no bytes and not the end, and what is read is summed" {
+    const a = std.testing.allocator;
+    var in: std.Io.Reader = .fixed("hello, world");
+    var buf: [16]u8 = undefined;
+    var sum = unpack.Summing.init(&in, &buf);
+    var out = std.Io.Writer.Allocating.init(a);
+    defer out.deinit();
+    try std.testing.expectEqual(@as(usize, 0), try sum.reader.stream(&out.writer, .limited(0)));
+    try std.testing.expectEqual(@as(usize, 5), try sum.reader.stream(&out.writer, .limited(5)));
+    try std.testing.expectEqual(@as(usize, 7), try sum.reader.stream(&out.writer, .limited(100)));
+    try std.testing.expectError(error.EndOfStream, sum.reader.stream(&out.writer, .limited(100)));
+    try std.testing.expectEqualStrings("hello, world", out.written());
+    try std.testing.expectEqual(std.hash.Crc32.hash("hello, world"), sum.crc.final());
+    try std.testing.expectEqual(@as(u32, 12), sum.len);
+}

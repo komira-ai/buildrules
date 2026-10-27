@@ -71,15 +71,54 @@ pub fn unpackTar(dest: std.fs.Dir, reader: *std.Io.Reader) !Stats {
     return stats;
 }
 
+/// A reader that hands on what `inner` yields and keeps the CRC-32 and the
+/// length (mod 2^32) of it: the two values a gzip trailer states of the
+/// decompressed bytes, which the standard library's decompressor reads but
+/// does not compare.
+pub const Summing = struct {
+    inner: *std.Io.Reader,
+    crc: std.hash.Crc32 = .init(),
+    len: u32 = 0,
+    reader: std.Io.Reader,
+
+    pub fn init(inner: *std.Io.Reader, buffer: []u8) Summing {
+        return .{
+            .inner = inner,
+            .reader = .{ .vtable = &.{ .stream = stream }, .buffer = buffer, .seek = 0, .end = 0 },
+        };
+    }
+
+    fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const self: *Summing = @fieldParentPtr("reader", r);
+        const dest = limit.slice(try w.writableSliceGreedy(1));
+        if (dest.len == 0) return 0;
+        const n = try self.inner.readSliceShort(dest);
+        if (n == 0) return error.EndOfStream;
+        self.crc.update(dest[0..n]);
+        self.len +%= @as(u32, @truncate(n));
+        w.advance(n);
+        return n;
+    }
+};
+
 /// Extracts the gzipped tar `bytes` into `dest`.
 pub fn unpackTgz(dest: std.fs.Dir, bytes: []const u8) !Stats {
     var in: std.Io.Reader = .fixed(bytes);
     var window: [std.compress.flate.max_window_len]u8 = undefined;
     var dec = std.compress.flate.Decompress.init(&in, .gzip, &window);
-    const stats = try unpackTar(dest, &dec.reader);
-    // The tar ends at its zero blocks; reading the rest of the gzip stream is
-    // what checks its trailer (CRC and length), so a truncated or corrupt
-    // tarball is an error and not a short package.
-    _ = dec.reader.discardRemaining() catch return error.CorruptGzip;
+    var sbuf: [8 * 1024]u8 = undefined;
+    var sum = Summing.init(&dec.reader, &sbuf);
+    // A read that fails is the gzip stream's: the decompressor refuses a block, or a trailer that is cut (it reads the trailer as the last
+    // block ends, which can be while the tar is still reading its zero blocks).
+    const stats = unpackTar(dest, &sum.reader) catch |err| return if (err == error.ReadFailed) error.CorruptGzip else err;
+    // The tar ends at its zero blocks; reading the rest of the gzip stream
+    // reads its trailer, so a truncated tarball is an error and not a short
+    // package. The decompressor keeps the trailer's CRC-32 and length but
+    // compares neither: they are compared here with those of the bytes that
+    // were read, so a corrupt tarball is an error as well.
+    _ = sum.reader.discardRemaining() catch return error.CorruptGzip;
+    const trailer = dec.container_metadata.gzip;
+    if (trailer.crc != sum.crc.final()) return error.GzipCrcMismatch;
+    if (trailer.count != sum.len) return error.GzipSizeMismatch;
     return stats;
 }
