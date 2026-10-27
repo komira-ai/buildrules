@@ -209,7 +209,7 @@ test "hasNoStatements: a re-export file has none, any other statement is one" {
         "comptime A = Dict[\n    String,\n    Int,\n]\ndef f() -> Int:\n    return 1\n",
         "alias A = 1\nfn f(): pass\n",
         "alias A = 1\nstruct S:\n    pass\n",
-        "alias A = 1\ntrait T:\n    pass\n",
+        "alias A = 1\ntrait T:\n    def f(self) -> Int:\n        return 1\n",
         "alias A = 1\n@always_inline\n",
         "var A = 1\n",
         "alias A = 1\nvar B = 2\n",
@@ -291,6 +291,71 @@ test "withEmptySources: a package of alias-only files is listed 0/0 and a file w
     const msrcs = [_][2][]const u8{ .{ "p/src/aliases.mojo", "alias" }, .{ "p/src/code.mojo", "code" } };
     const out2 = try S.withEmptySources(a, rows, &mixed, &msrcs, readAliasOnly);
     try t.expectEqualStrings("p/src/code.mojo", S.missing(out2, &mixed).?);
+}
+
+test "hasNoStatements: a trait declaration with signatures and empty default bodies has none" {
+    for ([_][]const u8{
+        "trait T:\n    def f(self) -> Int: ...\n",
+        "trait T: ...\n",
+        "trait T:\n    pass\n",
+        "trait T(Copyable, Movable):\n    \"\"\"Doc.\"\"\"\n    def f(self) -> Int: ...\n    def g(mut self):\n        pass\n",
+        "# header\n\ntrait T:\n    \"\"\"One.\n\n    More.\n    \"\"\"\n    def f(self):\n        \"\"\"Default.\"\"\"\n        pass\n    def g(self): pass # empty\n",
+        "trait T[n: Int]:\n    def f[\n        In: Movable, P: Movable\n    ](\n        self,\n        n: Int,\n        ref input: In,\n    ) raises:\n        ...\n",
+        "trait A:\n    def a(self): ...\n\n# between\n\ntrait B(A):\n    @staticmethod\n    def b() -> Int: ...\n",
+        "from .x import Y\ncomptime Z = Y\ntrait T:\n    def f(self): ...\n",
+    }) |case| t.expect(S.hasNoStatements(case)) catch |e| {
+        std.debug.print("refused, should be accepted: {s}\n", .{case});
+        return e;
+    };
+    for ([_][]const u8{
+        "trait T:\n    def f(self) -> Int:\n        return 1\n",
+        "trait T:\n    def f(self) -> Int: return 1\n",
+        "trait T:\n    def f(self):\n        pass\n        x = 1\n",
+        "trait T:\n    def f(self): ...\n\ndef g():\n    pass\n",
+        "trait T:\n    x = 1\n",
+        "trait T:\n    comptime N: Int\n",
+        "trait T: x = 1\n",
+        "trait T\n",
+        "trait :\n    pass\n",
+        "trait T(\n    A,\n):\n    pass\n",
+        "trait T:\n    def f(self,\n",
+        "trait T:\n    def f(self)\n",
+        "trait T:\n    def f(self) -> Int: ...; g()\n",
+        "trait T:\n    @deco(1)\n    def f(self): ...\n",
+        "trait T:\n    def f(self, s: String = \"a\"): ...\n",
+        "trait T:\n    \"\"\"Doc.\"\"\" x = 1\n",
+        "trait T:\n    def f(self): ...\n@always_inline\n",
+    }) |case| t.expect(!S.hasNoStatements(case)) catch |e| {
+        std.debug.print("accepted, should be refused: {s}\n", .{case});
+        return e;
+    };
+}
+
+fn readTraits(_: std.mem.Allocator, p: []const u8) []const u8 {
+    if (std.mem.eql(u8, p, "only")) return "trait T(Copyable):\n    \"\"\"Doc.\"\"\"\n    def f(self) -> Int: ...\n    def g(mut self):\n        pass\n";
+    if (std.mem.eql(u8, p, "body")) return "trait T:\n    def f(self) -> Int:\n        return 1\n";
+    return "trait T:\n    def f(self) -> Int: ...\n\ndef g() -> Int:\n    return 1\n";
+}
+
+test "withEmptySources: a trait-only file is listed 0/0; a trait with a real default body, or beside a function, stays missing" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var files: std.StringArrayHashMapUnmanaged(std.AutoArrayHashMapUnmanaged(usize, bool)) = .empty;
+    const rows = try S.summarize(a, &files);
+    const only = [_][]const u8{"p/src/traits.mojo"};
+    const osrcs = [_][2][]const u8{.{ "p/src/traits.mojo", "only" }};
+    const out = try S.withEmptySources(a, rows, &only, &osrcs, readTraits);
+    try t.expect(S.missing(out, &only) == null);
+    try t.expectEqualStrings("p/src/traits.mojo 0/0 0%\ntotal 0/0 0%\n", try S.render(a, out, &only));
+    const body = [_][]const u8{"p/src/body.mojo"};
+    const bsrcs = [_][2][]const u8{.{ "p/src/body.mojo", "body" }};
+    const out2 = try S.withEmptySources(a, rows, &body, &bsrcs, readTraits);
+    try t.expectEqualStrings("p/src/body.mojo", S.missing(out2, &body).?);
+    const mixed = [_][]const u8{ "p/src/traits.mojo", "p/src/mixed.mojo" };
+    const msrcs = [_][2][]const u8{ .{ "p/src/traits.mojo", "only" }, .{ "p/src/mixed.mojo", "mixed" } };
+    const out3 = try S.withEmptySources(a, rows, &mixed, &msrcs, readTraits);
+    try t.expectEqualStrings("p/src/mixed.mojo", S.missing(out3, &mixed).?);
 }
 
 // ---- what no test compiled: the own lines and decision words of functions the reports lack ---------------------------------------------

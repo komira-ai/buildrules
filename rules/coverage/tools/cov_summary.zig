@@ -6,7 +6,8 @@
 //! `--src` gives the file behind an `--expect` path (Mojo only); a `--src` path that is no `--expect` path is another source of the package (a
 //! test), read for the calls that reach the code no test compiled and never counted. The Mojo report omits a source with no executable line, so an expected source that
 //! no report names but whose text has no statement beyond comments, docstrings and `import` lines (a re-export `__init__.mojo`) is listed as 0/0
-//! instead of refused; one with any other statement stays refused (`hasNoStatements`).
+//! instead of refused; one with any other statement stays refused (`hasNoStatements`). A trait declaration is no statement either: its header, its
+//! method signatures and default bodies that are only `...`, `pass` or a docstring emit no code, so a file of only those is 0/0 too.
 //!
 //! `--blocks` is a zig_cover.zig block report (Zig's branch figure: the compiler's basic blocks, `<file> TAB <line> TAB <column> TAB <hit> TAB <total>`).
 //! With any, the output continues after the line total with the same listing prefixed `branches `: the blocks at a position that ran are the most
@@ -342,18 +343,52 @@ fn scanExpr(line: []const u8, depth: *i32, saw_eq: *bool, cont: *bool) bool {
     return quote == 0;
 }
 
+const SigScan = union(enum) { bad, open, done: []const u8 };
+
+/// One line of a trait header or a method signature, comment already removed: `depth` carries the open brackets across lines. `.done` holds
+/// the text after the colon that ends the signature; a string, a `;`, a backslash, a stray closing bracket or a line that ends outside a
+/// bracket without its colon is `.bad`.
+fn sigScan(code: []const u8, depth: *i32) SigScan {
+    for (code, 0..) |c, i| {
+        switch (c) {
+            '"', '\'', ';', '\\' => return .bad,
+            '(', '[', '{' => depth.* += 1,
+            ')', ']', '}' => {
+                depth.* -= 1;
+                if (depth.* < 0) return .bad;
+            },
+            ':' => if (depth.* == 0) return .{ .done = std.mem.trim(u8, code[i + 1 ..], " \t") },
+            else => {},
+        }
+    }
+    return if (depth.* > 0) .open else .bad;
+}
+
+fn codeOf(line: []const u8) []const u8 {
+    return std.mem.trim(u8, line[0 .. std.mem.indexOfScalar(u8, line, '#') orelse line.len], " \t");
+}
+
+fn emptyBody(rest: []const u8) bool {
+    return rest.len == 0 or std.mem.eql(u8, rest, "...") or std.mem.eql(u8, rest, "pass");
+}
+
 /// Whether a Mojo source has no executable line: only blank lines, comments, docstrings (a triple-quoted string on its own lines), top-level
 /// `from ... import ...` / `import ...` statements (a re-export file, `__init__.mojo`) and top-level alias declarations (`alias` or `comptime NAME = ...`,
 /// with an annotation or a parameter list, the value running over several lines inside brackets or after a backslash), which emit no code. The Mojo
 /// coverage report omits such a file, and so it does a file with code that no test compiled; this is what tells them apart, so it is strict: any other
 /// statement (a function, a struct, a `var`, a `comptime if` / `for` / `assert`), a `;`, an indented line outside a continuation, or an unclosed
-/// docstring or bracket makes it false.
+/// docstring or bracket makes it false. A trait declaration (its header on one line, then indented method signatures, `@name` decorators and
+/// bodies that are only `...`, `pass` or a docstring) is no statement; a default body with any other statement, or any line of the trait this
+/// cannot classify, makes the file false.
 pub fn hasNoStatements(text: []const u8) bool {
     var in_doc: ?[]const u8 = null; // the closing triple quote while inside a docstring
     var depth: i32 = 0; // open parentheses of an import, or brackets of an alias
     var cont = false; // the previous import or alias line ended with a backslash
     var in_alias = false; // inside an alias declaration that runs over more lines
     var saw_eq = false; // the alias declaration has its `=`
+    var in_trait = false; // inside the indented body of a trait declaration
+    var in_sig = false; // inside a method signature that runs over more lines
+    var sig_depth: i32 = 0; // open brackets of that signature
     // A carriage return that does not end a CRLF is a line break to some readers and not to this one: refuse the file rather than guess.
     for (text, 0..) |c, i| {
         if (c == '\r' and (i + 1 >= text.len or text[i + 1] != '\n')) return false;
@@ -372,6 +407,43 @@ pub fn hasNoStatements(text: []const u8) bool {
         // A vertical tab or form feed outside a string is a line break to some readers (Python's splitlines) and not to others.
         const doc_start = std.mem.startsWith(u8, line, "\"\"\"") or std.mem.startsWith(u8, line, "'''");
         if (!doc_start and hasLineBreakChar(raw)) return false;
+        if (in_trait) {
+            if (in_sig) {
+                if (line.len == 0 or line[0] == '#') continue;
+                switch (sigScan(codeOf(line), &sig_depth)) {
+                    .bad => return false,
+                    .open => {},
+                    .done => |rest| {
+                        if (!emptyBody(rest)) return false;
+                        in_sig = false;
+                    },
+                }
+                continue;
+            }
+            if (line.len == 0 or line[0] == '#') continue;
+            if (raw[0] != ' ' and raw[0] != '\t') {
+                in_trait = false; // back at column 0: handled as a top-level line below
+            } else if (!doc_start) {
+                const code = codeOf(line);
+                if (emptyBody(code)) continue;
+                if (std.mem.startsWith(u8, code, "def ") or std.mem.startsWith(u8, code, "fn ")) {
+                    sig_depth = 0;
+                    switch (sigScan(code, &sig_depth)) {
+                        .bad => return false,
+                        .open => in_sig = true,
+                        .done => |rest| if (!emptyBody(rest)) return false,
+                    }
+                    continue;
+                }
+                if (code[0] == '@' and code.len > 1) {
+                    for (code[1..]) |c| {
+                        if (!(std.ascii.isAlphanumeric(c) or c == '_' or c == '.')) return false;
+                    }
+                    continue;
+                }
+                return false;
+            }
+        }
         if (depth > 0 or cont) {
             if (in_alias) {
                 // A backslash joins the next line: a blank line (or the end of the text) after it leaves the statement unfinished.
@@ -410,13 +482,27 @@ pub fn hasNoStatements(text: []const u8) bool {
             } else in_alias = true;
             continue;
         }
+        if (std.mem.startsWith(u8, line, "trait ")) {
+            const code = codeOf(line);
+            const name = std.mem.trimLeft(u8, code[6..], " \t");
+            if (name.len == 0 or !(std.ascii.isAlphabetic(name[0]) or name[0] == '_')) return false;
+            var d: i32 = 0;
+            switch (sigScan(code[6..], &d)) {
+                .done => |rest| {
+                    if (!emptyBody(rest)) return false;
+                    in_trait = rest.len == 0;
+                },
+                else => return false,
+            }
+            continue;
+        }
         const is_import = (std.mem.startsWith(u8, line, "from ") and std.mem.indexOf(u8, line, " import ") != null) or std.mem.startsWith(u8, line, "import ");
         if (!is_import or !importContinuation(line)) return false;
         const code = line[0 .. std.mem.indexOfScalar(u8, line, '#') orelse line.len];
         if (!parens(code, &depth)) return false;
         cont = std.mem.endsWith(u8, std.mem.trimRight(u8, code, " \t"), "\\");
     }
-    return in_doc == null and depth == 0 and !cont;
+    return in_doc == null and depth == 0 and !cont and !in_sig;
 }
 
 /// `rows` plus a 0/0 row for each file of `expect` that no row names and whose source (`srcs`: expected path, then the file to read) has no
