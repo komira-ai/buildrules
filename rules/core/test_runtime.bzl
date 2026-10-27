@@ -2,6 +2,8 @@
 test runs from, and the data, environment and arguments it is given.
 """
 
+load(":hang_limit.bzl", "HANG_LIMIT_S", "check_hang_limit", "hang_limit_flags")
+
 # ---- the test runtime contract ------------------------------------------
 #
 # A test runs from a staged tree built for it alone:
@@ -102,7 +104,7 @@ def test_root(ctx, path, exe, data):
     root = ctx.actions.copied_dir(path, files)
     return root, root.project("bin/" + name)
 
-def gate_mojo(tc, label, test, marker, flags = [], tail = [], macos_library_dirs = ""):
+def gate_mojo(tc, label, test, marker, flags = [], tail = [], macos_library_dirs = "", test_hang_limit_s = HANG_LIMIT_S):
     """The command that runs one gated test: `gate mojo` (rules/gate,
     README.md) of `test` (the binary inside a test_root) as `label`, writing
     `PASS <label>` to `marker` when it passes. `flags` are its limits (the
@@ -112,7 +114,11 @@ def gate_mojo(tc, label, test, marker, flags = [], tail = [], macos_library_dirs
     run:gate, darwin-arm64: run:gate_darwin). `macos_library_dirs` is the
     value of `macos_library_dirs()` of the consumer's key; a caller that runs
     the test on macOS passes it, and it is part of that action's key. The
-    runner uses it on macOS only."""
+    runner uses it on macOS only. `test_hang_limit_s` is the hang limit of the run (hang_limit.bzl): a welded test run carries it, 1800 s unless the target says
+    another; `None` leaves it off (the run of a coverage limit in `flags`, which is another limit, refuses it). With a time limit in `flags` (`--deadline-s`) the
+    shorter of the two runs."""
+    if test_hang_limit_s != None:
+        check_hang_limit(label, test_hang_limit_s)
     dirs = ["--macos-library-dirs", macos_library_dirs] if macos_library_dirs else []
     return cmd_args(
         tc.gate,
@@ -128,6 +134,7 @@ def gate_mojo(tc, label, test, marker, flags = [], tail = [], macos_library_dirs
         "--marker",
         marker,
         dirs,
+        hang_limit_flags(test_hang_limit_s) if test_hang_limit_s != None else [],
         flags,
         tail,
     )

@@ -1,11 +1,18 @@
 //! `gate mojo`: runs one gated Mojo test (G1-G12 of
 //! the gate runner's design), optionally under a memory cap (M1-M6),
-//! a test time limit (D1-D6) or a coverage run's limit (C1).
+//! a test time limit (D1-D6), a hang limit (H1-H3) or a coverage run's limit (C1).
 //!
 //!   gate mojo --busybox B --runtime-lib DIR --label L --test ROOT/bin/NAME --marker M
-//!             [--mem-cap-mib N] [--deadline-s L --runner-timeout-s T]
+//!             [--mem-cap-mib N] [--deadline-s L --runner-timeout-s T] [--hang-limit-s N]
 //!             [--limit-s N --limit-report coverage] [--macos-library-dirs DIR[:DIR]...]
 //!             [--env NAME=VALUE]... [--arg VALUE]...
+//!
+//! The hang limit (docs/contract.md, section 12.8): a welded test that has not finished within N seconds is stopped (H1: SIGKILL to its whole
+//! process group, then the scan for survivors of the coverage limit), exits 125 with no marker (H2), and says on stderr, after the banner, one line:
+//! `hang limit: <label> did not finish within <N> s and was stopped; a test never waits on time, so this means it hung (an event that never came)` (H3). It is what a rule gives
+//! every welded test (default 1800 s, rules/core/hang_limit.bzl). It and the time limit (D1-D6) are two limits of one run: with both the shorter
+//! runs and the longer cannot fire first (a tie is the time limit's, whose line also names the runner's timeout). The coverage limit is another
+//! kind of run and is refused beside it.
 //!
 //! On exit 0 of the test: `PASS <label>\n` to the marker, nothing printed,
 //! exit 0. Otherwise the banner (`GATED TEST FAILED: <label> (exit <rc>)`,
@@ -38,6 +45,7 @@ pub const Args = struct {
     cap_mib: ?u64 = null,
     deadline_s: ?[]const u8 = null,
     runner_timeout_s: ?[]const u8 = null,
+    hang_limit_s: ?u64 = null,
     limit_s: ?u64 = null,
     limit_report: ?[]const u8 = null,
     macos_library_dirs: ?[]const u8 = null,
@@ -55,8 +63,8 @@ pub fn parse(alloc: std.mem.Allocator, argv: []const []const u8, a: *Args) ?u8 {
     a.env = std.ArrayList([]const u8).empty;
     a.args = std.ArrayList([]const u8).empty;
     var i: usize = 0;
-    var have = [_]bool{false} ** 11;
-    const names = [_][]const u8{ "--busybox", "--runtime-lib", "--label", "--test", "--marker", "--mem-cap-mib", "--deadline-s", "--runner-timeout-s", "--limit-s", "--limit-report", "--macos-library-dirs" };
+    var have = [_]bool{false} ** 12;
+    const names = [_][]const u8{ "--busybox", "--runtime-lib", "--label", "--test", "--marker", "--mem-cap-mib", "--deadline-s", "--runner-timeout-s", "--limit-s", "--limit-report", "--macos-library-dirs", "--hang-limit-s" };
     while (i < argv.len) : (i += 2) {
         const flag = argv[i];
         if (std.mem.eql(u8, flag, "--env")) {
@@ -103,6 +111,10 @@ pub fn parse(alloc: std.mem.Allocator, argv: []const []const u8, a: *Args) ?u8 {
             },
             9 => a.limit_report = v,
             10 => a.macos_library_dirs = v,
+            11 => a.hang_limit_s = util.positiveStrict(v) orelse {
+                util.err("hang_limit: REFUSING: the limit '{s}' is not a positive whole number of seconds\n", .{v});
+                return 2;
+            },
             else => unreachable,
         }
     }
@@ -125,6 +137,7 @@ pub fn parse(alloc: std.mem.Allocator, argv: []const []const u8, a: *Args) ?u8 {
     if (a.limit_report) |r| {
         if (!std.mem.eql(u8, r, "coverage")) return usage("--limit-report {s}: the only report is coverage", .{r});
         if (a.deadline_s != null) return usage("usage error: --limit-s and --deadline-s are two limits", .{});
+        if (a.hang_limit_s != null) return usage("usage error: --limit-s and --hang-limit-s are two limits", .{});
     }
     return null;
 }
@@ -237,6 +250,9 @@ fn runParsed(alloc: std.mem.Allocator, a: *Args) !u8 {
 
     var limit: supervise.Limit = .none;
     if (a.deadline_s) |d| limit = .{ .deadline_ms = util.positiveStrict(d).? * 1000 };
+    // H1: with both limits the shorter runs; a tie is the time limit's. `hang` says which of the two the run is under.
+    const hang = if (a.hang_limit_s) |h| (a.deadline_s == null or h < util.positiveStrict(a.deadline_s.?).?) else false;
+    if (hang) limit = .{ .group_ms = a.hang_limit_s.? *| 1000 };
     if (a.limit_s) |l| limit = .{ .group_ms = l * 1000 };
     const outcome = try supervise.run(alloc, .{
         .path = (try alloc.dupeZ(u8, bin)).ptr,
@@ -252,7 +268,7 @@ fn runParsed(alloc: std.mem.Allocator, a: *Args) !u8 {
 
     if (outcome.signal != 0) return 128 +| outcome.signal;
     if (outcome.timer_failed) {
-        const what = a.deadline_s orelse "the coverage run's";
+        const what = if (hang) "the hang limit" else a.deadline_s orelse "the coverage run's";
         util.err("test_deadline: the timer of {s} failed, so the test ran without its limit of {s} s\n", .{ a.label, what });
         return 2;
     }
@@ -261,6 +277,7 @@ fn runParsed(alloc: std.mem.Allocator, a: *Args) !u8 {
         return 2;
     }
     if (a.limit_s != null and outcome.limit_hit) return coverageExpired(alloc, a, outcome, log);
+    if (hang and outcome.limit_hit) return hangExpired(alloc, a, outcome, log);
 
     const rc = outcome.status;
     if (rc == 0) {
@@ -277,7 +294,7 @@ fn runParsed(alloc: std.mem.Allocator, a: *Args) !u8 {
     if (outcome.capped_kib) |k| {
         util.err("MEMORY CAP: killed {s} at {d} MiB resident, over its cap of {d} MiB\n", .{ a.label, k / 1024, a.cap_mib.? });
     }
-    if (a.deadline_s != null and outcome.limit_hit) {
+    if (!hang and a.deadline_s != null and outcome.limit_hit) {
         util.err("TEST TIME LIMIT: killed {s} after {s} s, under the test runner's timeout of {s} s (buildrules.test_timeout_s)\n", .{ a.label, a.deadline_s.?, a.runner_timeout_s.? });
     }
     return rc;
@@ -294,6 +311,19 @@ pub fn banner(label: []const u8, rc: u8, log: []const u8) void {
 fn red(label: []const u8, comptime fmt: []const u8, a: anytype) u8 {
     util.err("{s}\nCOVERAGE RUN FAILED: {s}\n" ++ fmt ++ "\n{s}\n", .{ util.rule, label } ++ a ++ .{util.rule});
     return 1;
+}
+
+/// H1-H3: a test past its hang limit, its whole group killed: the banner (the test is red like any other), what survived the kill if anything did
+/// (a second line, which does not start with `hang limit:`), then the hang line. No marker.
+fn hangExpired(alloc: std.mem.Allocator, a: *Args, o: supervise.Outcome, log: []const u8) !u8 {
+    banner(a.label, supervise.hang_status, log);
+    if (o.survivors.len > 0) {
+        var list = std.ArrayList(u8).empty;
+        for (o.survivors) |m| list.writer(alloc).print("{d} {c} {s};", .{ m.pid, m.state, m.comm }) catch {};
+        util.err("gate_runner: after the hang limit, processes of {s} survived the kill of its process group {d} (pid state comm: {s}); they are killed now\n", .{ a.label, o.pid, list.items });
+    }
+    util.err("{s}", .{try supervise.hangLine(alloc, a.label, a.hang_limit_s.?)});
+    return supervise.hang_status;
 }
 
 /// C1: a coverage run past its limit, its whole group killed.

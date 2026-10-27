@@ -30,6 +30,9 @@ const posix = std.posix;
 const sys = @import("sys.zig");
 const proctab = @import("proctab.zig");
 
+/// A process of a process group, as the survivor scan lists it (a test replaces `plat.group_members` with a function that returns these).
+pub const Member = proctab.Member;
+
 pub const ExecFn = *const fn (path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8) noreturn;
 
 pub const Platform = struct {
@@ -37,7 +40,7 @@ pub const Platform = struct {
     kill: *const fn (pid: sys.pid_t, sig: u8) void = sys.kill,
     now_ms: *const fn () ?u64 = sys.monotonicMs,
     /// C's status when it has exited and its parent can see it (Linux; a test replaces it with one that shows nothing).
-    exited_now: *const fn (pid: sys.pid_t) ?u8 = sys.exitedNoReap,
+    exited_now: *const fn (pid: sys.pid_t) ?u8 = if (sys.is_linux) sys.exitedNoReap else exitedNowhere,
     /// The wait between two looks for survivors of a coverage run's kill
     /// (`survivor_poll_ms`); a test replaces it with a clock that advances.
     sleep_ms: *const fn (ms: u64) void = sys.sleepMs,
@@ -51,6 +54,12 @@ pub const Platform = struct {
 
 /// The platform every mode uses; tests replace fields of it.
 pub var plat: Platform = .{};
+
+/// `Platform.exited_now` where C's exit cannot be read without reaping it (macOS: `exited` reaps with waitpid and never asks).
+fn exitedNowhere(pid: sys.pid_t) ?u8 {
+    _ = pid;
+    return null;
+}
 
 pub fn realExec(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8) noreturn {
     const err = posix.execveZ(path, argv, envp);
@@ -67,7 +76,7 @@ pub const Limit = union(enum) {
     /// every process below it; where /proc cannot be read, or when C is
     /// still alive 10 s later, its whole group.
     deadline_ms: u64,
-    /// A coverage run's: SIGKILL to the whole group, then the survivor scan.
+    /// A coverage run's, and a welded test's hang limit: SIGKILL to the whole group, then the survivor scan.
     group_ms: u64,
     /// A mutation step's: SIGTERM to the group, 2 s, SIGKILL to the group.
     term_kill_ms: u64,
@@ -126,7 +135,7 @@ fn installSignals() !void {
         // macOS: C's exit wakes the loop through SIGCHLD (byte 0 is not a
         // signal the loop acts on; it only checks for an exit).
         const chld = posix.Sigaction{ .handler = .{ .handler = onChild }, .mask = posix.sigemptyset(), .flags = posix.SA.NOCLDSTOP };
-        try posix.sigaction(posix.SIG.CHLD, &chld, null);
+        posix.sigaction(posix.SIG.CHLD, &chld, null);
     }
 }
 
@@ -286,6 +295,15 @@ fn finish(ch: *Child) void {
     _ = sys.waitpid(ch.q, false);
     if (ch.reaped == null) ch.reaped = sys.waitpid(ch.c, false);
     if (ch.pidfd) |fd| posix.close(fd);
+}
+
+/// The exit status of a test stopped by its hang limit (the one `timeout` uses).
+pub const hang_status: u8 = 125;
+
+/// The one line that says a test was stopped by its hang limit, newline included, the same wherever the limit is applied (`gate mojo`, `check marker`).
+/// `test_label` is the test's label. It does not say the test was slow: a test never waits on time, so a test that did not finish hung.
+pub fn hangLine(alloc: std.mem.Allocator, test_label: []const u8, limit_s: u64) std.mem.Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(alloc, "hang limit: {s} did not finish within {d} s and was stopped; a test never waits on time, so this means it hung (an event that never came)\n", .{ test_label, limit_s });
 }
 
 /// The time to wait for a killed group to be gone from /proc.

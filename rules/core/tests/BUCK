@@ -2,6 +2,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # The refusals of the rules every family shares (rules/core), as analysis tests (rules/rust/refusal.bzl): a download that is not pinned, a rerun request, a
 # download mirror, a test's data and environment. Each is green only if the rule refused, with the message that says what to write instead; the accepted form of
 # each is beside it, so a check that refuses everything is red too.
+load("//rules/core:hang_limit.bzl", "HANG_LIMIT_S", "check_hang_limit", "check_hang_limits", "hang_limit_args", "hang_limit_flags", "hang_limit_of")
 load("//rules/core:pinned_file.bzl", "check_pinned")
 load("//rules/core:rerun.bzl", "parse_rerun")
 load("//rules/core:test_runtime.bzl", "check_data_destinations", "env_args", "macos_library_dirs")
@@ -108,6 +109,42 @@ _ALL.append(refuses("env_name_starting_with_a_digit_is_refused", env_args, ["//t
 _ALL += [
     refuses("env_name_{}_is_refused".format(n.lower()), env_args, ["//t:t", {n: "x"}], ["env sets " + n + ", which the test runner sets itself"])
     for n in ["PATH", "LD_PRELOAD", "TMPDIR", "HOME"]
+]
+
+# ---- the hang limit of a welded test (rules/core/hang_limit.bzl, docs/contract.md section 12.8) ------------------------------------------------------------
+
+_ALL.append(accepts("hang_limit_of_a_whole_number_of_seconds_is_accepted", check_hang_limit, ["//t:t", 3600]))
+
+_ALL += [
+    refuses("hang_limit_{}_is_refused".format(name), check_hang_limit, ["//t:t", value], ["test_hang_limit_s {} is not a positive whole number of seconds".format(shown), "never lower it to make a test pass"])
+    for name, value, shown in [("zero", 0, "0"), ("negative", -5, "-5"), ("text", "300", "\"300\""), ("true", True, "True")]
+]
+
+_TESTS = ["tests/test_a.mojo", "tests/test_b.mojo"]
+
+_ALL.append(accepts("hang_limits_of_the_star_and_of_a_test_are_accepted", check_hang_limits, ["//t:t", {"*": 3000, "tests/test_b.mojo": 7200}, _TESTS]))
+
+_ALL.append(accepts("no_hang_limits_are_accepted", check_hang_limits, ["//t:t", {}, _TESTS]))
+
+_ALL.append(refuses("hang_limit_of_an_unknown_test_is_refused", check_hang_limits, ["//t:t", {"tests/test_c.mojo": 60}, _TESTS], ["test_hang_limit_s names \"tests/test_c.mojo\", which is `*` or a test of the package"]))
+
+_ALL.append(refuses("hang_limit_of_a_test_with_a_bad_value_is_refused", check_hang_limits, ["//t:t", {"tests/test_a.mojo": 0}, _TESTS], ["test_hang_limit_s[\"tests/test_a.mojo\"]", "is not a positive whole number of seconds"]))
+
+_ALL.append(refuses("hang_limits_that_are_not_a_dict_are_refused", check_hang_limits, ["//t:t", 60, _TESTS], ["test_hang_limit_s must be a dict"]))
+
+# The default is half an hour, a test's own entry wins over `*`, and `*` over the default; the options are the ones `check marker` and `gate mojo` read.
+[
+    fail("{} is {}, not {}".format(what, repr(got), repr(want)))
+    for what, got, want in [
+        ("HANG_LIMIT_S", HANG_LIMIT_S, 1800),
+        ("hang_limit_of with no entry", hang_limit_of({}, "tests/test_a.mojo"), 1800),
+        ("hang_limit_of with the star", hang_limit_of({"*": 3000}, "tests/test_a.mojo"), 3000),
+        ("hang_limit_of with the test's own entry", hang_limit_of({"*": 3000, "tests/test_a.mojo": 7200}, "tests/test_a.mojo"), 7200),
+        ("hang_limit_of with the entry of another test", hang_limit_of({"tests/test_b.mojo": 7200}, "tests/test_a.mojo"), 1800),
+        ("hang_limit_args", hang_limit_args("//t:t", 90), ["--hang-limit-s", "90", "--hang-label", "//t:t"]),
+        ("hang_limit_flags", hang_limit_flags(90), ["--hang-limit-s", "90"]),
+    ]
+    if got != want
 ]
 
 # ---- the process tests of the refusals of the tools (rules/*/tests/*_refuse_test.zig) ----------------------------------------------------------------

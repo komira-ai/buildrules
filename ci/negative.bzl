@@ -74,7 +74,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the known defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it carries (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + test_defines_problems(ctx)
+    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + test_defines_problems(ctx) + hang_limit_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
@@ -252,6 +252,54 @@ def test_defines_problems(ctx):
             problems.append("{}: build_args is {}: a define reached a build that is not a test of a package that gives some".format(label, got))
     return problems
 
+# The hang limit of a welded test run (rules/core/hang_limit.bzl, docs/contract.md section 12.8): every `mojo_test_run_rule` of the example packages carries
+# `--hang-limit-s 1800` and `--hang-label <its own label>` on the action that writes its marker, and a package that says another limit
+# (`test_hang_limit_s = {...}` of examples/mojo/test_defines) has that one on its test and the default on nothing it did not name. The fixture of ci/faulty has its own
+# (1 s). A test run without the options would run unbounded; one with another number would hide a test that is meant to be long or a limit that was lowered.
+HANG_LIMIT_DEFAULT = "1800"
+HANG_LIMIT_OVERRIDES = {
+    "//examples/mojo/test_defines:test_defines_on": "2400",
+}
+HANG_LIMIT_FIXTURES = {
+    "//ci/faulty:mojo_test_that_hangs": "1",
+}
+
+def _cmd_tokens(action):
+    """The words of an action's command, quotes taken off: `[a, "b", c]` is `["a", "b", "c"]`. An action that runs no command has none."""
+    if not hasattr(action.attrs, "cmd"):
+        return []
+    return [w.strip("\"") for w in str(action.attrs.cmd).lstrip("[").rstrip("]").split(", ")]
+
+def _marker_commands(ctx, label):
+    """The commands of the `check marker` actions of the target `label` on GATE_PLATFORM, each as its words."""
+    node = ctx.configured_targets(label, target_platform = GATE_PLATFORM)
+    return [t for t in [_cmd_tokens(a) for a in ctx.aquery().all_actions(node)] if "marker" in t]
+
+def hang_limit_problems(ctx):
+    """Every way a welded Mojo test run does not carry its hang limit on the action that writes its marker: a list of strings, empty when every one does."""
+    problems = []
+    q = ctx.uquery()
+    runs = {}
+    for package in GATE_PACKAGES + ["//examples/mojo/test_defines"]:
+        for t in q.eval("kind('mojo_test_run_rule', {}:)".format(package)):
+            runs[str(t.label)] = True
+    if len(runs) < 10:
+        problems.append("only {} welded Mojo test runs were found in the example packages, which a hang limit check cannot be held to".format(len(runs)))
+    for label in sorted(runs.keys()) + sorted(HANG_LIMIT_FIXTURES.keys()):
+        short = label.removeprefix("buildrules")
+        want = HANG_LIMIT_FIXTURES.get(short, HANG_LIMIT_OVERRIDES.get(short, HANG_LIMIT_DEFAULT))
+        commands = _marker_commands(ctx, label)
+        if len(commands) != 1:
+            problems.append("{}: {} actions write its marker (`check marker`), not 1".format(label, len(commands)))
+            continue
+        cmd = commands[0]
+        flags = {cmd[i]: cmd[i + 1] for i in range(len(cmd) - 1) if cmd[i] in ["--hang-limit-s", "--hang-label"]}
+        if flags.get("--hang-limit-s") != want:
+            problems.append("{}: the action that writes its marker has --hang-limit-s {}, it must carry {}".format(label, flags.get("--hang-limit-s"), want))
+        if not flags.get("--hang-label", "").endswith(label[1:]):
+            problems.append("{}: the action that writes its marker has --hang-label {}, the verdict must name the test's own label".format(label, flags.get("--hang-label")))
+    return problems
+
 def _built_with_why(ctx, label):
     """(artifacts built, the failures of building `label` on GATE_PLATFORM as one string, empty when none)."""
     built = 0
@@ -362,6 +410,9 @@ FAULTY = [
     ("//ci/faulty:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
     ("//ci/faulty:lib_behind_a_failing_test", "//examples/hello:hello_lib", "this test fails by design"),
     ("//ci/faulty:mojo_test_that_fails", None, "check marker: TEST FAILED: "),
+    # A test that blocks forever (ci/faulty/hang.zig) under a hang limit of one second (`test_hang_limit_s = 1`): red, with the hang-limit verdict (docs/contract.md, section 12.8)
+    # and the label of the test, and not a pass or a wait for the executor's own timeout. Only the verdict is held here, never how long the run took.
+    ("//ci/faulty:mojo_test_that_hangs", None, "hang limit: buildrules//ci/faulty:mojo_test_that_hangs did not finish within 1 s and was stopped; a test never waits on time, so this means it hung (an event that never came)"),
     ("//ci/faulty:native_with_an_undefined_symbol", "//ci/faulty:native_good", "undefined symbol: faulty_missing_helper"),
     ("//ci/faulty:native_newer_than_the_floor", "//ci/faulty:native_good", "undefined symbol: arc4random"),
     ("//ci/faulty:native_with_debug_info", "//ci/faulty:native_good", "member debug_info.c.pic.o has 1 debug section(s), first .debug_faulty"),

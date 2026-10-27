@@ -278,6 +278,9 @@ the execution platform runs nothing locally unless `-c buildrules_re.mode=local`
 Exit codes of every command **[chosen]**: `0` ok; `1` failed, stale or refused (every problem is printed,
 with the fix); `2` usage error.
 
+The runners that run a welded test in a build action (`check marker`, `gate mojo`) end with the test's own status, and add one: `125`, a test stopped by its hang
+limit (section 12.8). It is not `124`, which is a killed compiler deadlock that is retried once (the compile watchdog), so a hang is never retried; no test of these rules exits with `125` by itself.
+
 | command | does | runs |
 |---|---|---|
 | `init [DIR] (--path P \| --git O --commit S) [--cell N] [--rust-version V]` | section 3 rows marked `init`; idempotent | nothing |
@@ -707,6 +710,31 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 ### 12.8 The gate
 
 A library that is not tested is not a library: `:lib` is the `.mojoc` behind the run of every test of its package (`mojo_gated_lib_rule`, rules/mojo/unit.bzl). `:lib_ungated` is the compile (`mopm unit build`), the package's own tests import it (they cannot import `:lib`, which waits for them), and `:lib` is a copy of its bytes made by the `mojo_gate` action, whose inputs are the compiled file and the marker each test run writes after the test exited 0. A failing test leaves no marker, so the action never runs; everything that reads `:lib` (a member's unit through `--deps`, a binary, `:build`, `:ci`, `mopm pack`) is red with it. The bytes are the compiled ones, so a dependent's key moves only when the library does and not when only a test changes. A package with no test has nothing to wait for; `:coverage` is what refuses it. The proof is a pair of fixtures that need no compiler (`ci/mojo_gate`): a library behind a failing test makes its consumer red, the same behind a passing one is green, and `ci/negative.bzl` requires both outcomes, plus the wiring: the real packages' `:lib` has every test run among its dependencies.
+
+**The hang limit.** Every welded Mojo test action is held to a hang limit, so a test that never finishes ends the build red and says why, instead of holding a worker
+until the executor's own timeout. It is infrastructure and not a timing assertion: a test never waits for a time to pass, so a test that has not finished by the limit
+did not finish at all, and the limit is never evidence that a test is slow. The same contract holds in these rules and in a consumer's own Mojo rules (`gate_mojo` of
+`rules/core/test_runtime.bzl`):
+
+- **Default and override.** 1800 seconds per action. `test_hang_limit_s` is the attribute of a test run (`mojo_test_run_rule`), a positive whole number of seconds, and
+  `mojo_package(test_hang_limit_s = {"<test source or *>": seconds})` sets it per test (`*` is every test, a test's own entry wins; a name that is no test of the package, or a
+  value that is not a positive whole number, is refused when the package loads). Raise it for a test that is genuinely long; never lower it to make a test pass.
+- **Which actions.** The ones whose marker welds `:lib`: the test run (`check marker`, `--hang-limit-s N --hang-label LABEL`) and, in a consumer's rules, the gated run
+  (`gate mojo --hang-limit-s N`). The command of `buck2 test` is not welded and has the test runner's own timeout; the coverage runs (the kcov run and the branch run, which
+  run the same test again) are not welded either and are not held to it by this limit. The compile of the test has its own watchdog.
+- **On expiry** the whole process group of the test is killed (`SIGKILL`; a child or a grandchild the test left is in it), the status is `125`, and stderr gets exactly one line
+  that starts `hang limit:`: `hang limit: <test> did not finish within <N> s and was stopped; a test never waits on time, so this means it hung (an event that never came)`. `<test>` is the label of the test
+  run, as the rule prints it (`buildrules//examples/mojo/x:test_x`). The action stays red like any failing test: no marker, no `PASS` line, and the library stays unbuildable;
+  a failure is never a cache hit, so the next build runs the test again. Processes of the group that survive the kill (the supervisor looks, as for a coverage run) are named on
+  a line of their own that does not start with `hang limit:`.
+- **With the time limit.** `gate mojo` already has a test time limit, `--deadline-s L --runner-timeout-s T` (D1-D6), which a rule puts on the command a test runner runs so the
+  test is stopped before the runner's timeout is, with a `TEST TIME LIMIT` line and status 137. It stays as it is. The two are limits of different commands (a welded action has the
+  hang limit; a test runner's command has the time limit), and when one `gate mojo` is given both the shorter one runs (the longer cannot fire first) and a tie is the time limit's,
+  whose line also names the runner's timeout. The hang limit is not expressed through the time limit because it must not need a runner timeout, and its verdict must not say the test was
+  slow. The coverage limit (`--limit-s`) is another kind of run and is refused beside it.
+- **Proof.** `rules/gate` (the supervisor and `gate mojo`) and `rules/check` (`check marker`) test the verdict (status, the one line, no marker, the group and a grandchild killed) with the
+  supervisor's clock replaced, never by waiting; `//rules/core/tests` holds the attribute's checks; `//ci:negative.bxl:check` holds that every real test run carries `--hang-limit-s 1800` (and the
+  override of `examples/mojo/test_defines`) on the action that writes its marker, and that `//ci/faulty:mojo_test_that_hangs`, a test that blocks forever under a limit of one second, is red with the hang-limit line.
 
 ### 12.9 Test data and variables
 

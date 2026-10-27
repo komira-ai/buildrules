@@ -26,7 +26,9 @@ pub fn run(_: Alloc, io: Io, args: []const []const u8) Oom!u8 {
 /// `check marker --out FILE [--capture] [--stamp TEXT | --stamp-log] [OPTIONS] -- PROGRAM [ARG]...`: runs a test, and writes FILE only when it
 /// passed (exit status 0): `passed` and a newline, or TEXT, or with --stamp-log what the test wrote. With --capture the test's stdout and
 /// stderr are held back and, when it failed, written to stdout (stdout then stderr); without it they pass through. A test that failed is
-/// `TEST FAILED: PROGRAM` on stderr and the test's own status.
+/// `TEST FAILED: PROGRAM` on stderr and the test's own status. With `--hang-limit-s N --hang-label L` the test runs under the supervisor of `gate mojo`
+/// and a test that has not finished within N seconds is stopped, with its whole process group: no file, the status 125, `TEST FAILED: PROGRAM`, and then the
+/// one line `hang limit: L did not finish within N s and was stopped; a test never waits on time, so this means it hung (an event that never came)` (runspec.zig).
 pub fn marker(_: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     const spec = (try rs.parse(io, "marker", .marker, args)) orelse return 2;
     const out = spec.out orelse {
@@ -42,10 +44,14 @@ pub fn marker(_: Alloc, io: Io, args: []const []const u8) Oom!u8 {
         .fail => |code| return code,
     };
     defer rs.cleanup(io, prepared);
-    const outcome = rs.start(io, "marker", prepared, if (spec.capture) .capture else .inherit);
+    const outcome = if (spec.hang_limit_s) |limit|
+        try rs.startLimited(io, "marker", prepared, limit, spec.hang_label.?)
+    else
+        rs.start(io, "marker", prepared, if (spec.capture) .capture else .inherit);
     if (outcome.code != 0) {
         io.out.writeAll(try common.concat(io.a, &.{ outcome.stdout, outcome.stderr })) catch {};
         io.say("marker", &.{ "TEST FAILED: ", prepared.argv[0] });
+        io.err.writeAll(outcome.verdict) catch {};
         return outcome.code;
     }
     const stamp = if (spec.stamp_log) try common.concat(io.a, &.{ outcome.stdout, outcome.stderr }) else spec.stamp orelse "passed\n";

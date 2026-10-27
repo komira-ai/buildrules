@@ -43,6 +43,11 @@ Test data and variables. A test that reads files (goldens, fixtures, a pinned th
 its run and in its coverage run and is named by `BUILDRULES_TEST_DATA`; the files and the variables are inputs of both actions, so a change to
 either runs the test again.
 
+Hang limit. Every test run is stopped as hung when it has not finished within 1800 seconds (`test_hang_limit_s`, rules/core/hang_limit.bzl; docs/contract.md section 12.8):
+the whole process group is killed, the status is 125, one line says `hang limit: <test> did not finish within <N> s and was stopped; a test never waits on time, so
+this means it hung (an event that never came)`, and the run is red (no marker, so `:lib` is unbuildable). `test_hang_limit_s = {"<test source or *>": seconds}` raises it for the tests it names: raise
+it for a test that is genuinely long; never lower it to make a test pass.
+
 Test defines. A test whose behaviour is chosen at compile time (a build flag read by `is_defined` or `get_defined_int` in the code under test) names the
 defines in `test_defines = {"NAME": value}` (a string, a bool or an int; rules/mojo/test_data.bzl, docs/contract.md section 12.9): each becomes `-D NAME=value` on the
 build of every test of the package, in its run, its coverage run and the bitcode of its branch run, so all of them measure the program that passed. They are not
@@ -74,6 +79,7 @@ load(":subdirs.bzl", "BASE_SUBDIR", "by_subdir", "check_same_units", "subdir_suf
 load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
 load(":check.bzl", _check = "mojo_check_rule", _table = "mojo_table_rule", _workspace = "mojo_workspace_rule")
+load("//rules/core:hang_limit.bzl", "check_hang_limits", "hang_limit_of")
 load(":test_data.bzl", "LAYOUT_INSTALLED", "check_installed_tree", "check_test_defines", "check_test_env", "check_test_layout", "stage_test_data")
 load(
     ":unit.bzl",
@@ -325,7 +331,7 @@ def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
         visibility = visibility,
     )
 
-def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, test_defines = {}, test_layout = "default", conda = False, visibility = ["PUBLIC"]):
+def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, test_defines = {}, test_layout = "default", test_hang_limit_s = {}, conda = False, visibility = ["PUBLIC"]):
     if table == None:
         fail("mojo_package needs its table: load mojo_package from the buildrules.mojo.bzl next to mopm.toml (`buildrules mojo sync` writes it)")
     _check_table(table)
@@ -610,6 +616,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     test_sources = sorted(test_graph_of.keys())
     check_test_env(here, test_env)
     check_test_layout(here, test_layout)
+    check_hang_limits(here, test_hang_limit_s, test_sources)
 
     # The compile-time defines of the tests (`-D NAME=value`), given to the three builds of each test (the run, the kcov run and the bitcode of the branch run) so
     # that all of them are the program the run is, and to nothing else: the library, a binary and a dependent member are built without them (a library's
@@ -670,6 +677,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                 data = staged[units[uid]["srcs"][0]["path"]],
                 test_env = test_env,
                 test_layout = test_layout,
+                test_hang_limit_s = hang_limit_of(test_hang_limit_s, in_package(units[uid]["srcs"][0]["path"])),
                 required_isa = required_isa(),
                 toolchain = toolchain,
                 exec_compatible_with = test_exec(),

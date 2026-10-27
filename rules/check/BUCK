@@ -32,14 +32,18 @@ zig_module(
     visibility = ["PUBLIC"],
 )
 
-_TESTS = ["check","cmds", "files", "install_root", "isa", "oom", "runspec"]
+# The modules the sources import: the private scratch directory, and the supervisor of the gate runner (rules/gate/supervise.zig) that `marker` runs a test under
+# when it is given a hang limit (`--hang-limit-s`): one supervisor for the gate and for this, and no second one.
+_MODULES = [":install_root", "//rules/gate:supervise"]
+
+_TESTS = ["check", "cmds", "files", "hang", "install_root", "isa", "oom", "runspec"]
 
 [
     zig_test(
         name = name + "_unit",
         src = name + "_test.zig",
         imports = _SRCS + _SUPPORT,
-        deps = [":install_root"],
+        deps = _MODULES,
         env_tools = {"TOOLBOX": _TOOLBOX},
         zig = _ZIG,
     )
@@ -52,7 +56,7 @@ zig_test(
     name = "all_unit",
     src = "all_test.zig",
     imports = _SRCS + _SUPPORT + [name + "_test.zig" for name in _TESTS if name != "install_root"],
-    deps = [":install_root"],
+    deps = _MODULES,
     env_tools = {"TOOLBOX": _TOOLBOX},
     zig = _ZIG,
 )
@@ -62,7 +66,7 @@ zig_exe(
     name = "check",
     src = "check.zig",
     imports = _SRCS,
-    deps = [":install_root"],
+    deps = _MODULES,
     unit_tests = [":" + name + "_unit" for name in _TESTS] + [_ZIG_VERSION],
     zig = _ZIG,
     visibility = ["PUBLIC"],
@@ -79,7 +83,7 @@ _NATIVE = {
         name = "check_" + name,
         src = "check.zig",
         imports = _SRCS,
-        deps = [":install_root"],
+        deps = _MODULES,
         target = triple,
         unit_tests = [":" + t + "_unit" for t in _TESTS] + [_ZIG_VERSION],
         zig = _ZIG,
@@ -110,7 +114,7 @@ zig_test(
     name = "check_exe_test",
     src = "check_exe_test.zig",
     imports = _SRCS + _SUPPORT,
-    deps = [":install_root"],
+    deps = _MODULES,
     env_tools = {"CHECK": ":check", "TOOLBOX": _TOOLBOX},
     visibility = ["PUBLIC"],
     zig = _ZIG,
