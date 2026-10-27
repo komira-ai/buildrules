@@ -248,6 +248,131 @@ test "hasNoStatements: a re-export file has none, any other statement is one" {
     };
 }
 
+test "hasNoStatements: a trait that only declares has none; a default body that does anything is code" {
+    // declarations: signatures with a body of pass, `...`, a docstring, or a docstring then pass
+    for ([_][]const u8{
+        "trait ScaleSignal:\n    fn scale(self) -> Int: ...\n",
+        "trait T:\n    fn f(self):\n        pass\n",
+        "trait T:\n    fn f(self): pass\n    fn g(self) -> Int: ...\n",
+        "trait T:\n    fn f(self):\n        \"\"\"Docs.\"\"\"\n",
+        "trait T:\n    fn f(self):\n        \"\"\"Docs.\"\"\"\n        pass\n",
+        "trait T:\n    fn f(self):\n        \"\"\"Docs\n        over lines: return 1\n        \"\"\"\n        ...\n",
+        "trait T:\n    fn f(self): \"\"\"Docs.\"\"\"\n",
+        "trait T:\n    fn f(self):  # why\n        ...  # nothing\n",
+        "trait T:\n    def f(self) raises -> Int:\n        pass\n",
+        "trait T:\n    fn f(self): pass  # note\n",
+        // a docstring of the trait, comments between members, blank lines
+        "trait T:\n    \"\"\"The trait.\"\"\"\n\n    # a note\n    fn f(self): ...\n\n    fn g(self): ...\n",
+        // decorators
+        "trait T:\n    @staticmethod\n    fn make() -> Int: ...\n",
+        "trait T:\n    @always_inline  # hot\n    @staticmethod\n    fn make() -> Int:\n        pass\n",
+        "trait T:\n    @deprecated(\"use g\")\n    fn f(self): ...\n",
+        // multi-line signatures, with defaults, annotations and strings holding a colon
+        "trait T:\n    fn f(\n        self,\n        a: Int = 1,\n        b: String = \"x:y\",\n    ) -> Int: ...\n",
+        "trait T:\n    fn f(self,\n        a: Dict[String, Int]\n    ) -> Int:\n        pass\n",
+        "trait T:\n    fn f(self, a: String = \"q\\\"b:c\") -> Int: ...\n", // an escaped quote inside a default value
+        "trait T:\n    fn f[n: Int](self, x: SIMD[DType.uint8, n]) -> Bool: ...\n",
+        // parametric and inheriting traits, over several lines too
+        "trait T[V: Copyable]:\n    fn f(self) -> V: ...\n",
+        "trait A(B, C):\n    fn f(self): ...\n",
+        "trait A[V: Copyable](B, C[V]):\n    fn f(self): ...\n",
+        "trait A(\n    B,\n    C,\n):\n    fn f(self): ...\n",
+        // aliases inside a trait, with and without a value
+        "trait T:\n    comptime Item: Copyable\n    alias N: Int\n    comptime Z = 0\n    fn f(self) -> Self.Item: ...\n",
+        "trait T:\n    comptime Items = List[\n        Int,\n    ]\n    fn f(self): ...\n",
+        // around other declarations
+        "\"\"\"doc\"\"\"\nfrom .a import B\ncomptime N = 1\n\ntrait T(B):\n    fn f(self): ...\n\n# end\ntrait U:\n    fn g(self): ...\n",
+        "trait A:\n    fn f(self): ...\ntrait B:\n    fn g(self): pass\n",
+    }) |case| t.expect(S.hasNoStatements(case)) catch |e| {
+        std.debug.print("refused, should be accepted: {s}\n", .{case});
+        return e;
+    };
+    // code: a default body with a statement, a function or a struct beside the trait, and malformed traits
+    for ([_][]const u8{
+        "trait T:\n    fn f(self) -> Int:\n        return 1\n",
+        "trait T:\n    fn f(self):\n        x = 1\n",
+        "trait T:\n    fn f(self):\n        print(1)\n",
+        "trait T:\n    fn f(self):\n        if True:\n            pass\n",
+        "trait T:\n    fn f(self):\n        pass\n        return\n",
+        "trait T:\n    fn f(self):\n        \"\"\"Docs.\"\"\"\n        x = 1\n",
+        "trait T:\n    fn f(self): return 1\n",
+        "trait T:\n    fn f(self) -> Int: 1\n",
+        "trait T:\n    fn f(self):\n        pass; x = 1\n",
+        "trait T:\n    fn f(self): ...\n    fn g(self) -> Int:\n        return 2\n",
+        "trait T:\n    @staticmethod\n    fn make() -> Int:\n        return 1\n",
+        "trait T:\n    fn f(\n        self,\n    ) -> Int:\n        return 1\n",
+        "trait T:\n    fn f(self): ...\n\nfn g():\n    pass\n", // a function after the trait
+        "fn g():\n    pass\n\ntrait T:\n    fn f(self): ...\n",
+        "trait T:\n    fn f(self): ...\n\nstruct S:\n    pass\n",
+        "trait T:\n    fn f(self): ...\n\nvar x = 1\n",
+        "trait T:\n    fn f(self): ...\n\ncomptime if True:\n    pass\n",
+        "trait T:\n    comptime if True:\n        fn f(self): ...\n",
+        "trait T:\n    var x: Int\n",
+        "trait T:\n    x = 1\n",
+        "trait T:\n    pass\n", // not a signature
+        "trait T:\n    fn f(self): ...\n    x = 1\n",
+        "trait T:\n    fn f(self): ...\n      fn g(self): ...\n", // a member that is neither at the members' indent nor a block
+        "trait T:\n    fn f(self): ...\n  fn g(self): ...\n",
+        "trait T:\n    fn f(self):\n    fn g(self): ...\n", // a method without a block
+        "trait T:\n    fn f(self):\n",
+        "trait T:\n    fn f(self)\n",
+        "trait T:\n    fn f(self: ...\n",
+        "trait T:\n    fn f(self; x): ...\n", // a `;` in a signature
+        "trait T:\n    fn f(self) \\\n        -> Int: ...\n", // a backslash joining signature lines is not read
+        "trait T:\n    fn f(self, a: String = \"x\\\n",
+
+        "trait T:\n    fn f(self)) -> Int: ...\n",
+        "trait T:\n    fn f(self): ...; g()\n",
+        "trait T:\n    fn f(self): \"\"\"never closed\n",
+        "trait T:\n    \"\"\"never closed\n",
+        "trait T:\n    @staticmethod\n",
+        "trait T:\n    @staticmethod\n    comptime N = 1\n",
+        "trait T:\n    comptime N = (1,\n",
+        "trait T:\n    comptime if N:\n        pass\n",
+        "trait T:\n    comptime N = 1; pass\n",
+        "trait T:\n    comptime N = 1 \\\n\n",
+        "trait T:\n    fn f(self): ...\n\x0b",
+        "trait T:\n", // no member
+        "trait T:",
+        "trait T\n    fn f(self): ...\n", // no colon
+        "trait T x:\n    fn f(self): ...\n",
+        "trait :\n    fn f(self): ...\n",
+        "trait 1T:\n    fn f(self): ...\n",
+        "trait T[:\n    fn f(self): ...\n",
+        "trait T: fn f(self): ...\n",
+        "traits = 1\n",
+        "trait T:\n    fn f(self): ...\ntrait\n",
+    }) |case| t.expect(!S.hasNoStatements(case)) catch |e| {
+        std.debug.print("accepted, should be refused: {s}\n", .{case});
+        return e;
+    };
+}
+
+fn readTraits(_: std.mem.Allocator, p: []const u8) []const u8 {
+    if (std.mem.eql(u8, p, "trait_only")) return "trait ScaleSignal:\n    fn scale(self) -> Int: ...\n";
+    if (std.mem.eql(u8, p, "trait_default")) return "trait Scaled:\n    fn scale(self) -> Int:\n        return 1\n";
+    return "trait ScaleSignal:\n    fn scale(self) -> Int: ...\n\nfn run() -> Int:\n    return 1\n";
+}
+
+test "withEmptySources: a file of trait declarations is listed 0/0; a trait with a working default body, or a function beside it, stays missing" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var files: std.StringArrayHashMapUnmanaged(std.AutoArrayHashMapUnmanaged(usize, bool)) = .empty;
+    const rows = try S.summarize(a, &files);
+    const decl = [_][]const u8{"p/src/traits.mojo"};
+    const dsrcs = [_][2][]const u8{.{ "p/src/traits.mojo", "trait_only" }};
+    const out = try S.withEmptySources(a, rows, &decl, &dsrcs, readTraits);
+    try t.expect(S.missing(out, &decl) == null);
+    try t.expectEqualStrings("p/src/traits.mojo 0/0 0%\ntotal 0/0 0%\n", try S.render(a, out, &decl));
+    for ([_][]const u8{ "trait_default", "mixed" }) |name| {
+        const one = [_][]const u8{"p/src/code.mojo"};
+        const srcs = [_][2][]const u8{.{ "p/src/code.mojo", name }};
+        const o = try S.withEmptySources(a, rows, &one, &srcs, readTraits);
+        try t.expectEqualStrings("p/src/code.mojo", S.missing(o, &one).?);
+    }
+}
+
 test "withEmptySources: only a source with no statement is listed 0/0; the rest stays missing" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();

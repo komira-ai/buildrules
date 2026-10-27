@@ -5,7 +5,8 @@
 //!
 //! `--src` gives the file behind an `--expect` path (Mojo only); a `--src` path that is no `--expect` path is another source of the package (a
 //! test), read for the calls that reach the code no test compiled and never counted. The Mojo report omits a source with no executable line, so an expected source that
-//! no report names but whose text has no statement beyond comments, docstrings and `import` lines (a re-export `__init__.mojo`) is listed as 0/0
+//! no report names but whose text has no statement beyond comments, docstrings, `import` lines, alias declarations and traits that only declare (methods
+//! with a body of `pass`, `...` or a docstring) is listed as 0/0
 //! instead of refused; one with any other statement stays refused (`hasNoStatements`).
 //!
 //! `--blocks` is a zig_cover.zig block report (Zig's branch figure: the compiler's basic blocks, `<file> TAB <line> TAB <column> TAB <hit> TAB <total>`).
@@ -44,6 +45,7 @@ const branch_lcov = @import("branch_lcov.zig");
 const mojo_src = @import("mojo_src.zig");
 const mojo_calls = @import("mojo_calls.zig");
 const mojo_gate = @import("mojo_gate.zig");
+const mojo_decl = @import("mojo_decl.zig");
 
 pub const FileCov = struct { path: []const u8, hit: usize, total: usize };
 
@@ -249,175 +251,7 @@ pub fn missing(rows: []const FileCov, expect: []const []const u8) ?[]const u8 {
     return null;
 }
 
-/// Whether a continuation line of a parenthesised import holds only what one may hold: names, dots, commas, `as`, parentheses, and a comment.
-fn importContinuation(line: []const u8) bool {
-    for (line) |c| {
-        if (c == '#') return true;
-        const ok = std.ascii.isAlphanumeric(c) or c == '_' or c == ' ' or c == '\t' or c == ',' or c == '.' or c == '(' or c == ')' or c == '\\';
-        if (!ok) return false;
-    }
-    return true;
-}
-
-/// Folds the parentheses of one import line into `depth`. The only `(` an import has opens its name list, right after `import` and not inside
-/// another (`from a import f()` and `from a import (f(), g)` are calls); a `)` with nothing open is refused.
-fn parens(code: []const u8, depth: *i32) bool {
-    for (code, 0..) |c, i| {
-        if (c == '(') {
-            if (depth.* != 0 or !std.mem.endsWith(u8, std.mem.trimRight(u8, code[0..i], " \t"), "import")) return false;
-            depth.* += 1;
-        } else if (c == ')') {
-            depth.* -= 1;
-            if (depth.* < 0) return false;
-        }
-    }
-    return true;
-}
-
-fn hasLineBreakChar(s: []const u8) bool {
-    return std.mem.indexOfAny(u8, s, "\x0b\x0c") != null;
-}
-
-/// The text of a top-level alias declaration after its name, when `line` is one: `alias NAME ...` or `comptime NAME ...` where NAME is followed by a
-/// parameter list (`[`), an annotation (`:`) or the `=` itself. `comptime if`, `comptime for`, `comptime assert` and every other `comptime` that does
-/// not declare a name are statements of the compile-time evaluator, not declarations, and give null.
-fn aliasTail(line: []const u8) ?[]const u8 {
-    const kw: usize = if (std.mem.startsWith(u8, line, "alias ")) 6 else if (std.mem.startsWith(u8, line, "comptime ")) 9 else return null;
-    var i = kw;
-    while (i < line.len and line[i] == ' ') i += 1;
-    const start = i;
-    while (i < line.len and (std.ascii.isAlphanumeric(line[i]) or line[i] == '_')) i += 1;
-    const name = line[start..i];
-    if (name.len == 0 or std.ascii.isDigit(name[0])) return null;
-    for ([_][]const u8{ "if", "for", "while", "assert", "else", "elif", "with", "try", "except", "raise", "return" }) |k| {
-        if (std.mem.eql(u8, name, k)) return null;
-    }
-    while (i < line.len and line[i] == ' ') i += 1;
-    if (i >= line.len) return null;
-    if (line[i] == '=' and i + 1 < line.len and line[i + 1] == '=') return null;
-    if (line[i] != '[' and line[i] != ':' and line[i] != '=') return null;
-    return line[i..];
-}
-
-/// Folds one line of an alias declaration into the state of its statement: `depth` (open brackets), `saw_eq` (the `=` of the declaration, outside every
-/// bracket) and `cont` (the line ends with a backslash). False for what a declaration does not hold: a `;`, a triple-quoted string, a string that does not
-/// end on its line, a backslash that is not the last character, a bracket closed before it was opened.
-fn scanExpr(line: []const u8, depth: *i32, saw_eq: *bool, cont: *bool) bool {
-    cont.* = false;
-    var quote: u8 = 0;
-    var i: usize = 0;
-    while (i < line.len) : (i += 1) {
-        const c = line[i];
-        if (quote != 0) {
-            if (c == '\\') {
-                i += 1;
-                if (i >= line.len) return false;
-            } else if (c == quote) quote = 0;
-            continue;
-        }
-        switch (c) {
-            '"', '\'' => {
-                if (std.mem.startsWith(u8, line[i..], "\"\"\"") or std.mem.startsWith(u8, line[i..], "'''")) return false;
-                quote = c;
-            },
-            '#' => return true,
-            ';' => return false,
-            '(', '[', '{' => depth.* += 1,
-            ')', ']', '}' => {
-                depth.* -= 1;
-                if (depth.* < 0) return false;
-            },
-            '=' => {
-                if (i + 1 < line.len and line[i + 1] == '=') {
-                    i += 1;
-                } else if (depth.* == 0 and (i == 0 or std.mem.indexOfScalar(u8, "!<>=:", line[i - 1]) == null)) saw_eq.* = true;
-            },
-            '\\' => {
-                if (std.mem.trim(u8, line[i + 1 ..], " \t").len != 0) return false;
-                cont.* = true;
-            },
-            else => {},
-        }
-    }
-    return quote == 0;
-}
-
-/// Whether a Mojo source has no executable line: only blank lines, comments, docstrings (a triple-quoted string on its own lines), top-level
-/// `from ... import ...` / `import ...` statements (a re-export file, `__init__.mojo`) and top-level alias declarations (`alias` or `comptime NAME = ...`,
-/// with an annotation or a parameter list, the value running over several lines inside brackets or after a backslash), which emit no code. The Mojo
-/// coverage report omits such a file, and so it does a file with code that no test compiled; this is what tells them apart, so it is strict: any other
-/// statement (a function, a struct, a `var`, a `comptime if` / `for` / `assert`), a `;`, an indented line outside a continuation, or an unclosed
-/// docstring or bracket makes it false.
-pub fn hasNoStatements(text: []const u8) bool {
-    var in_doc: ?[]const u8 = null; // the closing triple quote while inside a docstring
-    var depth: i32 = 0; // open parentheses of an import, or brackets of an alias
-    var cont = false; // the previous import or alias line ended with a backslash
-    var in_alias = false; // inside an alias declaration that runs over more lines
-    var saw_eq = false; // the alias declaration has its `=`
-    // A carriage return that does not end a CRLF is a line break to some readers and not to this one: refuse the file rather than guess.
-    for (text, 0..) |c, i| {
-        if (c == '\r' and (i + 1 >= text.len or text[i + 1] != '\n')) return false;
-    }
-    var it = std.mem.splitScalar(u8, text, '\n');
-    while (it.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \t\r");
-        if (in_doc) |q| {
-            const at = std.mem.indexOf(u8, line, q) orelse continue;
-            const rest = std.mem.trim(u8, line[at + 3 ..], " \t");
-            if (rest.len != 0 and rest[0] != '#') return false;
-            if (hasLineBreakChar(rest)) return false;
-            in_doc = null;
-            continue;
-        }
-        // A vertical tab or form feed outside a string is a line break to some readers (Python's splitlines) and not to others.
-        const doc_start = std.mem.startsWith(u8, line, "\"\"\"") or std.mem.startsWith(u8, line, "'''");
-        if (!doc_start and hasLineBreakChar(raw)) return false;
-        if (depth > 0 or cont) {
-            if (in_alias) {
-                // A backslash joins the next line: a blank line (or the end of the text) after it leaves the statement unfinished.
-                if (depth == 0 and line.len == 0) return false;
-                if (!scanExpr(line, &depth, &saw_eq, &cont)) return false;
-                if (depth == 0 and !cont) {
-                    if (!saw_eq) return false;
-                    in_alias = false;
-                }
-                continue;
-            }
-            if (!importContinuation(line)) return false;
-            const code = line[0 .. std.mem.indexOfScalar(u8, line, '#') orelse line.len];
-            if (!parens(code, &depth)) return false;
-            cont = std.mem.endsWith(u8, std.mem.trimRight(u8, code, " \t"), "\\");
-            continue;
-        }
-        if (line.len == 0 or line[0] == '#') continue;
-        if (doc_start) {
-            const q = line[0..3];
-            if (std.mem.indexOf(u8, line[3..], q)) |at| {
-                const rest = std.mem.trim(u8, line[3 + at + 3 ..], " \t");
-                if (rest.len != 0 and rest[0] != '#') return false;
-                if (hasLineBreakChar(rest)) return false;
-            } else in_doc = q;
-            continue;
-        }
-        // Only a statement at column 0 is an import of the module.
-        if (raw[0] == ' ' or raw[0] == '\t') return false;
-        if (std.mem.startsWith(u8, line, "alias ") or std.mem.startsWith(u8, line, "comptime ")) {
-            const tail = aliasTail(line) orelse return false;
-            saw_eq = false;
-            if (!scanExpr(tail, &depth, &saw_eq, &cont)) return false;
-            if (depth == 0 and !cont) {
-                if (!saw_eq) return false;
-            } else in_alias = true;
-            continue;
-        }
-        const is_import = (std.mem.startsWith(u8, line, "from ") and std.mem.indexOf(u8, line, " import ") != null) or std.mem.startsWith(u8, line, "import ");
-        if (!is_import or !importContinuation(line)) return false;
-        const code = line[0 .. std.mem.indexOfScalar(u8, line, '#') orelse line.len];
-        if (!parens(code, &depth)) return false;
-        cont = std.mem.endsWith(u8, std.mem.trimRight(u8, code, " \t"), "\\");
-    }
-    return in_doc == null and depth == 0 and !cont;
-}
+pub const hasNoStatements = mojo_decl.hasNoStatements;
 
 /// `rows` plus a 0/0 row for each file of `expect` that no row names and whose source (`srcs`: expected path, then the file to read) has no
 /// statement. A file the report lacks that has statements stays missing, so `missing` still refuses it.
