@@ -246,7 +246,7 @@ test "a clean Mach-O library has no finding and lists its defined symbols by C n
     defer ar.deinit();
     const a = ar.allocator();
     const o1 = try clean(a, &.{ .{ .name = "zeta", .kind = .def }, .{ .name = "memcpy", .kind = .undef }, .{ .name = "strlen", .kind = .undef } });
-    const o2 = try clean(a, &.{ .{ .name = "alpha", .kind = .def }, .{ .name = "zeta", .kind = .undef }, .{ .name = "__error", .kind = .undef } });
+    const o2 = try clean(a, &.{ .{ .name = "alpha", .kind = .def }, .{ .name = "zeta", .kind = .undef }, .{ .name = "__error", .kind = .undef }, .{ .name = "utimensat", .kind = .undef }, .{ .name = "futimens", .kind = .undef } });
     const b = try archive(a, &.{ .{ .name = "a.o", .data = o1 }, .{ .name = "b.o", .data = o2 } });
     const r = try A.check(a, "libx.a", b, .{});
     try t.expectEqual(@as(usize, 0), r.findings.len);

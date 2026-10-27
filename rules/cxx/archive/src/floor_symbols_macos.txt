@@ -532,3 +532,5 @@ listxattr
 removexattr
 getattrlist
 setattrlist
+utimensat
+futimens
