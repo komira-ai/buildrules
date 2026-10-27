@@ -11,9 +11,13 @@ builds two targets in the calling package:
 soname. The archive is the one the toolchain's `ar` wrote, so its bytes are the toolchain's; `archive_check` is the validation that holds them to what a
 library other people link must be (deterministic headers, members in the order of their names, no debug section, no build path, nothing undefined that
 the final link will lack). A build holding the target runs the check: a defect is a red build that names it.
+
+For a macOS arm64 target platform the same two targets build a Mach-O archive: the pinned zig (on the linux execution platform) compiles for `aarch64-macos` at its generic arm64 CPU
+(rules/cxx/toolchain.bzl), and `archive_check` reads Mach-O objects and holds their undefined symbols to libSystem. On every other platform nothing differs.
 """
 
 load("//rules:isa.bzl", "ISA_LEVELS", "isa_select")
+load("//rules/core:platform.bzl", "by_os_cpu", "os_cpu_keys")
 load(":providers.bzl", "NativeArchiveInfo")
 
 def _impl(ctx):
@@ -84,7 +88,10 @@ native_same = rule(
 def _baseline():
     """The CPU flag of the platform's baseline, whatever the toolchain's default is (a v3 platform compiles the rest of the program for v3; a library other
     people link must run on any machine of the family)."""
-    return isa_select(lambda l: ["-mcpu=x86_64"] if ISA_LEVELS[l]["family"] == "x86_64" else ["-mcpu=generic"], ["-mcpu=x86_64"])
+    return by_os_cpu({
+        "macos_aarch64": ["-mcpu=generic"],
+        "DEFAULT": isa_select(lambda l: ["-mcpu=x86_64"] if ISA_LEVELS[l]["family"] == "x86_64" else ["-mcpu=generic"], ["-mcpu=x86_64"]),
+    })
 
 def native_static(name, srcs, soname, hdrs = [], includes = [], cflags = [], cflags_by_os = {}, needs = [], allow = [], validate = True, file_prefix = None, visibility = ["PUBLIC"]):
     """A native static library: `<name>_cxx` (the `cxx_library`) and `<name>` (the `native_archive`). `includes` are directories (relative to the repository root)
@@ -99,11 +106,10 @@ def native_static(name, srcs, soname, hdrs = [], includes = [], cflags = [], cfl
     for os in cflags_by_os.keys():
         if os not in ("linux", "macos"):
             fail("{}: cflags_by_os names the OS {}; the OSes are linux and macos".format(name, os))
-    by_os = select({
-        "buildrules//platforms:linux": list(cflags_by_os.get("linux", [])),
-        "buildrules//platforms:macos": list(cflags_by_os.get("macos", [])),
-        "DEFAULT": [],
-    })
+    by_os = {"buildrules//platforms:linux": list(cflags_by_os.get("linux", [])), "DEFAULT": []}
+    for key in os_cpu_keys("macos_aarch64"):
+        by_os[key] = list(cflags_by_os.get("macos", []))
+    by_os = select(by_os)
     prefix = ["-ffile-prefix-map={}=.".format(file_prefix)] if file_prefix else []
     native.cxx_library(
         name = name + "_cxx",

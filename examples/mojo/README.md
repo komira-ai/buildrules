@@ -14,6 +14,7 @@
     sibfake/stale/         RED BY DESIGN: `chain_stale` synced when `chain/c` was 0.2.0; its library is built from 0.1.0, so analysis of `:lib_ungated` must stay red (ci/negative.bzl, CASES)
     copy_of_base/          base's sources at another path; `:same_bytes` fails unless the two `.mojoc` files are equal
     member_native/         cshim_user -> cshim: two members; cshim has a C shim of its own (`[native.shim]`), built by `mojo_package` (`:native_shim`), linked into both members' tests and packed into `cshim:conda`
+    member_native_macos/   `member_native` at mopm 0.0.73, whose lock has a graph per conda subdir: built for macOS arm64 the shim is compiled for `aarch64-macos` by the pinned zig and linked into the tests of both members on the macOS worker (ci/native_macos.bzl holds the compile's target and CPU for macOS arm64 and linux x86_64); `mojo_sync` writes its tables
     rooted/native/         a package below the repository root with a C library of its own (`[native.shim]`) and a rooted graph: the unit's sources and headers are named `examples/mojo/rooted/native/native/rshim.c`, and `:native_shim` is built from the files below the package
     rooted/data/           a package below the repository root with a rooted graph whose `test_data` names its test as the package does (`tests/test_rooted_data.mojo`); its test reads the staged file
     copy_of_cshim/         cshim's C at another path; `:same_bytes` fails unless the two archives are equal
