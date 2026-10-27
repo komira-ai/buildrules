@@ -33,6 +33,13 @@ branches of the library's sources in the annotated IR are classified (`branch/RE
 
 `covcheck` takes the files of `:coverage[reports]` as `--cobertura` inputs and those of `:coverage[branches]` as `--branch-lcov` inputs, one per test and the one of the code no test compiled: `buck2 build //pkg:coverage[reports] //pkg:coverage[branches] --show-full-output` prints their paths.
 
+**Unmeasured sources (Mojo).** kcov records no line of a source whose functions are all `@always_inline("nodebug")` (the compiler gives inlined code of that kind no line table), although the tests run it, and a source in no report is
+refused: counting it `0/0` would say nothing was there. A package names such a source in `coverage_unmeasured.txt` next to its BUCK file (`mojo_package` passes the file to `:coverage` as an input, `cov_summary --unmeasured <package directory>=<file>`;
+`tools/cov_unmeasured.zig`): one entry per line, `<source path relative to the package>`, a TAB or two spaces, a reason that is not empty; blank lines and `#` comments are skipped. A listed source that no report names is accepted and printed
+as `unmeasured: <path>: <reason>` after the totals (then `unmeasured total N files: ...`); it is in no line total, no branch total and no floor, and it is never `0/0`, never silent. It is for code kcov cannot record, not for code that is hard to test: a
+listed source a report names ("listed as unmeasured but measured: remove the entry"), a path that is no library source of the package, a duplicate, an entry without a reason and a source with no statement fail the action, so an entry cannot outlive its reason.
+A source in no report and not listed fails exactly as before. `examples/mojo/unmeasured` has one, end to end.
+
 **Code no test compiled (Mojo).** Mojo compiles only the functions a test reaches, so a function no test calls has no line in kcov's report and no branch in the IR. Counted from the reports alone, deleting
 the last test of a function took its lines out of the denominator and the figure rose. `cov_summary --src` reads the library's sources (`tools/mojo_src.zig`, with the rules of covcheck, the full-source checker this replaced: its lexer's executable
 lines, its declaration reader's functions) and counts, for every function none of whose own lines is in a line report or on a branch record, its executable lines as found and not hit, and two branch arms

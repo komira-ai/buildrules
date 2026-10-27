@@ -1,12 +1,15 @@
 //! cov_summary: the line coverage of a package, from the normalized Cobertura reports of its tests (cov_normalize's output).
 //!
 //!   cov_summary --out <file> [--expect <repository path>]... [--src <repository path>=<file>]... [--blocks <blocks file>]...
-//!               [--branch-lcov <branch records>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] [--uncompiled-report <file>] <report.xml>...
+//!               [--unmeasured <package directory>=<coverage_unmeasured.txt>] [--branch-lcov <branch records>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] [--uncompiled-report <file>] <report.xml>...
 //!
 //! `--src` gives the file behind an `--expect` path (Mojo only); a `--src` path that is no `--expect` path is another source of the package (a
 //! test), read for the calls that reach the code no test compiled and never counted. The Mojo report omits a source with no executable line, so an expected source that
 //! no report names but whose text has no statement beyond comments, docstrings and `import` lines (a re-export `__init__.mojo`) is listed as 0/0
 //! instead of refused; one with any other statement stays refused (`hasNoStatements`).
+//!
+//! `--unmeasured` names the package's `coverage_unmeasured.txt` (cov_unmeasured.zig): the listed sources are accepted when no report names them, printed as
+//! `unmeasured: <path>: <reason>` after the totals, and left out of the line and branch totals; a stale or malformed entry fails the action.
 //!
 //! `--blocks` is a zig_cover.zig block report (Zig's branch figure: the compiler's basic blocks, `<file> TAB <line> TAB <column> TAB <hit> TAB <total>`).
 //! With any, the output continues after the line total with the same listing prefixed `branches `: the blocks at a position that ran are the most
@@ -44,6 +47,7 @@ const branch_lcov = @import("branch_lcov.zig");
 const mojo_src = @import("mojo_src.zig");
 const mojo_calls = @import("mojo_calls.zig");
 const mojo_gate = @import("mojo_gate.zig");
+const cov_unmeasured = @import("cov_unmeasured.zig");
 
 pub const FileCov = struct { path: []const u8, hit: usize, total: usize };
 
@@ -725,6 +729,7 @@ pub fn main() !void {
     var block_reports = std.ArrayList([]const u8).empty;
     var branch_files = std.ArrayList([]const u8).empty;
     var srcs = std.ArrayList([2][]const u8).empty;
+    var unmeasured_arg: ?[2][]const u8 = null;
     var unc_lines_out: ?[]const u8 = null;
     var unc_branches_out: ?[]const u8 = null;
     var unc_report_out: ?[]const u8 = null;
@@ -740,6 +745,10 @@ pub fn main() !void {
             i += 1;
             const eq = std.mem.indexOfScalar(u8, argv[i], '=') orelse die(2, "--src wants <expected path>=<file>, got {s}", .{argv[i]});
             try srcs.append(a, .{ argv[i][0..eq], argv[i][eq + 1 ..] });
+        } else if (std.mem.eql(u8, argv[i], "--unmeasured") and i + 1 < argv.len) {
+            i += 1;
+            const eq = std.mem.indexOfScalar(u8, argv[i], '=') orelse die(2, "--unmeasured wants <package directory>=<file>, got {s}", .{argv[i]});
+            unmeasured_arg = .{ argv[i][0..eq], argv[i][eq + 1 ..] };
         } else if (std.mem.eql(u8, argv[i], "--blocks") and i + 1 < argv.len) {
             i += 1;
             try block_reports.append(a, argv[i]);
@@ -761,17 +770,28 @@ pub fn main() !void {
             try reports.append(a, argv[i]);
         }
     }
-    if (out_path == null or reports.items.len == 0) die(2, "usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... [--src <path>=<file>]... [--uncompiled-lines <file>] [--uncompiled-branches <file>] [--uncompiled-report <file>] <report.xml>...", .{});
+    if (out_path == null or reports.items.len == 0) die(2, "usage: cov_summary --out <file> [--expect <path>]... [--blocks <file>]... [--branch-lcov <file>]... [--src <path>=<file>]... [--unmeasured <dir>=<file>] [--uncompiled-lines <file>] [--uncompiled-branches <file>] [--uncompiled-report <file>] <report.xml>...", .{});
     if (block_reports.items.len != 0 and branch_files.items.len != 0) die(2, "--blocks (Zig) and --branch-lcov (Mojo) are two kinds of branch figure: a package has one", .{});
     var files: std.StringArrayHashMapUnmanaged(Lines) = .empty;
     for (reports.items) |p| {
         const text = std.fs.cwd().readFileAlloc(a, p, 64 << 20) catch |e| die(1, "cannot read {s}: {s}", .{ p, @errorName(e) });
         addReport(a, &files, text) catch die(1, "{s} is not a normalized Cobertura report", .{p});
     }
+    var unmeasured_text: []const u8 = "";
+    var exp: []const []const u8 = expect.items;
+    if (unmeasured_arg) |u| {
+        switch (try cov_unmeasured.load(a, u[0], u[1], expect.items, files.keys(), srcs.items, readSource, hasNoStatements)) {
+            .refused => |m| die(1, "{s}", .{m}),
+            .ok => |ok| {
+                exp = ok.expect;
+                unmeasured_text = ok.listing;
+            },
+        }
+    }
     const branch_texts = try a.alloc([]const u8, branch_files.items.len);
     for (branch_files.items, branch_texts) |p, *t| t.* = readSource(a, p);
     var diag = branch_lcov.Diag{};
-    const found = countUncompiled(a, &files, branch_files.items, branch_texts, expect.items, srcs.items, readSource, &diag) catch |e| switch (e) {
+    const found = countUncompiled(a, &files, branch_files.items, branch_texts, exp, srcs.items, readSource, &diag) catch |e| switch (e) {
         error.Refused => die(1, "{s}", .{diag.msg}),
         error.OutOfMemory => return e,
     };
@@ -802,5 +822,6 @@ pub fn main() !void {
             .text => |t| text = try std.mem.concat(a, u8, &.{ text, t }),
         }
     }
+    if (unmeasured_text.len != 0) text = try std.mem.concat(a, u8, &.{ text, unmeasured_text });
     std.fs.cwd().writeFile(.{ .sub_path = out_path.?, .data = text }) catch |e| die(1, "cannot write {s}: {s}", .{ out_path.?, @errorName(e) });
 }

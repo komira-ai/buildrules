@@ -731,6 +731,10 @@ def _cov_summary_impl(ctx):
     for b in ctx.attrs.branches:
         cmd.add("--branch-lcov", _file(b))
 
+    # The package's `coverage_unmeasured.txt`, if it has one: the sources kcov cannot record, an input of the action (rules/coverage/tools/cov_unmeasured.zig).
+    if ctx.attrs.unmeasured:
+        cmd.add("--unmeasured", cmd_args(ctx.attrs.unmeasured_root, ctx.attrs.unmeasured, delimiter = "="))
+
     # What no test compiled: the lines of the functions no report records, and (with branch records) the arms of their decision words. The
     # summary counts them as found and not hit, and writes them as one more report and one more branch record file (rules/coverage/tools/mojo_src.zig).
     uncompiled = ctx.actions.declare_output("uncompiled.cobertura.xml")
@@ -778,6 +782,9 @@ mojo_cov_summary_rule = rule(
         "reports": attrs.list(attrs.dep()),
         "srcs": attrs.dict(attrs.string(), attrs.source(), default = {}),
         "tool": attrs.exec_dep(default = "buildrules//rules/coverage:cov_summary", providers = [RunInfo]),
+        # `coverage_unmeasured.txt` and the package's directory from the repository root, the base of its paths (absent: every source is required in a report).
+        "unmeasured": attrs.option(attrs.source(), default = None),
+        "unmeasured_root": attrs.string(default = ""),
     },
 )
 

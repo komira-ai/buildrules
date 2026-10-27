@@ -655,6 +655,14 @@ buck2 build //pkg:coverage[branches] --show-full-output
 *Branch records.* kcov writes no `branch` attribute for a Mojo executable, so `:coverage[reports]` holds no branch data (`examples/mojo/coverage_records_test.zig` holds that, and holds the `branches` rows of `coverage.txt`
 to the records of `:coverage[branches_of_tests]` file by file; `examples/mojo/uncompiled_test.zig` holds the uncompiled files, and that deleting a test lowers the figures). The classifier refuses what it has no evidence for, naming `file:line:col`; the shapes that stay refused are in `rules/coverage/branch/README.md`.
 
+*Unmeasured sources.* A source of the library whose code kcov cannot record (every function `@always_inline("nodebug")`, so the compiler gives it no line table) is in no report although the tests run it, and `:coverage`
+refuses a source that is in no report. A package says so explicitly: `coverage_unmeasured.txt` beside its BUCK file (and beside `coverage_floor.txt`) holds one entry per line, `<source path relative to the package>`, a TAB or two spaces,
+and the reason (required); blank lines and lines starting with `#` are skipped. The file is an input of `:coverage` (and not of `:workspace`, so the table does not move with it); with no file the package is as it was. A listed source that no
+report names is accepted and printed after the totals as `unmeasured: <repository path>: <reason>`, followed by `unmeasured total N files: left out of the line and branch totals and the floors`: it is counted in no total and in no floor, and it is
+never listed `0/0`, so a figure never claims to have measured it. The action fails, naming the file and the path, for an entry whose source a report names ("listed as unmeasured but measured: remove the entry": the entry went stale when kcov began
+to record the file), an entry that is no library source of the package (no such file, a test, another file), a path listed twice, an entry without a reason, and an entry for a source with no statement (it is listed `0/0` already). A source that is in no
+report and is not listed is refused as it always was (`rules/coverage/README.md`, "Unmeasured sources"; `examples/mojo/unmeasured`).
+
 *The floor.* A package with a `coverage_floor.txt` beside its BUCK file (the file every other package's floor is, `rules/coverage/README.md`) gets `:coverage_floor`: `lines NN.NN`, the line total of
 `coverage.txt` rounded down to a hundredth, and `branches NN.NN`, the `branches total` likewise. Each figure is a minimum: lower than the floor fails with `coverage fell`, equal passes, and higher passes and prints
 `you may raise the floor to NN.NN` (optional). A package whose `coverage.txt` has branch rows needs a `branches` figure ("the tests record branches ... add `branches NN.NN`"), and one without them is refused a `branches` figure
