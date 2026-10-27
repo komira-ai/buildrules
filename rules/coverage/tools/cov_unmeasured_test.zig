@@ -187,7 +187,7 @@ test "load: a file of nodebug inline functions only is accepted, other decorator
     const a = arena.allocator();
     try t.expectEqualStrings("accepted", try listed(a, NB ++ "def f(x: Int) -> Int:\n    return x\n"));
     try t.expectEqualStrings("accepted", try listed(a, "@always_inline( \"nodebug\" )\ndef f(x: Int) -> Int:\n    return x\n\n" ++ NB ++ "def g(x: Int) -> Int:\n    return x\n"));
-    try t.expectEqualStrings("accepted", try listed(a, "@deprecated\n" ++ NB ++ "@parameter\ndef f(x: Int) -> Int:\n    return x\n"));
+    try t.expectEqualStrings("accepted", try listed(a, "@deprecated\n" ++ NB ++ "@register_passable(\"trivial\")\ndef f(x: Int) -> Int:\n    return x\n"));
     try t.expectEqualStrings("accepted", try listed(a, NB ++ "@deprecated(\"old\")\nfn f(x: Int) -> Int:\n    return x\n"));
     // A method of a struct is a function of the file: this one is inlined too.
     try t.expectEqualStrings("accepted", try listed(a, "struct S:\n    " ++ "@always_inline(\"nodebug\")\n    def m(self) -> Int:\n        return 1\n"));
@@ -228,24 +228,168 @@ test "load: a file with statements but no function is refused" {
     try t.expectEqualStrings("list.txt: src/p/b.mojo listed as unmeasured but it defines no @always_inline(\"nodebug\") function: kcov can record it; test it instead", try listed(a, "comptime N = 3\nvar x = 1\n"));
 }
 
-test "load: a statement outside every nodebug function refuses the entry, a declaration does not" {
-    var arena = std.heap.ArenaAllocator.init(t.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const stray = "list.txt: src/p/b.mojo listed as unmeasured but line 5 is a statement outside every @always_inline(\"nodebug\") function: kcov can record it; test it instead";
-    try t.expectEqualStrings(stray, try listed(a, NB ++ "def f() -> Int:\n    return 1\n\ncomptime if True:\n    print(\"x\")\n"));
-    try t.expectEqualStrings("list.txt: src/p/b.mojo listed as unmeasured but line 5 is a statement outside every @always_inline(\"nodebug\") function: kcov can record it; test it instead", try listed(a, NB ++ "def f() -> Int:\n    return 1\n\nfor i in range(3):\n    print(i)\n"));
-    try t.expectEqualStrings("accepted", try listed(a, "from std.sys import size_of\nalias N = 3\ncomptime M = 4\n\n" ++ NB ++ "def f() -> Int:\n    return 1\n"));
-    try t.expectEqualStrings("accepted", try listed(a, "struct S:\n    var x: Int\n\n    " ++ "@always_inline(\"nodebug\")\n    def m(self) -> Int:\n        return 1\n"));
+const P = "@always_inline(\"nodebug\")\ndef a(): return 1\n";
+
+const source_cases = [_]Case{
+    .{ .name = "comment_nodebug", .src = "# @always_inline(\"nodebug\")\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "docstring_nodebug", .src = "\"\"\"\n@always_inline(\"nodebug\")\n\"\"\"\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "string_var_nodebug", .src = "comptime S = \"@always_inline(\\\"nodebug\\\")\"\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "decor_before_struct", .src = "@always_inline(\"nodebug\")\nstruct S:\n    var x: Int\n\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "decor_before_comptime", .src = "@always_inline(\"nodebug\")\ncomptime X = 1\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "nested_plain", .src = "@always_inline(\"nodebug\")\ndef f(x: Int) -> Int:\n    def g(y: Int) -> Int:\n        return y\n    return g(x)\n", .accept = false },
+    .{ .name = "nested_nodebug_in_plain", .src = "def f(x: Int) -> Int:\n    @always_inline(\"nodebug\")\n    def g(y: Int) -> Int:\n        return y\n    return g(x)\n", .accept = false },
+    .{ .name = "blank_between", .src = "@always_inline(\"nodebug\")\n\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "comment_between", .src = "@always_inline(\"nodebug\")\n# hi\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "inline_body_plain", .src = "def f(x: Int) -> Int: return x\n", .accept = false },
+    .{ .name = "inline_body_after_nodebug", .src = "@always_inline(\"nodebug\")\ndef f(x: Int) -> Int: return x\ndef g(x: Int) -> Int: return x\n", .accept = false },
+    .{ .name = "trailing_comment_ok", .src = "@always_inline(\"nodebug\")  # why\ndef f(x: Int) -> Int:\n    return x\n", .accept = true },
+    .{ .name = "crlf_ok", .src = "@always_inline(\"nodebug\")\r\ndef f(x: Int) -> Int:\r\n    return x\r\n", .accept = true },
+    .{ .name = "crlf_plain", .src = "def f(x: Int) -> Int:\r\n    return x\r\n", .accept = false },
+    .{ .name = "paren_in_comment_sig", .src = "@always_inline(\"nodebug\")\ndef f(  # (\n    x: Int,\n) -> Int:\n    return x\n\ndef g(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "paren_in_string_default", .src = "@always_inline(\"nodebug\")\ndef f(x: String = \"(\") -> Int:\n    return 1\n\ndef g(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "brace_default", .src = "@always_inline(\"nodebug\")\ndef f(x: Int = 1) -> Int:\n    return 1\n\ndef g(x: Dict[Int, Int] = {1: 2}) -> Int:\n    return 1\n", .accept = false },
+    .{ .name = "tab_def", .src = "@always_inline(\"nodebug\")\ndef f(x: Int) -> Int:\n    return x\ndef\tg(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "double_space_def", .src = "@always_inline(\"nodebug\")\ndef f(x: Int) -> Int:\n    return x\ndef   g(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "indented_def_in_comptime_if", .src = "@always_inline(\"nodebug\")\ndef f(x: Int) -> Int:\n    return x\ncomptime if True:\n    def g(x: Int) -> Int:\n        return x\n", .accept = false },
+    .{ .name = "decorated_tab_indent", .src = "struct S:\n\t@always_inline(\"nodebug\")\n\tdef m(self) -> Int:\n\t\treturn 1\n\tdef n(self) -> Int:\n\t\treturn 2\n", .accept = false },
+    .{ .name = "raises_sig", .src = "@always_inline(\"nodebug\")\ndef f(x: Int) raises -> Int:\n    return x\ndef g(x: Int) raises -> Int:\n    raise Error(\"x\")\n", .accept = false },
+    .{ .name = "body_ellipsis_with_code", .src = "def f(x: Int) -> Int:\n    ...\n    return x\n", .accept = false },
+    .{ .name = "trait_plain_nobody_only", .src = "@always_inline(\"nodebug\")\ndef f() -> Int:\n    return 1\ndef g(x: Int):\n    ...\n", .accept = true },
+    .{ .name = "statements_outside_fn", .src = "@always_inline(\"nodebug\")\ndef f() -> Int:\n    return 1\n\ncomptime if True:\n    print(\"x\")\n", .accept = false },
+    .{ .name = "decor_same_line_def", .src = "@always_inline(\"nodebug\") def f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "nodebug_with_extra_arg", .src = "@always_inline(\"nodebug\", \"x\")\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "nodebug_single_quote", .src = "@always_inline('nodebug')\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "nodebug_upper", .src = "@always_inline(\"NODEBUG\")\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "nodebug_wrong_deco", .src = "@always_inline_x(\"nodebug\")\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "nodebug_other_deco_with_arg", .src = "@foo(\"nodebug\")\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "unlisted_decorator_beside_nodebug", .src = "@always_inline(\"nodebug\")\n@foo\ndef f(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "lambda_like_fn_value", .src = "@always_inline(\"nodebug\")\ndef f(x: Int) -> Int:\n    var g = fn(y: Int) -> Int: return y\n    return g(x)\n", .accept = false },
+    .{ .name = "empty", .src = "", .accept = false },
+    .{ .name = "only_comment", .src = "# nothing\n", .accept = false },
+    .{ .name = "struct_init_plain", .src = "@always_inline(\"nodebug\")\ndef f() -> Int:\n    return 1\nstruct S:\n    def __init__(out self):\n        pass\n", .accept = false },
+    .{ .name = "multiline_string_def_hides", .src = "@always_inline(\"nodebug\")\ndef f() -> Int:\n    return 1\n\ncomptime D = \"\"\"\ndef g(x):\n  return x\n\"\"\"\n", .accept = true },
+    .{ .name = "def_after_unterminated_docstring_quote", .src = "@always_inline(\"nodebug\")\ndef f() -> Int:\n    \"\"\"doc\"\"\"\n    return 1\ndef g() -> Int:\n    return 2\n", .accept = false },
+    .{ .name = "single_line_triple_then_def", .src = "comptime S = \"\"\"a\"\"\"\ndef g() -> Int:\n    return 2\n", .accept = false },
+    .{ .name = "raw_string_prefix", .src = "comptime S = r\"\\\"\ndef g() -> Int:\n    return 2\n", .accept = false },
+    .{ .name = "apostrophe_in_comment", .src = "@always_inline(\"nodebug\")\ndef f() -> Int:\n    return 1  # it's\ndef g() -> Int:\n    return 2\n", .accept = false },
+    .{ .name = "char_quote_str", .src = "@always_inline(\"nodebug\")\ndef f() -> String:\n    return \"'\"\ndef g() -> Int:\n    return 2\n", .accept = false },
+    .{ .name = "backslash_quote_str", .src = "@always_inline(\"nodebug\")\ndef f() -> String:\n    return \"\\\\\"\ndef g() -> Int:\n    return 2\n", .accept = false },
+};
+
+const joined_cases = [_]Case{
+    .{ .name = "semicolon_after_alias", .src = P ++ "alias N = 3; print(N)\n", .accept = false },
+    .{ .name = "semicolon_after_var", .src = P ++ "var g = 1; print(g)\n", .accept = false },
+    .{ .name = "semicolon_after_docstring", .src = P ++ "\"x\"; print(1)\n", .accept = false },
+    .{ .name = "semicolon_after_decorator", .src = P ++ "@foo; print(1)\n", .accept = false },
+    .{ .name = "semicolon_after_listed_decorator", .src = P ++ "@value; print(1)\n", .accept = false },
+    .{ .name = "semicolon_after_struct_header", .src = P ++ "struct S: pass; print(1)\n", .accept = false },
+    .{ .name = "semicolon_after_import", .src = P ++ "import os; print(1)\n", .accept = false },
+    .{ .name = "semicolon_in_body", .src = P ++ "@always_inline(\"nodebug\")\ndef b():\n    var x = 1; return x\n", .accept = false },
+    .{ .name = "semicolon_in_header_line", .src = P ++ "@always_inline(\"nodebug\")\ndef b(): var x = 1; return x\n", .accept = false },
+    .{ .name = "semicolon_in_comment_is_a_comment", .src = P ++ "alias N = 3  # a; b\n", .accept = true },
+    .{ .name = "semicolon_in_string_is_a_string", .src = P ++ "alias S = \";\"\n", .accept = true },
+    .{ .name = "def_backslash_continued_name", .src = P ++ "def \\\n b(x): return x + 1\n", .accept = false },
+    .{ .name = "fn_backslash_continued_name", .src = P ++ "fn \\\n b(x): return x + 1\n", .accept = false },
+    .{ .name = "nodebug_def_backslash_continued_name", .src = P ++ "@always_inline(\"nodebug\")\ndef \\\n b(x): return x + 1\n", .accept = false },
+    .{ .name = "backslash_in_constant", .src = P ++ "alias N = 1 + \\\n 2\n", .accept = false },
+    .{ .name = "backslash_inside_string_is_a_string", .src = P ++ "alias S = \"a\\\\nb\"\n", .accept = true },
+    .{ .name = "lambda_on_signature_line", .src = P ++ "@always_inline(\"nodebug\")\ndef b(x: Int) -> Int: return (lambda y: y)(x)\n", .accept = false },
+    .{ .name = "lambda_after_multiline_signature", .src = P ++ "@always_inline(\"nodebug\")\ndef b(\n    x: Int,\n) -> Int: return (lambda y: y)(x)\n", .accept = false },
+    .{ .name = "function_value_after_closing_bracket", .src = P ++ "@always_inline(\"nodebug\")\ndef b(\n    x: Int,\n) -> Int:\n    var g = fn(y: Int) -> Int: return y\n    return g(x)\n", .accept = false },
+    .{ .name = "lambda_in_body", .src = P ++ "@always_inline(\"nodebug\")\ndef b(x: Int) -> Int:\n    var g = lambda y: y\n    return g(x)\n", .accept = false },
+    .{ .name = "function_type_in_signature", .src = P ++ "@always_inline(\"nodebug\")\ndef b(f: fn(Int) -> Int) -> Int:\n    return 1\n", .accept = false },
+    .{ .name = "plain_nested_def_in_body", .src = P ++ "@always_inline(\"nodebug\")\ndef b(x: Int) -> Int:\n    def g(y: Int) -> Int:\n        return y\n    return g(x)\n", .accept = false },
+    .{ .name = "nested_nodebug_def_in_body", .src = P ++ "@always_inline(\"nodebug\")\ndef b(x: Int) -> Int:\n    @always_inline(\"nodebug\")\n    def g(y: Int) -> Int:\n        return y\n    return g(x)\n", .accept = true },
+    .{ .name = "nested_def_after_other_decorator", .src = P ++ "@always_inline(\"nodebug\")\ndef b(x: Int) -> Int:\n    @parameter\n    def g(y: Int) -> Int:\n        return y\n    return g(x)\n", .accept = false },
+    .{ .name = "triple_string_closes_then_semicolon", .src = P ++ "\"\"\"doc\n\"\"\"; print(1)\n", .accept = false },
+    .{ .name = "triple_string_closes_then_call", .src = P ++ "\"\"\"doc\n\"\"\" + a()\n", .accept = false },
+    .{ .name = "quote_led_call", .src = P ++ "\"x\".format(a())\n", .accept = false },
+    .{ .name = "triple_quoted_concatenation", .src = P ++ "'''x''' + a()\n", .accept = false },
+    .{ .name = "variable_initialized_by_call", .src = P ++ "var g = a()\n", .accept = false },
+    .{ .name = "variable_initialized_by_multiline_call", .src = P ++ "var g = foo(\n    1)\n", .accept = false },
+    .{ .name = "field_initialized_by_call", .src = P ++ "struct S:\n    var x: Int = side()\n", .accept = false },
+    .{ .name = "field_initialized_by_literal", .src = P ++ "struct S:\n    var x: Int = 1\n", .accept = false },
+    .{ .name = "field_without_type", .src = P ++ "struct S:\n    var x\n", .accept = false },
+    .{ .name = "one_line_struct_with_method", .src = P ++ "struct S: def m(self): return 1\n", .accept = false },
+    .{ .name = "one_line_struct_with_pass", .src = P ++ "struct S: pass\n", .accept = false },
+    .{ .name = "constant_with_call", .src = P ++ "alias N = f(1)\n", .accept = false },
+    .{ .name = "constant_with_lambda", .src = P ++ "alias N = lambda x: x\n", .accept = false },
+    .{ .name = "comptime_if_block", .src = P ++ "comptime if True:\n    print(\"x\")\n", .accept = false },
+    .{ .name = "comptime_for_block", .src = P ++ "comptime for i in range(3):\n    print(i)\n", .accept = false },
+    .{ .name = "top_level_call", .src = P ++ "print(1)\n", .accept = false },
+    .{ .name = "top_level_assignment", .src = P ++ "x = 1\n", .accept = false },
+    .{ .name = "top_level_if", .src = P ++ "if True:\n    pass\n", .accept = false },
+    .{ .name = "top_level_for", .src = P ++ "for i in range(3):\n    print(i)\n", .accept = false },
+    .{ .name = "top_level_return_value", .src = P ++ "return 1\n", .accept = false },
+    .{ .name = "ellipsis_alone", .src = P ++ "...\n", .accept = false },
+    .{ .name = "plain_def_with_body", .src = P ++ "def b(x: Int) -> Int:\n    return x\n", .accept = false },
+    .{ .name = "unlisted_decorator_on_nodebug_def", .src = P ++ "@staticmethod\n@always_inline(\"nodebug\")\ndef b() -> Int:\n    return 1\n", .accept = false },
+    .{ .name = "parameter_decorator_outside_body", .src = P ++ "@parameter\n@always_inline(\"nodebug\")\ndef b() -> Int:\n    return 1\n", .accept = false },
+    .{ .name = "unterminated_bracket", .src = P ++ "alias N = [1,\n", .accept = false },
+    .{ .name = "unterminated_string", .src = P ++ "alias S = \"abc\n", .accept = false },
+    .{ .name = "struct_header_with_body_after_colon", .src = P ++ "struct S: var x: Int\n", .accept = false },
+    .{ .name = "trait_header_with_statement_after_colon", .src = P ++ "trait T: pass\n", .accept = false },
+    .{ .name = "bodiless_def_with_code_after_ellipsis", .src = P ++ "def b(): ...; print(1)\n", .accept = false },
+    .{ .name = "bodiless_def_then_code_at_same_depth", .src = P ++ "def b():\n    ...\n    print(1)\n", .accept = false },
+    .{ .name = "imports_and_constants", .src = P ++ "from std.sys import size_of\nimport os\nalias N = 3\ncomptime M: Int = 4\nalias T = List[Int]\n", .accept = true },
+    .{ .name = "struct_fields_docstring_pass", .src = P ++ "struct S:\n    \"\"\"doc.\"\"\"\n    var x: Int\n    var y: Optional[Int]\n", .accept = true },
+    .{ .name = "struct_with_pass", .src = P ++ "struct S:\n    pass\n", .accept = true },
+    .{ .name = "struct_header_with_parameters_and_bases", .src = P ++ "struct S[T: AnyType](Copyable):\n    var x: T\n", .accept = true },
+    .{ .name = "bodiless_def_inline_ellipsis", .src = P ++ "def b(): ...\n", .accept = true },
+    .{ .name = "bodiless_def_ellipsis_next_line", .src = P ++ "def b():\n    ...\n", .accept = true },
+    .{ .name = "trait_requirements", .src = P ++ "trait T:\n    def f(self) -> Int: ...\n    def g(self):\n        ...\n", .accept = true },
+    .{ .name = "fieldwise_init_struct_is_accepted", .src = P ++ "@fieldwise_init\nstruct P:\n    var x: Int\n    var y: Int\n", .accept = true },
+    .{ .name = "value_struct_is_accepted", .src = P ++ "@value\nstruct P:\n    var x: Int\n", .accept = true },
+    .{ .name = "register_passable_struct_is_accepted", .src = P ++ "@register_passable(\"trivial\")\nstruct P:\n    var x: Int\n", .accept = true },
+    .{ .name = "struct_with_nodebug_method", .src = P ++ "struct S:\n    var x: Int\n\n    @always_inline(\"nodebug\")\n    def m(self) -> Int:\n        return 1\n", .accept = true },
+    .{ .name = "single_quoted_nodebug_is_refused", .src = P ++ "@always_inline('nodebug')\ndef b() -> Int:\n    return 1\n", .accept = false },
+    .{ .name = "spaced_nodebug_decorator", .src = P ++ "@always_inline( \"nodebug\" )\ndef b() -> Int:\n    return 1\n", .accept = true },
+    .{ .name = "multiline_nodebug_signature", .src = P ++ "@always_inline(\"nodebug\")\ndef b(\n    x: Int,\n    y: Int,\n) -> Int:\n    return x + y\n", .accept = true },
+    .{ .name = "comments_and_blank_lines", .src = P ++ "# a comment\n\nalias N = 3  # trailing\n\n# another\n", .accept = true },
+    .{ .name = "multiline_docstring_with_code_words", .src = P ++ "\"\"\"\nprint(1); x = a()\n\\ \n\"\"\"\n", .accept = true },
+};
+
+const Case = struct { name: []const u8, src: []const u8, accept: bool };
+
+/// Runs every case of `cases` and fails, naming each that went the wrong way, so one run shows all of them.
+fn runCases(cases: []const Case) !void {
+    var wrong: usize = 0;
+    for (cases) |c| {
+        var arena = std.heap.ArenaAllocator.init(t.allocator);
+        defer arena.deinit();
+        const r = try listed(arena.allocator(), c.src);
+        const accepted = std.mem.eql(u8, r, "accepted");
+        if (accepted != c.accept) {
+            wrong += 1;
+            std.debug.print("case {s}: {s}, expected {s}: {s}\n", .{ c.name, if (accepted) "accepted" else "refused", if (c.accept) "accepted" else "refused", r });
+        }
+    }
+    try t.expectEqual(@as(usize, 0), wrong);
 }
 
-test "load: a function value made inside a nodebug function refuses the entry, a nested nodebug function does not" {
+// Sources of the nodebug-only rule. The rule outside the body of every @always_inline("nodebug") function: no `;` and no backslash anywhere; each statement is an
+// import, an alias or comptime constant without a call, a struct or trait header with nothing after its colon, a field without a value, a listed decorator
+// (@always_inline("nodebug"), @fieldwise_init, @value, @register_passable, @deprecated), a docstring, a def whose whole body is `...`, or pass. Inside a body no
+// fn, def or lambda word unless it starts a nested nodebug function the lister found. A struct with @fieldwise_init or @value is accepted: the methods the
+// compiler writes for it have no source line for kcov to record.
+test "load: shapes of source a test could reach outside the nodebug functions are refused, and the declarations beside them are accepted" {
+    try runCases(&source_cases);
+}
+
+test "load: statements joined to a declaration, backslash continuations, function values and lines that start inside a string are refused" {
+    try runCases(&joined_cases);
+}
+
+test "load: a refusal names the first line of the statement and says which rule it broke" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const made = "list.txt: src/p/b.mojo listed as unmeasured but line 3 makes a function value inside a function, which may be run without a record: kcov can record it; test it instead";
-    try t.expectEqualStrings(made, try listed(a, NB ++ "def f(x: Int) -> Int:\n    var g = fn(y: Int) -> Int: return y\n    return g(x)\n"));
-    try t.expectEqualStrings("accepted", try listed(a, NB ++ "def f(x: Int) -> Int:\n    " ++ NB ++ "    def g(y: Int) -> Int:\n        return y\n    return g(x)\n"));
+    const pre = "list.txt: src/p/b.mojo listed as unmeasured but line ";
+    const post = ": kcov can record it; test it instead";
+    try t.expectEqualStrings(pre ++ "4 has a `;`" ++ post, try listed(a, P ++ "\nalias N = 3; print(N)\n"));
+    try t.expectEqualStrings(pre ++ "3 continues with a backslash or has one outside a string" ++ post, try listed(a, P ++ "alias N = 1 + \\\n 2\n"));
+    try t.expectEqualStrings(pre ++ "3 makes a function value inside a nodebug function" ++ post, try listed(a, NB ++ "def b(x: Int) -> Int:\n    var g = lambda y: y\n    return g(x)\n"));
+    try t.expectEqualStrings(pre ++ "3 is not one of the declarations a nodebug-only source may hold outside its functions (import, alias or comptime constant without a call, struct or trait header, field without a value, listed decorator, docstring, bodiless def, pass)" ++ post, try listed(a, P ++ "print(1)\n"));
 }
 
 // ---- the step as cov_summary runs it: the figure, with and without the file ----
