@@ -64,9 +64,14 @@ pub fn run(a: std.mem.Allocator, entries: []const Entry) !Report {
             try add(a, &r, "{s}: cannot read the lock: {s}", .{ e.path, @errorName(err) });
             continue;
         };
+        // Fail closed: every `path` key of a lock (in either quoting) must be an entry this reads, or a change of the graph's formatting would pass unread.
+        const keys = std.mem.count(u8, text, "\"path\"") + std.mem.count(u8, text, "'path'");
+        var parsed: usize = 0;
+        defer if (parsed != keys) add(a, &r, "{s}: {d} `path` keys but {d} source entries read: an entry is in a shape this check does not read (one `{{\"path\": \"P\", \"sha256\": \"H\"}}` per line); change the check with the graph's format", .{ e.path, keys, parsed }) catch {};
         var lines = std.mem.splitScalar(u8, text, '\n');
         while (lines.next()) |line| {
             const p = parseLine(line) orelse continue;
+            parsed += 1;
             r.sources += 1;
             const file = by_path.get(p.path) orelse {
                 try add(a, &r, "{s}: the source {s} is not among the files of the tree (declared sha256 {s}): the lock names a file that is not there; run `buildrules mojo sync`", .{ e.path, p.path, p.sha });
@@ -81,6 +86,7 @@ pub fn run(a: std.mem.Allocator, entries: []const Entry) !Report {
             }
         }
     }
+    if (r.locks > 0 and r.sources == 0) try add(a, &r, "{d} locks and no source entry in any of them: the check read nothing", .{r.locks});
     return r;
 }
 
@@ -89,7 +95,7 @@ pub fn run(a: std.mem.Allocator, entries: []const Entry) !Report {
 const hello_sha = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"; // sha256 of "hello\n"
 
 fn lockText(a: std.mem.Allocator, path: []const u8, sha: []const u8) ![]u8 {
-    return std.fmt.allocPrint(a, "SCHEMA = 1\nGRAPH_JSON = r'''{{\n  \"units\": [{{\n      \"srcs\": [\n        {{\"path\": \"{s}\", \"sha256\": \"{s}\"}}\n      ],\n      \"path\": \"unrelated\"\n  }}]\n}}\n'''\n", .{ path, sha });
+    return std.fmt.allocPrint(a, "SCHEMA = 1\nGRAPH_JSON = r'''{{\n  \"units\": [{{\n      \"srcs\": [\n        {{\"path\": \"{s}\", \"sha256\": \"{s}\"}}\n      ]\n  }}]\n}}\n'''\n", .{ path, sha });
 }
 
 const Fixture = struct {
@@ -205,4 +211,52 @@ test "every lock is read, and each stale one is a finding of its own" {
     const r = try run(a, &entries);
     try t.expectEqual(@as(usize, 2), r.locks);
     try expectRed(r, &.{ "b/buildrules.mojo.lock.bzl", "b/y.mojo" });
+}
+
+/// A lock whose one entry is written in `shape`, over a file that matches it: the entry is correct, so only the shape can make it red.
+fn expectShapeRefused(shape: []const u8) !void {
+    var f = Fixture.init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    try f.write("lock", shape);
+    try f.write("src", "hello\n");
+    const entries = [_]Entry{
+        .{ .path = "pkg/buildrules.mojo.lock.bzl", .file = try f.real("lock") },
+        .{ .path = "pkg/src.mojo", .file = try f.real("src") },
+    };
+    const r = try run(a, &entries);
+    if (r.errors.items.len == 0) return error.ShapeSkipped;
+    try t.expect(std.mem.indexOf(u8, r.errors.items[0], "pkg/buildrules.mojo.lock.bzl") != null);
+    var named = false;
+    for (r.errors.items) |m| {
+        if (std.mem.indexOf(u8, m, "shape this check does not read") != null) named = true;
+    }
+    try t.expect(named);
+}
+
+test "an entry in single quotes is refused, not skipped" {
+    try expectShapeRefused("  {'path': 'pkg/src.mojo', 'sha256': '" ++ hello_sha ++ "'}\n");
+}
+
+test "an entry with its keys swapped is refused, not skipped" {
+    try expectShapeRefused("  {\"sha256\": \"" ++ hello_sha ++ "\", \"path\": \"pkg/src.mojo\"}\n");
+}
+
+test "an entry in compact JSON is refused, not skipped" {
+    try expectShapeRefused("  {\"path\":\"pkg/src.mojo\",\"sha256\":\"" ++ hello_sha ++ "\"}\n");
+}
+
+test "a second entry on one line is refused, not skipped" {
+    const e = "{\"path\": \"pkg/src.mojo\", \"sha256\": \"" ++ hello_sha ++ "\"}";
+    try expectShapeRefused("  " ++ e ++ ", " ++ e ++ "\n");
+}
+
+test "locks with no source entry at all are refused" {
+    var f = Fixture.init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    try f.write("lock", "SCHEMA = 1\n");
+    const entries = [_]Entry{.{ .path = "pkg/buildrules.mojo.lock.bzl", .file = try f.real("lock") }};
+    const r = try run(a, &entries);
+    try expectRed(r, &.{"no source entry"});
 }
