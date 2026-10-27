@@ -84,6 +84,90 @@ fn recordable(a: std.mem.Allocator, name: []const u8, path: []const u8, text: []
         if (!f.nodebug) return try std.fmt.allocPrint(a, "{s}: {s} listed as unmeasured but {s} at line {d} is not @always_inline(\"nodebug\"): kcov can record it; test it instead", .{ name, path, f.name, f.line });
     }
     if (fns.len == 0) return try std.fmt.allocPrint(a, "{s}: {s} listed as unmeasured but it defines no @always_inline(\"nodebug\") function: kcov can record it; test it instead", .{ name, path });
+    const ls = try mojo_src.lexSource(a, text);
+    if (try strayLine(a, ls, fns)) |s| {
+        return try std.fmt.allocPrint(a, "{s}: {s} listed as unmeasured but line {d} {s}: kcov can record it; test it instead", .{ name, path, s.line, s.what });
+    }
+    return null;
+}
+
+const Stray = struct { line: usize, what: []const u8 };
+
+fn isIdentByte(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_';
+}
+
+fn codeText(l: mojo_src.Line) []const u8 {
+    const t = if (l.comment) |c| l.text[0..c] else l.text;
+    return std.mem.trim(u8, t, " \t\r");
+}
+
+/// Whether the word `w` stands in `code` between non-identifier bytes (inside a string too: the scan errs toward refusing).
+fn hasWord(code: []const u8, w: []const u8) bool {
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, code, from, w)) |at| : (from = at + 1) {
+        const before = at == 0 or !isIdentByte(code[at - 1]);
+        const after = at + w.len >= code.len or !isIdentByte(code[at + w.len]);
+        if (before and after) return true;
+    }
+    return false;
+}
+
+fn startsWord(code: []const u8, w: []const u8) bool {
+    return std.mem.startsWith(u8, code, w) and (code.len == w.len or !isIdentByte(code[w.len]));
+}
+
+/// Whether `code`, a statement outside every function, only declares: a decorator, a `struct` or `trait` header, a field, an `alias` or a `comptime`
+/// constant (not a `comptime if` / `for` / `while` block, which is code), a docstring or a bare string.
+fn declares(code: []const u8) bool {
+    if (code[0] == '@' or code[0] == '"' or code[0] == '\'') return true;
+    for ([_][]const u8{ "struct", "trait", "var", "alias" }) |w| if (startsWord(code, w)) return true;
+    // A `def` that mojo_src.declaredFunctions did not list has no body or `...` alone for one (a requirement of a trait): it is a declaration.
+    if (std.mem.eql(u8, code, "...") or std.mem.startsWith(u8, code, "def ") or std.mem.startsWith(u8, code, "fn ")) return true;
+    if (startsWord(code, "comptime")) {
+        const rest = std.mem.trimLeft(u8, code["comptime".len..], " \t");
+        for ([_][]const u8{ "if", "elif", "else", "for", "while", "assert" }) |w| if (startsWord(rest, w)) return false;
+        return true;
+    }
+    return false;
+}
+
+/// The first line that is code the report could count and that is not in the body of a nodebug function: a statement outside every function (the
+/// declarations of `declares` and imports are not), or in a nodebug body a function value (`fn`, `def` or `lambda` that does not start a declared
+/// function of its own). Null when there is none.
+fn strayLine(a: std.mem.Allocator, ls: []const mojo_src.Line, fns: []const mojo_src.Fn) !?Stray {
+    var depth: i32 = 0;
+    var cont = false;
+    var sig_depth: i32 = 0;
+    for (ls, 0..) |l, i| {
+        const n = i + 1;
+        if (!l.code or l.in_string) continue;
+        const code = codeText(l);
+        if (code.len == 0) continue;
+        var owner: ?mojo_src.Fn = null;
+        var is_def = false;
+        for (fns) |f| {
+            if (f.line == n) is_def = true;
+            if (n >= f.line and n <= f.end) owner = f;
+        }
+        if (owner) |f| {
+            // Past the signature of the function (a nested declared function has its own checks), its code may not make a function value.
+            if (f.line == n) sig_depth = 0;
+            if (is_def) {
+                sig_depth = l.opens - l.closes + l.brackets;
+            } else if (sig_depth > 0) {
+                sig_depth += l.opens - l.closes + l.brackets;
+            } else if (hasWord(code, "fn") or hasWord(code, "def") or hasWord(code, "lambda")) {
+                return .{ .line = n, .what = try a.dupe(u8, "makes a function value inside a function, which may be run without a record") };
+            }
+            continue;
+        }
+        const inside = depth > 0 or cont;
+        depth += l.opens - l.closes + l.brackets;
+        cont = l.continued;
+        if (inside or l.is_import and !l.tail_code) continue;
+        if (!declares(code)) return .{ .line = n, .what = try a.dupe(u8, "is a statement outside every @always_inline(\"nodebug\") function") };
+    }
     return null;
 }
 

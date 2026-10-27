@@ -228,6 +228,26 @@ test "load: a file with statements but no function is refused" {
     try t.expectEqualStrings("list.txt: src/p/b.mojo listed as unmeasured but it defines no @always_inline(\"nodebug\") function: kcov can record it; test it instead", try listed(a, "comptime N = 3\nvar x = 1\n"));
 }
 
+test "load: a statement outside every nodebug function refuses the entry, a declaration does not" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const stray = "list.txt: src/p/b.mojo listed as unmeasured but line 5 is a statement outside every @always_inline(\"nodebug\") function: kcov can record it; test it instead";
+    try t.expectEqualStrings(stray, try listed(a, NB ++ "def f() -> Int:\n    return 1\n\ncomptime if True:\n    print(\"x\")\n"));
+    try t.expectEqualStrings("list.txt: src/p/b.mojo listed as unmeasured but line 5 is a statement outside every @always_inline(\"nodebug\") function: kcov can record it; test it instead", try listed(a, NB ++ "def f() -> Int:\n    return 1\n\nfor i in range(3):\n    print(i)\n"));
+    try t.expectEqualStrings("accepted", try listed(a, "from std.sys import size_of\nalias N = 3\ncomptime M = 4\n\n" ++ NB ++ "def f() -> Int:\n    return 1\n"));
+    try t.expectEqualStrings("accepted", try listed(a, "struct S:\n    var x: Int\n\n    " ++ "@always_inline(\"nodebug\")\n    def m(self) -> Int:\n        return 1\n"));
+}
+
+test "load: a function value made inside a nodebug function refuses the entry, a nested nodebug function does not" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const made = "list.txt: src/p/b.mojo listed as unmeasured but line 3 makes a function value inside a function, which may be run without a record: kcov can record it; test it instead";
+    try t.expectEqualStrings(made, try listed(a, NB ++ "def f(x: Int) -> Int:\n    var g = fn(y: Int) -> Int: return y\n    return g(x)\n"));
+    try t.expectEqualStrings("accepted", try listed(a, NB ++ "def f(x: Int) -> Int:\n    " ++ NB ++ "    def g(y: Int) -> Int:\n        return y\n    return g(x)\n"));
+}
+
 // ---- the step as cov_summary runs it: the figure, with and without the file ----
 
 const rep_a =
