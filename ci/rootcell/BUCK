@@ -1,4 +1,5 @@
 load("@buildrules//rules:platforms.bzl", "buildrules_execution_platforms", "exec_platform_missing", "exec_platform_ready", "linux_arm64_enabled", "linux_arm64_gate")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load(":probe.bzl", "probe")
 
 # This package is loaded in a cell whose own configuration has no `[buildrules_re]` section (ci/root_keys.bxl). Every key buildrules reads is the root cell's, so the
@@ -21,3 +22,5 @@ probe(
     macos_aarch64_missing = exec_platform_missing("macos-aarch64", "probe"),
     macos_aarch64_ready = str(exec_platform_ready("macos-aarch64")),
 )
+
+scrub_files()

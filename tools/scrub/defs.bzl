@@ -50,7 +50,7 @@ def scrub_test(name, packages, require = [], visibility = ["PUBLIC"]):
     scrub_rule(
         name = name,
         packages = packages,
-        prefixes = ["examples/crates/" if p.startswith("crates//") else ("toolchains/" if p.startswith("toolchains//") else "") for p in packages],
+        prefixes = ["examples/crates/" if p.startswith("crates//") else ("toolchains/" if p.startswith("toolchains//") else ("ci/rootcell/" if p.startswith("rootcell//") else "")) for p in packages],
         require = require,
         visibility = visibility,
     )

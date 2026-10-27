@@ -587,6 +587,7 @@ no_shell(
         "//tools/stage:scrub_files",
         "crates//:scrub_files",
         "crates//crates/zdemo:scrub_files",
+        "rootcell//:scrub_files",
     ],
     require = ["BUCK", "ci/no_shell_check.zig", "ci/no_shell_allow.tsv", "rules/zig/zig.bzl", "site/static/install.sh", "tools/held/BUCK", "examples/crates/Cargo.toml", ".github/workflows/ci.yml"],
 )

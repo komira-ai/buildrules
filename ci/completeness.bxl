@@ -23,7 +23,7 @@ def _pkg(label):
 def _package_problems(q):
     problems = []
     packages = {}
-    for t in q.eval("//... + crates//... + toolchains//..."):
+    for t in q.eval("//... + crates//... + toolchains//... + rootcell//..."):
         packages[_pkg(t.label)] = True
     both = {}
     for name, owner in [("//ci:no_shell", "ci/BUCK"), ("//tools/scrub:scrub", "tools/scrub/BUCK")]:
