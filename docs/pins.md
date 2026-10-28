@@ -63,6 +63,14 @@ mopm 0.0.85 is the published release, https://github.com/komira-ai/mopm/releases
 as in the release's `SHA256SUMS` (downloaded and `sha256sum -c` checked, 2026-10-27). Nothing names it yet. Since 0.0.83 the one change a consumer sees is in `mopm run`: what follows `--` reaches the program
 verbatim and `--opt-level <0-3>` is new (v0.0.84 changed tests only). The unit graph, `mopm plan`, `mopm lock` and `mopm pack` are as in 0.0.83, so this tree reads nothing differently.
 
+## mopm 0.0.86
+
+mopm 0.0.86 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.86, pinned for all three hosts beside 0.0.85 in the same two tables, with the sizes and digests of its assets
+as in the release's `SHA256SUMS` (downloaded and `sha256sum -c` checked, 2026-10-28). Nothing names it yet. Since 0.0.85 one thing changed that this tree reads: a native dependency named `lzma`, `xz`
+or `liblzma` is the conda package `liblzma` (the runtime library, `liblzma.so.5`), and the pinned native catalog pins `liblzma` instead of `xz`, dropping `xz`, `xz-tools`, `xz-gpl-tools` and
+`liblzma-devel`, none of which holds the library a program loads. A lock written by 0.0.86 for a package that declares `lzma` pins `liblzma` alone in `system_libs`; the nine packages of each subdir's
+catalog all unpack with `conda_unpack --all-libs` (`rules/mojo/system_libs.bzl`), checked on the farm with the files of the catalog.
+
 ## Mirrors
 
 `buildrules.url_map` (rules/core/url_map.bzl) replaces the leading part of a download's URL and nothing else: the sha256 and size are still checked, so a mirror
