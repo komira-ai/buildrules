@@ -57,6 +57,12 @@ as in the release's `SHA256SUMS` (downloaded and `sha256sum -c` checked, 2026-10
 and the unit graph it prints is format 3 (`system_libs`, `loads`), and a package can say `publish = false`. This tree reads format 3 only from the change that teaches `rules/mojo` the format, so a
 repository that names 0.0.83 in its `mopm-toolchain.toml` needs a buildrules release that contains it; until then a row is all this tree has of 0.0.83, and no target reads it.
 
+## mopm 0.0.85
+
+mopm 0.0.85 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.85, pinned for all three hosts beside 0.0.83 in the same two tables, with the sizes and digests of its assets
+as in the release's `SHA256SUMS` (downloaded and `sha256sum -c` checked, 2026-10-27). Nothing names it yet. Since 0.0.83 the one change a consumer sees is in `mopm run`: what follows `--` reaches the program
+verbatim and `--opt-level <0-3>` is new (v0.0.84 changed tests only). The unit graph, `mopm plan`, `mopm lock` and `mopm pack` are as in 0.0.83, so this tree reads nothing differently.
+
 ## Mirrors
 
 `buildrules.url_map` (rules/core/url_map.bzl) replaces the leading part of a download's URL and nothing else: the sha256 and size are still checked, so a mirror
