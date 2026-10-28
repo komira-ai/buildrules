@@ -39,7 +39,8 @@ and every unit that links it has an entry with `built` that this macro maps to t
 also gets `:conda`, with the archives packed as `lib<id>.a`; `conda = True` gives any package one (a package whose dependencies are workspace members, children or siblings, is packed with each as a versioned dependency: its `mopm.toml` writes `{ path = "../b", version = "0.1" }`). The names `:native_<id>` and `:native_<id>_cxx` are stable: a repository that lists libraries by target can name
 them. Any other native library (a shared one) is an entry of `natives = {"<soname>": "<target>"}`; one the lock or the graph provides may not also be named there.
 Every library target carries `MojoNativeArchiveInfo` (its natives in link order, and their files), which a label that adopts the package hands to a dependent
-that links through other rules.
+that links through other rules, and `:lib` carries `MojoSystemLibsInfo` (the directories of the system libraries the graph pins, rules/mojo/system_libs.bzl), which the
+label hands to a dependent whose tests run through other rules.
 
 Test data and variables. A test that reads files (goldens, fixtures, a pinned third-party file, a program it starts) names them in
 `test_data = {"<test source or *>": {"<staged path>": "<file or target>"}}`, and one that reads variables in `test_env = {"NAME": "value"}`
@@ -852,6 +853,8 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             lib = ":lib_ungated",
             test_runs = tests,
             package = own_lib["package"],
+            # Every library the graph pins, for a label that adopts the package: a dependent's tests load what this package's tests load.
+            system_libs = [syslib_label[n] for n in sorted(syslib_label.keys())],
             check = ":check",
             exec_compatible_with = unit_exec(),
             visibility = visibility,

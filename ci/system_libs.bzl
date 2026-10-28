@@ -5,6 +5,10 @@ with that is held here at analysis, without running anything: the run of each te
 library the test loads, in the order of the graph's list, and for none the test does not load; and the compile of each test (its release build, its coverage build) is given none
 of them, and a graph slice of format 2 without `loads` (a compile moves with a pin otherwise, and a mopm that reads formats 1 and 2 stops at a 3). The runs that execute it are the
 package's own tests (//ci:mojo) and the stand-in of ci/mojo_syslibs.
+
+The package's `:lib` also hands every library the graph pins to a label that adopts the package (`MojoSystemLibsInfo`, rules/mojo/providers.bzl), so a dependent that runs
+its tests through other rules is given the same files: the gated library lists one `mojo_system_lib` for each `system_libs` entry of the graph, and no other. The stand-in of
+ci/mojo_syslibs (`run_green_via_lib`, `run_red_via_lib_without`) runs a probe with the directories such a library exports.
 """
 
 load("//examples/mojo/load_native:buildrules.mojo.lock.bzl", "GRAPH", "GRAPHS")
@@ -31,6 +35,13 @@ def system_libs_problems(ctx, platform):
     tests = [u for u in GRAPH["units"] if u["kind"] == "test"]
     if len(tests) < 2 or len(GRAPHS) < 2:
         problems.append("{}: the graph must hold two tests that load different libraries and a graph for each of two subdirs, so each test's own libraries and each platform's pin are held".format(PACKAGE))
+    pinned = sorted([e["name"] for e in GRAPH.get("system_libs", [])])
+    if not pinned:
+        problems.append("{}: the graph pins no system library, so what `:lib` hands to an adopting label is not held".format(PACKAGE))
+    lib = ctx.configured_targets("{}:lib".format(PACKAGE), target_platform = platform)
+    exported = sorted([d.name for d in lib.attrs_eager().system_libs.value()])
+    if exported != ["syslib_" + n for n in pinned]:
+        problems.append("{}:lib lists the system libraries {} for a label that adopts the package; the graph pins {}".format(PACKAGE, exported, ["syslib_" + n for n in pinned]))
     for u in tests:
         stem = u["outputs"][0][:-len(".pass")]
         loads = u["loads"]
