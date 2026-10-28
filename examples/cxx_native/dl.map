@@ -1,0 +1,6 @@
+{
+  global:
+    shapes_dl_sides;
+  local:
+    *;
+};

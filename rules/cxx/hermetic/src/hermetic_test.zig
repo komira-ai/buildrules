@@ -238,3 +238,99 @@ test "running out of memory is an error of debugSections and findings, whichever
     try std.testing.expect(failed > 0);
     try std.testing.expect(failed < 64);
 }
+
+/// An ELF64 with a dynamic section whose DT_NEEDED entries name `needed` (in order), then one DT_SONAME and a DT_NULL: header, the dynamic string table, the
+/// dynamic entries, and section headers for null, .dynstr (index 1) and .dynamic (index 2, linked to the string table).
+fn dynImage(a: std.mem.Allocator, needed: []const []const u8, name_off_past_end: bool) ![]u8 {
+    var strs = std.ArrayList(u8).empty;
+    try strs.append(a, 0);
+    var offs = std.ArrayList(u64).empty;
+    for (needed) |n| {
+        try offs.append(a, strs.items.len);
+        try strs.appendSlice(a, n);
+        try strs.append(a, 0);
+    }
+    const soname_off = strs.items.len;
+    try strs.appendSlice(a, "libself.so.1");
+    try strs.append(a, 0);
+    const nent = needed.len + 3 + @as(usize, if (name_off_past_end) 1 else 0);
+    const str_off = 64;
+    const dyn_off = (str_off + strs.items.len + 7) / 8 * 8;
+    const sh_off = dyn_off + nent * 16;
+    const b = try a.alloc(u8, sh_off + 3 * 64);
+    @memset(b, 0);
+    @memcpy(b[0..4], "\x7fELF");
+    b[4] = 2;
+    b[5] = 1;
+    std.mem.writeInt(u64, b[0x28..][0..8], sh_off, .little);
+    std.mem.writeInt(u16, b[0x3A..][0..2], 64, .little);
+    std.mem.writeInt(u16, b[0x3C..][0..2], 3, .little);
+    std.mem.writeInt(u16, b[0x3E..][0..2], 1, .little);
+    @memcpy(b[str_off..][0..strs.items.len], strs.items);
+    var e: usize = 0;
+    for (offs.items) |o| {
+        std.mem.writeInt(u64, b[dyn_off + e * 16 ..][0..8], 1, .little);
+        std.mem.writeInt(u64, b[dyn_off + e * 16 + 8 ..][0..8], o, .little);
+        e += 1;
+    }
+    if (name_off_past_end) {
+        std.mem.writeInt(u64, b[dyn_off + e * 16 ..][0..8], 1, .little);
+        std.mem.writeInt(u64, b[dyn_off + e * 16 + 8 ..][0..8], 9999, .little);
+        e += 1;
+    }
+    std.mem.writeInt(u64, b[dyn_off + e * 16 ..][0..8], 14, .little); // DT_SONAME is not a DT_NEEDED
+    std.mem.writeInt(u64, b[dyn_off + e * 16 + 8 ..][0..8], soname_off, .little);
+    // The last entry is DT_NULL (zeros).
+    const dstr = sh_off + 64;
+    std.mem.writeInt(u32, b[dstr + 4 ..][0..4], 3, .little);
+    std.mem.writeInt(u64, b[dstr + 0x18 ..][0..8], str_off, .little);
+    std.mem.writeInt(u64, b[dstr + 0x20 ..][0..8], strs.items.len, .little);
+    const dyn = sh_off + 128;
+    std.mem.writeInt(u32, b[dyn + 4 ..][0..4], 6, .little);
+    std.mem.writeInt(u64, b[dyn + 0x18 ..][0..8], dyn_off, .little);
+    std.mem.writeInt(u64, b[dyn + 0x20 ..][0..8], nent * 16, .little);
+    std.mem.writeInt(u32, b[dyn + 0x28 ..][0..4], 1, .little);
+    return b;
+}
+
+// Catches: a binary that asks the loader for the machine's own C++ runtime passing as hermetic, the check reading the wrong tag (DT_SONAME) or only the first
+// entry, and a library that merely shares a prefix (`libc++utils.so`, `libunwindx.so`) refused for it.
+test "runtimeNeeded: every DT_NEEDED naming a C++ runtime library, versioned or not, and nothing else" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const b = try dynImage(a, &.{ "libc.so.6", "libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc++utils.so", "libunwindx.so.1", "libc++.so", "libc++abi.so.1", "libunwind.so.8" }, false);
+    const got = try H.runtimeNeeded(a, b);
+    try std.testing.expectEqual(@as(usize, 5), got.len);
+    try std.testing.expectEqualStrings("libstdc++.so.6", got[0]);
+    try std.testing.expectEqualStrings("libgcc_s.so.1", got[1]);
+    try std.testing.expectEqualStrings("libc++.so", got[2]);
+    try std.testing.expectEqualStrings("libc++abi.so.1", got[3]);
+    try std.testing.expectEqualStrings("libunwind.so.8", got[4]);
+    // The same libraries are named in the finding of the whole check, with a reason that says the runtime is static.
+    const f = try H.findings(a, b, "/work/root");
+    try std.testing.expectEqual(@as(usize, 1), f.len);
+    try std.testing.expect(std.mem.indexOf(u8, f[0], "needs the shared library libstdc++.so.6") != null);
+}
+
+test "runtimeNeeded: a dynamic section with only the C library, a static image, a name past the string table, a cut file and a non-ELF" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try std.testing.expectEqual(@as(usize, 0), (try H.runtimeNeeded(a, try dynImage(a, &.{ "libc.so.6", "libm.so.6" }, false))).len);
+    try std.testing.expectEqual(@as(usize, 0), (try H.runtimeNeeded(a, try image(a, &.{ ".text", ".data" }, "x"))).len);
+    const past = try dynImage(a, &.{"libstdc++.so.6"}, true);
+    try std.testing.expectEqual(@as(usize, 1), (try H.runtimeNeeded(a, past)).len);
+    const b = try dynImage(a, &.{"libstdc++.so.6"}, false);
+    try std.testing.expectError(error.Truncated, H.runtimeNeeded(a, b[0 .. b.len - 100]));
+    try std.testing.expectError(error.NotElf64, H.runtimeNeeded(a, "not an elf, but long enough to pass the first length test of the reader, which wants 64 bytes"));
+}
+
+test "isRuntimeLibrary: the stem, then nothing or a version" {
+    try std.testing.expect(H.isRuntimeLibrary("libstdc++.so"));
+    try std.testing.expect(H.isRuntimeLibrary("libstdc++.so.6.0.33"));
+    try std.testing.expect(H.isRuntimeLibrary("libgcc_s.so.1"));
+    try std.testing.expect(!H.isRuntimeLibrary("libstdc++.sox"));
+    try std.testing.expect(!H.isRuntimeLibrary("libm.so.6"));
+    try std.testing.expect(!H.isRuntimeLibrary("libc++"));
+}

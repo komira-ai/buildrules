@@ -8,4 +8,6 @@ NativeArchiveInfo = provider(fields = {
     "archive": provider_field(typing.Any),
     # The sorted defined global symbols of the archive, one per line.
     "symbols": provider_field(typing.Any),
+    # `c` or `c++`: a C++ library's final link also brings the C++ runtime (rules/cxx/native.bzl).
+    "lang": provider_field(str, default = "c"),
 })

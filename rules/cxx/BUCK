@@ -118,7 +118,7 @@ zig_module(
 
 # archive_check (Zig): the validation of a native static library (`native_archive`, native.bzl): deterministic members, no debug section, no
 # build path, the glibc floor, and no undefined symbol that the final link would lack. Behind its unit tests (archive/src/archive_test.zig).
-_ARCHIVE_SRCS = ["archive/src/archive_test.zig", "archive/src/archive_macho_test.zig", "archive/src/floor_symbols.txt", "archive/src/floor_symbols_macos.txt"]
+_ARCHIVE_SRCS = ["archive/src/archive_test.zig", "archive/src/archive_macho_test.zig", "archive/src/floor_symbols.txt", "archive/src/floor_symbols_macos.txt", "archive/src/floor_symbols_cxx.txt", "archive/src/floor_symbols_cxx_macos.txt"]
 
 zig_test(
     name = "archive_check_unit",

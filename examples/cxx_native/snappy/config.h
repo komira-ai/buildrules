@@ -1,0 +1,30 @@
+// snappy's config.h (cmake/config.h.in) for a POSIX system at the platform baseline: the compiler builtins and POSIX functions on, every instruction-set
+// extension off (the library is compiled for the baseline CPU of its platform, so the portable code paths are the ones it takes).
+#ifndef THIRD_PARTY_SNAPPY_OPENSOURCE_CMAKE_CONFIG_H_
+#define THIRD_PARTY_SNAPPY_OPENSOURCE_CMAKE_CONFIG_H_
+
+#define HAVE_ATTRIBUTE_ALWAYS_INLINE 1
+#define HAVE_BUILTIN_CTZ 1
+#define HAVE_BUILTIN_EXPECT 1
+#define HAVE_BUILTIN_PREFETCH 1
+#define HAVE_FUNC_MMAP 1
+#define HAVE_FUNC_SYSCONF 1
+#define HAVE_LIBLZO2 0
+#define HAVE_LIBZ 0
+#define HAVE_LIBLZ4 0
+#define HAVE_SYS_MMAN_H 1
+#define HAVE_SYS_RESOURCE_H 1
+#define HAVE_SYS_TIME_H 1
+#define HAVE_SYS_UIO_H 1
+#define HAVE_UNISTD_H 1
+#define HAVE_WINDOWS_H 0
+#define SNAPPY_HAVE_SSSE3 0
+#define SNAPPY_HAVE_X86_CRC32 0
+#define SNAPPY_HAVE_BMI2 0
+#define SNAPPY_HAVE_NEON 0
+#define SNAPPY_RVV_1 0
+#define SNAPPY_RVV_0_7 0
+#define SNAPPY_HAVE_NEON_CRC32 0
+#define SNAPPY_IS_BIG_ENDIAN 0
+
+#endif  // THIRD_PARTY_SNAPPY_OPENSOURCE_CMAKE_CONFIG_H_

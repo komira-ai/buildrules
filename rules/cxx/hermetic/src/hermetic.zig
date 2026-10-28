@@ -2,6 +2,11 @@
 //!
 //!   hermetic <elf> <result.json>
 //!
+//! A third makes a binary depend on the machine it runs on:
+//!
+//!  - a `DT_NEEDED` entry naming a C++ runtime library (`libstdc++`, `libc++`, `libc++abi`, `libunwind`, `libgcc_s`). The toolchain links zig's libc++ statically; a
+//!    binary or shared object that asks the loader for one of these would run with whichever version the user's system has, or not at all.
+//!
 //! Two defects make a binary depend on the absolute path of the action's working directory (the exec root of a farm worker, the runner's
 //! workspace on GitHub, a home directory on a laptop):
 //!
@@ -10,7 +15,7 @@
 //!  - the working directory itself, as bytes anywhere in the file (a path in a string table, in a section, in `.comment`).
 //!
 //! The directory the tool runs in is the one the build action ran in (an action's working directory is the exec root), so "this directory's path
-//! occurs in the file" is "the file depends on where it was built". Writes a validation result and exits 0 when neither is found, 1 after writing
+//! occurs in the file" is "the file depends on where it was built". Writes a validation result and exits 0 when none of the three is found, 1 after writing
 //! "failure" when one is (or the file is not an ELF it can read).
 
 const std = @import("std");
@@ -47,6 +52,46 @@ pub fn debugSections(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allo
     return out.toOwnedSlice(a);
 }
 
+/// The libraries of the C++ runtime that `b` names in a `DT_NEEDED` entry of its dynamic section, in the order of the entries (a static executable has no such section).
+pub fn runtimeNeeded(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.Error)![]const []const u8 {
+    if (b.len < 64 or !std.mem.eql(u8, b[0..4], "\x7fELF") or b[4] != 2 or b[5] != 1) return error.NotElf64;
+    const shoff: usize = @intCast(try rd(u64, b, 0x28));
+    const shentsize: usize = try rd(u16, b, 0x3A);
+    const shnum: usize = try rd(u16, b, 0x3C);
+    var out = std.ArrayList([]const u8).empty;
+    var i: usize = 0;
+    while (i < shnum) : (i += 1) {
+        const sh = shoff + i * shentsize;
+        if (try rd(u32, b, sh + 4) != 6) continue; // SHT_DYNAMIC
+        const off: usize = @intCast(try rd(u64, b, sh + 0x18));
+        const size: usize = @intCast(try rd(u64, b, sh + 0x20));
+        const link: usize = @intCast(try rd(u32, b, sh + 0x28));
+        const str_sh = shoff + link * shentsize;
+        const str_off: usize = @intCast(try rd(u64, b, str_sh + 0x18));
+        const str_size: usize = @intCast(try rd(u64, b, str_sh + 0x20));
+        if (str_off > b.len or b.len - str_off < str_size) return error.Truncated;
+        const strs = b[str_off .. str_off + str_size];
+        var e: usize = 0;
+        while (e + 16 <= size) : (e += 16) {
+            if (try rd(u64, b, off + e) != 1) continue; // DT_NEEDED
+            const name_off: usize = @intCast(try rd(u64, b, off + e + 8));
+            if (name_off >= strs.len) continue;
+            const name = std.mem.sliceTo(strs[name_off..], 0);
+            if (isRuntimeLibrary(name)) try out.append(a, name);
+        }
+    }
+    return out.toOwnedSlice(a);
+}
+
+/// Whether a library file name is one of the C++ runtime's: `lib<stem>.so` with any version after it.
+pub fn isRuntimeLibrary(name: []const u8) bool {
+    const stems = [_][]const u8{ "libstdc++.so", "libc++.so", "libc++abi.so", "libunwind.so", "libgcc_s.so" };
+    for (stems) |st| {
+        if (std.mem.startsWith(u8, name, st) and (name.len == st.len or name[st.len] == '.')) return true;
+    }
+    return false;
+}
+
 /// Whether `dir` (an absolute path longer than "/") occurs in `b`.
 pub fn mentions(b: []const u8, dir: []const u8) bool {
     if (dir.len < 2) return false;
@@ -59,6 +104,9 @@ pub fn findings(a: std.mem.Allocator, b: []const u8, dir: []const u8) ![]const [
     const dbg = try debugSections(a, b);
     if (dbg.len != 0)
         try out.append(a, try std.fmt.allocPrint(a, "it has {d} debug section(s), first {s}: the compile directory is in them (link with -Wl,--strip-debug)", .{ dbg.len, dbg[0] }));
+    const rt = try runtimeNeeded(a, b);
+    if (rt.len != 0)
+        try out.append(a, try std.fmt.allocPrint(a, "it needs the shared library {s}: the C++ runtime is linked statically, so the machine's own would be loaded in its place", .{rt[0]}));
     if (mentions(b, dir)) try out.append(a, try std.fmt.allocPrint(a, "it contains the absolute path of the directory it was built in ({s})", .{dir}));
     return out.toOwnedSlice(a);
 }
@@ -87,12 +135,12 @@ pub fn main() !void {
         std.process.exit(1);
     };
     if (found.len != 0) {
-        const msg = try std.fmt.allocPrint(a, "hermetic: {s} depends on where it was built: {s}", .{ name, found[0] });
+        const msg = try std.fmt.allocPrint(a, "hermetic: {s} depends on the machine or directory it was built in: {s}", .{ name, found[0] });
         try writeResult(argv[2], false, msg);
         for (found) |f| std.debug.print("hermetic: {s}: {s}\n", .{ name, f });
         std.process.exit(1);
     }
-    try writeResult(argv[2], true, "no debug section and no path of the build directory");
+    try writeResult(argv[2], true, "no debug section, no C++ runtime library asked of the loader and no path of the build directory");
 }
 
 test {

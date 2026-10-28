@@ -1,6 +1,6 @@
 //! archive_check: the validation of a native static library (`native_archive`, rules/cxx/native.bzl).
 //!
-//!   archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>]
+//!   archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>] [--lang c|c++]
 //!
 //! A static library a Mojo package ships is linked into other people's programs, so it is held to what a library must be:
 //!
@@ -14,6 +14,8 @@
 //!  - closed: every undefined global symbol is defined by the archive itself, by a `--needs` archive, by the C library at the floor or by the
 //!    compiler runtime (`floor_symbols.txt`; for Mach-O objects `floor_symbols_macos.txt`, libSystem, by the C name: the symbol's leading underscore is
 //!    removed), or is named by an `--allow`. A weak undefined symbol resolves to zero and is not a defect.
+//!    A C++ library (`--lang c++`) may also leave undefined what the C++ runtime defines: libc++, libc++abi and libunwind of the pinned zig, which the final link
+//!    brings statically (`floor_symbols_cxx.txt`; macOS: `floor_symbols_cxx_macos.txt`). A C library never reads those files.
 //!    Whatever else is undefined is named: it is a symbol the final link will not find.
 //!
 //! Writes a validation result (`{"version":1,"data":{"status",...}}`) and exits 0 when every rule holds; exits 1 after writing "failure" when
@@ -29,6 +31,8 @@ const floor = @import("cxx_floor");
 
 pub const floor_symbols = @embedFile("floor_symbols.txt");
 pub const floor_symbols_macos = @embedFile("floor_symbols_macos.txt");
+pub const floor_symbols_cxx = @embedFile("floor_symbols_cxx.txt");
+pub const floor_symbols_cxx_macos = @embedFile("floor_symbols_cxx_macos.txt");
 
 pub const Error = error{ NotArchive, Truncated, BadHeader, NotElf64, NotMacho64, NotRelocatable };
 
@@ -367,6 +371,8 @@ pub const Options = struct {
     /// Symbols the author names as provided by something the check cannot see.
     allow: []const []const u8 = &.{},
     max_glibc: []const u8 = "2.34",
+    /// A C++ library (`--lang c++`): the symbols of the C++ runtime the final link brings (floor_symbols_cxx.txt, floor_symbols_cxx_macos.txt) are known too.
+    cxx: bool = false,
     /// The absolute path of the directory the archive was built in ("" skips the test: a unit test has none).
     dir: []const u8 = "",
 };
@@ -457,6 +463,18 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
         const t = std.mem.trim(u8, l, " \r");
         if (t.len != 0 and t[0] != '#') known_macho.add(t);
     }
+    if (o.cxx) {
+        lines = std.mem.splitScalar(u8, floor_symbols_cxx, '\n');
+        while (lines.next()) |l| {
+            const t = std.mem.trim(u8, l, " \r");
+            if (t.len != 0 and t[0] != '#') known.add(t);
+        }
+        lines = std.mem.splitScalar(u8, floor_symbols_cxx_macos, '\n');
+        while (lines.next()) |l| {
+            const t = std.mem.trim(u8, l, " \r");
+            if (t.len != 0 and t[0] != '#') known_macho.add(t);
+        }
+    }
     for (o.allow) |s| {
         known.add(s);
         known_macho.add(s);
@@ -519,9 +537,10 @@ pub const Cli = struct {
     allow: []const []const u8,
     symbols: ?[]const u8,
     max_glibc: []const u8,
+    cxx: bool = false,
 };
 
-pub const usage = "usage: archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>]";
+pub const usage = "usage: archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>] [--lang c|c++]";
 
 pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocator.Error!?Cli {
     if (args.len < 2) return null;
@@ -542,6 +561,8 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocat
             c.symbols = val;
         } else if (std.mem.eql(u8, flag, "--max-glibc")) {
             c.max_glibc = val;
+        } else if (std.mem.eql(u8, flag, "--lang")) {
+            if (std.mem.eql(u8, val, "c++")) c.cxx = true else if (!std.mem.eql(u8, val, "c")) return null;
         } else return null;
     }
     if (oom) return error.OutOfMemory;
@@ -587,7 +608,7 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, dir: []const u8, args: []const
         needs.push(nb);
     }
     const name = std.fs.path.basename(c.archive);
-    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir });
+    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .cxx = c.cxx, .dir = dir });
     var out = Acc(u8){ .a = a, .oom = &oom };
     for (rep.defined) |s| {
         out.pushAll(s);

@@ -577,3 +577,48 @@ test "symbols: a symbol table or a string table that runs past the end of the fi
         try t.expectError(error.Truncated, A.symbols(a, cut));
     }
 }
+
+// Catches: a C++ library refused for the runtime it is meant to link (operator new, the virtual-call stub, the personality routine), a C library given the
+// C++ floor, and a C++ library let off symbols the runtime does not define.
+test "C++: the runtime's symbols are known to a C++ library only; a name outside the runtime is refused in both" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const user = try object(a, &.{
+        .{ .name = "_Znwm", .kind = .undef },
+        .{ .name = "_ZdlPv", .kind = .undef },
+        .{ .name = "__cxa_pure_virtual", .kind = .undef },
+        .{ .name = "__gxx_personality_v0", .kind = .undef },
+        .{ .name = "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6appendEPKc", .kind = .undef },
+    }, &.{});
+    const b = try archive(a, &.{.{ .name = "a.o", .data = user }});
+    const cxx = try A.check(a, "libx.a", b, .{ .cxx = true });
+    try t.expectEqual(@as(usize, 0), cxx.findings.len);
+    // The same archive as a C library: each runtime symbol is named.
+    const c = try A.check(a, "libx.a", b, .{});
+    try t.expectEqual(@as(usize, 5), c.findings.len);
+    try t.expect(hasFinding(c, "undefined symbol: _Znwm"));
+    try t.expect(hasFinding(c, "undefined symbol: __cxa_pure_virtual"));
+    // A symbol of libstdc++ (std::__cxx11), one of no library, and a glibc symbol newer than the floor are refused in a C++ library.
+    const bad = try object(a, &.{
+        .{ .name = "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_appendEPKcm", .kind = .undef },
+        .{ .name = "_Z17not_in_any_runtimev", .kind = .undef },
+        .{ .name = "arc4random", .kind = .undef },
+    }, &.{});
+    const bb = try archive(a, &.{.{ .name = "a.o", .data = bad }});
+    const r = try A.check(a, "libx.a", bb, .{ .cxx = true });
+    try t.expectEqual(@as(usize, 3), r.findings.len);
+    try t.expect(hasFinding(r, "undefined symbol: _ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_appendEPKcm"));
+    try t.expect(hasFinding(r, "undefined symbol: _Z17not_in_any_runtimev"));
+    try t.expect(hasFinding(r, "undefined symbol: arc4random"));
+}
+
+test "parseArgs: --lang c++ and --lang c; any other language is refused" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--lang", "c++" })).?.cxx);
+    try t.expect(!(try A.parseArgs(a, &.{ "l.a", "r.json", "--lang", "c" })).?.cxx);
+    try t.expect(!(try A.parseArgs(a, &.{ "l.a", "r.json" })).?.cxx);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--lang", "rust" })) == null);
+}

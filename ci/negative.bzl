@@ -430,6 +430,8 @@ FAULTY = [
     ("//ci/faulty:native_with_an_undefined_symbol", "//ci/faulty:native_good", "undefined symbol: faulty_missing_helper"),
     ("//ci/faulty:native_newer_than_the_floor", "//ci/faulty:native_good", "undefined symbol: arc4random"),
     ("//ci/faulty:native_with_debug_info", "//ci/faulty:native_good", "member debug_info.c.pic.o has 1 debug section(s), first .debug_faulty"),
+    ("//ci/faulty:native_c_using_the_cxx_runtime", "//ci/faulty:native_cxx_good", "undefined symbol: _Znwm"),
+    ("//ci/faulty:native_cxx_beyond_the_runtime", "//ci/faulty:native_cxx_good", "undefined symbol: _ZSt20__throw_length_errorPKc"),
     # The data and the variables of a Mojo test (ci/mojo_data/BUCK): the stand-in test reads what is staged and says which of its expectations failed.
     # The control of each is the run that stages everything the probe expects.
     ("//ci/mojo_data:run_red_content", "//ci/mojo_data:run_green", "data_probe: greeting.txt holds other data"),

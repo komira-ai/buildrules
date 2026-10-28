@@ -1,0 +1,159 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/cxx:defs.bzl", "c_check", "glibc_floor_check", "hermetic_check")
+load("@buildrules//rules/cxx:native.bzl", "native_static")
+
+# C++ static libraries of the kind a package ships as a member native (docs/contract.md, section 12): `native_static` with `lang = "c++"`. Each archive is checked by
+# archive_check against the C++ runtime of its platform (libc++, libc++abi and libunwind of the pinned zig on linux; the system libc++ on macOS arm64), which the final
+# link brings. The consumers below link the archive itself, as `prebuilt_cxx_library`, never the library's sources, and run it (linux x86_64).
+
+# Sources of the package: new, delete, a pure virtual function, libc++ strings.
+native_static(
+    name = "native_shapes",
+    srcs = ["shapes.cc"],
+    hdrs = ["shapes.h"],
+    soname = "libshapes.a",
+    lang = "c++",
+    std = "c++17",
+    visibility = ["PUBLIC"],
+)
+
+# snappy 1.3.1 from its pinned release archive: the sources are the archive's, the two generated headers the package's (snappy/).
+native_static(
+    name = "native_snappy",
+    soname = "libsnappy.a",
+    srcs = [],
+    hdrs = ["snappy/config.h", "snappy/snappy-stubs-public.h"],
+    includes = ["examples/cxx_native/snappy"],
+    cflags = ["-DHAVE_CONFIG_H", "-DNDEBUG", "-w"],
+    lang = "c++",
+    std = "c++11",
+    source = {
+        "url": "https://github.com/google/snappy/archive/refs/tags/1.3.1.tar.gz",
+        "sha256": "893f708a0bf4b5529d555ffcee390e940e932fcf90261f682604475a76cd0247",
+        "size_bytes": 1116583,
+        "strip_prefix": "snappy-1.3.1",
+        "srcs": ["snappy.cc", "snappy-c.cc", "snappy-sinksource.cc", "snappy-stubs-internal.cc"],
+        "hdrs": ["snappy.h", "snappy-c.h", "snappy-internal.h", "snappy-sinksource.h", "snappy-stubs-internal.h"],
+    },
+    visibility = ["PUBLIC"],
+)
+
+prebuilt_cxx_library(
+    name = "shapes_archive",
+    static_lib = ":native_shapes",
+    static_pic_lib = ":native_shapes",
+    preferred_linkage = "static",
+    target_compatible_with = LINUX_X86_64,
+)
+
+prebuilt_cxx_library(
+    name = "snappy_archive",
+    static_lib = ":native_snappy",
+    static_pic_lib = ":native_snappy",
+    preferred_linkage = "static",
+    target_compatible_with = LINUX_X86_64,
+)
+
+cxx_binary(
+    name = "use_shapes",
+    srcs = ["main_shapes.cc"],
+    compiler_flags = ["-O2"],
+    deps = [":shapes_archive"],
+    target_compatible_with = LINUX_X86_64,
+)
+
+cxx_binary(
+    name = "use_snappy",
+    srcs = ["main_snappy.cc"],
+    compiler_flags = ["-O2"],
+    deps = [":snappy_archive"],
+    target_compatible_with = LINUX_X86_64,
+)
+
+# A consumer of a C++ archive takes the C++ runtime into itself: it asks the loader for no libstdc++, libc++, libc++abi, libunwind or libgcc_s (hermetic_check),
+# and needs no glibc symbol version newer than the floor, so it runs on a machine whose own C++ runtime is any version or absent.
+hermetic_check(
+    name = "hermetic_shapes",
+    exe = ":use_shapes",
+    target_compatible_with = LINUX_X86_64,
+)
+
+glibc_floor_check(
+    name = "floor_shapes",
+    exe = ":use_shapes",
+    target_compatible_with = LINUX_X86_64,
+)
+
+hermetic_check(
+    name = "hermetic_snappy",
+    exe = ":use_snappy",
+    target_compatible_with = LINUX_X86_64,
+)
+
+glibc_floor_check(
+    name = "floor_snappy",
+    exe = ":use_snappy",
+    target_compatible_with = LINUX_X86_64,
+)
+
+# The same archive in a shared object that a program opens at run time (a JIT or a REPL loads libraries so). The object carries the C++ runtime inside it, hides
+# every symbol but its own entry point (dl.map), and asks the loader for no C++ runtime (hermetic_dl); `dl_main` is C and has none either, and checks the runtime's
+# symbols are not visible through the handle, so neither side can take the other's.
+export_file(
+    name = "dl.map",
+    src = "dl.map",
+)
+
+cxx_library(
+    name = "shapes_dl",
+    srcs = ["dl_shim.cc"],
+    compiler_flags = ["-O2", "-fvisibility=hidden"],
+    linker_flags = ["-Wl,--version-script=$(location :dl.map)"],
+    preferred_linkage = "shared",
+    deps = [":shapes_archive"],
+    target_compatible_with = LINUX_X86_64,
+)
+
+hermetic_check(
+    name = "hermetic_dl",
+    exe = ":shapes_dl",
+    target_compatible_with = LINUX_X86_64,
+)
+
+cxx_binary(
+    name = "dl_main",
+    srcs = ["dl_main.c"],
+    compiler_flags = ["-O2"],
+    target_compatible_with = LINUX_X86_64,
+)
+
+command_alias(
+    name = "dl_run",
+    exe = ":dl_main",
+    args = ["$(location :shapes_dl)"],
+    target_compatible_with = LINUX_X86_64,
+)
+
+c_check(
+    name = "runs_dl",
+    exe = ":dl_run",
+    expected_stdout = "dl 7",
+    target_compatible_with = LINUX_X86_64,
+)
+
+c_check(
+    name = "runs_shapes",
+    exe = ":use_shapes",
+    expected_stdout = "shapes 7",
+    target_compatible_with = LINUX_X86_64,
+)
+
+c_check(
+    name = "runs_snappy",
+    exe = ":use_snappy",
+    expected_stdout = "snappy ok",
+    target_compatible_with = LINUX_X86_64,
+)
+
+scrub_files()

@@ -408,3 +408,17 @@ test "members: a symbol table whose name fits the header field (no #1/N) is not 
     try t.expectEqualStrings("a.o", ms[0].name);
     try t.expectEqualStrings("abcd", ms[0].data);
 }
+
+// Catches: a C++ library for macOS refused for the C++ runtime (the system libc++), a C library given that floor, and a name outside it let through.
+test "C++ for macOS: the runtime's names (by C name) are known to a C++ library only" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try clean(a, &.{ .{ .name = "_Znwm", .kind = .undef }, .{ .name = "__cxa_pure_virtual", .kind = .undef }, .{ .name = "__gxx_personality_v0", .kind = .undef } });
+    const b = try archive(a, &.{.{ .name = "a.o", .data = o }});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{ .cxx = true })).findings.len);
+    try t.expectEqual(@as(usize, 3), (try A.check(a, "libx.a", b, .{})).findings.len);
+    const bad = try clean(a, &.{.{ .name = "_Z17not_in_any_runtimev", .kind = .undef }});
+    const bb = try archive(a, &.{.{ .name = "a.o", .data = bad }});
+    try t.expect(hasFinding(try A.check(a, "libx.a", bb, .{ .cxx = true }), "undefined symbol: _Z17not_in_any_runtimev"));
+}

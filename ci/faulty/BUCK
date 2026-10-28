@@ -168,4 +168,32 @@ native_static(
     validate = False,
 )
 
+# C++ native libraries. The control is a C++ library that uses the whole of the runtime its final link brings. The defects: the same runtime symbol in a library whose
+# lang is `c` (the floor of a C library has no C++ runtime), and a symbol of libstdc++ in a C++ library (the runtime is libc++; a library built against libstdc++
+# would need the user's own).
+native_static(
+    name = "native_cxx_good",
+    srcs = ["native/cxx_good.cc"],
+    soname = "libfaulty_cxx_good.a",
+    lang = "c++",
+    std = "c++17",
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_static(
+    name = "native_c_using_the_cxx_runtime",
+    srcs = ["native/uses_cxx_runtime.c"],
+    soname = "libfaulty_c_cxx.a",
+    validate = False,
+)
+
+native_static(
+    name = "native_cxx_beyond_the_runtime",
+    srcs = ["native/cxx_beyond_runtime.cc"],
+    soname = "libfaulty_cxx_beyond.a",
+    lang = "c++",
+    validate = False,
+)
+
 scrub_files()
