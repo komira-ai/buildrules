@@ -7,12 +7,16 @@
 //!   * the members `lib/<leaf>` (a direct child of `lib/`) whose leaf is a shared object (`.so`, `.so.<...>`) or a dynamic library (`.dylib`, `.dylib.<...>`). Static
 //!     archives, pkg-config files, headers, cmake files and everything below `lib/<dir>/` are left out;
 //!   * a member that is a symbolic link (a library's SONAME and its unversioned name usually are) is written as a regular file holding the bytes of the file it
-//!     resolves to, so the output holds no link and a bare name of any of them opens. A link that leaves `lib/`, that points at nothing in the package, or that
-//!     loops is refused;
+//!     resolves to, so the output holds no link and a bare name of any of them opens. A link that leaves `lib/` or that loops is refused;
 //!   * the files are named by their leaf, in `<out_dir>` itself, and have the executable bit when the package's file has it.
-//! Refused, with nothing written at all: a package with no such member, a member named twice, a file that is empty or over 512 MiB, and a member (or the file a link
-//! resolves to) that carries an install-prefix placeholder in `info/paths.json` (the bytes are copied verbatim, so a library that embeds its install prefix would
-//! name a directory of the machine that built it; such a library cannot be listed until the placeholder is rewritten, as modular.cfg's is).
+//!
+//! Noted, not refused (docs/contract.md section 12.11; a pin of a package is policy-free: whatever conda-forge calls a package, it unpacks): a package with no shared
+//! library (a metapackage, a tool, a package of headers) unpacks to an empty directory, and a link to a file the package does not hold (the unversioned name of a
+//! `-devel` package, whose library is in the runtime package) is left out; each says so on the standard error of the action, naming the package, and is no error.
+//! Refused, with nothing written at all (integrity, not policy): an archive that is corrupt or truncated or has no `info/paths.json`, a member named twice, a file that
+//! is empty or over 512 MiB, and a member (or the file a link resolves to) that carries an install-prefix placeholder in `info/paths.json` (the bytes are copied
+//! verbatim, so a library that embeds its install prefix would name a directory of the machine that built it; such a library cannot be listed until the placeholder
+//! is rewritten, as modular.cfg's is).
 
 const std = @import("std");
 const pu = @import("prebuilt_unpack.zig");
@@ -54,13 +58,24 @@ fn leafOf(name: []const u8) ?[]const u8 {
     return leaf;
 }
 
+fn noteLess(_: void, x: []const u8, y: []const u8) bool {
+    return std.mem.lessThan(u8, x, y);
+}
+
 fn lessThan(_: void, x: Lib, y: Lib) bool {
     return std.mem.lessThan(u8, x.name, y.name);
 }
 
-/// The members of `conda` `lib/` that `conda_unpack --all-libs` writes, sorted by name, every refusal made before anything is returned. On an error `why.*`
-/// says what is wrong. Allocates from `a`; the caller drops an arena.
-pub fn collect(a: std.mem.Allocator, conda: []const u8, why: *[]const u8) Error![]Lib {
+pub const Collected = struct {
+    /// The members `conda_unpack --all-libs` writes, sorted by name; empty for a package that has no shared library.
+    libs: []Lib,
+    /// What was left out, one sentence each, without the package's name (the caller says whose they are).
+    notes: []const []const u8,
+};
+
+/// The members of `conda` `lib/` that `conda_unpack --all-libs` writes, sorted by name, and the notes of what it leaves out; every refusal is made before anything is
+/// returned. On an error `why.*` says what is wrong. Allocates from `a`; the caller drops an arena.
+pub fn collect(a: std.mem.Allocator, conda: []const u8, why: *[]const u8) Error!Collected {
     const pkg = pu.payload(conda) catch |e| {
         why.* = try std.fmt.allocPrint(a, "{s}", .{@errorName(e)});
         return e;
@@ -98,6 +113,7 @@ pub fn collect(a: std.mem.Allocator, conda: []const u8, why: *[]const u8) Error!
     }
 
     var libs = std.ArrayList(Lib).empty;
+    var notes = std.ArrayList([]const u8).empty;
     var selected = std.ArrayList([]const u8).empty;
     var iter = entries.iterator();
     while (iter.next()) |kv| {
@@ -106,6 +122,7 @@ pub fn collect(a: std.mem.Allocator, conda: []const u8, why: *[]const u8) Error!
         var at: []const u8 = name;
         var e = kv.value_ptr.*;
         var hops: usize = 0;
+        var dangling: ?[]const u8 = null;
         while (e.link) |target| {
             if (target.len == 0 or std.mem.indexOfScalar(u8, target, '/') != null) {
                 why.* = try std.fmt.allocPrint(a, "lib/{s} is a link to {s}, which is not a file beside it", .{ at, target });
@@ -118,9 +135,13 @@ pub fn collect(a: std.mem.Allocator, conda: []const u8, why: *[]const u8) Error!
             }
             at = target;
             e = entries.get(target) orelse {
-                why.* = try std.fmt.allocPrint(a, "lib/{s} is a link to {s}, which the package does not hold", .{ name, target });
-                return error.DanglingLink;
+                dangling = target;
+                break;
             };
+        }
+        if (dangling) |target| {
+            try notes.append(a, try std.fmt.allocPrint(a, "lib/{s} is a link to {s}, which the package does not hold: left out", .{ name, target }));
+            continue;
         }
         if (e.bytes.len == 0) {
             why.* = try std.fmt.allocPrint(a, "lib/{s} is empty", .{at});
@@ -130,13 +151,14 @@ pub fn collect(a: std.mem.Allocator, conda: []const u8, why: *[]const u8) Error!
         try selected.append(a, name);
         if (!std.mem.eql(u8, at, name)) try selected.append(a, at);
     }
+    std.mem.sort([]const u8, notes.items, {}, noteLess);
     if (libs.items.len == 0) {
-        why.* = "the package has no shared library (lib/*.so*, lib/*.dylib*)";
-        return error.NoLibraries;
+        try notes.append(a, "the package has no shared library (lib/*.so*, lib/*.dylib*): its directory is empty");
+        return .{ .libs = libs.items, .notes = notes.items };
     }
     try refusePlaceholders(a, conda, selected.items, why);
     std.mem.sort(Lib, libs.items, {}, lessThan);
-    return libs.items;
+    return .{ .libs = libs.items, .notes = notes.items };
 }
 
 fn skip(it: *std.tar.Iterator, f: std.tar.Iterator.File) !void {
@@ -183,20 +205,31 @@ fn refusePlaceholders(a: std.mem.Allocator, conda: []const u8, leaves: []const [
     }
 }
 
-/// The program: `args` are `<package.conda> <out_dir>`. Reads the package, refuses before writing, then writes each library into `out_dir` (made).
-pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, args: []const []const u8, why: *[]const u8) Error!void {
+/// The program: `args` are `[--package <name>] <package.conda> <out_dir>`. Reads the package, refuses before writing, then writes each library into `out_dir` (made,
+/// and left empty for a package with none). `notes.*` is what was left out, each line naming the package (`<name>` when given, else the file).
+pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, args_in: []const []const u8, why: *[]const u8, notes: *[]const []const u8) Error!void {
+    var args = args_in;
+    var who: ?[]const u8 = null;
+    if (args.len == 4 and std.mem.eql(u8, args[0], "--package")) {
+        who = args[1];
+        args = args[2..];
+    }
     if (args.len != 2) {
-        why.* = "usage: conda_unpack --all-libs <package.conda> <out_dir>";
+        why.* = "usage: conda_unpack --all-libs [--package <name>] <package.conda> <out_dir>";
         return error.Usage;
     }
     const conda = cwd.readFileAlloc(a, args[0], 1 << 31) catch |e| {
         why.* = try std.fmt.allocPrint(a, "cannot read {s}: {s}", .{ args[0], @errorName(e) });
         return e;
     };
-    const libs = collect(a, conda, why) catch |e| {
+    const got = collect(a, conda, why) catch |e| {
         why.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ args[0], if (why.len != 0) why.* else @errorName(e) });
         return e;
     };
+    const libs = got.libs;
+    const named = try a.alloc([]const u8, got.notes.len);
+    for (got.notes, named) |n, *out_note| out_note.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ who orelse args[0], n });
+    notes.* = named;
     cwd.makePath(args[1]) catch |e| {
         why.* = try std.fmt.allocPrint(a, "cannot create {s}: {s}", .{ args[1], @errorName(e) });
         return e;

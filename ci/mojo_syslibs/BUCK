@@ -66,12 +66,58 @@ mojo_system_lib_rule(
     visibility = ["//ci:"],
 )
 
+# Two packages with no shared library of their own (docs/contract.md section 12.11, "no package is refused for what it is"): conda-forge's `xz` is a metapackage (a
+# tool and its documentation, no `lib/` file at all), and `liblzma-devel` holds the static archive and an unversioned `liblzma.so` that links to a file only the
+# runtime package `liblzma` holds. The unpack gives each an empty directory and says so in a note; it is no error.
+pinned_file(
+    name = "xz.conda",
+    url = "https://conda.anaconda.org/conda-forge/linux-64/xz-5.8.3-ha02ee65_1.conda",
+    sha256 = "547b2392d8f7b76efd4a0970946f6da2a1136ad5fe3dc936af81e02eb7181076",
+    size_bytes = 23610,
+)
+
+pinned_file(
+    name = "liblzma_devel.conda",
+    url = "https://conda.anaconda.org/conda-forge/linux-64/liblzma-devel-5.8.3-hb03c661_1.conda",
+    sha256 = "adef6e8b60afb684110b06b5310977c6836e1c923ce3ec199f45c0f000b42f20",
+    size_bytes = 491970,
+)
+
+mojo_system_lib_rule(
+    name = "xz",
+    archive = ":xz.conda",
+    package = "xz",
+    exec_compatible_with = LINUX_X86_64,
+    visibility = ["//ci:"],
+)
+
+mojo_system_lib_rule(
+    name = "liblzma_devel",
+    archive = ":liblzma_devel.conda",
+    package = "liblzma-devel",
+    exec_compatible_with = LINUX_X86_64,
+    visibility = ["//ci:"],
+)
+
 _NEEDS = {"PROBE_NEEDS": "libsqlite3.so.0,libsqlite3.so,libz.so.1"}
 
 mojo_test_run_rule(
     name = "run_green",
     bin = ":probe_test",
     system_libs = [":libsqlite", ":libzlib"],
+    test_env = _NEEDS,
+    toolchain = ":toolchain",
+    exec_compatible_with = test_exec_compatible_with(),
+    visibility = ["//ci:"],
+)
+
+# The same run, given the two packages that hold no library as well (a lib-less root and a lib-less run dependency of a pinned set): the unpacks succeed, and the probe
+# still finds every library it needs in the directories of the other two. The probe also requires every directory of the path to exist, so an unpack that wrote nothing
+# at all (not even its empty directory) is red.
+mojo_test_run_rule(
+    name = "run_green_libless",
+    bin = ":probe_test",
+    system_libs = [":xz", ":libsqlite", ":liblzma_devel", ":libzlib"],
     test_env = _NEEDS,
     toolchain = ":toolchain",
     exec_compatible_with = test_exec_compatible_with(),
