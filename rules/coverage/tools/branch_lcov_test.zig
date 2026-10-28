@@ -210,15 +210,89 @@ test "a count is saturated, never wrapped, when tests are summed" {
     try t.expect(sum.files.get("a").?.get("1,1:br:0/1,0").? >= 999999999999999999);
 }
 
-test "two tests that give one location another number of decisions are refused, naming both" {
+// Unequal copies (the rewrite of the test that asserted a refusal): at one location the test whose copy has the most decisions is the
+// location's set, the other tests' records there are dropped, never added; equal counts are summed; several at the maximum are summed.
+const ONE_OF_ONE = "SF:src/p/a.mojo\nBRDA:7,3:br:0/1,0,1\nBRDA:7,3:br:0/1,1,0\nend_of_record\n";
+const ONE_OF_FOUR =
+    "SF:src/p/a.mojo\nBRDA:7,3:br:0/4,0,0\nBRDA:7,3:br:0/4,1,0\nBRDA:7,3:br:1/4,0,0\nBRDA:7,3:br:1/4,1,0\n" ++
+    "BRDA:7,3:br:2/4,0,0\nBRDA:7,3:br:2/4,1,0\nBRDA:7,3:br:3/4,0,0\nBRDA:7,3:br:3/4,1,0\nend_of_record\n";
+
+test "unequal copies: 1 decision in one test and 4 in another summarise, in either order, as the 4" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     var d = L.Diag{};
-    var sum = L.Sum{};
-    try sum.add(a, &d, "SF:src/p/a.mojo\nBRDA:7,3:br:0/1,0,1\nBRDA:7,3:br:0/1,1,0\nend_of_record\n", "one.info");
-    try t.expectError(error.Refused, sum.add(a, &d, "SF:src/p/a.mojo\nBRDA:7,3:br:0/2,0,1\nBRDA:7,3:br:0/2,1,0\nBRDA:7,3:br:1/2,0,1\nBRDA:7,3:br:1/2,1,0\nend_of_record\n", "two.info"));
-    try t.expectEqualStrings("src/p/a.mojo:7: one.info gives 1 decision(s) at 3:br and two.info gives 2: the tests' copies of this code hold different decisions at one location, so their branch records cannot be summed by id", d.msg);
+    for ([_][2][]const u8{ .{ ONE_OF_ONE, ONE_OF_FOUR }, .{ ONE_OF_FOUR, ONE_OF_ONE } }) |order| {
+        const counts = try (try sumOf(a, &d, &order)).counts(a);
+        try t.expectEqual(@as(usize, 1), counts.len);
+        try t.expectEqual(@as(usize, 8), counts[0].total);
+        try t.expectEqual(@as(usize, 0), counts[0].hit);
+    }
+}
+
+test "unequal copies: a hit only in the smaller copy's test marks no arm covered" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var d = L.Diag{};
+    const sum = try sumOf(a, &d, &.{ ONE_OF_ONE, ONE_OF_FOUR });
+    const taken = sum.files.get("src/p/a.mojo").?;
+    try t.expectEqual(@as(usize, 8), taken.count());
+    try t.expect(taken.get("7,3:br:0/1,0") == null);
+    for (taken.values()) |v| try t.expectEqual(@as(u64, 0), v);
+}
+
+test "unequal copies: the larger copy's own hits count, and the smaller copy's are not added to them" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var d = L.Diag{};
+    const four_hit = "SF:src/p/a.mojo\nBRDA:7,3:br:0/2,0,3\nBRDA:7,3:br:0/2,1,0\nBRDA:7,3:br:1/2,0,0\nBRDA:7,3:br:1/2,1,0\nend_of_record\n";
+    const sum = try sumOf(a, &d, &.{ ONE_OF_ONE, four_hit, ONE_OF_ONE });
+    const counts = try sum.counts(a);
+    try t.expectEqual(@as(usize, 1), counts[0].hit);
+    try t.expectEqual(@as(usize, 4), counts[0].total);
+    try t.expectEqual(@as(u64, 3), sum.files.get("src/p/a.mojo").?.get("7,3:br:0/2,0").?);
+}
+
+test "unequal copies: equal counts are summed as before" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var d = L.Diag{};
+    const sum = try sumOf(a, &d, &.{ ONE_OF_ONE, "SF:src/p/a.mojo\nBRDA:7,3:br:0/1,0,2\nBRDA:7,3:br:0/1,1,5\nend_of_record\n" });
+    const taken = sum.files.get("src/p/a.mojo").?;
+    try t.expectEqual(@as(u64, 3), taken.get("7,3:br:0/1,0").?);
+    try t.expectEqual(@as(u64, 5), taken.get("7,3:br:0/1,1").?);
+}
+
+test "unequal copies: several tests at the maximum are summed, the smaller ones dropped" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var d = L.Diag{};
+    const two_a = "SF:src/p/a.mojo\nBRDA:7,3:br:0/2,0,1\nBRDA:7,3:br:0/2,1,0\nBRDA:7,3:br:1/2,0,0\nBRDA:7,3:br:1/2,1,0\nend_of_record\n";
+    const two_b = "SF:src/p/a.mojo\nBRDA:7,3:br:0/2,0,2\nBRDA:7,3:br:0/2,1,0\nBRDA:7,3:br:1/2,0,0\nBRDA:7,3:br:1/2,1,4\nend_of_record\n";
+    const sum = try sumOf(a, &d, &.{ ONE_OF_ONE, two_a, two_b, ONE_OF_ONE });
+    const taken = sum.files.get("src/p/a.mojo").?;
+    try t.expectEqual(@as(usize, 4), taken.count());
+    try t.expectEqual(@as(u64, 3), taken.get("7,3:br:0/2,0").?);
+    try t.expectEqual(@as(u64, 4), taken.get("7,3:br:1/2,1").?);
+    const counts = try sum.counts(a);
+    try t.expectEqual(@as(usize, 2), counts[0].hit);
+}
+
+test "unequal copies: another location of the same file keeps its own rule, and the other kinds at one line are untouched" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var d = L.Diag{};
+    const other = "SF:src/p/a.mojo\nBRDA:7,3:br:0/1,0,1\nBRDA:7,3:br:0/1,1,0\nBRDA:7,3:rhs:0/1,0,1\nBRDA:7,3:rhs:0/1,1,0\nBRDA:9,1:br:0/1,0,1\nBRDA:9,1:br:0/1,1,1\nend_of_record\n";
+    const sum = try sumOf(a, &d, &.{ other, ONE_OF_FOUR });
+    const counts = try sum.counts(a);
+    // br at 7,3 is the four decisions (8 arms, none hit); the rhs at 7,3 and the br at 9,1 keep their own 2 + 2 arms, 3 hit.
+    try t.expectEqual(@as(usize, 12), counts[0].total);
+    try t.expectEqual(@as(usize, 3), counts[0].hit);
 }
 
 test "two tests that give one decision another number of arms are refused, naming both" {
