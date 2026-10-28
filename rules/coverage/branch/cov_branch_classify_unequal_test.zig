@@ -103,3 +103,81 @@ test "U4 two largest copies with different hits are summed" {
     try r.has("BRDA:3,5:br:1/2,0,13", "second branch, arm 0, is not 9+4");
     try r.has("BRDA:3,5:br:1/2,1,14", "second branch, arm 1, is not 9+5");
 }
+
+// U5. Copies of 1, 2 and 4 branches at 3,5 (the 1-branch copies of case.ll, `pick[T=Float]` made 2 and a copy `pick[T=Big]` added with 4):
+// only the 4-branch copy is the location's. Its first branch ran 7 and 0 times, its others never ran (`-`); the smaller copies' hits (3,12
+// in the 1-branch copies, 1,1 and 9,9 in the 2-branch one) cover no arm and are not added to the 7. Catches: the largest copy not the one
+// kept (a 2-branch or 1-branch record written); a smaller copy's hits added to an arm of the same number (the 7 becoming 8 or more, a `-`
+// becoming a count).
+test "U5 copies of 1, 2 and 4 branches: only the 4-branch copy is kept" {
+    var c = try h.Case.init("unequal");
+    defer c.deinit();
+    var e = try bigger(&c, "!70", "!72");
+    const big = [_][]const u8{
+        "",
+        "define internal void @\"pkg::a::pick[T=Big]\"(i64 %0, i1 %1) #0 !dbg !11 !prof !73 {",
+        "2:",
+        "  br i1 %3, label %4, label %5, !dbg !40, !prof !90",
+        "  br i1 %1, label %4, label %5, !dbg !40",
+        "  br i1 %4, label %4, label %5, !dbg !40",
+        "  br i1 %5, label %4, label %5, !dbg !40",
+        "  ret void, !dbg !41",
+        "}",
+    };
+    try e.insertBefore("attributes #0", &big);
+    try e.append(&.{"!90 = !{!\"branch_weights\", i32 7, i32 0}"});
+    const r = try c.run(try e.text());
+    try r.exits(0);
+    try r.has("BRDA:3,5:br:0/4,0,7", "the 4-branch copy's first branch, arm 0, is not its own 7");
+    try r.has("BRDA:3,5:br:0/4,1,0", "the 4-branch copy's first branch, arm 1, is not its own 0");
+    try r.has("BRDA:3,5:br:1/4,0,-", "second branch of 4, arm 0, is not '-' (a smaller copy's hits counted)");
+    try r.has("BRDA:3,5:br:2/4,1,-", "third branch of 4, arm 1, is not '-' (a smaller copy's hits counted)");
+    try r.has("BRDA:3,5:br:3/4,0,-", "fourth branch of 4, arm 0, is not '-' (a smaller copy's hits counted)");
+    try r.counts("BRDA:3,5:br:0/4,", 2, "a.mojo 3,5 is not one record of 4 branches");
+    try r.lacks("BRDA:3,5:br:1/2,0,9", "the 2-branch copy's second branch (9,9) was written");
+    try r.lacks("BRDA:3,5:br:0/1,1,12", "the 1-branch copies' summed record (3,12) was written");
+}
+
+// U6. A right operand follows its and/or: `both` (c.mojo 7,14, an `and` with its right operand) holds one decision at 7,14 and a copy
+// `pkg::c::both2` holds two `and`s there whose results no test reads (so it has no right operand), so `both`'s `br` at 7,14 is dropped and
+// its `rhs` with it, though the `rhs` is a record of its own whose total is its parent's. The larger copy's records stay. Catches: the
+// `rhs` kept when its parent is dropped (a 0/1 right operand with counts and no decision beside it).
+test "U6 a right operand whose and/or is in a dropped copy is dropped too" {
+    var c = try h.Case.init("unequal");
+    defer c.deinit();
+    var e = try h.Ir.of(c.a(), h.case_ll);
+    const both2 = [_][]const u8{
+        "",
+        "define internal i1 @\"pkg::c::both2\"(i64 %0, i64 %1) #0 !dbg !102 !prof !73 {",
+        "2:",
+        "  %3 = icmp sgt i64 %0, 0, !dbg !116",
+        "  br i1 %3, label %4, label %6, !dbg !117, !prof !132",
+        "4:                                                ; preds = %2",
+        "  %5 = icmp sgt i64 %1, 0, !dbg !118",
+        "  br label %7, !dbg !117",
+        "6:                                                ; preds = %2",
+        "  br label %7, !dbg !117",
+        "7:                                                ; preds = %4, %6",
+        "  %8 = phi i1 [ %5, %4 ], [ false, %6 ], !dbg !117",
+        "  %11 = icmp sgt i64 %0, 1, !dbg !116",
+        "  br i1 %11, label %12, label %14, !dbg !117, !prof !132",
+        "12:                                               ; preds = %7",
+        "  %13 = icmp sgt i64 %1, 1, !dbg !118",
+        "  br label %15, !dbg !117",
+        "14:                                               ; preds = %7",
+        "  br label %15, !dbg !117",
+        "15:                                               ; preds = %12, %14",
+        "  %16 = phi i1 [ %13, %12 ], [ false, %14 ], !dbg !117",
+        "  %17 = xor i1 %8, %16, !dbg !121",
+        "  ret i1 %17, !dbg !121",
+        "}",
+    };
+    try e.insertBefore("attributes #0", &both2);
+    const r = try c.run(try e.text());
+    try r.exits(0);
+    try r.has("BRDA:7,14:br:0/2,0,4", "the 2-`and` copy's first branch at 7,14, arm 0, is not its own 4");
+    try r.has("BRDA:7,14:br:1/2,1,2", "the 2-`and` copy's second branch at 7,14, arm 1, is not its own 2");
+    try r.counts("BRDA:7,14:br:", 4, "7,14 is not 2 branches of 2 arms (the 1-branch copy's record written)");
+    try r.lacks("BRDA:7,14:rhs:0/1", "the right operand of the dropped copy's `and` was written");
+    try r.lacks("BRDA:7,14:rhs", "a right operand at 7,14 was written (the larger copy's results are read by no test, so it has none)");
+}

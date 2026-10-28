@@ -224,7 +224,7 @@ order: Mojo puts `if` and `elif` on one location (`4,5:br:0/3`, `1/3`, `2/3` for
 summed arm by arm; every copy must hold as many, and where both are known, compute the condition of its `<n>`-th at the same line and column, or, for a decision at an `if`, `elif` or `while`
 statement's keyword, inside its header (from the keyword to the `:` closing it, over continuation lines): a copy may fold part of the condition away (`if index < 0 or index >= self.length:`,
 whose copies inlined with a constant index compute the condition at the `>=`, the others at the `or`). An instance that folded away one `elif` and another that folded away another would
-otherwise be summed crosswise, and an `elif` has a header of its own, so it is still refused. A count of a branch that never ran is `-`, counted and not taken (lcov's "never reached"),
+otherwise be summed crosswise, and an `elif` has a header of its own, so its branches are matched by their order, not their position; copies holding different numbers of them follow "Copies of unequal size" below. A count of a branch that never ran is `-`, counted and not taken (lcov's "never reached"),
 never 0.
 
 **Copies of unequal size.** When the copies of a function at one location hold different numbers of decisions of a kind (an `@always_inline` method whose inlined copies folded a branch away in
@@ -320,7 +320,7 @@ The body of a `comptime for` is unrolled by the compiler: one copy of each decis
 has a different number of copies in each instance. The decisions of such a body, found from the source (the line is indented under a `comptime for` line, or a `for` line after `@parameter`, of its own function),
 are **one record**, `<n>/<N>` = `0/1`: the iterations of every copy and instance are summed arm by arm. The choice is one aggregated pair of arms, not one pair per iteration: per-iteration records could not be
 matched across instances of other widths, and an iteration number is no source location. The pair is covered when some iteration, in some test, took each arm; it cannot say that every lane did. An `if`
-with an `elif` clause in the body keeps its records one per copy (its copies are told apart by their order, as an `if` chain's are), so instances of different trip counts are still refused there. A file
+with an `elif` clause in the body keeps its records one per copy (its copies are told apart by their order, as an `if` chain's are), so instances of different trip counts follow "Copies of unequal size": the instance with the most branches is the location's and the smaller instances' hits are dropped. A file
 whose brackets do not balance has no unrolled loops read.
 
 ### Folded conditions
@@ -430,7 +430,7 @@ By behaviour, each run as a build action on the farm, and a defect each catches:
   one (an edit that changes nothing fails the case). It checks the exit status, the output file byte for byte or by line, the messages on stderr and that nothing is written to stdout.
   `case`, 1 to 9c on `fixtures/case.ll`: the golden output, the metadata order, a second test's counts, unknown tokens, file names, `--gen`, zero branches, a name no prefix covers, sources named by
   import name with `--src` (8d to 8g), malformed IR, copies, and/or shapes refused. `andor`, 9j and 9k: and/or results no test reads, error flags, three on one line. `files`, 9d to 9i: nodebug
-  callees, kinds, invokes, decision-free and twice-spelled files. `rules`, 11 to 11f on `fixtures/rules.ll`: the shape rules. `try`, 12 to 12c on `fixtures/try.ll`. `unequal`, U1 to U4 on `fixtures/case.ll`: copies holding different numbers of branches at one location (the largest is kept and a hit only in a smaller one covers no arm; equal copies, and several largest, still summed). `fold`, 13 to 15, on IR written in the test file: a Bool converted to an Int, an unrolled loop in instances of two widths (and a chain with an `elif`, still refused), and a condition the build decided (a target query, a literal; a runtime flag and an unspecialised query still decisions). `main`: bad usage (exit 2, the
+  callees, kinds, invokes, decision-free and twice-spelled files. `rules`, 11 to 11f on `fixtures/rules.ll`: the shape rules. `try`, 12 to 12c on `fixtures/try.ll`. `unequal`, U1 to U4 on `fixtures/case.ll`: copies holding different numbers of branches at one location (the largest is kept and a hit only in a smaller one covers no arm; equal copies, and several largest, still summed). `fold`, 13 to 15, on IR written in the test file: a Bool converted to an Int, an unrolled loop in instances of two widths (and a chain with an `elif`, where the larger chain is kept and the smaller one's hits dropped), and a condition the build decided (a target query, a literal; a runtime flag and an unspecialised query still decisions). `main`: bad usage (exit 2, the
   message and the usage line) and an output whose write fails (a file size limit in the child: exit 1, nothing written, no temporary file left).
 - **The tool.** `cov_branch_unit`: link (the exact lld and zig command lines and environments, each input missing or empty, a bitcode without the magic, an lld or zig that fails with the last
   lines of its log, an output that is no ELF file or that holds a directory of the action; with native libraries: the libraries after the object in the order given, `llvm-nm` run on the
