@@ -20,7 +20,33 @@ pub const Record = struct {
     total: usize, // how many of this kind at this location one copy holds
     arms: usize,
     weights: ?[]const u64, // null: never ran
+    // The decision whose copies this record's are counted with: itself, or
+    // for a right operand its and/or's.
+    gate_line: u64,
+    gate_col: u64,
+    gate_kind: Kind,
 };
+
+/// The records of the copies holding the most decisions at their location:
+/// a record whose copy holds fewer decisions of its kind (its `total`) than
+/// another copy at the same location is dropped, as its arms cannot be
+/// identified with the larger copy's.
+pub fn keepMost(alloc: Alloc, recs: []const Record) []Record {
+    var most = std.StringHashMap(usize).init(alloc);
+    for (recs) |r| {
+        const slot = most.getOrPut(gateKey(alloc, r)) catch oom();
+        if (!slot.found_existing or slot.value_ptr.* < r.total) slot.value_ptr.* = r.total;
+    }
+    var out = std.ArrayList(Record).empty;
+    for (recs) |r| {
+        if (r.total == most.get(gateKey(alloc, r)).?) out.append(alloc, r) catch oom();
+    }
+    return out.items;
+}
+
+fn gateKey(alloc: Alloc, r: Record) []const u8 {
+    return std.fmt.allocPrint(alloc, "{s}\x00{d}\x00{d}\x00{s}", .{ r.repo, r.gate_line, r.gate_col, @tagName(r.gate_kind) }) catch oom();
+}
 
 fn recordLess(_: void, a: Record, b: Record) bool {
     const o = std.mem.order(u8, a.repo, b.repo);

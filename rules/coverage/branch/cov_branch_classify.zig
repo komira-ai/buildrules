@@ -47,7 +47,9 @@
 //! `select`, `switch`, `try` or `rhs` (the right operand of `and`/`or`); <N> is how
 //! many decisions of that kind one copy of a function (an LLVM function, or
 //! one inlined copy of it) holds at that location, <n> which one, in IR
-//! order. Copies are summed arm by arm and must agree on <N> and on where
+//! order. Copies are summed arm by arm; of copies holding different numbers
+//! the one with the most is kept and the others' counts dropped; those
+//! holding the most must agree on where
 //! each one's condition is computed (or, for an `if`/`elif`/`while`, compute
 //! it inside the same header). A branch on the same condition value
 //! with the same weights at the same location as another (a loop's
@@ -471,8 +473,11 @@ fn endFunction(st: *State) void {
     }
     for (ds) |d| {
         if (!d.keep) continue;
-        var r = Record{ .repo = d.file.repo, .line = d.line, .col = d.col, .kind = d.kind, .ordinal = d.ordinal, .total = d.total, .arms = d.arms, .weights = d.weights };
+        var r = Record{ .repo = d.file.repo, .line = d.line, .col = d.col, .kind = d.kind, .ordinal = d.ordinal, .total = d.total, .arms = d.arms, .weights = d.weights, .gate_line = d.line, .gate_col = d.col, .gate_kind = d.kind };
         if (d.parent) |p| {
+            r.gate_line = ds[p].line;
+            r.gate_col = ds[p].col;
+            r.gate_kind = ds[p].kind;
             r.ordinal = ds[p].ordinal;
             r.total = ds[p].total;
         }
@@ -714,22 +719,30 @@ pub fn main() void {
     std.mem.sort([]const u8, names.items, {}, lessStr);
     for (names.items) |n| st.err("unmapped file name '{s}': neither --map, --exclude nor --exclude-file covers it", .{n});
 
-    // Every copy of a function must hold as many decisions of a kind at a
-    // location as the others, with their conditions computed at the same
-    // places (where both are known; for an `if`, `elif` or `while`, inside
-    // its header: a copy may have folded part of the condition away), or
-    // the n-th of one is not another's.
+    // Copies of a function holding different numbers of decisions of a kind
+    // at a location cannot be matched n-th to n-th. The copy with the most
+    // is that location's set of decisions; the records of the others are
+    // dropped below (their arms cannot be told from its arms, so their
+    // counts are not added: a false "arm not covered", never a false
+    // cover). Among the copies holding that most, as many decisions must
+    // have their conditions computed at the same places (where both are
+    // known; for an `if`, `elif` or `while`, inside its header: a copy may
+    // have folded part of the condition away), or the n-th of one is not
+    // another's.
     const First = struct { n: usize, fp: []Pos };
+    var most = std.StringHashMap(usize).init(alloc);
+    var mi = st.copies.valueIterator();
+    while (mi.next()) |c| {
+        const slot = most.getOrPut(c.key) catch oom();
+        if (!slot.found_existing or slot.value_ptr.* < c.n) slot.value_ptr.* = c.n;
+    }
     var per_key = std.StringHashMap(First).init(alloc);
     var ci = st.copies.valueIterator();
     while (ci.next()) |c| {
+        if (c.n < most.get(c.key).?) continue;
         const slot = per_key.getOrPut(c.key) catch oom();
         if (!slot.found_existing) {
             slot.value_ptr.* = .{ .n = c.n, .fp = alloc.dupe(Pos, c.fp) catch oom() };
-        } else if (slot.value_ptr.n != c.n) {
-            st.err("{s}: one copy of its function has {d} branch(es) of this kind here and another {d}: they cannot be matched to be summed", .{ c.where, @min(slot.value_ptr.n, c.n), @max(slot.value_ptr.n, c.n) });
-            slot.value_ptr.n = c.n;
-            slot.value_ptr.fp = alloc.dupe(Pos, c.fp) catch oom();
         } else {
             const span = headerSpan(c.file.lines, c.line, c.col);
             for (slot.value_ptr.fp, c.fp, 0..) |*x, y, n| {
@@ -785,7 +798,7 @@ pub fn main() void {
     while (cf.next()) |fp| {
         if (fp.*.where == .measured and fp.*.exec.count() > 0) coded.append(alloc, fp.*.repo) catch oom();
     }
-    const bytes = render(alloc, st.records.items, coded.items);
+    const bytes = render(alloc, records.keepMost(alloc, st.records.items), coded.items);
     writeOut(out_file, bytes) catch |err| fail("{s}: {s}; nothing written", .{ out_file, @errorName(err) });
     var decisions: usize = 0;
     var made: usize = 0;

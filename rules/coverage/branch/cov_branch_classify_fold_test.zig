@@ -179,10 +179,11 @@ test "13 a Bool converted to an Int: no decision, no refusal" {
 // 14. An `if` in a `comptime for` body (line 8) is unrolled: one br per iteration, all at 8,9, and a different number in each instance of
 // the function (4 lanes, 8 lanes). They are one decision of two arms, every iteration's counts summed: 4 lanes of 2/3 and 8 lanes of 1/1 are
 // 16 true and 20 false. With an `elif` (line 14, 16) the copies are told apart by their order, so two instances of another number of
-// lanes are still refused. Catches: the instances refused as "one copy of its function has 4 branch(es) of this kind here and another 8"
-// (the downstream failure); one record per lane (4/4 and 0/8 ordinals); only the first iteration or only the largest instance counted
-// (not 16/20); the rule applied to a chain with an `elif`, whose records would be summed crosswise (no refusal); the rule applied outside
-// a `comptime for` (the same IR on a source without it is refused as before).
+// lanes are not one decision: the instance with the most branches is the location's and the smaller one's counts are dropped (the
+// unequal-copies rule, cov_branch_classify_unequal_test.zig). Catches: the instances refused as "one copy of its function has 4
+// branch(es) of this kind here and another 8" (the downstream failure); one record per lane (4/4 and 0/8 ordinals); only the first
+// iteration or only the largest instance counted (not 16/20); a chain with an `elif`, or the same IR on a source without `comptime
+// for`: the larger copy's records, none of the smaller's counts added.
 test "14 an unrolled loop's branches are one decision, however many iterations" {
     var c = try h.Case.init("unrolled");
     defer c.deinit();
@@ -200,11 +201,19 @@ test "14 an unrolled loop's branches are one decision, however many iterations" 
     var plain = try h.Case.init("not unrolled");
     defer plain.deinit();
     try plain.source("u", try sub(&plain, u_src, "comptime for k in range(N):", "for k in range(N):"));
-    _ = try plain.refused("pick without comptime", "one copy of its function has 4 branch(es) of this kind here and another 8", try module(&plain, &.{ four, eight }));
-    // An `if` with an `elif`: not one decision.
+    // Copies of unequal size: the 8-branch copy is the location's, with its own counts (1/1 each); the 4-branch copy's 2/3 are dropped.
+    const pr = try plain.accepted("pick without comptime", try module(&plain, &.{ four, eight }), "if 12,");
+    try pr.has("BRDA:8,9:br:0/8,0,1", "pick without comptime: the larger copy's first branch is not its own 1");
+    try pr.has("BRDA:8,9:br:7/8,1,1", "pick without comptime: the larger copy's last branch is not its own 1");
+    try pr.counts("BRDA:8,9:", 16, "pick without comptime: not 8 branches of 2 arms");
+    // An `if` with an `elif`: not one decision; the larger chain (6 branches) is kept, the smaller (4) dropped.
     const c2 = try lanesFn(&c, "chain2", 2, "23", "50", "23");
     const c3 = try lanesFn(&c, "chain3", 3, "23", "50", "23");
-    _ = try c.refused("chain with elif", "one copy of its function has 4 branch(es) of this kind here and another 6", try module(&c, &.{ c2, c3 }));
+    const cr = try c.run(try module(&c, &.{ c2, c3 }));
+    try cr.exits(0);
+    try cr.has("BRDA:14,9:br:0/6,0,2", "chain with elif: the larger chain's first branch is not its own 2");
+    try cr.has("BRDA:14,9:br:5/6,1,3", "chain with elif: the larger chain's last branch is not its own 3");
+    try cr.counts("BRDA:14,9:", 12, "chain with elif: not 6 branches of 2 arms");
 }
 
 // 15. A br or select on a condition the build decided is no decision of the run: the literal `true` or `false`, or the result of a call of
