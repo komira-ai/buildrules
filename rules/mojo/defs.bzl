@@ -236,6 +236,18 @@ def graph_path_in_package(path, pkg_dir, rooted, refuse = fail):
         return path
     return path[len(pkg_dir) + 1:]
 
+def program_sources(units, root, pkg_dir, project, rooted, refuse = fail):
+    """The programs of `[targets] bins` of the package `root`, for `mojo_conda`: `{"<source path below the package's directory>": "<that file, relative to the BUCK file>"}`.
+    Each is a `bin` unit of the package itself (a member's programs are not its own); the graph's source path is cut to the package's directory as `graph_path_in_package`
+    does, and the file is under `project`, the directory of the package from the BUCK file ("" when they are one)."""
+    out = {}
+    for u in units:
+        if u["kind"] == "bin" and u["package"] == root:
+            for src in u.get("srcs", []):
+                rel = graph_path_in_package(src["path"], pkg_dir, rooted, refuse)
+                out[rel] = _join(project, rel)
+    return out
+
 def native_include_dirs(u, pkg_dir, rooted, refuse = fail):
     """The include directories of a native unit, below the package's directory. mopm prints a unit's `includes` as the manifest wrote them (directories below
     the member) in both graph bases, and when the manifest names none (or an empty list, `len > 0`) it prints the directories of the headers relative to the member (`addNatives` in
@@ -889,12 +901,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     if own_native_ids or conda:
         # The programs of `[targets] bins`: the graph lists each as a unit of this package with the path of its source, which is the path the manifest writes. `mopm pack`
         # reads each file, so `:conda` is given them.
-        bin_sources = {}
-        for u in graph["units"]:
-            if u["kind"] == "bin" and u["package"] == root:
-                for src in u.get("srcs", []):
-                    rel = graph_path_in_package(src["path"], pkg_dir, rooted)
-                    bin_sources[rel] = _join(project, rel)
+        bin_sources = program_sources(graph["units"], root, pkg_dir, project, rooted)
         mojo_conda(
             name = name_once("conda"),
             lib = ":lib",

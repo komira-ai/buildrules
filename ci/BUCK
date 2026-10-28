@@ -117,6 +117,8 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:conda_without_programs_stages_the_manifests_alone",
     "//rules/mojo/tests:conda_program_leaving_the_repository_is_refused",
     "//rules/mojo/tests:conda_program_on_a_staged_manifest_is_refused",
+    "//rules/mojo/tests:conda_two_paths_of_one_program_are_refused",
+    "//rules/mojo/tests:conda_programs_are_the_packages_own_below_it",
     "//rules/mojo/tests:test_data",
     "//rules/mojo/tests:table_without_graphs_per_subdir_is_the_linux_64_graph",
     "//rules/mojo/tests:table_with_graphs_per_subdir_is_read_as_it_is",

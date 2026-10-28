@@ -1,5 +1,6 @@
 """What `mojo_conda` stages for `mopm pack` (rules/mojo/pack.bzl, `workspace_tree`): the checks of rules/mojo/tests/BUCK. Each takes `refuse`, as the checks of siblings.bzl do."""
 
+load("//rules/mojo:defs.bzl", "program_sources")
 load("//rules/mojo:pack.bzl", "workspace_tree")
 
 def program_is_staged_at_its_path(refuse = fail):
@@ -37,3 +38,32 @@ def program_on_a_staged_manifest_is_refused(refuse = fail):
     got, _ = workspace_tree("src/p", "m", {"util": "um"}, {"mopm.toml": "p", "util/mopm.toml": "u"}, refuse)
     if got != {"src/p/mopm.toml": "m", "src/p/util/mopm.toml": "um"}:
         refuse("a program replaced a staged manifest: {}".format(got))
+
+def two_paths_of_one_program_are_refused(refuse = fail):
+    """Two programs that normalize to one path (`bins/a.mojo` and `./bins/a.mojo`) are one file: refused, and the first keeps it."""
+    got, _ = workspace_tree("src/p", "m", {}, {"bins/a.mojo": "first", "./bins/a.mojo": "second"}, refuse)
+    if got != {"src/p/mopm.toml": "m", "src/p/bins/a.mojo": "first"}:
+        refuse("a second program replaced the first: {}".format(got))
+
+_UNITS = [
+    {"kind": "lib", "package": "app", "srcs": [{"path": "src/app/src/app/__init__.mojo"}]},
+    {"kind": "bin", "package": "app", "srcs": [{"path": "src/app/bins/run.mojo"}]},
+    {"kind": "bin", "package": "app", "srcs": [{"path": "src/app/tools/x.mojo"}]},
+    {"kind": "bin", "package": "util", "srcs": [{"path": "src/util/bins/other.mojo"}]},
+]
+
+def programs_are_the_packages_own_below_it(refuse = fail):
+    """The programs come from the package's own `bin` units: a member's are left out, two are two, and each file is named from the BUCK file's directory, in a
+    graph whose paths start at the repository root and in one whose paths start at the package."""
+    rooted = program_sources(_UNITS, "app", "src/app", "", True, refuse)
+    if rooted != {"bins/run.mojo": "bins/run.mojo", "tools/x.mojo": "tools/x.mojo"}:
+        refuse("the programs of a rooted graph are not the package's own, below it: {}".format(rooted))
+    nested = program_sources(_UNITS, "app", "src/app", "src/app", True, refuse)
+    if nested != {"bins/run.mojo": "src/app/bins/run.mojo", "tools/x.mojo": "src/app/tools/x.mojo"}:
+        refuse("a package below the BUCK file's directory is not named from it: {}".format(nested))
+    unrooted_units = [dict(u, srcs = [{"path": s["path"][len("src/" + u["package"] + "/"):]} for s in u["srcs"]]) for u in _UNITS]
+    unrooted = program_sources(unrooted_units, "app", "src/app", "", False, refuse)
+    if unrooted != {"bins/run.mojo": "bins/run.mojo", "tools/x.mojo": "tools/x.mojo"}:
+        refuse("the programs of an unrooted graph are not the package's own: {}".format(unrooted))
+    if program_sources([u for u in _UNITS if u["kind"] != "bin"], "app", "src/app", "", True, refuse) != {}:
+        refuse("a package with no program has programs")
