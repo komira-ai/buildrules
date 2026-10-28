@@ -7,7 +7,7 @@
 //! usage: conda_unpack <package.conda> <out_dir> [--keep <member>]...
 //!            [--lib <library.conda> <member>]...
 //!        conda_unpack --only-libs <out_dir> (--lib <library.conda> <member>)...
-//!        conda_unpack --all-libs <library.conda> <out_dir>
+//!        conda_unpack --all-libs [--package <name>] <library.conda> <out_dir>
 //!
 //! The second form writes only the `--lib` members (and CLOSURE_MANIFEST):
 //! shared libraries from pinned packages for a tool that is not the Mojo
@@ -328,7 +328,9 @@ pub fn main() !void {
     if (args.len >= 2 and std.mem.eql(u8, args[1], "--only-libs")) return onlyLibs(a, args);
     if (args.len >= 2 and std.mem.eql(u8, args[1], "--all-libs")) {
         var why: []const u8 = "";
-        conda_libs.run(a, std.fs.cwd(), args[2..], &why) catch |e| fail("{s}", .{if (why.len != 0) why else @errorName(e)});
+        var notes: []const []const u8 = &.{};
+        conda_libs.run(a, std.fs.cwd(), args[2..], &why, &notes) catch |e| fail("{s}", .{if (why.len != 0) why else @errorName(e)});
+        for (notes) |n| std.debug.print("conda_unpack: note: {s}\n", .{n});
         return;
     }
     const usage = "usage: conda_unpack <package.conda> <out_dir> [--keep <member>]... [--lib <library.conda> <member>]...";

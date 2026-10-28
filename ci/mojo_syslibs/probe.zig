@@ -25,6 +25,9 @@ pub fn main() !void {
     _ = it.next();
     while (it.next()) |d| {
         if (d.len == 0 or d[0] != '/') fail("the directory {s} of LD_LIBRARY_PATH is not absolute", .{d});
+        // Every directory must be there, a package that holds no library included (its unpack makes an empty one).
+        var present = std.fs.openDirAbsolute(d, .{}) catch |e| fail("the directory {s} of LD_LIBRARY_PATH cannot be opened: {s}", .{ d, @errorName(e) });
+        present.close();
         try dirs.append(a, d);
     }
     var names = std.mem.splitScalar(u8, needs, ',');

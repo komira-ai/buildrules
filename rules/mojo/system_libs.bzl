@@ -112,7 +112,7 @@ def _impl(ctx):
     out = ctx.actions.declare_output("lib", dir = True)
     tool = ctx.attrs.unpacker[DefaultInfo].default_outputs[0]
     ctx.actions.run(
-        cmd_args(tool, "--all-libs", ctx.attrs.archive[DefaultInfo].default_outputs[0], out.as_output()),
+        cmd_args(tool, "--all-libs", "--package", ctx.attrs.package, ctx.attrs.archive[DefaultInfo].default_outputs[0], out.as_output()),
         category = "mojo_system_lib",
         identifier = ctx.attrs.package,
     )

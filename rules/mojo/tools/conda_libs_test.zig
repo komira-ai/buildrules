@@ -4,9 +4,11 @@
 //! What is held, and the defect each test would catch:
 //!   - the shared libraries of `lib/` come out flat, under every name the package gives them, a link as a copy of the file it resolves to, with the executable bit of that
 //!     file, and nothing else does (archives, pkg-config files, headers, a library below `lib/<dir>/`): a program that opens a bare name that is only a link finds a file;
-//!   - a link that leaves the directory, points at nothing, or loops, an empty file, a member named twice, a package with no shared library, a library with an install-prefix
-//!     placeholder (named directly or through a link) and a package without `info/paths.json` are refused, and when any is, nothing is written (not even the directory);
-//!   - a placeholder in a file that is not copied (a `.pc`) does not refuse the package.
+//!   - a link that leaves the directory or loops, an empty file, a member named twice, a library with an install-prefix placeholder (named directly or through a link),
+//!     a package without `info/paths.json` and an archive that is corrupt or truncated are refused (integrity), and when any is, nothing is written (not even the directory);
+//!   - a placeholder in a file that is not copied (a `.pc`) does not refuse the package;
+//!   - a package with no shared library (a metapackage, a tool) unpacks to an empty directory and a link to a file the package does not hold is left out, each with a note
+//!     naming the package and no error: a pin is never refused for what the package is, so a lock with such a package builds.
 const std = @import("std");
 const L = @import("conda_libs.zig");
 const t = std.testing;
@@ -122,7 +124,7 @@ test "collect: Linux layout: the file and both of its links come out under their
         .{ .name = "lib/", .flag = '5' },
     }, plain_paths);
     var why: []const u8 = "";
-    const libs = try L.collect(a, pkg, &why);
+    const libs = (try L.collect(a, pkg, &why)).libs;
     try t.expectEqual(@as(usize, 3), libs.len);
     try t.expectEqualStrings("libsqlite3.so", libs[0].name);
     try t.expectEqualStrings("libsqlite3.so.0", libs[1].name);
@@ -143,7 +145,7 @@ test "collect: macOS layout, and a file that is not executable stays so" {
         .{ .name = "lib/libsqlite3.0.dylib", .flag = '2', .link = "libsqlite3.3.54.1.dylib" },
     }, plain_paths);
     var why: []const u8 = "";
-    const libs = try L.collect(a, pkg, &why);
+    const libs = (try L.collect(a, pkg, &why)).libs;
     try t.expectEqual(@as(usize, 3), libs.len);
     for (libs) |l| {
         try t.expectEqualStrings("MACHO", l.bytes);
@@ -162,16 +164,15 @@ test "collect: a chain of links resolves to the file at its end" {
         .{ .name = "lib/libx.so.1.2.3", .body = "REAL" },
     }, plain_paths);
     var why: []const u8 = "";
-    const libs = try L.collect(a, pkg, &why);
+    const libs = (try L.collect(a, pkg, &why)).libs;
     try t.expectEqual(@as(usize, 3), libs.len);
     for (libs) |l| try t.expectEqualStrings("REAL", l.bytes);
 }
 
-test "collect: refusals, each with its words" {
+test "collect: refusals (integrity and a path that escapes), each with its words" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try refused(a, try conda(a, &.{.{ .name = "lib/libx.so", .flag = '2', .link = "libx.so.1" }}, plain_paths), error.DanglingLink, "does not hold");
     try refused(a, try conda(a, &.{.{ .name = "lib/libx.so", .flag = '2', .link = "../other/libx.so.1" }}, plain_paths), error.LinkLeavesDirectory, "not a file beside it");
     try refused(a, try conda(a, &.{.{ .name = "lib/libx.so", .flag = '2', .link = "/usr/lib/libx.so.1" }}, plain_paths), error.LinkLeavesDirectory, "not a file beside it");
     try refused(a, try conda(a, &.{
@@ -183,10 +184,6 @@ test "collect: refusals, each with its words" {
         .{ .name = "lib/libx.so", .body = "one" },
         .{ .name = "lib/libx.so", .body = "two" },
     }, plain_paths), error.DuplicateMember, "twice");
-    try refused(a, try conda(a, &.{
-        .{ .name = "lib/libx.a", .body = "archive" },
-        .{ .name = "lib/pkgconfig/x.pc", .body = "pc" },
-    }, plain_paths), error.NoLibraries, "no shared library");
     try refused(a, try conda(a, &.{.{ .name = "lib/libx.so", .body = "x" }}, null), error.NoMember, "info/paths.json");
     try refused(a, try conda(a, &.{.{ .name = "lib/libx.so", .body = "x" }}, "not json"), error.BadPathsJson, "not JSON");
     try refused(a, try conda(a, &.{.{ .name = "lib/libx.so", .body = "x" }}, "{\"paths_version\": 1}"), error.BadPathsJson, "no `paths` list");
@@ -206,10 +203,10 @@ test "collect: an install-prefix placeholder refuses the library, named directly
     }, through), error.PrefixPlaceholder, "lib/libx.so.1");
     const on_pc = "{\"paths\": [{\"_path\": \"lib/pkgconfig/x.pc\", \"prefix_placeholder\": \"/p\"}, {\"_path\": \"lib/libx.so.1\"}]}";
     var why: []const u8 = "";
-    const libs = try L.collect(a, try conda(a, &.{
+    const libs = (try L.collect(a, try conda(a, &.{
         .{ .name = "lib/libx.so.1", .body = "x" },
         .{ .name = "lib/pkgconfig/x.pc", .body = "prefix=/p" },
-    }, on_pc), &why);
+    }, on_pc), &why)).libs;
     try t.expectEqual(@as(usize, 1), libs.len);
 }
 
@@ -230,7 +227,8 @@ test "run: the libraries are regular files of the output directory, with the byt
         .{ .name = "lib/libx.a", .body = "archive" },
     }, plain_paths));
     var why: []const u8 = "";
-    try L.run(a, tmp.dir, &.{ "p.conda", "out/libs" }, &why);
+    var notes: []const []const u8 = &.{};
+    try L.run(a, tmp.dir, &.{ "p.conda", "out/libs" }, &why, &notes);
     var d = try tmp.dir.openDir("out/libs", .{ .iterate = true });
     defer d.close();
     var seen: usize = 0;
@@ -248,6 +246,7 @@ test "run: the libraries are regular files of the output directory, with the byt
         try t.expectEqualStrings("REAL", try f.readToEndAlloc(a, 64));
     }
     try t.expectError(error.FileNotFound, d.access("libx.a", .{}));
+    try t.expectEqual(@as(usize, 0), notes.len);
 }
 
 test "run: a refused package writes nothing, not even the directory; a missing package and the wrong arguments are said" {
@@ -258,16 +257,146 @@ test "run: a refused package writes nothing, not even the directory; a missing p
     defer tmp.cleanup();
     try writeConda(tmp.dir, "bad.conda", try conda(a, &.{
         .{ .name = "lib/libx.so.1", .body = "fine" },
-        .{ .name = "lib/libx.so", .flag = '2', .link = "missing" },
+        .{ .name = "lib/libx.so", .body = "" },
     }, plain_paths));
     var why: []const u8 = "";
-    try t.expectError(error.DanglingLink, L.run(a, tmp.dir, &.{ "bad.conda", "out" }, &why));
+    var notes: []const []const u8 = &.{};
+    try t.expectError(error.EmptyMember, L.run(a, tmp.dir, &.{ "bad.conda", "out" }, &why, &notes));
     try t.expect(std.mem.indexOf(u8, why, "bad.conda") != null);
     try t.expectError(error.FileNotFound, tmp.dir.access("out", .{}));
     why = "";
-    try t.expectError(error.FileNotFound, L.run(a, tmp.dir, &.{ "nothing.conda", "out" }, &why));
+    try t.expectError(error.FileNotFound, L.run(a, tmp.dir, &.{ "nothing.conda", "out" }, &why, &notes));
     try t.expect(std.mem.indexOf(u8, why, "cannot read nothing.conda") != null);
     why = "";
-    try t.expectError(error.Usage, L.run(a, tmp.dir, &.{"only-one"}, &why));
+    try t.expectError(error.Usage, L.run(a, tmp.dir, &.{"only-one"}, &why, &notes));
     try t.expect(std.mem.indexOf(u8, why, "usage: conda_unpack --all-libs") != null);
+}
+
+fn entryCount(dir: std.fs.Dir, sub: []const u8) !usize {
+    var d = try dir.openDir(sub, .{ .iterate = true });
+    defer d.close();
+    var n: usize = 0;
+    var it = d.iterate();
+    while (try it.next()) |_| n += 1;
+    return n;
+}
+
+fn noteHas(notes: []const []const u8, words: []const u8) bool {
+    for (notes) |n| if (std.mem.indexOf(u8, n, words) != null) return true;
+    return false;
+}
+
+test "collect: a package with no shared library gives none and a note, not an error (a metapackage, headers and archives only)" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    const got = try L.collect(a, try conda(a, &.{
+        .{ .name = "lib/libx.a", .body = "archive" },
+        .{ .name = "lib/pkgconfig/x.pc", .body = "pc" },
+        .{ .name = "include/x.h", .body = "header" },
+    }, plain_paths), &why);
+    try t.expectEqual(@as(usize, 0), got.libs.len);
+    try t.expectEqual(@as(usize, 1), got.notes.len);
+    try t.expect(noteHas(got.notes, "no shared library"));
+    // nothing at all in the package, not even a lib/: the same
+    const bare = try L.collect(a, try conda(a, &.{.{ .name = "info/about.json", .body = "{}" }}, plain_paths), &why);
+    try t.expectEqual(@as(usize, 0), bare.libs.len);
+    try t.expect(noteHas(bare.notes, "no shared library"));
+}
+
+test "collect: a link to a file the package does not hold is left out with a note; the libraries beside it are kept" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    // the -devel case: the unversioned name links to the library the runtime package holds
+    const devel = try L.collect(a, try conda(a, &.{
+        .{ .name = "lib/liblzma.so", .flag = '2', .link = "liblzma.so.5" },
+        .{ .name = "lib/liblzma.a", .body = "archive" },
+    }, plain_paths), &why);
+    try t.expectEqual(@as(usize, 0), devel.libs.len);
+    try t.expect(noteHas(devel.notes, "lib/liblzma.so is a link to liblzma.so.5, which the package does not hold"));
+    try t.expect(noteHas(devel.notes, "no shared library"));
+    // a chain that ends in nothing is left out whole; a file of the same package stays
+    const mixed = try L.collect(a, try conda(a, &.{
+        .{ .name = "lib/libx.so", .flag = '2', .link = "libx.so.1" },
+        .{ .name = "lib/libx.so.1", .flag = '2', .link = "libx.so.1.2" },
+        .{ .name = "lib/liby.so.3", .body = "Y" },
+    }, plain_paths), &why);
+    try t.expectEqual(@as(usize, 1), mixed.libs.len);
+    try t.expectEqualStrings("liby.so.3", mixed.libs[0].name);
+    try t.expect(noteHas(mixed.notes, "lib/libx.so is a link to libx.so.1.2"));
+    try t.expect(noteHas(mixed.notes, "lib/libx.so.1 is a link to libx.so.1.2"));
+    try t.expect(!noteHas(mixed.notes, "liby"));
+}
+
+test "collect: a placeholder in a library still refuses when another link of the package is left out" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const direct = "{\"paths\": [{\"_path\": \"lib/liby.so.3\", \"prefix_placeholder\": \"/opt/p\"}]}";
+    try refused(a, try conda(a, &.{
+        .{ .name = "lib/libx.so", .flag = '2', .link = "missing" },
+        .{ .name = "lib/liby.so.3", .body = "Y" },
+    }, direct), error.PrefixPlaceholder, "lib/liby.so.3");
+}
+
+test "collect: a corrupt or truncated archive is refused, not noted" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    const good = try conda(a, &.{.{ .name = "lib/libx.so", .body = "x" }}, plain_paths);
+    if (L.collect(a, good[0 .. good.len / 2], &why)) |_| return error.TestExpectedAnError else |_| {}
+    if (L.collect(a, "this is not a conda package", &why)) |_| return error.TestExpectedAnError else |_| {}
+    if (L.collect(a, "", &why)) |_| return error.TestExpectedAnError else |_| {}
+}
+
+test "run: a package with no library leaves an empty output directory and a note naming the package; a dangling link leaves the rest" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeConda(tmp.dir, "meta.conda", try conda(a, &.{.{ .name = "bin/xz", .body = "tool" }}, plain_paths));
+    var why: []const u8 = "";
+    var notes: []const []const u8 = &.{};
+    try L.run(a, tmp.dir, &.{ "--package", "xz", "meta.conda", "out/xz" }, &why, &notes);
+    try t.expectEqual(@as(usize, 0), try entryCount(tmp.dir, "out/xz"));
+    try t.expectEqual(@as(usize, 1), notes.len);
+    try t.expect(std.mem.startsWith(u8, notes[0], "xz: "));
+    try t.expect(noteHas(notes, "no shared library"));
+
+    // without the name the file is named
+    notes = &.{};
+    try L.run(a, tmp.dir, &.{ "meta.conda", "out/bare" }, &why, &notes);
+    try t.expect(std.mem.startsWith(u8, notes[0], "meta.conda: "));
+
+    try writeConda(tmp.dir, "part.conda", try conda(a, &.{
+        .{ .name = "lib/liby.so.3", .body = "Y" },
+        .{ .name = "lib/liby.so", .flag = '2', .link = "liby.so.3" },
+        .{ .name = "lib/libz.so", .flag = '2', .link = "libz.so.1" },
+    }, plain_paths));
+    notes = &.{};
+    try L.run(a, tmp.dir, &.{ "--package", "part", "part.conda", "out/part" }, &why, &notes);
+    try t.expectEqual(@as(usize, 2), try entryCount(tmp.dir, "out/part"));
+    try t.expectError(error.FileNotFound, tmp.dir.access("out/part/libz.so", .{}));
+    try t.expectEqual(@as(usize, 1), notes.len);
+    try t.expect(std.mem.startsWith(u8, notes[0], "part: lib/libz.so is a link to libz.so.1"));
+}
+
+test "run: a truncated archive writes nothing, not even the directory" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const good = try conda(a, &.{.{ .name = "lib/libx.so", .body = "x" }}, plain_paths);
+    try writeConda(tmp.dir, "cut.conda", good[0 .. good.len / 2]);
+    var why: []const u8 = "";
+    var notes: []const []const u8 = &.{};
+    if (L.run(a, tmp.dir, &.{ "--package", "cut", "cut.conda", "out" }, &why, &notes)) |_| return error.TestExpectedAnError else |_| {}
+    try t.expectError(error.FileNotFound, tmp.dir.access("out", .{}));
+    try t.expectEqual(@as(usize, 0), notes.len);
 }

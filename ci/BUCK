@@ -810,6 +810,7 @@ group(name = "all", deps = [
     "//ci/mojo_data:run_green",
     "//ci/mojo_data:run_green_installed",
     "//ci/mojo_syslibs:run_green",
+    "//ci/mojo_syslibs:run_green_libless",
     "//ci/mojo_syslibs:run_green_via_lib",
     "//ci/faulty:c_check_of_its_stdout",
     "//ci/faulty:native_good",
