@@ -6,6 +6,7 @@ load("//rules/mojo:unit.bzl", "check_closure_ids", "cov_link_natives")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
 load(":generated.bzl", "generated_member_below_the_package_is_named_by_its_manifest_directory", "generated_sibling_is_named_by_its_manifest_directory", "longest_manifest_directory_wins", "manifest_directories_are_those_of_the_recorded_manifests", "src_name_is_read_before_the_manifests")
 load(":natives.bzl", "BUILT", "BUILT_UNIT", "PREBUILT", "UNIT", "USER", "built_natives_are_the_targets_of_their_units", "native_includes_are_below_the_package_in_both_bases", "native_includes_default_to_the_header_directories_below_the_package", "native_units_are_told_by_their_id", "own_natives", "reversed_graph_is_reversed", "wiring_is_as_the_graph_says")
+load(":pack.bzl", "package_without_programs_stages_what_it_did", "program_is_staged_at_its_path", "program_leaving_the_repository_is_refused", "program_on_a_staged_manifest_is_refused")
 load(":siblings.bzl", "graph_paths_below_the_package", "nested_member_keeps_its_target", "sibling_is_named_by_its_directory", "sibling_with_a_path_up_is_named_by_its_directory", "workspace_is_flat_at_repository_paths")
 load("//rules/mojo:sync.bzl", "sync_packages", "sync_stage_tree")
 load(":sync.bzl", "packages_are_normalized", "stage_holds_the_workspaces_and_the_other_files_once")
@@ -513,3 +514,21 @@ refuses(
 )
 
 accepts(name = "compile_slice_is_never_above_format_two", check = a_slice_for_the_compile_is_never_above_format_two, args = [])
+
+# What `mojo_conda` stages for `mopm pack` (rules/mojo/pack.bzl, `workspace_tree`): the programs of `[targets] bins` at their paths below the package, and nothing
+# changed for a package without them.
+_r30, _f30 = recording()
+program_is_staged_at_its_path(_f30)
+refusal_test(name = "conda_stages_a_program_at_its_path", refusals = _r30, none = True, visibility = ["PUBLIC"])
+
+_r31, _f31 = recording()
+package_without_programs_stages_what_it_did(_f31)
+refusal_test(name = "conda_without_programs_stages_the_manifests_alone", refusals = _r31, none = True, visibility = ["PUBLIC"])
+
+_r32, _f32 = recording()
+program_leaving_the_repository_is_refused(_f32)
+refusal_test(name = "conda_program_leaving_the_repository_is_refused", refusals = _r32, contains = ["the program ../../../x.mojo", "leaves the repository"], visibility = ["PUBLIC"])
+
+_r33, _f33 = recording()
+program_on_a_staged_manifest_is_refused(_f33)
+refusal_test(name = "conda_program_on_a_staged_manifest_is_refused", refusals = _r33, contains = ["the program mopm.toml", "the program util/mopm.toml", "already staged"], visibility = ["PUBLIC"])

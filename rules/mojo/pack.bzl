@@ -7,6 +7,9 @@ only runs it on the `.mojoc` a `mojo_package` built. (Publishing, which uploads,
 A package that ships a static native library (`[native.<id>] kind = "static"` in its manifest) gives `natives = {"<id>": "<archive target>"}`:
 the archive is packed as `lib<id>.a` beside the `.mojoc`, and the package's `.mopm.json` names it. The consumer's `mopm lock` pins the archive's
 sha256; the consumer's `mojo_package` takes it out of the `.conda` (rules/mojo/tools/prebuilt_unpack.zig).
+
+A package that lists programs (`[targets] bins = [{ name = "run", path = "bins/run.mojo" }]`) gives `bins = {"bins/run.mojo": "bins/run.mojo"}`: `mopm pack` reads each
+program's source and ships it, so the file is staged below the manifest's directory at the path the manifest writes. `mojo_package` fills it from the unit graph.
 """
 
 load("//rules/core:platform.bzl", "LINUX_X86_64")
@@ -29,28 +32,43 @@ def _within(path):
             out.append(p)
     return "/".join(out)
 
-def workspace_tree(dir, manifest, members):
-    """The files `mopm pack` reads, laid out as the repository has them: `{"<repository path>/mopm.toml": <file>}`.
+def workspace_tree(dir, manifest, members, bins = {}, refuse = fail):
+    """The files `mopm pack` reads, laid out as the repository has them: `{"<repository path>/<file>": <file>}`, and the repository path of the package's mopm.toml.
 
     `dir` is the package's directory from the repository root ("" for the root itself) and `members` maps each path dependency, as the package's mopm.toml
     writes it (`util`, or `../b` for a sibling), to that package's mopm.toml. mopm reads the manifest of a path dependency at
     `<dir of --manifest>/<path>/mopm.toml`, so the package and every member are put at their own repository paths and a sibling's `..` stays inside the
     tree. (A copied_dir refuses a key that is not normalized, which `../b/mopm.toml` is: keyed by the path as it is written, a sibling cannot be staged.)
-    Fails for a path that leaves the repository, and for two entries that land on one file."""
+    `bins` maps each program of `[targets] bins`, by the path the package's mopm.toml writes (`bins/run.mojo`), to its source: mopm reads that file at
+    `<dir of --manifest>/<path>` and ships it, so it is staged at `<dir>/<path>`. Nothing else of the package is staged: a program imports the package's library,
+    which is the `.mojoc` given to `mopm pack`.
+    `refuse(message)` is called for a path that leaves the repository, and for two entries that land on one file (the entry is then left out); by default it fails."""
     tree = {}
     here = _within(dir)
     if here == None:
-        fail("mojo_conda: the package directory {} leaves the repository".format(dir))
+        refuse("mojo_conda: the package directory {} leaves the repository".format(dir))
+        return tree, ""
     own = (here + "/" if here else "") + "mopm.toml"
     tree[own] = manifest
     for path, member in members.items():
         at = _within((here + "/" if here else "") + path)
         if at == None:
-            fail("mojo_conda: the member {} of the package at {} leaves the repository".format(path, here or "."))
+            refuse("mojo_conda: the member {} of the package at {} leaves the repository".format(path, here or "."))
+            continue
         file = (at + "/" if at else "") + "mopm.toml"
         if file in tree:
-            fail("mojo_conda: the member {} of the package at {} is {}, which is already staged".format(path, here or ".", file))
+            refuse("mojo_conda: the member {} of the package at {} is {}, which is already staged".format(path, here or ".", file))
+            continue
         tree[file] = member
+    for path, source in bins.items():
+        file = _within((here + "/" if here else "") + path)
+        if file == None:
+            refuse("mojo_conda: the program {} of the package at {} leaves the repository".format(path, here or "."))
+            continue
+        if file in tree:
+            refuse("mojo_conda: the program {} of the package at {} is {}, which is already staged".format(path, here or ".", file))
+            continue
+        tree[file] = source
     return tree, own
 
 def _impl(ctx):
@@ -58,8 +76,8 @@ def _impl(ctx):
     subdir = ctx.attrs.subdir
     out = ctx.actions.declare_output("channel", dir = True)
     manifest = ctx.attrs.manifest
-    if ctx.attrs.members:
-        tree, own = workspace_tree(ctx.attrs.dir, manifest, ctx.attrs.members)
+    if ctx.attrs.members or ctx.attrs.bins:
+        tree, own = workspace_tree(ctx.attrs.dir, manifest, ctx.attrs.members, ctx.attrs.bins)
         workspace = ctx.actions.copied_dir("workspace", tree)
         manifest = cmd_args(workspace.project(own), hidden = workspace)
     cmd = cmd_args(
@@ -94,6 +112,10 @@ _mojo_conda = rule(
         "dir": attrs.string(default = ""),
         # The manifests of the path dependencies (workspace members) the manifest names: `{"<path as the manifest writes it>": "<their mopm.toml>"}`.
         "members": attrs.dict(attrs.string(), attrs.source(), default = {}),
+        # The programs of `[targets] bins`: `{"<path as the manifest writes it>": "<the source file>"}`. `mopm pack` ships each program's source, so it reads
+        # the file at that path below the manifest's directory; each is staged there, in the workspace `members` is staged in (a package with a program has one
+        # even with no members).
+        "bins": attrs.dict(attrs.string(), attrs.source(), default = {}),
         # `[native.<id>]` of the manifest -> the static archive (a `cxx_library[static-pic]`) packed as `lib<id>.a` (mopm pack --native).
         "natives": attrs.dict(attrs.string(), attrs.dep(), default = {}),
         "mojo": attrs.string(),

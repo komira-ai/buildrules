@@ -887,9 +887,18 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     # archive packed as `lib<id>.a` beside the `.mojoc` (rules/mojo/pack.bzl). Its sha256 goes into the lock of a consumer, which gets the archive as a
     # prebuilt: the archive that was tested is the archive that ships.
     if own_native_ids or conda:
+        # The programs of `[targets] bins`: the graph lists each as a unit of this package with the path of its source, which is the path the manifest writes. `mopm pack`
+        # reads each file, so `:conda` is given them.
+        bin_sources = {}
+        for u in graph["units"]:
+            if u["kind"] == "bin" and u["package"] == root:
+                for src in u.get("srcs", []):
+                    rel = graph_path_in_package(src["path"], pkg_dir, rooted)
+                    bin_sources[rel] = _join(project, rel)
         mojo_conda(
             name = name_once("conda"),
             lib = ":lib",
+            bins = bin_sources,
             dir = pkg_dir,
             manifest = ":mopm.toml",
             members = {_relative(pkg_dir, l[2:-len(":lib")]): l[:-len(":lib")] + ":mopm.toml" for l in member_libs.values() if l != None},

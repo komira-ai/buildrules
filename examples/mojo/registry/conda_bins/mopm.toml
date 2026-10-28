@@ -1,0 +1,9 @@
+[package]
+name = "conda_bins"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[targets]
+lib = { path = "src/conda_bins" }
+bins = [{ name = "hello", path = "bins/hello.mojo" }]
+tests = ["tests"]
