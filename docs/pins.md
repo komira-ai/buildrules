@@ -42,6 +42,21 @@ prints the graph of linux-aarch64 and osx-arm64 as well as linux-64, and whose `
 name it in their own `mopm-toolchain.toml`. `MOPM_DEFAULT` stays 0.0.48: the packages that name it are synced with it, and `mopm pack` of 0.0.73 writes other bytes, so moving them
 means regenerating the locks of every package that consumes a packed library.
 
+## mopm 0.0.81
+
+mopm 0.0.81 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.81, pinned for all three hosts: its linux-x86_64 asset in `MOPM_VERSIONS` (`rules/mopm/pins.bzl`) and its linux-aarch64 and
+macos-arm64 assets in `MOPM_HOST_ASSETS` (`rules/mopm/hosts.bzl`). Each size and digest is the asset's and the one in the release's `SHA256SUMS` (downloaded and compared, 2026-10-27), and
+`mopm-pin / verify` checks each tarball's signature as it does 0.0.73's. Nothing names it yet: `MOPM_DEFAULT` stays 0.0.48 and the packages that name 0.0.73 keep it, so a repository that
+moves to 0.0.81 does so in its own `mopm-toolchain.toml` and regenerates its lock. Since 0.0.73 the unit graph, `mopm plan`, `mopm lock` and `mopm pack` of a package that declares no programs
+are unchanged (the changelog says a package with no `bins` packs to the same bytes); a package that lists programs in `[targets] bins` now carries their source in its package.
+
+## mopm 0.0.83
+
+mopm 0.0.83 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.83, pinned for all three hosts beside 0.0.81 in the same two tables, with the sizes and digests of its assets
+as in the release's `SHA256SUMS` (downloaded and `sha256sum -c` checked, 2026-10-27). Nothing names it yet. It differs from 0.0.81 for a consumer: `mopm lock` pins the system libraries a package loads
+and the unit graph it prints is format 3 (`system_libs`, `loads`), and a package can say `publish = false`. This tree reads format 3 only from the change that teaches `rules/mojo` the format, so a
+repository that names 0.0.83 in its `mopm-toolchain.toml` needs a buildrules release that contains it; until then a row is all this tree has of 0.0.83, and no target reads it.
+
 ## Mirrors
 
 `buildrules.url_map` (rules/core/url_map.bzl) replaces the leading part of a download's URL and nothing else: the sha256 and size are still checked, so a mirror
