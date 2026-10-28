@@ -21,7 +21,7 @@ buck2 build //pkg:test_x__info --show-full-output         # one test's records
 | target | what |
 |---|---|
 | `:cov_branch` | the tool of the link, run and annotate actions: [`cov_branch.zig`](cov_branch.zig) importing [`cov_branch_link.zig`](cov_branch_link.zig), [`cov_branch_run.zig`](cov_branch_run.zig), [`cov_branch_annotate.zig`](cov_branch_annotate.zig), [`cov_branch_common.zig`](cov_branch_common.zig) and [`proc.zig`](proc.zig) (a command run with an exact environment, waited for, its output in files). A static executable built with the pinned zig 0.15.2 behind its unit tests (`:cov_branch_unit`: the three subcommands in-process over stand-in steps, and what they share); handed out only with its process tests passed (`:cov_branch_exe_test`, `:cov_branch_link_exe_test`, `:cov_branch_run_exe_test`, `:cov_branch_proc_test`), which run the executable as a child over stand-in programs and are validations of it |
-| `:cov_branch_classify` | [`cov_branch_classify.zig`](cov_branch_classify.zig) (importing [`cov_branch_andor.zig`](cov_branch_andor.zig), [`cov_branch_source.zig`](cov_branch_source.zig), [`cov_branch_ir.zig`](cov_branch_ir.zig) and [`cov_branch_records.zig`](cov_branch_records.zig)), a static executable, handed out only with its seven groups of cases passing ([Tests](#tests)) |
+| `:cov_branch_classify` | [`cov_branch_classify.zig`](cov_branch_classify.zig) (importing [`cov_branch_andor.zig`](cov_branch_andor.zig), [`cov_branch_source.zig`](cov_branch_source.zig), [`cov_branch_ir.zig`](cov_branch_ir.zig) and [`cov_branch_records.zig`](cov_branch_records.zig)), a static executable, handed out only with its eight groups of cases passing ([Tests](#tests)) |
 | `:llvm23`, `:llvm23_check` | `bin/llvm-profdata`, `bin/llvm-nm` of LLVM 23.1.3 with the libraries they load under `lib/`, and `runtime/libclang_rt.profile-x86_64.a`, the compiler-rt 23.1.3 profile runtime, unpacked from pinned conda-forge packages ([`pins.bzl`](../pins.bzl), `LLVM_BRANCH_PINS`); and the check that the directory holds exactly those files, that `llvm-profdata --version` prints 23.1.3 and that the runtime defines `__llvm_profile_runtime` and `__llvm_profile_write_file` |
 | `toolchains//:mojo_<v>_lld24`, `_lld24_check` | `bin/lld` of the pinned Mojo compiler package of version `<v>` (LLD 24, the LLVM the compiler is built on) with the C++ runtime libraries it loads; the check that the directory holds exactly those files and that `lld -flavor gnu --version` prints `LLD 24.` |
 | `toolchains//:mojo_<v>_raw_version_check` | the version coupling ([below](#the-version-coupling)) |
@@ -227,6 +227,12 @@ whose copies inlined with a constant index compute the condition at the `>=`, th
 otherwise be summed crosswise, and an `elif` has a header of its own, so it is still refused. A count of a branch that never ran is `-`, counted and not taken (lcov's "never reached"),
 never 0.
 
+**Copies of unequal size.** When the copies of a function at one location hold different numbers of decisions of a kind (an `@always_inline` method whose inlined copies folded a branch away in
+some callers and not in others), their `<n>`-th decisions cannot be identified with each other. The copy holding the most is that location's set of decisions, and its arms are counted from its
+own hits alone; the other copies' hits at the location are dropped, not added. This under-reports (an arm only a smaller copy took shows as not covered) and never over-reports, because no guess is
+made about which arm of the larger copy a smaller copy's arm is. Copies holding that same most are summed arm by arm as above, and must compute their conditions at the same places. A right
+operand (`rhs`) follows the decision it belongs to.
+
 One decision tested twice, two branches or selects on the same condition value with the same weights node at the same location (a loop's two at its head; an `if` whose test is both
 branched on and selected on), is one record: the br is kept.
 
@@ -267,12 +273,12 @@ Known shapes, with what each gives:
   Accepted. An `and`/`or` in such a condition is then never tested, and is its own two arms (above).
 - `<n>/<N>` numbers the decisions of one kind at one location in IR order. It cannot tell an `elif` (Mojo gives it the `if`'s location) from a second copy of one decision the optimizer made
   inside one function (jump threading, an optimizer's unrolling; the unrolled body of a `comptime for` is read from the source instead, [above](#unrolled-loops)). Such a copy gets its own `<n>` and its own counts, so the original's arms look less taken than they are: the error is a false "arm not
-  covered", never a silent pass. If two copies of a function disagree on `<N>` the action fails (above).
+  covered", never a silent pass. If two copies of a function disagree on `<N>` the larger one's decisions are kept and the smaller's counts dropped ([above](#cov_branch_classify)).
 - A String's destructor or copy at a decision's token whose tested instruction sits at another location (a destroy reusing an earlier destroy's flags test) is recorded as a decision of that
   token (the rule above reads only the tested instruction's location there): a false "arm not covered" at worst, never a dropped decision.
 
-**What stays refused** (the classifier fails the action naming `file:line:col`; none is read as a pass): copies holding different numbers of decisions at a location (but not those of a `comptime for` body, which are one decision, [unrolled loops](#unrolled-loops); a `comptime for` whose
-unrolled calls share one `inlinedAt`); a br at a call in a `try:` body on something else than the call's flag; a short-circuit and/or with no result phi (an `if` folded away when both arms
+**What stays refused** (the classifier fails the action naming `file:line:col`; none is read as a pass): a `comptime for` whose
+unrolled calls share one `inlinedAt` (copies of different sizes are not refused, [above](#cov_branch_classify)); a br at a call in a `try:` body on something else than the call's flag; a short-circuit and/or with no result phi (an `if` folded away when both arms
 return alike; a `debug_assert` condition; a non-`Bool` `and` whose result goes through memory); a select at a call on something else than a raising call's flag or a select between 0 and 1; a phi at an and/or that is no
 short-circuit one's (a reload of the left operand after String destructor code); copies computing a condition in different headers; zero branches parsed in a file with a branch-like instruction on a decision line (a decision line the build folded to straight-line code is 0/0);
 a `with` in measured code, whose branches (the `__exit__(err)` result that suppresses the error, and the context manager's state) no rule reads. The refusal of a library is a failed
@@ -424,7 +430,7 @@ By behaviour, each run as a build action on the farm, and a defect each catches:
   one (an edit that changes nothing fails the case). It checks the exit status, the output file byte for byte or by line, the messages on stderr and that nothing is written to stdout.
   `case`, 1 to 9c on `fixtures/case.ll`: the golden output, the metadata order, a second test's counts, unknown tokens, file names, `--gen`, zero branches, a name no prefix covers, sources named by
   import name with `--src` (8d to 8g), malformed IR, copies, and/or shapes refused. `andor`, 9j and 9k: and/or results no test reads, error flags, three on one line. `files`, 9d to 9i: nodebug
-  callees, kinds, invokes, decision-free and twice-spelled files. `rules`, 11 to 11f on `fixtures/rules.ll`: the shape rules. `try`, 12 to 12c on `fixtures/try.ll`. `fold`, 13 to 15, on IR written in the test file: a Bool converted to an Int, an unrolled loop in instances of two widths (and a chain with an `elif`, still refused), and a condition the build decided (a target query, a literal; a runtime flag and an unspecialised query still decisions). `main`: bad usage (exit 2, the
+  callees, kinds, invokes, decision-free and twice-spelled files. `rules`, 11 to 11f on `fixtures/rules.ll`: the shape rules. `try`, 12 to 12c on `fixtures/try.ll`. `unequal`, U1 to U4 on `fixtures/case.ll`: copies holding different numbers of branches at one location (the largest is kept and a hit only in a smaller one covers no arm; equal copies, and several largest, still summed). `fold`, 13 to 15, on IR written in the test file: a Bool converted to an Int, an unrolled loop in instances of two widths (and a chain with an `elif`, still refused), and a condition the build decided (a target query, a literal; a runtime flag and an unspecialised query still decisions). `main`: bad usage (exit 2, the
   message and the usage line) and an output whose write fails (a file size limit in the child: exit 1, nothing written, no temporary file left).
 - **The tool.** `cov_branch_unit`: link (the exact lld and zig command lines and environments, each input missing or empty, a bitcode without the magic, an lld or zig that fails with the last
   lines of its log, an output that is no ELF file or that holds a directory of the action; with native libraries: the libraries after the object in the order given, `llvm-nm` run on the

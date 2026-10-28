@@ -387,29 +387,11 @@ test "9 arms of two instances" {
     _ = try c.refused("arms of two instances", "src/pkg/b.mojo:3:5: two instances of one switch have 3 and 2 arms", try e.text());
 }
 
-// 9b. A copy of a function holding another number of branches of a kind at
-// a location than another copy is refused: its n-th is not theirs. Catches:
-// ordinals summed across copies that do not match (a branch one generic
-// instance folded away shifting the others'). The second branch has other
-// weights: with the same, it would be one decision tested twice.
-test "9b copies differ in number" {
-    var c = try h.Case.init("");
-    defer c.deinit();
-    var e = try h.Ir.of(c.a(), h.case_ll);
-    var i: usize = 0;
-    var n: usize = 0;
-    while (i < e.lines.items.len) : (i += 1) {
-        const l = e.lines.items[i];
-        if (!std.mem.endsWith(u8, l, ", !dbg !40, !prof !70")) continue;
-        try e.lines.insert(c.a(), i + 1, try std.mem.concat(c.a(), u8, &.{ l[0 .. l.len - "!prof !70".len], "!prof !72" }));
-        i += 1;
-        n += 1;
-    }
-    try std.testing.expect(n > 0);
-    _ = try c.refused("copies differ", "src/pkg/a.mojo:3:5 (br): one copy of its function has 1 branch(es) of this kind here and another 2", try e.text());
-}
-
-// So is one holding as many whose conditions are computed elsewhere (each
+// 9b. Copies of a function holding other numbers of branches of a kind at a
+// location are not refused: the copy with the most is the location's (the
+// cases of cov_branch_classify_unequal_test.zig, U1 to U4).
+//
+// A copy holding as many whose conditions are computed elsewhere (each
 // instance folded away another of its branches there). Catches: copies
 // matched by their number alone.
 test "9b copies' conditions computed elsewhere" {
