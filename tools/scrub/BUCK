@@ -82,6 +82,7 @@ scrub_test(
     "//examples/mojo/load_native:scrub_files",
     "//examples/mojo/installed:scrub_files",
     "//examples/mojo/registry/cnative:scrub_files",
+    "//examples/mojo/registry/conda_bins:scrub_files",
     "//examples/mojo/registry/probe_sys/base_sys:scrub_files",
     "//examples/mojo/registry/probe_sys:scrub_files",
     "//examples/mojo/sibfake/chain/a:scrub_files",
