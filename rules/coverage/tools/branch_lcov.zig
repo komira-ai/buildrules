@@ -18,8 +18,10 @@
 //!
 //! Across files (`Shapes`): one test's classifier sees only its own copies of the code, so two tests whose copies hold the same number of
 //! decisions at a location but different ones are summed crosswise unnoticed; what can be seen is two tests giving one location (line,
-//! column, kind) a different `N`, or one decision a different number of arms, and both are refused naming the file, the line and the two
-//! reports.
+//! column, kind) a different `N`, or one decision a different number of arms. For a different `N` (an inlined function whose copies were
+//! cut down differently) the tests whose copy has the most decisions are the location's set and are summed; the records of the others at
+//! that location are dropped, never added, so the figure under-reports rather than guess which arm of the larger copy a smaller copy's
+//! arm is. A different number of arms is refused naming the file, the line and the two reports.
 
 const std = @import("std");
 const Alloc = std.mem.Allocator;
@@ -221,28 +223,38 @@ pub const Sum = struct {
     fn addFile(self: *Sum, a: Alloc, d: *Diag, f: File, origin: []const u8) Error!void {
         var arms = std.StringArrayHashMapUnmanaged(u64).empty;
         var totals = std.StringArrayHashMapUnmanaged(u64).empty;
-        var lines = std.StringArrayHashMapUnmanaged(u64).empty;
         var it = f.branches.iterator();
         while (it.next()) |e| {
             const p = split(e.key_ptr.*);
             const slot = try arms.getOrPut(a, p.decision);
             slot.value_ptr.* = if (slot.found_existing) slot.value_ptr.* + 1 else 1;
             try totals.put(a, p.site, p.total);
-            try lines.put(a, p.site, p.line);
         }
+        const files_slot = try self.files.getOrPut(a, f.path);
+        if (!files_slot.found_existing) files_slot.value_ptr.* = .empty;
+        // Where the copies of one location hold different numbers of decisions, the copy with the most decisions is the location's set:
+        // a file giving fewer has that location's records dropped, a file giving more replaces what was summed. Never guess which arm of
+        // the larger copy a smaller copy's arm is; the result under-reports instead.
+        var dropped = std.StringHashMapUnmanaged(void).empty;
         var tit = totals.iterator();
         while (tit.next()) |e| {
-            const k = try std.fmt.allocPrint(a, "{s}\x00{s}", .{ f.path, e.key_ptr.* });
+            const site = e.key_ptr.*;
+            const k = try std.fmt.allocPrint(a, "{s}\x00{s}", .{ f.path, site });
             if (self.totals.get(k)) |seen| {
-                if (seen.n != e.value_ptr.*) {
-                    const site = e.key_ptr.*;
-                    const col_kind = site[std.mem.indexOfScalar(u8, site, ',').? + 1 ..];
-                    return refuse(a, d, "{s}:{d}: {s} gives {d} decision(s) at {s} and {s} gives {d}: the tests' copies of this code hold different decisions at one location, so their branch records cannot be summed by id", .{ f.path, lines.get(site).?, seen.origin, seen.n, col_kind, origin, e.value_ptr.* });
+                if (seen.n > e.value_ptr.*) {
+                    try dropped.put(a, site, {});
+                } else if (seen.n < e.value_ptr.*) {
+                    var i: usize = 0;
+                    while (i < files_slot.value_ptr.count()) {
+                        if (std.mem.eql(u8, split(files_slot.value_ptr.keys()[i]).site, site)) files_slot.value_ptr.orderedRemoveAt(i) else i += 1;
+                    }
+                    try self.totals.put(a, k, .{ .n = e.value_ptr.*, .origin = origin });
                 }
             } else try self.totals.put(a, k, .{ .n = e.value_ptr.*, .origin = origin });
         }
         var ait = arms.iterator();
         while (ait.next()) |e| {
+            if (dropped.contains(split(try std.fmt.allocPrint(a, "{s},0", .{e.key_ptr.*})).site)) continue;
             const k = try std.fmt.allocPrint(a, "{s}\x00{s}", .{ f.path, e.key_ptr.* });
             if (self.arms.get(k)) |seen| {
                 if (seen.n != e.value_ptr.*) {
@@ -251,11 +263,10 @@ pub const Sum = struct {
                 }
             } else try self.arms.put(a, k, .{ .n = e.value_ptr.*, .origin = origin });
         }
-        const slot = try self.files.getOrPut(a, f.path);
-        if (!slot.found_existing) slot.value_ptr.* = .empty;
         var bit = f.branches.iterator();
         while (bit.next()) |e| {
-            const t = try slot.value_ptr.getOrPut(a, e.key_ptr.*);
+            if (dropped.contains(split(e.key_ptr.*).site)) continue;
+            const t = try files_slot.value_ptr.getOrPut(a, e.key_ptr.*);
             t.value_ptr.* = if (t.found_existing) t.value_ptr.* +| e.value_ptr.* else e.value_ptr.*;
         }
     }

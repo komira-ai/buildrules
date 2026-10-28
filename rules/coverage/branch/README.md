@@ -285,8 +285,8 @@ a `with` in measured code, whose branches (the `__exit__(err)` result that suppr
 `:coverage`, not a figure: a package that hits one has the line figure from its `[reports]` and no branch figure until the classifier learns the shape, from evidence, in a test.
 
 **Silent-miss limits** (a limit, not a check; each shows as a false "arm not covered" or is documented above, never as a false pass): `rhs` attribution matches by count and is not structural;
-two tests' copies that hold as many decisions at a location but different ones are summed crosswise by `cov_summary` (it refuses a different `N` or a different number of arms, not a different
-decision); an `<n>/<N>` miscount from an optimizer-duplicated decision.
+two tests' copies that hold as many decisions at a location but different ones are summed crosswise by `cov_summary` (it refuses a different number of arms, not a different
+decision; a different `N` is "Copies of unequal size" below, across tests as within one: the tests holding the most decisions are summed, the others' records at the location are dropped); an `<n>/<N>` miscount from an optimizer-duplicated decision.
 
 **Output.** Per measured file the IR holds code of, `SF:<repository path>`, its records sorted by line, column, kind, `<n>` and arm, `end_of_record`; files sorted bytewise. A file with code and no
 source decision is named with no record (`SF:` then `end_of_record`), so `cov_summary` counts its package's branches as measured with none to take, rather than not measured. A test whose IR
