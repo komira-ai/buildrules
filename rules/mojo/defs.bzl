@@ -76,7 +76,7 @@ toolchain) and the test runs as the platform's `exec_compatible_with`, so the fa
 load("//rules:isa.bzl", "ISA_LEVELS", "isa_select", "required_isa", "test_exec_compatible_with")
 load(":exec.bzl", "gated", "test_exec", "unit_exec", "unsupported_exec")
 load("//rules/core:pinned_file.bzl", "pinned_file")
-load("//rules/core:platform.bzl", "LINUX_X86_64")
+load("//rules/core:platform.bzl", "LINUX_X86_64", "TOOL_EXEC")
 load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/cxx:native.bzl", "native_static")
 load(":pack.bzl", "mojo_conda")
@@ -438,7 +438,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         toolchain = toolchain,
         unsupported = unsupported_platform(graphs, here + ":check"),
         exec_missing = unsupported_exec(here + ":check"),
-        exec_compatible_with = LINUX_X86_64,
+        exec_compatible_with = TOOL_EXEC,
         visibility = visibility,
     )
 
@@ -468,7 +468,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         table = _join(project, "buildrules.mojo.lock.bzl"),
         workspace = ":workspace",
         workspace_root = rooted,
-        exec_compatible_with = LINUX_X86_64,
+        exec_compatible_with = TOOL_EXEC,
         visibility = visibility,
     )
 
@@ -704,7 +704,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             name = name_once("syslib_" + n),
             archive = by_subdir(graphs, archives),
             package = n,
-            exec_compatible_with = LINUX_X86_64,
+            exec_compatible_with = TOOL_EXEC,
             visibility = visibility,
         )
         syslib_label[n] = ":syslib_" + n

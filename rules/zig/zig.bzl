@@ -6,13 +6,20 @@ and file utilities), the zig distribution (C link driver, and the compiler for
 Actions never search the worker's PATH.
 """
 
-def _on_linux(rule_fn):
-    """`rule_fn`, run on the linux x86_64 execution platform unless the call says otherwise."""
+def _on_tool_exec(rule_fn, targeted = False):
+    """`rule_fn`, run on the tool execution platform (rules/core/platform.bzl, `TOOL_EXEC`: linux x86_64 on a farm, the Mac itself in local mode on macOS arm64) unless the call
+    says otherwise. `targeted`: the rule has a zig `target`, which defaults to the one that platform runs (`TOOL_TARGET`) and is not written when it is the attribute's own
+    default, so a farm's commands are what they always were."""
     def call(**kwargs):
         if "exec_compatible_with" not in kwargs:
-            kwargs["exec_compatible_with"] = LINUX_X86_64
+            kwargs["exec_compatible_with"] = TOOL_EXEC
+        if targeted and "target" not in kwargs and TOOL_TARGET != _DEFAULT_TARGET:
+            kwargs["target"] = TOOL_TARGET
         return rule_fn(**kwargs)
     return call
+
+# The `target` attribute's default of every zig rule below.
+_DEFAULT_TARGET = "x86_64-linux-musl"
 
 # What a `zig_exe` was built for: zig's -target triple of the executable.
 ZigExeInfo = provider(fields = {
@@ -22,7 +29,7 @@ ZigExeInfo = provider(fields = {
 })
 load("@buildrules//rules/core:test_runtime.bzl", "RUNNER_ENV", "data_map")
 load(":checks.bzl", "check_exe_target", "check_exec_tool_name", "check_module_name", "check_optimize", "check_same_tests", "check_target_triple", "check_unique_dep_names", "check_unique_imports", "zig_closure")
-load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/core:platform.bzl", "MACOS_AARCH64", "TOOL_EXEC", "TOOL_TARGET")
 load("@buildrules//rules/core:rerun.bzl", "RERUN_ATTRS", "rerun_env", "rerun_info")
 
 # What a `zig_test` runs, for the rule that runs the same test under coverage (rules/coverage/zig_cover.bzl): the same root, zig, target, data and tools.
@@ -68,8 +75,20 @@ PATH="$T/bin"; export PATH
 """
 
 def _zig_dist_impl(ctx):
-    bb = ctx.attrs.busybox[DefaultInfo].default_outputs[0]
     out = ctx.actions.declare_output("zig", dir = True)
+    if ctx.attrs.unpack:
+        # `unpack` (tools/bootstrap), a pinned program that needs no shell and no busybox: what a Mac, which has no static busybox, unpacks its zig with.
+        # The archive's one top directory (`strip_prefix`) is stripped.
+        if ctx.attrs.busybox:
+            fail("{}: unpack and busybox are two ways to unpack; name one".format(ctx.label))
+        ctx.actions.run(
+            cmd_args(ctx.attrs.unpack[DefaultInfo].default_outputs[0], "--strip-components", "1", ctx.attrs.archive[DefaultInfo].default_outputs[0], out.as_output()),
+            category = "zig_unpack",
+        )
+        return [DefaultInfo(default_output = out)]
+    if not ctx.attrs.busybox:
+        fail("{}: name the busybox that unpacks the archive, or the unpack program".format(ctx.label))
+    bb = ctx.attrs.busybox[DefaultInfo].default_outputs[0]
     script = _PRELUDE + """
 mkdir -p "$2.x"
 tar -xJf "$1" -C "$2.x"
@@ -87,8 +106,10 @@ zig_dist_rule = rule(
     impl = _zig_dist_impl,
     attrs = {
         "archive": attrs.dep(),
-        "busybox": attrs.dep(default = "buildrules//rules/pins:busybox"),
+        # The busybox whose `tar` unpacks the archive (the default), or `unpack` (never both): a Mac has no busybox before this zig exists.
+        "busybox": attrs.option(attrs.dep(), default = None),
         "strip_prefix": attrs.string(),
+        "unpack": attrs.option(attrs.dep(), default = None),
     },
 )
 
@@ -240,7 +261,7 @@ zig_exe_rule = rule(
         "strip": attrs.bool(default = True),
         # zig's -target: what the executable runs on (it is built on the
         # linux execution platform whatever this says).
-        "target": attrs.string(default = "x86_64-linux-musl"),
+        "target": attrs.string(default = _DEFAULT_TARGET),
         # `zig_test` targets the executable waits for.
         "unit_tests": attrs.list(attrs.dep(), default = []),
         "zig": attrs.dep(default = "buildrules//rules/pins:zig"),
@@ -367,7 +388,7 @@ zig_test_rule = rule(
         # zig's -target. The tests run as part of the action, so it must be a
         # target the execution platform runs (the default, or another libc
         # of its cpu).
-        "target": attrs.string(default = "x86_64-linux-musl"),
+        "target": attrs.string(default = _DEFAULT_TARGET),
         "zig": attrs.dep(default = "buildrules//rules/pins:zig"),
         # The runner of the action (tools/zig_launch.zig), built by the
         # pinned zig directly: no test needs a shell to run.
@@ -382,18 +403,22 @@ def _zig_bootstrap_exe_impl(ctx):
     # are directories of the action's working directory (as zig_cc_launcher's).
     env = {"ZIG_GLOBAL_CACHE_DIR": ".zig-cache/global", "ZIG_LOCAL_CACHE_DIR": ".zig-cache/local"}
     zig_exe = cmd_args(zig, "/zig", delimiter = "")
-    inputs = [ctx.attrs.src, ctx.attrs.test_src] + ctx.attrs.imports
+    inputs = [ctx.attrs.src] + ([ctx.attrs.test_src] if ctx.attrs.test_src else []) + ctx.attrs.imports
+    passed = [t[DefaultInfo].default_outputs[0] for t in ctx.attrs.unit_tests]
     # `zig test` runs the tests of `test_src` and, given -femit-bin, leaves the
     # test executable behind: the output exists only if every test passed.
-    tested = ctx.actions.declare_output(ctx.label.name + ".tested")
-    ctx.actions.run(
-        cmd_args(zig_exe, "test", "-target", ctx.attrs.target, ctx.attrs.test_src, cmd_args(tested.as_output(), format = "-femit-bin={}"), hidden = inputs),
-        env = env,
-        category = "zig_bootstrap_test",
-    )
+    # (Without a `test_src` the tests are the `unit_tests`: `zig_test` targets.)
+    tested = []
+    if ctx.attrs.test_src:
+        tested = [ctx.actions.declare_output(ctx.label.name + ".tested")]
+        ctx.actions.run(
+            cmd_args(zig_exe, "test", "-target", ctx.attrs.target, ctx.attrs.test_src, cmd_args(tested[0].as_output(), format = "-femit-bin={}"), hidden = inputs),
+            env = env,
+            category = "zig_bootstrap_test",
+        )
     out = ctx.actions.declare_output(ctx.label.name)
     ctx.actions.run(
-        cmd_args(zig_exe, "build-exe", "-OReleaseSafe", "-target", ctx.attrs.target, "-fstrip", ctx.attrs.src, cmd_args(out.as_output(), format = "-femit-bin={}"), hidden = [tested] + inputs),
+        cmd_args(zig_exe, "build-exe", "-OReleaseSafe", "-target", ctx.attrs.target, "-fstrip", ctx.attrs.src, cmd_args(out.as_output(), format = "-femit-bin={}"), hidden = tested + passed + inputs),
         env = env,
         category = "zig_bootstrap_exe",
     )
@@ -402,14 +427,18 @@ def _zig_bootstrap_exe_impl(ctx):
 # An executable built by the pinned zig with no shell and no busybox, behind
 # the unit tests in `test_src` (which imports `src`): the launchers of the
 # other rules are built this way, so those rules need no shell either. Built
-# `-OReleaseSafe -fstrip` like `zig_exe`.
+# `-OReleaseSafe -fstrip` like `zig_exe`. A program built for another system
+# than the one it is built on (`macos_applets`) has no `test_src` (`zig test`
+# would run the tests on the system it is built for) and waits for `unit_tests`
+# instead, `zig_test` targets that run on this one.
 zig_bootstrap_exe_rule = rule(
     impl = _zig_bootstrap_exe_impl,
     attrs = {
         "imports": attrs.list(attrs.source(), default = []),
         "src": attrs.source(),
-        "target": attrs.string(default = "x86_64-linux-musl"),
-        "test_src": attrs.source(),
+        "target": attrs.string(default = _DEFAULT_TARGET),
+        "test_src": attrs.option(attrs.source(), default = None),
+        "unit_tests": attrs.list(attrs.dep(), default = []),
         "zig": attrs.dep(default = "buildrules//rules/pins:zig"),
     },
 )
@@ -439,12 +468,23 @@ conda_libs_rule = rule(
 )
 
 
-conda_libs = _on_linux(conda_libs_rule)
+conda_libs = _on_tool_exec(conda_libs_rule)
 
-zig_dist = _on_linux(zig_dist_rule)
-zig_bootstrap_exe = _on_linux(zig_bootstrap_exe_rule)
-zig_exe = _on_linux(zig_exe_rule)
-zig_test = _on_linux(zig_test_rule)
+_zig_dist_on_tool_exec = _on_tool_exec(zig_dist_rule)
+
+def zig_dist(**kwargs):
+    """The zig distribution unpacked from `archive`: by the pinned applets' `tar`, or, on a Mac that runs Buck2 itself (`TOOL_EXEC`), by the pinned `unpack` program, which
+    needs no applets (a Mac has none before macos_applets is built, and that is built by a zig). The call's own `busybox` or `unpack` chooses."""
+    if "busybox" not in kwargs and "unpack" not in kwargs:
+        if TOOL_EXEC == MACOS_AARCH64:
+            kwargs["unpack"] = "buildrules//rules/pins:bootstrap_unpack_macos_aarch64"
+        else:
+            kwargs["busybox"] = "buildrules//rules/pins:busybox"
+    return _zig_dist_on_tool_exec(**kwargs)
+
+zig_bootstrap_exe = _on_tool_exec(zig_bootstrap_exe_rule, targeted = True)
+zig_exe = _on_tool_exec(zig_exe_rule, targeted = True)
+zig_test = _on_tool_exec(zig_test_rule, targeted = True)
 zig_module = zig_module_rule
 
 def _zig_exe_target_test_impl(ctx):

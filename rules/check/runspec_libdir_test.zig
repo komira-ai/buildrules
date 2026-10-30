@@ -2,6 +2,7 @@
 //! macOS puts them first in DYLD_FALLBACK_LIBRARY_PATH. The environment a run gets without the option is the one runspec_test.zig holds.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const t = std.testing;
 const kit = @import("checkkit.zig");
 const rs = @import("runspec.zig");
@@ -40,6 +41,8 @@ test "--lib-dir without --ld-library-path is refused before anything is started"
 // Defect caught: the directories before the compiler's lib (a library of the package shadowing the compiler runtime), replacing it, made absolute against the
 // wrong directory, in another order, or a DYLD_* variable in a Linux program's environment. Runs the real program on the host: a Linux one (the macOS variables are the cases below).
 test "--lib-dir on the host: the library path is the runtime's, then each directory absolute in the order given; no other variable moves" {
+    // The program started is the one of the machine the test runs on: on a Mac it is a macOS program and sets the DYLD_* variables, which the cases below hold.
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
     var c = try kit.Case.init();
     defer c.deinit();
     const here = try c.path(".");

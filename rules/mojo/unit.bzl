@@ -15,6 +15,7 @@ A unit's output directory is the action's single output. A library's `.mojoc` is
 """
 
 load("//rules:isa.bzl", "isa_satisfies")
+load("//rules:platforms.bzl", "darwin_hosts_here", "darwin_local_hosts_refusal")
 load("//rules/coverage/branch:llvm_branch.bzl", "CovBranchInfo", "RAW_PROFILE_VERSION")
 load("//rules/cxx:providers.bzl", "NativeArchiveInfo", "NativeLibraryInfo")
 load("//rules/native:link.bzl", "LINK_ARCHIVE_DIR", "extra_link_archives", "link_archive_name", "link_cfg")
@@ -29,10 +30,11 @@ load(":test_data.bzl", "DATA_ENV", "LAYOUT_DEFAULT", "LAYOUT_INSTALLED", "check_
 # really re-executes, so two builds can be compared byte for byte.
 _NONCE = read_config("buildrules", "unit_nonce", "")
 
-# The macOS workers' host identities (`[buildrules_re] darwin_macos_hosts`, space separated: what `mojo_compile host-identity` prints on each worker). A macOS
-# compile is given them (toolchain.cfg, so they are part of its action key) and refuses a worker that is not one of them. Read from the root cell, where the execution
-# platforms are configured.
-_MACOS_HOSTS = sorted([h for h in read_root_config("buildrules_re", "darwin_macos_hosts", "").split(" ") if h])
+# The macOS hosts a compile may run on (rules/platforms.bzl): the identities `[buildrules_re] darwin_macos_hosts` names (space separated: what `mojo_compile host-identity`
+# prints on each worker), or, on a Mac that runs Buck2 itself (`mode = local`, none named), the sentinel `local`. A macOS compile is given them (toolchain.cfg, so they
+# are part of its action key) and its wrapper refuses a worker that is not one of them, except the sentinel, which skips the comparison. Read from the root cell, where
+# the execution platforms are configured.
+_MACOS_HOSTS, _LOCAL_EXECUTION = darwin_hosts_here()
 
 # The directories a macOS test run adds to dyld's search for a library it opens by its bare name (`[buildrules_re] macos_library_dirs`, separated by ':' or spaces;
 # docs/contract.md). Empty when the key is absent. Only a macOS test run is given them (`--macos-library-dirs`, so they are part of that action's key); a Linux
@@ -123,9 +125,12 @@ def _unit_impl(ctx):
     macos = "-macos" in tc.cc_target
     if macos:
         # The macOS wrapper links with the host's C driver: no zig, and the deployment target is the version after `-macos.` of the triple.
+        refusal = darwin_local_hosts_refusal(list(ctx.attrs.macos_hosts), ctx.attrs.local_execution)
+        if refusal:
+            fail("{}: {}; a farm's hosts are real identities and never mix with it.".format(ctx.label, refusal))
         if not ctx.attrs.macos_hosts:
             fail(("{}: no macOS host identity. Set `[buildrules_re] darwin_macos_hosts` of the root cell to what `mojo_compile host-identity` prints on each macOS " +
-                  "worker (separated by spaces).").format(ctx.label))
+                  "worker (separated by spaces), or build on a Mac with `-c buildrules_re.mode=local` and no worker property set.").format(ctx.label))
         cfg = "wrapper=wrapper\ncompiler=compiler\ndeployment_target={}\n".format(tc.cc_target.rsplit("-macos.", 1)[-1])
         for h in ctx.attrs.macos_hosts:
             cfg += "macos_host={}\n".format(h)
@@ -225,6 +230,8 @@ mojo_unit_rule = rule(
         "wrapper": attrs.exec_dep(default = "buildrules//rules/mojo:mojo_compile_host"),
         # The host identities a macOS compile may run on (see _MACOS_HOSTS).
         "macos_hosts": attrs.list(attrs.string(), default = _MACOS_HOSTS),
+        # True when macos_hosts is the local sentinel (a build on this Mac; rules/platforms.bzl, `darwin_hosts_for`).
+        "local_execution": attrs.bool(default = _LOCAL_EXECUTION),
         # Another zig directory for the link (a coverage build's cov_link keeps debug info and relocates paths).
         "zig_override": attrs.option(attrs.exec_dep(), default = None),
     },

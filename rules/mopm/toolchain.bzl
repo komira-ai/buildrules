@@ -12,7 +12,7 @@ on linux x86_64 whatever the tarball is for: it only writes files.
 """
 
 load("//rules/core:pinned_file.bzl", "pinned_file")
-load("//rules/core:platform.bzl", "LINUX_X86_64", "by_host")
+load("//rules/core:platform.bzl", "TOOL_EXEC", "by_host")
 load("//rules/core:url_map.bzl", "mapped_url")
 load(":hosts.bzl", "MOPM_HOST_ASSETS")
 load(":pins.bzl", "MOPM_DEFAULT", "all_versions", "vname")
@@ -78,7 +78,7 @@ def mopm_toolchains(extra = {}):
             dir = by_host(row["dir"], dirs["linux-aarch64"], dirs["macos-aarch64"]),
             missing = by_host("", missing["linux-aarch64"], missing["macos-aarch64"]),
             version = v,
-            exec_compatible_with = LINUX_X86_64,
+            exec_compatible_with = TOOL_EXEC,
             visibility = ["PUBLIC"],
         )
     native.alias(name = "mopm", actual = ":mopm_" + vname(MOPM_DEFAULT), visibility = ["PUBLIC"])

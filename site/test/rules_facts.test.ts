@@ -87,7 +87,7 @@ const argName = (a: string): string => /^[*]*([A-Za-z_][A-Za-z0-9_]*)/.exec(a)![
 
 /** The attributes of the `rule(...)` assigned to `var`: the keys of its `attrs` dict. */
 function ruleAttrs(var_: string): string[] | undefined {
-  const start = new RegExp(`^${var_} = (?:_on_linux\\()?rule\\(`, 'm').exec(src);
+  const start = new RegExp(`^${var_} = (?:_on_(?:linux|tool_exec)\\()?rule\\(`, 'm').exec(src);
   if (!start) return undefined;
   const rest = src.slice(start.index);
   const end = rest.search(/\n\)/);
@@ -106,7 +106,7 @@ function paramsOf(name: string, seen: string[] = []): string[] | undefined {
     const names = args.filter((a) => !a.startsWith('*')).map(argName);
     return args.some((a) => a.startsWith('**')) ? [...names, ...GENERIC, ...ALL_ATTRS] : names;
   }
-  const alias = new RegExp(`^${name} = (?:_on_linux\\()?([A-Za-z_][A-Za-z0-9_]*)\\)?\\s*$`, 'm').exec(src);
+  const alias = new RegExp(`^${name} = (?:_on_(?:linux|tool_exec)\\()?([A-Za-z_][A-Za-z0-9_]*)(?:, targeted = True)?\\)?\\s*$`, 'm').exec(src);
   if (alias) return paramsOf(alias[1], [...seen, name]);
   for (const v of [name, `_${name}`, `${name}_rule`, `_${name}_rule`]) {
     const a = ruleAttrs(v);
