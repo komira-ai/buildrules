@@ -86,7 +86,8 @@ def _tier_problems(ctx, platform, exec, local_mac):
     applets = ctx.configured_targets("//rules/pins:busybox", target_platform = platform)
     if local_mac != applets.rule_type.endswith("alias"):
         problems.append("//rules/pins:busybox on {} is a {}: {}".format(platform, applets.rule_type, "a Mac's is the alias of macos_applets" if local_mac else "a farm's is the pinned download"))
-    for name in ["conda_unpack", "mojo_launch", "mojo_compile_macos"]:
+    # files_check names no target: the default of its kind of tool is the one that runs on `exec` (rules/zig/zig.bzl, TOOL_TARGET).
+    for name in ["conda_unpack", "files_check", "mojo_launch", "mojo_compile_macos"]:
         node = ctx.configured_targets("//rules/mojo:" + name, target_platform = platform)
         want = "aarch64-macos" if name == "mojo_compile_macos" or local_mac else "x86_64-linux-musl"
         got = node.resolved_attrs_eager(ctx).target
