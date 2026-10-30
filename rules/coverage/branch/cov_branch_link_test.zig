@@ -706,3 +706,23 @@ test "stringsWith is the first three runs of four printable bytes that hold the 
     try testing.expectEqualStrings("/w12 ", try l.stringsWith(a, "x\x7f/w12", "/w"));
     try testing.expectEqualStrings("/w12 ", try l.stringsWith(a, "x\n/w12", "/w"));
 }
+
+test "link tail: --link-tail repeats in order, ends the zig line after the profile runtime, and a link without one is the line it was" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const full = [_][]const u8{ "--compiler", "c", "--zig", "z", "--target", "t", "--lld", "l", "--runtime", "r", "--bitcode", "bc", "--out", "o", "--nm", "n" };
+    var why: []const u8 = "";
+    const none = (try l.parseArgs(a, &full, &why)).?;
+    try testing.expectEqual(@as(usize, 0), none.link_tail.len);
+    const got = (try l.parseArgs(a, &(full ++ [_][]const u8{ "--link-tail", "-lc++", "--link-tail", "-lm" }), &why)).?;
+    try expectArgv(&.{ "-lc++", "-lm" }, got.link_tail);
+    try testing.expect((try l.parseArgs(a, &(full ++ [_][]const u8{"--link-tail"}), &why)) == null);
+    try testing.expectEqualStrings("--link-tail needs a value", why);
+    const plain = try l.zigArgv(a, "/z", "t", "/k", "/kgen.so", "/o", "/rt.a", &.{"/n.a"}, &.{});
+    const withtail = try l.zigArgv(a, "/z", "t", "/k", "/kgen.so", "/o", "/rt.a", &.{"/n.a"}, &.{"-lc++"});
+    try testing.expectEqual(plain.len + 1, withtail.len);
+    try testing.expectEqualStrings("-Wl,--no-whole-archive", plain[plain.len - 1]);
+    try testing.expectEqualStrings("-lc++", withtail[withtail.len - 1]);
+    try testing.expectEqualStrings("/n.a", withtail[8]);
+}

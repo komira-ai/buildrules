@@ -1,0 +1,22 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/native:defs.bzl", "native_library")
+
+# A C++ library behind a C ABI (native/cxxlib.cc: a class with a virtual function, a static initializer, std::string and std::vector, RTTI, an exception thrown and
+# caught inside it). Its sources are C++, so `NativeLibraryInfo.cxx_runtime` is set and a program that links it links the C++ runtime once (rules/mojo/unit.bzl).
+# The header is exported under the name its users include, `cxxlib.h`, from `include/cxxlib.h`. `cxx_runtime = True` states what the sources are: stating the other is refused.
+native_library(
+    name = "cxxlib",
+    srcs = ["native/cxxlib.cc"],
+    exported_headers = {"cxxlib.h": "include/cxxlib.h"},
+    cxxflags = ["-fno-omit-frame-pointer"],
+    cxx_runtime = True,
+)
+
+# A C library whose only dependency is the C++ library: the C++ runtime it needs comes through `deps`, and so do the archive and the exported header.
+native_library(
+    name = "cuser",
+    srcs = ["native/cuser.c"],
+    deps = [":cxxlib"],
+)
+
+scrub_files()

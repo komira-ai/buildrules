@@ -54,6 +54,7 @@ const SOURCES = [
   'rules/zig/zig.bzl',
   'rules/cxx/defs.bzl',
   'rules/cxx/archive.bzl',
+  'rules/native/defs.bzl',
   'rules/mojo/defs.bzl',
   'rules/mopm/toolchain.bzl',
   'rules/isa.bzl',
@@ -143,6 +144,7 @@ describe('rule arguments on the pages are the arguments the rules take', () => {
       ['cargo_workspace', '/rules/rust/'],
       ['npm_package', '/rules/node/'],
       ['mojo_package', '/rules/mojo/'],
+      ['native_library', '/rules/cxx/'],
     ];
     for (const [rule, path] of doc) {
       const t = pageText(page(path));

@@ -34,7 +34,23 @@ _ISA_X86_64_V2 = transition(impl = _impl, refs = {"value": "buildrules//platform
 _ISA_X86_64_V3 = transition(impl = _impl, refs = {"value": "buildrules//platforms:isa_x86_64_v3"})
 _ISA_X86_64_V4 = transition(impl = _impl, refs = {"value": "buildrules//platforms:isa_x86_64_v4"})
 
-_DEP_ATTRS = ["deps", "isa_x86_64_v1", "isa_x86_64_v2", "isa_x86_64_v3", "isa_x86_64_v4", "rust_1_85_0", "rust_1_95_0"]
+def _macos_impl(platform, refs):
+    os = refs.os[ConstraintValueInfo]
+    cpu = refs.cpu[ConstraintValueInfo]
+    constraints = dict(platform.configuration.constraints)
+    constraints[os.setting.label] = os
+    constraints[cpu.setting.label] = cpu
+    tag = "+macos_aarch64"
+    label = platform.label if tag in platform.label else platform.label + tag
+    return PlatformInfo(
+        label = label,
+        configuration = ConfigurationInfo(constraints = constraints, values = platform.configuration.values),
+    )
+
+# The OS and the CPU of the target platform replaced: the same targets built for macOS on Apple silicon (the Mojo rules then run on the macOS worker).
+_MACOS_AARCH64 = transition(impl = _macos_impl, refs = {"cpu": "buildrules//platforms:aarch64", "os": "buildrules//platforms:macos"})
+
+_DEP_ATTRS = ["deps", "macos_aarch64", "isa_x86_64_v1", "isa_x86_64_v2", "isa_x86_64_v3", "isa_x86_64_v4", "rust_1_85_0", "rust_1_95_0"]
 
 def _group_impl(ctx):
     outs = []
@@ -47,6 +63,7 @@ def _group_impl(ctx):
 _at = rule(
     impl = _group_impl,
     attrs = {
+        "macos_aarch64": attrs.list(attrs.transition_dep(cfg = _MACOS_AARCH64), default = []),
         "isa_x86_64_v1": attrs.list(attrs.transition_dep(cfg = _ISA_X86_64_V1), default = []),
         "isa_x86_64_v2": attrs.list(attrs.transition_dep(cfg = _ISA_X86_64_V2), default = []),
         "isa_x86_64_v3": attrs.list(attrs.transition_dep(cfg = _ISA_X86_64_V3), default = []),
@@ -72,6 +89,10 @@ def isa_at(name, level_id, deps, **kwargs):
     if level_id not in _ISA_CELLS:
         fail("isa_at: {} has no transition ({})".format(level_id, ", ".join(_ISA_CELLS)))
     _at(name = name, **dict(kwargs, **{"isa_" + level_id: deps}))
+
+def macos_at(name, deps, **kwargs):
+    """Builds `deps` for macOS on Apple silicon (`buildrules//platforms:macos_aarch64`), whatever platform the build is for."""
+    _at(name = name, **dict(kwargs, **{"macos_aarch64": deps}))
 
 def group(name, deps, **kwargs):
     """Builds `deps` as they are (the default cell of a matrix)."""

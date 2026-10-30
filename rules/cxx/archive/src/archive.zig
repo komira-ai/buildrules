@@ -9,7 +9,8 @@
 //!
 //!  - an archive of 64-bit little-endian ELF relocatable objects, or of 64-bit little-endian Mach-O relocatable objects (a library built for macOS arm64:
 //!    BSD-style member names, `__.SYMDEF` as the symbol table), nothing else and not both;
-//!  - deterministic: every member header has time, owner and group 0, and the members are in the order of their names;
+//!  - deterministic: every member header has time, owner and group 0, and the members are in the order of their names (with `--members any` they may be in any order: a library
+//!    whose sources are a `select()` of lists has them in the order the target lists them, which is fixed for a target but not sorted by name);
 //!  - hermetic: no object has a `.debug_*` section (a Mach-O object: a `__DWARF` section or a debug-map symbol) and no byte of the archive holds the absolute path of the directory it was built in
 //!    (`hermetic.zig`, the check of the C++ rules, applied to each member);
 //!  - at the glibc floor: no object needs a glibc symbol version newer than `--max-glibc` (`floor.zig`, applied to each member). A relocatable
@@ -385,6 +386,8 @@ fn lessThan(_: void, x: []const u8, y: []const u8) bool {
 }
 
 pub const Options = struct {
+    /// The members may be in any order (`--members any`); by default they are in the order of their names.
+    any_order: bool = false,
     /// The archives of the libraries this one needs (`needs`): what they define may be left undefined here.
     needs: []const []const u8 = &.{},
     /// Symbols the author names as provided by something the check cannot see.
@@ -449,7 +452,7 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     for (ms) |m| {
         if (!std.mem.eql(u8, m.time, "0") or !std.mem.eql(u8, m.owner, "0") or !std.mem.eql(u8, m.group, "0"))
             say(&f, "{s}: member {s} records a time or an owner (time {s}, owner {s}, group {s}): the archive is not deterministic", .{ name, m.name, m.time, m.owner, m.group });
-        if (prev.len != 0 and std.mem.lessThan(u8, m.name, prev))
+        if (!o.any_order and prev.len != 0 and std.mem.lessThan(u8, m.name, prev))
             say(&f, "{s}: member {s} comes after {s}: the members are not in the order of their names", .{ name, m.name, prev });
         prev = m.name;
         if (isMacho(m.data)) {
@@ -674,6 +677,7 @@ pub const Cli = struct {
     min_prefixed: usize,
     original: []const []const u8,
     runtime_cxx: bool,
+    any_order: bool,
     cxx_namespaces: []const []const u8,
 };
 
@@ -686,7 +690,7 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocat
     var allow = Acc([]const u8){ .a = a, .oom = &oom };
     var spaces = Acc([]const u8){ .a = a, .oom = &oom };
     var original = Acc([]const u8){ .a = a, .oom = &oom };
-    var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34", .prefix = "", .min_prefixed = 0, .original = &.{}, .runtime_cxx = false, .cxx_namespaces = &.{} };
+    var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34", .prefix = "", .min_prefixed = 0, .original = &.{}, .runtime_cxx = false, .cxx_namespaces = &.{}, .any_order = false };
     var i: usize = 2;
     while (i < args.len) : (i += 2) {
         if (i + 1 >= args.len) return null;
@@ -700,6 +704,9 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocat
             c.symbols = val;
         } else if (std.mem.eql(u8, flag, "--max-glibc")) {
             c.max_glibc = val;
+        } else if (std.mem.eql(u8, flag, "--members")) {
+            if (!std.mem.eql(u8, val, "any")) return null;
+            c.any_order = true;
         } else if (std.mem.eql(u8, flag, "--runtime")) {
             if (!std.mem.eql(u8, val, "c++")) return null;
             c.runtime_cxx = true;
@@ -782,7 +789,7 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, dir: []const u8, args: []const
         }
     }
     const name = std.fs.path.basename(c.archive);
-    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir, .prefix = c.prefix, .min_prefixed = c.min_prefixed, .original = original.items.items, .runtime_cxx = c.runtime_cxx, .cxx_namespaces = c.cxx_namespaces });
+    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir, .prefix = c.prefix, .min_prefixed = c.min_prefixed, .original = original.items.items, .runtime_cxx = c.runtime_cxx, .cxx_namespaces = c.cxx_namespaces, .any_order = c.any_order });
     var out = Acc(u8){ .a = a, .oom = &oom };
     for (rep.defined) |s| {
         out.pushAll(s);

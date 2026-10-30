@@ -5,6 +5,7 @@ load("@buildrules//rules/zig:zig.bzl", "zig_test")
 load("@buildrules//rules/rust:test_run.bzl", "test_run")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test")
 load("@buildrules//rules/cxx:defs.bzl", "checked_cxx_library")
+load("@buildrules//rules/native:defs.bzl", "native_library")
 load("@buildrules//rules/node:defs.bzl", "npm_tarball")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage_rule")
 load("@buildrules//rules/mojo:unit.bzl", "mojo_cov_pgo_rule", "mojo_test_run_rule")
@@ -153,5 +154,14 @@ mojo_test_run_rule(
     toolchain = "//ci/faulty:mojo_toolchain",
     test_hang_limit_s = 0,
     exec_compatible_with = test_exec_compatible_with(),
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+# The known defect of native_library's statement about its sources: `cxx_runtime = False` for a library with a C++ source. The statement is checked against the sources by the rule
+# (rules/native/library.bzl), at analysis, naming the target; red by design on the one platform it is compatible with.
+native_library(
+    name = "native_library_stating_no_cxx_runtime_for_cxx_sources",
+    srcs = ["nl_cxx.cc"],
+    cxx_runtime = False,
     target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
 )

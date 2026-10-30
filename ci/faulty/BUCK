@@ -3,7 +3,9 @@ load("@buildrules//ci/mojo_gate:fixture.bzl", "gate_fixture_lib")
 load("@buildrules//rules:isa.bzl", "test_exec_compatible_with")
 load("@buildrules//rules/core:run_check.bzl", "run_check")
 load("@buildrules//rules/cxx:defs.bzl", "c_check")
+load("@buildrules//examples/native/zlib:files.bzl", "ZLIB_FILES")
 load("@buildrules//rules/cxx:native.bzl", "native_static")
+load("@buildrules//rules/native:defs.bzl", "native_library")
 load("@buildrules//rules/mojo:same.bzl", "mojo_same")
 load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
 load("@buildrules//rules/rust:cargo.bzl", "cargo_table_check")
@@ -217,6 +219,117 @@ native_static(
     soname = "libfaulty_prefix_nsu.a",
     prefix = "faultyp",
     prefix_min = 1,
+    validate = False,
+)
+
+# A dependent of a `native_library` (rules/native/defs.bzl) sees the headers its dependency exports, and only those. The archive check is left an output of each
+# target (`validate = False`), as for the natives above, so the compile that fails is a failed action of the target. Controls: `nl_user` and `nl_zlib_user`.
+native_library(
+    name = "nl_lib",
+    srcs = ["nl/lib.c"],
+    exported_headers = {"nl/lib.h": "nl/lib.h"},
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_library(
+    name = "nl_user",
+    srcs = ["nl/user.c"],
+    deps = [":nl_lib"],
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+# No dependency: the header of nl_lib is not on this library's include path.
+native_library(
+    name = "nl_user_without_the_dependency",
+    srcs = ["nl/user.c"],
+    validate = False,
+)
+
+# nl_mid_plain has nl_lib in `deps`, not `exported_deps`: nl_top sees nl_mid_plain's headers (it has none) and not nl_lib's.
+native_library(
+    name = "nl_mid_plain",
+    srcs = ["nl/mid.c"],
+    deps = [":nl_lib"],
+    validate = False,
+)
+
+native_library(
+    name = "nl_top_over_plain_deps",
+    srcs = ["nl/top.c"],
+    deps = [":nl_mid_plain"],
+    validate = False,
+)
+
+# A library of the zlib tree that exports no include directory: a dependent cannot find <zlib.h>.
+native_library(
+    name = "nl_zlib_without_the_export",
+    upstream = {
+        "url": "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz",
+        "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+        "size": 1512791,
+        "strip": "zlib-1.3.1",
+        "files": ZLIB_FILES,
+    },
+    srcs = ["adler32.c"],
+    includes = ["."],
+    validate = False,
+)
+
+native_library(
+    name = "nl_zlib_user_without_the_export",
+    srcs = ["nl/zuser.c"],
+    deps = [":nl_zlib_without_the_export"],
+    validate = False,
+)
+
+native_library(
+    name = "nl_zlib_user",
+    srcs = ["nl/zuser.c"],
+    deps = ["//examples/native/zlib:zlib"],
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+# `hdrs` are private: a header a library compiles with does not reach its dependents (only `exported_headers` do). Control: `nl_priv_user`.
+native_library(
+    name = "nl_priv",
+    srcs = ["nl/priv.c"],
+    hdrs = {"p/priv.h": "nl/priv.h"},
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_library(
+    name = "nl_priv_user",
+    srcs = ["nl/priv_ok.c"],
+    deps = [":nl_priv"],
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_library(
+    name = "nl_priv_user_including_it",
+    srcs = ["nl/priv_bad.c"],
+    deps = [":nl_priv"],
+    validate = False,
+)
+
+# A renamed library at the level of native_library (`prefix`): the control renames everything; the other defines a symbol its renaming header cannot reach (a name given to
+# the assembler with an asm label), which the archive check finds defined without the prefix. Both are left to fail in the check (`validate = False`).
+native_library(
+    name = "nl_prefix_good",
+    srcs = ["native/prefix_good_a.c", "native/prefix_good_b.c"],
+    prefix = {"name": "faultyp", "min": 3},
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_library(
+    name = "nl_prefix_leaks_a_symbol",
+    srcs = ["native/prefix_leaks_a_symbol.c"],
+    prefix = {"name": "faultyp", "min": 1},
     validate = False,
 )
 

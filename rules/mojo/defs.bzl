@@ -339,6 +339,17 @@ def native_wiring(unit, prebuilt_packages, user_natives, here, refuse = fail, bu
             refuse("{}: {} links the native library {}; add it to mojo_package(natives = {{...}})".format(here, unit["id"], soname))
     return sonames, labels
 
+def check_natives_used(here, user_natives, linked_sonames, refuse = fail):
+    """Every entry of `mojo_package(natives = {...})` names a library the package's graph links or builds: `linked_sonames` are the sonames of every unit's natives and of the
+    package's own `[native.<id>]`. An entry of another name would be a library nothing links, silently."""
+    for soname in sorted(user_natives.keys()):
+        if soname not in linked_sonames:
+            refuse("{}: natives names {}, which no unit of the package's graph links and no [native.<id>] of its manifest builds ({}): remove the entry, or fix the soname".format(
+                here,
+                soname,
+                ", ".join(sorted(linked_sonames.keys())) or "the graph links none",
+            ))
+
 COVERAGE_FLOOR_FILE = "coverage_floor.txt"
 
 # The sources of the package that kcov cannot record, one per line with the reason (rules/coverage/tools/cov_unmeasured.zig); an input of `:coverage`.
@@ -538,10 +549,14 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                     return natives[soname]
         return None
 
+    # The static libraries of the package's own `[native.<id>]` that `natives = {...}` supplies as `native_library` targets, by soname: they are built where they are
+    # declared and not from the package's sources (the entry in the manifest names a source until mopm has `provided = true`; it is not compiled).
+    provided_natives = {}
+
     def common(uid, kind, product, profile = None):
         u = units[uid]
         cl = _closure(units, uid)
-        sonames, native_labels = native_wiring(u, prebuilt_packages, natives, here, built = built_labels)
+        sonames, native_labels = native_wiring(u, prebuilt_packages, {k: v for k, v in natives.items() if k not in provided_natives}, here, built = built_labels)
         return dict(
             deps = [label_of(d, ":lib_ungated" if kind == "test" else ":lib") for d in u["deps"]],
             graph = slice_of(uid, profile) if profile else by_subdir(graphs, {sd: slice_of(uid, None, sd) for sd in subdirs}),
@@ -592,6 +607,12 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             needs.append(t)
         soname = u.get("soname") or "lib{}.a".format(nid)
         own_native_ids[nid] = soname
+        if soname in natives:
+            # Supplied by a `native_library` (or any target with `NativeArchiveInfo`): `:native_<id>` is that target, so the graph's `built` entries, the unit tests and
+            # `:conda` take it where they take a library built here, and its file name is the soname the graph names.
+            provided_natives[soname] = True
+            native.alias(name = name_once("native_" + nid), actual = natives[soname], visibility = visibility)
+            continue
         name_once("native_" + nid + "_cxx")
         native_static(
             name = name_once("native_" + nid),
@@ -605,6 +626,12 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             file_prefix = here_repo,
             visibility = visibility,
         )
+
+    linked_sonames = {s: True for s in own_native_ids.values()}
+    for uid in units.keys():
+        for n in units[uid].get("natives", []):
+            linked_sonames[n["soname"]] = True
+    check_natives_used(here, natives, linked_sonames)
 
     libs = []
     builds = []
@@ -793,7 +820,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                     **common(uid, "test", stem, _BITCODE_PROFILE)
                 )
                 # The instrumented link gets the test's native libraries as its ordinary link does (the graph's order and the same targets).
-                pgo_sonames, pgo_natives = native_wiring(u, prebuilt_packages, natives, here, built = built_labels)
+                pgo_sonames, pgo_natives = native_wiring(u, prebuilt_packages, {k: v for k, v in natives.items() if k not in provided_natives}, here, built = built_labels)
                 mojo_cov_pgo_rule(
                     name = name_once(stem + "__pgo"),
                     bc = ":" + stem + "__bc",

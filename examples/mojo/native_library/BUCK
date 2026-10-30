@@ -1,0 +1,43 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:pack.bzl", "mojo_conda_holds")
+load("@buildrules//rules/mojo:sync.bzl", "mojo_sync")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+_NATIVES = {
+    "libasm_add.a": "//examples/native/asm:asm_add",
+    "libasm_prefixed.a": "//examples/native/asm:asm_prefixed",
+    "libasm_split.a": "//examples/native/asm_split:asm_split",
+    "libhooks.a": "//examples/native/hooks:hooks",
+    "libhooks_provider.a": "//examples/native/hooks:hooks_provider",
+    "libcxxlib.a": "//examples/native/cxx:cxxlib",
+    "libzlib.a": "//examples/native/zlib:zlib",
+}
+
+# A Mojo package over three `native_library` targets (examples/native): `natives` maps the soname of each `[native.<id>]` of mopm.toml to the target that builds it, instead
+# of the package compiling sources of its own. The tests call each library: zlib (a pinned tarball, C, `select()` on the OS), a C++ library (the C++ runtime is linked once at the
+# end of the test's link) and a library with assembly chosen by the CPU. On macOS arm64 the same targets are built for `aarch64-macos` and the tests run on a macOS worker.
+mojo_package(
+    path = ".",
+    natives = _NATIVES,
+)
+
+# The `.conda` holds the archives that were built and tested: unpacked, `lib/<soname>` is exactly the bytes of each `native_library` target.
+mojo_conda_holds(
+    name = "conda_holds",
+    conda = ":conda",
+    natives = _NATIVES,
+    package = "natlib",
+    visibility = ["//ci:"],
+)
+
+# `buildrules mojo sync` as a farm action (rules/mojo/sync.bzl): `buck2 run //examples/mojo/native_library:sync` writes the lock and the glue.
+mojo_sync(
+    name = "sync",
+    committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
+    files = [],
+    mopm = "0.0.73",
+    visibility = ["//ci:"],
+    workspaces = [":workspace"],
+)
+
+scrub_files()

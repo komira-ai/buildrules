@@ -19,7 +19,10 @@ For a macOS arm64 target platform the same two targets build a Mach-O archive: t
 load("//rules:isa.bzl", "ISA_LEVELS", "isa_select")
 load("//rules/core:platform.bzl", "LINUX_X86_64", "by_os_cpu", "os_cpu_keys")
 load(":defs.bzl", "prefix_header")
-load(":providers.bzl", "NativeArchiveInfo")
+load(":providers.bzl", "NativeArchiveInfo", "NativeLibraryInfo")
+
+# A source is C++ by its extension.
+CXX_SUFFIXES = (".cc", ".cpp", ".cxx", ".c++")
 
 def _impl(ctx):
     lib = ctx.attrs.lib
@@ -33,7 +36,10 @@ def _impl(ctx):
     result = ctx.actions.declare_output(ctx.label.name + ".archive_check.json")
     rest = []
     for n in ctx.attrs.needs:
-        rest.extend(["--needs", n[DefaultInfo].default_outputs[0]])
+        # A library of `native_library` brings the archives of its own link with it: what it calls into is undefined here too.
+        info = n.get(NativeLibraryInfo)
+        for a in (info.archives if info else [n[DefaultInfo].default_outputs[0]]):
+            rest.extend(["--needs", a])
     for s in ctx.attrs.allow:
         rest.extend(["--allow", s])
     if ctx.attrs.prefix:
@@ -44,13 +50,18 @@ def _impl(ctx):
             rest.extend(["--cxx-namespace", ns])
     elif ctx.attrs.min_prefixed or ctx.attrs.original_names or ctx.attrs.cxx_namespaces:
         fail("{}: min_prefixed, original_names and cxx_namespaces need a prefix".format(ctx.label))
+    cxx = ctx.attrs.cxx or any([s.endswith(CXX_SUFFIXES) for s in ctx.attrs.sources])
+    if ctx.attrs.members_any:
+        rest.extend(["--members", "any"])
+    if cxx:
+        rest.extend(["--runtime", "c++"])
     ctx.actions.run(cmd_args(ctx.attrs._tool[RunInfo], out, result.as_output(), rest), category = "archive_check", identifier = ctx.label.name)
 
     # The list of defined symbols is its own action: a validation result is the one output of the action that writes it.
     scratch = ctx.actions.declare_output(ctx.label.name + ".listed.json")
     ctx.actions.run(cmd_args(ctx.attrs._tool[RunInfo], out, scratch.as_output(), "--symbols", symbols.as_output(), rest), category = "archive_symbols", identifier = ctx.label.name)
     info = [
-        NativeArchiveInfo(soname = ctx.attrs.soname, archive = out, symbols = symbols),
+        NativeArchiveInfo(soname = ctx.attrs.soname, archive = out, symbols = symbols, cxx = cxx),
     ]
     if ctx.attrs.validate:
         info.append(DefaultInfo(default_output = out, sub_targets = {"symbols": [DefaultInfo(default_output = symbols)]}))
@@ -66,7 +77,13 @@ native_archive = rule(
     doc = "The static library `soname` out of the package's own `cxx_library` `lib`, with `archive_check` as a validation. `needs` are the libraries this one calls into (their symbols may stay undefined); `allow` names symbols something the check cannot see provides.",
     attrs = {
         "allow": attrs.list(attrs.string(), default = []),
+        # The library has C++ sources (`sources` names them): the C++ runtime may stay undefined (archive_check --runtime c++), and a program that links it links the runtime once.
+        "cxx": attrs.bool(default = False),
         "lib": attrs.dep(),
+        # Members in the order the target lists its sources (archive_check --members any), not sorted by name.
+        "members_any": attrs.bool(default = False),
+        # The names of the library's sources: it is C++ when any of them is.
+        "sources": attrs.list(attrs.string(), default = []),
         # A renamed library (rules/cxx/prefix): every symbol it defines starts with `prefix`, at least `min_prefixed` do, and none of `original_names` (files, one
         # name per line: the names before the renaming) is referenced undefined.
         # C++ namespaces whose mangled names the library may define without the prefix (a header of macros cannot rename them).

@@ -9,6 +9,7 @@ control's own error. ci/negative_check.zig holds the wiring of this file to the 
 
 load("//examples/mojo/sys_app:buildrules.mojo.lock.bzl", SYS_APP_GRAPH = "GRAPH")
 load("//examples/mojo/ws:buildrules.mojo.lock.bzl", WS_GRAPH = "GRAPH")
+load(":native_library.bzl", "native_library_problems", "native_link_cfg_problems")
 load(":native_macos.bzl", "native_macos_problems")
 load(":system_libs.bzl", "system_libs_problems")
 load(":subdirs.bzl", "subdir_problems", UNSUPPORTED_SUBDIR_PLATFORM = "UNSUPPORTED", UNSUPPORTED_SUBDIR_PLATFORMS = "UNSUPPORTED_PLATFORMS")
@@ -34,6 +35,7 @@ CASES = [
     ("//ci/negative:cross_exe_with_other_tests", PLATFORM, "waits for the unit tests"),
     ("//ci/negative:mojo_instrumented_link_without_a_native_the_unit_links", PLATFORM, "the unit links the native library libbase_sys.a and the instrumented link of its branch coverage is not given it"),
     ("//ci/negative:mojo_instrumented_link_with_a_needed_archive_before_its_user", PLATFORM, "libbase_sys.a is linked before libprobe_sys.a, which needs it"),
+    ("//ci/negative:native_library_stating_no_cxx_runtime_for_cxx_sources", PLATFORM, "cxx_runtime = False but the sources include C++"),
     ("//ci/negative:mojo_test_run_with_a_zero_hang_limit", PLATFORM, "test_hang_limit_s 0 is not a positive whole number of seconds"),
     # A package that lists sources in coverage_unmeasured.txt but makes no coverage (no test here): refused at analysis naming the file, never ignored (rules/mojo/unit.bzl).
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "coverage_unmeasured.txt exists but this package has no library or no test"),
@@ -77,7 +79,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the known defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it carries (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + test_defines_problems(ctx) + hang_limit_problems(ctx) + system_libs_problems(ctx, GATE_PLATFORM)
+    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + native_library_problems(ctx) + native_link_cfg_problems(ctx) + test_defines_problems(ctx) + hang_limit_problems(ctx) + system_libs_problems(ctx, GATE_PLATFORM)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
@@ -433,6 +435,13 @@ FAULTY = [
     # A renamed library (`prefix`): a symbol the renaming header cannot reach is defined without the prefix, and a call it cannot reach is left to resolve to another copy.
     ("//ci/faulty:native_prefix_leaks_a_symbol", "//ci/faulty:native_prefix_good", "1 defined symbol(s) without the prefix faultyp: faulty_prefixed_fixed"),
     ("//ci/faulty:native_prefix_misses_a_reference", "//ci/faulty:native_prefix_good", "undefined reference to faulty_prefixed_target, a name the prefix header renames"),
+    # A dependent of a `native_library` sees what its dependency exports (rules/native/defs.bzl): its header only through `deps`, a header of the dependency's dependency only
+    # through `exported_deps`, and the include directory of an upstream tree only when the dependency exports it. The compile is what fails.
+    ("//ci/faulty:nl_user_without_the_dependency", "//ci/faulty:nl_user", "'nl/lib.h' file not found"),
+    ("//ci/faulty:nl_top_over_plain_deps", "//ci/faulty:nl_user", "'nl/lib.h' file not found"),
+    ("//ci/faulty:nl_zlib_user_without_the_export", "//ci/faulty:nl_zlib_user", "'zlib.h' file not found"),
+    ("//ci/faulty:nl_priv_user_including_it", "//ci/faulty:nl_priv_user", "'p/priv.h' file not found"),
+    ("//ci/faulty:nl_prefix_leaks_a_symbol", "//ci/faulty:nl_prefix_good", "1 defined symbol(s) without the prefix faultyp: faulty_prefixed_fixed"),
     # The namespace a renamed library keeps is named by `prefix_cxx_namespaces`; without it the mangled name is a symbol without the prefix.
     ("//ci/faulty:native_prefix_namespace_unnamed", "//ci/faulty:native_prefix_namespace_good", "1 defined symbol(s) without the prefix faultyp: _ZN6snappy3fooEv"),
     # The data and the variables of a Mojo test (ci/mojo_data/BUCK): the stand-in test reads what is staged and says which of its expectations failed.

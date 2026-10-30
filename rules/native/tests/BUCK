@@ -1,0 +1,212 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# What `native_library` refuses while the graph is analysed (rules/native/checks.bzl), as analysis tests (rules/rust/refusal.bzl): each target exists, and is green, only
+# if the rule refused (or accepted) what a user would really write. Make a check accept the input and its target stops existing (analysis fails with "expected a
+# refusal"). Where the library is configured for a platform, and what its providers say, is held by ci/native_library.bzl.
+load("//rules:matrix.bzl", "group")
+load("//rules/native:checks.bzl", "check_asm_split", "check_asm_split_matched", "check_cxx_runtime", "check_has_sources", "check_prefix", "check_sources", "check_upstream")
+load(":helpers.bzl", "cfg_is", "extension_is", "extras_are", "extras_by_path_are", "label_is", "link_order_is", "name_is", "up")
+load("//rules/rust:refusal.bzl", "accepts", "refuses")
+
+_ALL = []
+
+_WHO = "examples/native/zlib:zlib"
+
+# ---- upstream: the pinned tarball and the explicit list of files ----
+
+_ALL.append(accepts("upstream_pinned_https_tarball_is_accepted", check_upstream, [_WHO, up()]))
+
+_ALL.append(refuses("upstream_over_http_is_refused", check_upstream, [_WHO, up(url = "http://example.invalid/lib-1.0.tar.gz")], ["is not an https:// URL"]))
+
+_ALL.append(refuses("upstream_that_names_no_archive_is_refused", check_upstream, [_WHO, up(url = "https://example.invalid/lib-1.0.exe")], ["does not name an archive"]))
+
+_ALL.append(refuses("upstream_without_a_digest_is_refused", check_upstream, [_WHO, up(sha256 = None)], ["upstream has no sha256"]))
+
+_ALL.append(refuses("upstream_with_a_short_digest_is_refused", check_upstream, [_WHO, up(sha256 = "abc")], ["sha256", "64 lower-case hex digits"]))
+
+_ALL.append(refuses("upstream_without_a_size_is_refused", check_upstream, [_WHO, up(size = None)], ["upstream has no size"]))
+
+_ALL.append(refuses("upstream_with_a_zero_size_is_refused", check_upstream, [_WHO, up(size = 0)], ["positive length"]))
+
+_ALL.append(refuses("upstream_without_files_is_refused", check_upstream, [_WHO, up(files = None)], ["upstream has no files"]))
+
+_ALL.append(refuses("upstream_with_an_empty_file_list_is_refused", check_upstream, [_WHO, up(files = [])], ["tree is not staged whole"]))
+
+_ALL.append(refuses("upstream_file_that_leaves_the_archive_is_refused", check_upstream, [_WHO, up(files = ["a.c", "../b.c"])], ["is not a path below the archive"]))
+
+_ALL.append(refuses("upstream_absolute_file_is_refused", check_upstream, [_WHO, up(files = ["/etc/passwd"])], ["is not a path below the archive"]))
+
+_ALL.append(refuses("upstream_file_listed_twice_is_refused", check_upstream, [_WHO, up(files = ["a.c", "a.c"])], ["is listed twice"]))
+
+_ALL.append(refuses("upstream_strip_above_the_root_is_refused", check_upstream, [_WHO, up(strip = "../x")], ["is not a directory below the archive's root"]))
+
+_ALL.append(refuses("upstream_with_an_unknown_key_is_refused", check_upstream, [_WHO, up(mirror = "https://example.invalid")], ['has the key "mirror"']))
+
+# ---- the file lists, per arm ----
+
+_FILES = ["a.c", "b.c", "inc/a.h", "inc/b.h"]
+
+_ALL.append(accepts("sources_of_the_tree_and_the_package_are_accepted", check_sources, [_WHO, _FILES, "srcs", ["a.c", "native/own.cc", "native/x.S", "native/y.s"]]))
+
+_ALL.append(refuses("source_that_is_not_c_c_plus_plus_or_assembly_is_refused", check_sources, [_WHO, _FILES, "srcs", ["a.rs"]], ["is not a C, C++ or assembly file"]))
+
+_ALL.append(refuses("source_outside_the_package_is_refused", check_sources, [_WHO, _FILES, "srcs", ["../x.c"]], ["is not a path below the package or the upstream tree"]))
+
+_ALL.append(refuses("header_of_the_tree_named_as_a_header_of_the_package_is_refused", check_sources, [_WHO, _FILES, "hdrs", ["inc/a.h"]], ["is a file of the upstream tree"]))
+
+_ALL.append(refuses("exported_header_of_the_tree_in_a_dict_is_refused", check_sources, [_WHO, _FILES, "exported_headers", {"a.h": "inc/a.h"}], ["is a file of the upstream tree"]))
+
+_ALL.append(accepts("exported_headers_of_the_package_by_name_are_accepted", check_sources, [_WHO, _FILES, "exported_headers", {"x/x.h": "include/x.h"}]))
+
+_ALL.append(accepts("include_directory_that_holds_a_staged_file_is_accepted", check_sources, [_WHO, _FILES, "exported_includes", [".", "inc"]]))
+
+_ALL.append(refuses("include_directory_with_no_staged_file_is_refused", check_sources, [_WHO, _FILES, "includes", ["include"]], ["is not a directory that holds a file of upstream files"]))
+
+_ALL.append(refuses("tree_include_without_an_upstream_is_refused", check_sources, [_WHO, [], "exported_includes", ["."]], ["the target has no upstream"]))
+
+_ALL.append(refuses("include_directory_that_leaves_the_tree_is_refused", check_sources, [_WHO, _FILES, "includes", ["../x"]], ["is `.` or a directory below the upstream tree"]))
+
+_ALL.append(refuses("unknown_file_list_is_refused", check_sources, [_WHO, _FILES, "flags", []], ["is not one of the file lists"]))
+
+# ---- cxx_runtime is what the sources are ----
+
+_ALL.append(accepts("cxx_runtime_stated_true_for_cxx_sources_is_accepted", check_cxx_runtime, [_WHO, True, True]))
+
+_ALL.append(accepts("cxx_runtime_not_stated_is_accepted", check_cxx_runtime, [_WHO, None, True]))
+
+_ALL.append(refuses("cxx_runtime_stated_false_for_cxx_sources_is_refused", check_cxx_runtime, [_WHO, False, True], ["cxx_runtime = False", "the sources include C++"]))
+
+_ALL.append(refuses("cxx_runtime_stated_true_for_c_sources_is_refused", check_cxx_runtime, [_WHO, True, False], ["cxx_runtime = True", "no source is C++"]))
+
+# ---- a library has a source ----
+
+_ALL.append(refuses("srcs_of_no_file_in_any_arm_is_refused", check_has_sources, [_WHO, [[], [], []]], ["srcs names no file, in any arm of its select()"]))
+
+_ALL.append(refuses("no_srcs_at_all_is_refused", check_has_sources, [_WHO, [[]]], ["a native_library has at least one source"]))
+
+_ALL.append(accepts("srcs_with_a_file_in_one_arm_are_accepted", check_has_sources, [_WHO, [[], ["a.c"]]]))
+
+# ---- prefix ----
+
+_ALL.append(accepts("prefix_with_a_name_and_a_minimum_is_accepted", check_prefix, [_WHO, {"name": "widget_awslc", "min": 1000}]))
+
+_ALL.append(accepts("prefix_of_the_strip_style_is_accepted", check_prefix, [_WHO, {"name": "k_s2n_", "strip": "s2n_", "min": 10}]))
+
+_ALL.append(refuses("prefix_that_is_not_a_table_is_refused", check_prefix, [_WHO, "widget"], ["a table of name, strip, min, extra_symbols and cxx_namespaces"]))
+
+_ALL.append(refuses("prefix_with_an_unknown_key_is_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "style": "x"}], ['has the key "style"']))
+
+_ALL.append(refuses("prefix_that_is_not_an_identifier_is_refused", check_prefix, [_WHO, {"name": "k-x", "min": 1}], ["is not an identifier"]))
+
+_ALL.append(refuses("prefix_without_a_name_is_refused", check_prefix, [_WHO, {"min": 1}], ["prefix name None is not an identifier"]))
+
+_ALL.append(refuses("prefix_without_a_minimum_is_refused", check_prefix, [_WHO, {"name": "k"}], ["the least number of symbols"]))
+
+_ALL.append(refuses("prefix_with_a_zero_minimum_is_refused", check_prefix, [_WHO, {"name": "k", "min": 0}], ["the least number of symbols"]))
+
+_ALL.append(refuses("prefix_strip_that_is_not_an_identifier_is_refused", check_prefix, [_WHO, {"name": "k_", "strip": "s2n-", "min": 1}], ["prefix strip"]))
+
+# ---- extra_symbols of a prefix, asm_split ----
+
+_ALL.append(accepts("prefix_with_hooks_to_rename_is_accepted", check_prefix, [_WHO, {"name": "hk", "min": 1, "extra_symbols": ["hook_alloc", "hook_free"]}]))
+
+_ALL.append(refuses("prefix_extra_symbols_that_are_not_identifiers_are_refused", check_prefix, [_WHO, {"name": "hk", "min": 1, "extra_symbols": ["hook-alloc"]}], ["extra_symbols", "a list of identifiers"]))
+
+_ALL.append(refuses("prefix_extra_symbols_that_are_not_a_list_are_refused", check_prefix, [_WHO, {"name": "hk", "min": 1, "extra_symbols": "hook_alloc"}], ["extra_symbols"]))
+
+_ALL.append(accepts("asm_split_of_s_files_is_accepted", check_asm_split, [_WHO, ["arm/", "native/split_"], ["arm/a.S", "arm/b.S", "x.c"]]))
+
+_ALL.append(refuses("asm_split_naming_a_file_that_is_not_preprocessed_is_refused", check_asm_split, [_WHO, ["arm/"], ["arm/a.s"]], ["is not a .S file"]))
+
+_ALL.append(refuses("asm_split_naming_a_c_file_is_refused", check_asm_split, [_WHO, ["native/"], ["native/x.c"]], ["is not a .S file"]))
+
+_ALL.append(refuses("asm_split_leaving_the_package_is_refused", check_asm_split, [_WHO, ["../x/"], []], ["is not the beginning of a path"]))
+
+_ALL.append(refuses("asm_split_that_is_not_a_list_is_refused", check_asm_split, [_WHO, "arm/", []], ["a list of path beginnings"]))
+
+# ---- asm_split names sources; a prefix names C++ namespaces ----
+
+_ALL.append(accepts("asm_split_patterns_that_begin_a_source_are_accepted", check_asm_split_matched, [_WHO, ["arm/", "x86/"], [["arm/a.S"], ["x86/b.S"]]]))
+
+_ALL.append(refuses("asm_split_pattern_that_begins_no_source_is_refused", check_asm_split_matched, [_WHO, ["arm/", "arn/"], [["arm/a.S"], []]], ['asm_split "arn/" is the beginning of no source']))
+
+_ALL.append(refuses("asm_split_against_no_source_at_all_is_refused", check_asm_split_matched, [_WHO, ["arm/"], [[]]], ["is the beginning of no source"]))
+
+_ALL.append(accepts("asm_split_of_nothing_names_nothing", check_asm_split_matched, [_WHO, [], [["a.c"]]]))
+
+_ALL.append(accepts("prefix_with_cxx_namespaces_is_accepted", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["snappy"]}]))
+
+_ALL.append(accepts("prefix_cxx_namespace_stdx_is_accepted", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["stdx", "std_"]}]))
+
+_ALL.append(refuses("prefix_empty_cxx_namespace_is_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": [""]}], ["cxx_namespaces"]))
+
+_ALL.append(refuses("prefix_cxx_namespace_std_is_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["snappy", "std"]}], ["never `std`"]))
+
+_ALL.append(refuses("prefix_cxx_namespaces_that_are_not_identifiers_are_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["a::b"]}], ["cxx_namespaces"]))
+
+_ALL.append(refuses("prefix_cxx_namespaces_that_are_not_a_list_are_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": "snappy"}], ["cxx_namespaces"]))
+
+# ---- pure functions ----
+
+# The link line: the library first, then its dependencies in the order given, and a library several of them need after the last that needs it.
+_ALL.append(accepts("link_order_is_the_library_then_its_dependencies", link_order_is, ["order", "top", [["mid", "base"]], ["top", "mid", "base"]]))
+
+_ALL.append(accepts("link_order_keeps_a_shared_library_after_its_last_user", link_order_is, ["order", "top", [["left", "bottom"], ["right", "bottom"]], ["top", "left", "right", "bottom"]]))
+
+_ALL.append(accepts("link_order_of_a_library_with_no_dependency_is_itself", link_order_is, ["order", "a", [], ["a"]]))
+
+_ALL.append(refuses("link_order_that_puts_a_library_before_its_user_is_refused", link_order_is, ["order", "top", [["left", "bottom"], ["right", "bottom"]], ["top", "left", "bottom", "right"]], ["got"]))
+
+_ALL.append(accepts("archive_extension_ignores_the_query", extension_is, ["ext", "https://example.invalid/x-1.0.tar.gz?download=1", ".tar.gz"]))
+
+_ALL.append(accepts("archive_extension_of_a_bareextension_is_none", extension_is, ["ext", "https://example.invalid/.tar.gz", None]))
+
+_ALL.append(accepts("cxx_label_of_a_package_local_label", label_is, ["label", ":base", ":base_cxx"]))
+
+_ALL.append(accepts("cxx_label_of_a_label_of_another_package", label_is, ["label", "//examples/native/deps:base", "//examples/native/deps:base_cxx"]))
+
+# ---- the archives a program links beyond the graph's (rules/native/link.bzl) ----
+
+# A library of the graph brings its deps: they follow it.
+_ALL.append(accepts("extra_archives_are_the_deps_of_the_listed_libraries", extras_are, ["extras", [["libtop.a", "libmid.a", "libbase.a"]], {"libtop.a": True}, ["libmid.a", "libbase.a"]]))
+
+# Two libraries over one base: the base once, after the last of its users.
+_ALL.append(accepts("extra_archives_put_a_shared_base_once_after_its_last_user", extras_are, ["extras", [["libleft.a", "libbase.a"], ["libright.a", "libbase.a"]], {"libleft.a": True, "libright.a": True}, ["libbase.a"]]))
+
+_ALL.append(accepts("extra_archives_keep_the_order_a_linker_needs", extras_are, ["extras", [["libtop.a", "libmid.a", "libbase.a"], ["libleft.a", "libbase.a"]], {"libtop.a": True, "libleft.a": True}, ["libmid.a", "libbase.a"]]))
+
+# An archive the graph lists is linked where the graph puts it, not appended again.
+_ALL.append(accepts("extra_archives_leave_out_what_the_graph_links", extras_are, ["extras", [["libtop.a", "libmid.a"], ["libmid.a"]], {"libtop.a": True, "libmid.a": True}, []]))
+
+_ALL.append(accepts("extra_archives_of_libraries_without_deps_are_none", extras_are, ["extras", [["liba.a"], ["libb.a"]], {"liba.a": True, "libb.a": True}, []]))
+
+_ALL.append(refuses("extra_archives_that_keep_the_first_place_of_a_shared_one_are_refused", extras_are, ["extras", [["libleft.a", "libbase.a"], ["libright.a", "libbase.a"]], {"libleft.a": True, "libright.a": True}, ["libbase.a", "libx.a"]], ["got"]))
+
+# An extra archive that needs one the graph lists: the graph's copy is behind it, so the line writes it again after the archive that needs it (a one-pass linker).
+_ALL.append(accepts("extra_archives_write_a_graph_archive_again_after_the_extra_that_needs_it", extras_are, ["extras", [["libbase.a"], ["libtop.a", "libmid.a", "libbase.a"]], {"libbase.a": True, "libtop.a": True}, ["libmid.a", "libbase.a"]]))
+
+# A graph archive nothing in the tail needs is not written again: `top` is listed and `mid` does not need it.
+_ALL.append(accepts("extra_archives_do_not_repeat_a_graph_archive_nothing_needs", extras_are, ["extras", [["libtop.a", "libmid.a"]], {"libtop.a": True}, ["libmid.a"]]))
+
+# Two archives with one file name from different packages are two archives.
+_ALL.append(accepts("extra_archives_of_one_name_from_two_packages_stay_two", extras_by_path_are, ["extras", [["a/liblib.a", "a/libx.a"], ["b/liblib.a", "b/libx.a"]], {"a/liblib.a": True, "b/liblib.a": True}, ["a/libx.a", "b/libx.a"]]))
+
+_ALL.append(refuses("extra_archives_that_merge_two_packages_archives_of_one_name_are_refused", extras_by_path_are, ["extras", [["a/liblib.a", "a/libx.a"], ["b/liblib.a", "b/libx.a"]], {"a/liblib.a": True, "b/liblib.a": True}, ["b/libx.a"]], ["got"]))
+
+# The file of an extra archive in the toolchain directory is told by its place, so two of one name are two files.
+_ALL.append(accepts("extra_archive_files_of_one_name_differ_by_position", name_is, ["name", 1, "libx.a", "001_libx.a"]))
+
+_ALL.append(refuses("extra_archive_files_of_one_name_at_two_positions_are_not_one_file_is_refused", name_is, ["name", 2, "libx.a", "001_libx.a"], ["got"]))
+
+# toolchain.cfg: a link of C libraries gets no C++ runtime; one with C++ gets it once, after the archives.
+_ALL.append(accepts("link_cfg_of_c_libraries_has_no_cxx_runtime", cfg_is, ["cfg", ["libmid.a"], False, "link_archive=link_archives/libmid.a\n"]))
+
+_ALL.append(accepts("link_cfg_with_cxx_ends_with_the_runtime_once", cfg_is, ["cfg", ["libcxxlib.a", "libx.a"], True, "link_archive=link_archives/libcxxlib.a\nlink_archive=link_archives/libx.a\nlink_tail=-lc++\n"]))
+
+_ALL.append(accepts("link_cfg_of_nothing_is_empty", cfg_is, ["cfg", [], False, ""]))
+
+_ALL.append(refuses("link_cfg_that_adds_the_runtime_to_a_c_link_is_refused", cfg_is, ["cfg", [], False, "link_tail=-lc++\n"], ["got"]))
+
+# Every refusal of this package, for //ci:refusals.
+group(name = "all", deps = _ALL, visibility = ["PUBLIC"])
+
+scrub_files()

@@ -988,3 +988,42 @@ test "cxx namespace: the command line takes it with a prefix only, and run honou
     err.clearRetainingCapacity();
     try t.expectEqual(@as(u8, 0), try A.run(a, tmp.dir, "", &.{ "libx.a", "r4.json", "--prefix", "k_", "--cxx-namespace", "snappy", "--cxx-namespace", "stdx" }, &err));
 }
+
+test "--members any: members out of the order of their names are not a finding, and the other rules still hold" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{.{ .name = "f", .kind = .def }}, &.{});
+    const out = try archive(a, &.{ .{ .name = "b.o", .data = o }, .{ .name = "a.o", .data = o } });
+    try t.expect(!hasFinding(try A.check(a, "libx.a", out, .{ .any_order = true }), "order"));
+    try t.expect(hasFinding(try A.check(a, "libx.a", out, .{ .any_order = false }), "not in the order of their names"));
+    // A member that records a time is still a finding, whatever the order.
+    const stamped = try archive(a, &.{ .{ .name = "b.o", .data = o, .time = "1700000000" }, .{ .name = "a.o", .data = o } });
+    try t.expect(hasFinding(try A.check(a, "libx.a", stamped, .{ .any_order = true }), "not deterministic"));
+}
+
+test "parseArgs: --members takes any and nothing else" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--members", "any" })).?.any_order);
+    try t.expect(!(try A.parseArgs(a, &.{ "l.a", "r.json" })).?.any_order);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--members", "name" })) == null);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--members" })) == null);
+}
+
+test "members any: run honours it (members out of the order of their names are red without the option and green with it)" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const o = try object(a, &.{.{ .name = "f", .kind = .def }}, &.{});
+    try tmp.dir.writeFile(.{ .sub_path = "out_of_order.a", .data = try archive(a, &.{ .{ .name = "b.o", .data = o }, .{ .name = "a.o", .data = o } }) });
+    var err = std.ArrayList(u8).empty;
+    try t.expectEqual(@as(u8, 1), try A.run(a, tmp.dir, "", &.{ "out_of_order.a", "r1.json" }, &err));
+    try t.expect(std.mem.indexOf(u8, err.items, "not in the order of their names") != null);
+    err.clearRetainingCapacity();
+    try t.expectEqual(@as(u8, 0), try A.run(a, tmp.dir, "", &.{ "out_of_order.a", "r2.json", "--members", "any" }, &err));
+    try t.expectEqual(@as(usize, 0), err.items.len);
+}
