@@ -193,6 +193,10 @@ pub const Unit = struct {
     root: []const u8,
     srcs: []const Src,
     built: []const Built = &.{},
+    /// A `native` unit whose archive a rule of the build system supplies (format 4).
+    provided: bool = false,
+    /// The system libraries the unit's final link adds after every archive (format 5), as mopm lists them.
+    link: []const []const u8 = &.{},
 };
 
 pub const Graph = struct {
@@ -215,6 +219,61 @@ fn field(o: std.json.ObjectMap, k: []const u8) ?std.json.Value {
     return o.get(k);
 }
 
+/// The newest unit graph format this reads: 4 adds `provided`, 5 adds `link` (mopm's spec/unit-graph.md).
+pub const newest_format: i64 = 5;
+
+/// The system libraries mopm lets a native name in `link` (`mopm.toml`, the metadata, the lock and the graph are all held to this list): they reach a linker command
+/// line as `-l<name>`, so a name outside it is refused here as mopm refuses it.
+pub const link_names = [_][]const u8{ "c++", "dl", "m", "pthread" };
+
+/// `provided` of a unit: true only on a `native` unit of a format 4 graph or later. A reader that did not know it would make an empty archive of a unit with no sources,
+/// so a graph that has it says 4. Anything mopm does not print is a problem in `diag`.
+fn readProvided(diag: *Diag, name: []const u8, id: []const u8, is_native: bool, format: i64, v: ?std.json.Value) bool {
+    const x = v orelse return false;
+    if (x != .bool) {
+        diag.add("{s}: {s}: `provided` is not true or false", .{ name, id });
+        return false;
+    }
+    if (!x.bool) return false;
+    if (!is_native) diag.add("{s}: {s}: `provided` is a key of a native unit", .{ name, id });
+    if (format < 4) diag.add("{s}: {s}: has `provided` in a graph of format {d}; it is a format 4 key: run `buildrules mojo sync`", .{ name, id, format });
+    return true;
+}
+
+/// `link` of a unit: the names of the system libraries its final link adds, in the order the graph gives (mopm's: c++, dl, m, pthread). Every name is one of `link_names`
+/// and none is twice; the key is a format 5 key and a `native` unit has none (an archive is not linked). Anything else is a problem in `diag`.
+fn readLink(a: std.mem.Allocator, diag: *Diag, name: []const u8, id: []const u8, is_native: bool, format: i64, v: ?std.json.Value) ![]const []const u8 {
+    const x = v orelse return &.{};
+    if (x != .array) {
+        diag.add("{s}: {s}: `link` is not a list of names", .{ name, id });
+        return &.{};
+    }
+    if (x.array.items.len == 0) return &.{};
+    if (format < 5) diag.add("{s}: {s}: has `link` in a graph of format {d}; it is a format 5 key: run `buildrules mojo sync`", .{ name, id, format });
+    if (is_native) diag.add("{s}: {s}: a native unit has no `link`: an archive is not linked", .{ name, id });
+    var out = std.ArrayList([]const u8).empty;
+    for (x.array.items) |item| {
+        const n = str(item) orelse {
+            diag.add("{s}: {s}: `link` is not a list of names", .{ name, id });
+            return &.{};
+        };
+        var known = false;
+        for (link_names) |k| known = known or std.mem.eql(u8, k, n);
+        if (!known) {
+            diag.add("{s}: {s}: `link` names {s}, which is not one of c++, dl, m, pthread", .{ name, id, n });
+            continue;
+        }
+        var seen = false;
+        for (out.items) |o| seen = seen or std.mem.eql(u8, o, n);
+        if (seen) {
+            diag.add("{s}: {s}: `link` names {s} twice", .{ name, id, n });
+            continue;
+        }
+        try out.append(a, n);
+    }
+    return out.toOwnedSlice(a);
+}
+
 pub fn parseGraph(a: std.mem.Allocator, name: []const u8, text: []const u8, diag: *Diag) error{Invalid}!Graph {
     const root = std.json.parseFromSliceLeaky(std.json.Value, a, text, .{}) catch {
         diag.add("{s}: the GRAPH_JSON block is not JSON", .{name});
@@ -231,10 +290,13 @@ pub fn parseGraph(a: std.mem.Allocator, name: []const u8, text: []const u8, diag
         diag.add("{s}: the unit graph has no `unit_graph` format number", .{name});
         return error.Invalid;
     };
-    if (version != .integer or version.integer < 1 or version.integer > 3) {
-        diag.add("{s}: unit_graph format is not 1, 2 or 3 (this buildrules reads 1, 2, which adds the native unit of a member's own library, and 3, which adds the system libraries a test loads); a newer format needs a newer buildrules: update buildrules", .{name});
+    if (version != .integer or version.integer < 1 or version.integer > newest_format) {
+        diag.add("{s}: unit_graph format is not 1, 2, 3, 4 or 5 (this buildrules reads 1, 2, which adds the native unit of a member's own library, 3, which adds the system libraries a test loads, " ++
+            "4, which adds the native unit whose archive a rule of the build system supplies (`provided`), and 5, which adds the system libraries of a final link (`link`)); " ++
+            "a newer format needs a newer buildrules: update buildrules", .{name});
         return error.Invalid;
     }
+    const format: i64 = version.integer;
     const pkg = str(field(o, "package") orelse .null) orelse "";
     const mojo = str(field(o, "mojo") orelse .null) orelse "";
     const tc = field(o, "toolchain") orelse std.json.Value.null;
@@ -255,6 +317,7 @@ pub fn parseGraph(a: std.mem.Allocator, name: []const u8, text: []const u8, diag
         },
     };
     var units = std.ArrayList(Unit).empty;
+    const unit_problems = diag.count();
     for (arr) |uv| {
         const uo = switch (uv) {
             .object => |x| x,
@@ -285,15 +348,23 @@ pub fn parseGraph(a: std.mem.Allocator, name: []const u8, text: []const u8, diag
                 }
             }
         }
+        const id = str(field(uo, "id") orelse .null) orelse "";
+        const kind = str(field(uo, "kind") orelse .null) orelse "";
+        const is_native = std.mem.eql(u8, kind, "native");
+        const provided = readProvided(diag, name, id, is_native, format, field(uo, "provided"));
+        const link = readLink(a, diag, name, id, is_native, format, field(uo, "link")) catch return error.Invalid;
         units.append(a, .{
-            .id = str(field(uo, "id") orelse .null) orelse "",
+            .id = id,
             .package = str(field(uo, "package") orelse .null) orelse "",
-            .kind = str(field(uo, "kind") orelse .null) orelse "",
+            .kind = kind,
             .root = str(field(uo, "root") orelse .null) orelse "",
             .srcs = srcs.toOwnedSlice(a) catch return error.Invalid,
             .built = built.toOwnedSlice(a) catch return error.Invalid,
+            .provided = provided,
+            .link = link,
         }) catch return error.Invalid;
     }
+    if (diag.count() != unit_problems) return error.Invalid;
     // A native a member builds is a unit of the graph (`native:<package>/<id>`), and every entry that says `built` names one: a graph in which an entry
     // names a unit that is not there cannot be linked, and the rules would only find that out when a test fails to link.
     const before = diag.count();

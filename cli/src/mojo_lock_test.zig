@@ -181,11 +181,11 @@ test "parseGraph: the fixture, and the leniencies: missing optional fields are e
 }
 
 // Defect caught: a graph of format 3 (system libraries a test loads) refused by the command that writes the table, so a package that names one could not be synced.
-test "parseGraph: formats 1, 2 and 3 are read, and a format 3 graph's system libraries and `loads` do not stop it" {
+test "parseGraph: formats 1 to 5 are read, and a format 3 graph's system libraries and `loads` do not stop it" {
     var e = Env.init();
     defer e.deinit();
     const a = e.a();
-    for ([_][]const u8{ "1", "2", "3" }) |n| {
+    for ([_][]const u8{ "1", "2", "3", "4", "5" }) |n| {
         var d = Diag.init(a);
         const text = try std.fmt.allocPrint(a, "{{\"unit_graph\": {s}, \"package\": \"p@1.0.0\", \"toolchain\": {{}}, \"units\": []}}", .{n});
         const g = try lockm.parseGraph(a, "g", text, &d);
@@ -208,9 +208,9 @@ test "parseGraph: a graph that is not mopm's format is refused, one reason each"
         .{ .text = "[]", .needle = "the unit graph is not a JSON object" },
         .{ .text = "\"x\"", .needle = "the unit graph is not a JSON object" },
         .{ .text = "{}", .needle = "no `unit_graph` format number" },
-        .{ .text = "{\"unit_graph\": 4}", .needle = "unit_graph format is not 1, 2 or 3" },
-        .{ .text = "{\"unit_graph\": 4}", .needle = "update buildrules" },
-        .{ .text = "{\"unit_graph\": 0}", .needle = "unit_graph format is not 1, 2 or 3" },
+        .{ .text = "{\"unit_graph\": 6}", .needle = "unit_graph format is not 1, 2, 3, 4 or 5" },
+        .{ .text = "{\"unit_graph\": 6}", .needle = "update buildrules" },
+        .{ .text = "{\"unit_graph\": 0}", .needle = "unit_graph format is not 1, 2, 3, 4 or 5" },
         .{ .text = "{\"unit_graph\": \"1\"}", .needle = "unit_graph format is not 1" },
         .{ .text = "{\"unit_graph\": 1}", .needle = "no `toolchain` object" },
         .{ .text = "{\"unit_graph\": 1, \"toolchain\": 5}", .needle = "no `toolchain` object" },
@@ -281,6 +281,101 @@ test "parseGraph: an entry built by a native unit the graph does not have is ref
         }
     };
     try kit.sweepOomRefusal(Call{});
+}
+
+const graph4 = @embedFile("fixture/mojo4.graph.json");
+const graph5 = @embedFile("fixture/mojo5.graph.json");
+
+fn unitOf(g: lockm.Graph, kind: []const u8) !lockm.Unit {
+    for (g.units) |u| if (std.mem.eql(u8, u.kind, kind)) return u;
+    return error.TestNoSuchUnit;
+}
+
+// Defect caught: a graph of format 4 (a provided native) refused by the command that writes the table, so a package whose archive comes from a rule of the build system could
+// not be synced; or its native unit read as one with sources.
+test "parseGraph: the format 4 fixture is read, its native unit is provided, and no unit has a link" {
+    var e = Env.init();
+    defer e.deinit();
+    const a = e.a();
+    var d = Diag.init(a);
+    const g = try lockm.parseGraph(a, "g", graph4, &d);
+    try t.expectEqual(@as(usize, 3), g.units.len);
+    const native = try unitOf(g, "native");
+    try t.expect(native.provided);
+    try t.expectEqual(@as(usize, 0), native.srcs.len);
+    try t.expectEqualStrings("native:shimpkg/shim", (try unitOf(g, "test")).built[0].unit);
+    for (g.units) |u| try t.expectEqual(@as(usize, 0), u.link.len);
+    try t.expectEqual(@as(usize, 0), d.count());
+}
+
+// Defect caught: the system libraries of a unit's final link dropped on the way from mopm's graph (a C++ archive linked without libc++), or read in another order than mopm's.
+test "parseGraph: the format 5 fixture is read, and a unit's link is what the graph lists, in its order" {
+    var e = Env.init();
+    defer e.deinit();
+    const a = e.a();
+    var d = Diag.init(a);
+    const g = try lockm.parseGraph(a, "g", graph5, &d);
+    for ([_][]const u8{ "lib", "test" }) |kind| {
+        const u = try unitOf(g, kind);
+        try t.expectEqual(@as(usize, 2), u.link.len);
+        try t.expectEqualStrings("c++", u.link[0]);
+        try t.expectEqualStrings("m", u.link[1]);
+    }
+    try t.expectEqual(@as(usize, 0), (try unitOf(g, "native")).link.len);
+    try t.expect((try unitOf(g, "native")).provided);
+    var all = Diag.init(a);
+    const four = try lockm.parseGraph(a, "g", "{\"unit_graph\": 5, \"toolchain\": {}, \"units\": [{\"id\": \"u\", \"link\": [\"c++\", \"dl\", \"m\", \"pthread\"]}]}", &all);
+    try t.expectEqual(@as(usize, 4), four.units[0].link.len);
+    try t.expectEqualStrings("pthread", four.units[0].link[3]);
+}
+
+const link_head = "{\"unit_graph\": 5, \"toolchain\": {}, \"units\": [";
+
+test "parseGraph: a `link` or `provided` mopm would not print is refused, one reason each" {
+    var e = Env.init();
+    defer e.deinit();
+    const a = e.a();
+    const cases = [_]struct { text: []const u8, needle: []const u8 }{
+        // A name outside mopm's list reaches a linker command line.
+        .{ .text = link_head ++ "{\"id\": \"u\", \"link\": [\"c++\", \"X11\"]}]}", .needle = "u: `link` names X11, which is not one of c++, dl, m, pthread" },
+        .{ .text = link_head ++ "{\"id\": \"u\", \"link\": [\"-Wl,--wrap=x\"]}]}", .needle = "names -Wl,--wrap=x" },
+        .{ .text = link_head ++ "{\"id\": \"u\", \"link\": [\"\"]}]}", .needle = "which is not one of c++, dl, m, pthread" },
+        .{ .text = link_head ++ "{\"id\": \"u\", \"link\": [\"m\", \"m\"]}]}", .needle = "u: `link` names m twice" },
+        .{ .text = link_head ++ "{\"id\": \"u\", \"link\": \"c++\"}]}", .needle = "u: `link` is not a list of names" },
+        .{ .text = link_head ++ "{\"id\": \"u\", \"link\": [5]}]}", .needle = "u: `link` is not a list of names" },
+        // `link` is a format 5 key, and a native unit is not linked.
+        .{ .text = "{\"unit_graph\": 4, \"toolchain\": {}, \"units\": [{\"id\": \"u\", \"link\": [\"m\"]}]}", .needle = "u: has `link` in a graph of format 4; it is a format 5 key" },
+        .{ .text = link_head ++ "{\"id\": \"native:p/x\", \"kind\": \"native\", \"link\": [\"m\"]}]}", .needle = "native:p/x: a native unit has no `link`" },
+        // `provided` is a format 4 key, a bool, and a native unit's.
+        .{ .text = "{\"unit_graph\": 3, \"toolchain\": {}, \"units\": [{\"id\": \"native:p/x\", \"kind\": \"native\", \"provided\": true}]}", .needle = "native:p/x: has `provided` in a graph of format 3; it is a format 4 key" },
+        .{ .text = link_head ++ "{\"id\": \"native:p/x\", \"kind\": \"native\", \"provided\": \"yes\"}]}", .needle = "native:p/x: `provided` is not true or false" },
+        .{ .text = link_head ++ "{\"id\": \"p@1#mojo1/lib\", \"kind\": \"lib\", \"provided\": true}]}", .needle = "p@1#mojo1/lib: `provided` is a key of a native unit" },
+    };
+    for (cases) |c| {
+        var d = Diag.init(a);
+        try t.expectError(error.Invalid, lockm.parseGraph(a, "g", c.text, &d));
+        try expectMsg(&d, c.needle);
+        const Call = struct {
+            text: []const u8,
+            pub fn call(self: @This(), x: std.mem.Allocator) !bool {
+                var dd = Diag.init(x);
+                _ = lockm.parseGraph(x, "g", self.text, &dd) catch return false;
+                return true;
+            }
+        };
+        try kit.sweepOomRefusal(Call{ .text = c.text });
+    }
+}
+
+test "parseGraph: `provided: false` and an empty `link` are what a graph without them says" {
+    var e = Env.init();
+    defer e.deinit();
+    const a = e.a();
+    var d = Diag.init(a);
+    const text = "{\"unit_graph\": 2, \"toolchain\": {}, \"units\": [{\"id\": \"native:p/x\", \"kind\": \"native\", \"provided\": false}, {\"id\": \"u\", \"link\": []}]}";
+    const g = try lockm.parseGraph(a, "g", text, &d);
+    try t.expect(!g.units[0].provided);
+    try t.expectEqual(@as(usize, 0), g.units[1].link.len);
 }
 
 const GraphCall = struct {
