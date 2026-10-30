@@ -1,9 +1,9 @@
 //! prefix_tool's command line: the arguments of each mode, the files it
 //! reads and writes, and the `elfsyms` run (README.md).
 //!
-//!   prefix_tool header --elfsyms <exe> --archive <lib.a> --header <out>
-//!       --symbols <out> --style boringssl|strip --prefix <p> [--strip <s>]
-//!       --min <n> [--extra <name>]...
+//!   prefix_tool header (--elfsyms <exe> --archive <lib.a> | --defined <names.txt>)
+//!       --header <out> --symbols <out> --style boringssl|strip --prefix <p>
+//!       [--strip <s>] --min <n> [--extra <name>]...
 //!   prefix_tool check --elfsyms <exe> --archive <lib.a> --result <out>
 //!       --prefix <p> --min <n> [--allow <pattern>]... [--names <file>]...
 //!
@@ -20,7 +20,7 @@ pub const Outcome = struct {
 };
 
 pub const usage =
-    \\usage: prefix_tool header --elfsyms <exe> --archive <lib.a> --header <out> --symbols <out>
+    \\usage: prefix_tool header (--elfsyms <exe> --archive <lib.a> | --defined <names.txt>) --header <out> --symbols <out>
     \\           --style boringssl|strip --prefix <p> [--strip <s>] --min <n> [--extra <name>]...
     \\       prefix_tool check --elfsyms <exe> --archive <lib.a> --result <out> --prefix <p>
     \\           --min <n> [--allow <pattern>]... [--names <file>]...
@@ -44,7 +44,7 @@ pub const Args = struct {
             .lists = std.StringHashMap(std.ArrayList([]const u8)).init(P.a()),
         };
         const single: []const []const u8 = if (std.mem.eql(u8, r.mode, "header"))
-            &.{ "--elfsyms", "--archive", "--header", "--symbols", "--style", "--prefix", "--strip", "--min" }
+            &.{ "--elfsyms", "--archive", "--defined", "--header", "--symbols", "--style", "--prefix", "--strip", "--min" }
         else if (std.mem.eql(u8, r.mode, "check"))
             &.{ "--elfsyms", "--archive", "--result", "--prefix", "--min" }
         else
@@ -64,8 +64,14 @@ pub const Args = struct {
                 r.one.put(k, v) catch P.oom();
             } else return P.fail("prefix_tool {s}: unknown flag {s}", .{ r.mode, k });
         }
+        // The library's defined names come from its archive (`elfsyms`) or from a file that lists them (the `--symbols` of archive_check, which reads ELF and
+        // Mach-O objects): one source, not both.
+        const from_file = r.one.contains("--defined");
+        if (from_file and (r.one.contains("--elfsyms") or r.one.contains("--archive")))
+            return P.fail("prefix_tool header: --defined is given with --elfsyms or --archive", .{});
         for (single) |k| {
-            if (std.mem.eql(u8, k, "--strip")) continue;
+            if (std.mem.eql(u8, k, "--strip") or std.mem.eql(u8, k, "--defined")) continue;
+            if (from_file and (std.mem.eql(u8, k, "--elfsyms") or std.mem.eql(u8, k, "--archive"))) continue;
             if (!r.one.contains(k)) return P.fail("prefix_tool {s}: {s} is required", .{ r.mode, k });
         }
         return r;
@@ -126,8 +132,9 @@ fn header(args: Args, cwd: []const u8) P.Fail!Outcome {
     const style = std.meta.stringToEnum(P.Style, args.get("--style")) orelse
         return P.fail("prefix_tool: unknown style {s}", .{args.get("--style")});
     const min = try args.min();
-    const archive = args.get("--archive");
-    const armap = try elfsyms(args.get("--elfsyms"), "armap", archive);
+    const from_file = args.one.contains("--defined");
+    const archive = if (from_file) args.get("--defined") else args.get("--archive");
+    const armap = if (from_file) try read(archive) else try elfsyms(args.get("--elfsyms"), "armap", archive);
     const names = try P.symbols(armap, args.list("--extra"), shown(cwd, archive), min);
     const text = try P.header(style, args.get("--prefix"), args.get("--strip"), names);
     try write(args.get("--symbols"), P.symbolsFile(names));

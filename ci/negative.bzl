@@ -435,6 +435,11 @@ FAULTY = [
     ("//ci/faulty:native_with_an_undefined_symbol", "//ci/faulty:native_good", "undefined symbol: faulty_missing_helper"),
     ("//ci/faulty:native_newer_than_the_floor", "//ci/faulty:native_good", "undefined symbol: arc4random"),
     ("//ci/faulty:native_with_debug_info", "//ci/faulty:native_good", "member debug_info.c.pic.o has 1 debug section(s), first .debug_faulty"),
+    # A renamed library (`prefix`): a symbol the renaming header cannot reach is defined without the prefix, and a call it cannot reach is left to resolve to another copy.
+    ("//ci/faulty:native_prefix_leaks_a_symbol", "//ci/faulty:native_prefix_good", "1 defined symbol(s) without the prefix faultyp: faulty_prefixed_fixed"),
+    ("//ci/faulty:native_prefix_misses_a_reference", "//ci/faulty:native_prefix_good", "undefined reference to faulty_prefixed_target, a name the prefix header renames"),
+    # The namespace a renamed library keeps is named by `prefix_cxx_namespaces`; without it the mangled name is a symbol without the prefix.
+    ("//ci/faulty:native_prefix_namespace_unnamed", "//ci/faulty:native_prefix_namespace_good", "1 defined symbol(s) without the prefix faultyp: _ZN6snappy3fooEv"),
     # The data and the variables of a Mojo test (ci/mojo_data/BUCK): the stand-in test reads what is staged and says which of its expectations failed.
     # The control of each is the run that stages everything the probe expects.
     ("//ci/mojo_data:run_red_content", "//ci/mojo_data:run_green", "data_probe: greeting.txt holds other data"),
