@@ -81,6 +81,7 @@ load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/cxx:native.bzl", "native_static")
 load(":pack.bzl", "mojo_conda")
 load(":system_libs.bzl", _check_graph_format = "check_graph_format", _check_loads = "check_loads", _check_same_system_libs = "check_same_system_libs", _compile_format = "compile_format", _mojo_system_lib = "mojo_system_lib_rule", _system_libs_of = "system_libs_of")
+load(":link.bzl", _check_link_keys = "check_link_keys", _check_same_links = "check_same_links", _is_provided = "is_provided", _slice_has_provided = "slice_has_provided", _unit_link = "unit_link")
 load(":subdirs.bzl", "BASE_SUBDIR", "by_subdir", "check_same_units", "subdir_suffix", "table_graphs", "unsupported_platform")
 load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
@@ -288,8 +289,10 @@ def _check_table(t):
     graphs = table_graphs(t)
     check_same_units(graphs)
     _check_same_system_libs(graphs, BASE_SUBDIR)
+    _check_same_links(graphs, BASE_SUBDIR)
     for sd, x in sorted(graphs.items()):
         _check_graph_format("the committed unit graph of {}".format(sd), x["unit_graph"])
+        _check_link_keys("the committed unit graph of {}".format(sd), x)
         _check_loads("the committed unit graph of {}".format(sd), x, _system_libs_of("the committed unit graph of {}".format(sd), x))
         if x["mojo"] != t["MOJO"] or x["toolchain"]["mojo"] != t["MOJO"]:
             fail("the table says Mojo {} but its unit graph of {} is for Mojo {}: run `buildrules mojo sync`".format(t["MOJO"], sd, x["mojo"]))
@@ -338,6 +341,13 @@ def native_wiring(unit, prebuilt_packages, user_natives, here, refuse = fail, bu
         else:
             refuse("{}: {} links the native library {}; add it to mojo_package(natives = {{...}})".format(here, unit["id"], soname))
     return sonames, labels
+
+def check_provided_native(here, nid, soname, user_natives, refuse = fail):
+    """A `provided = true` native (graph format 4) has its archive supplied by `natives = {...}`: the graph has no sources for it, and an archive that nothing supplies
+    would be an empty one. `refuse` is `fail` in a build; a test passes a recorder (rules/rust/refusal.bzl)."""
+    if soname not in user_natives:
+        refuse(("{}: [native.{}] is `provided = true`, so its archive is built by a rule and not compiled from sources: add `natives = {{\"{}\": \"<native_library target>\"}}` to mojo_package " +
+                "(a target with NativeArchiveInfo, rules/native/defs.bzl)").format(here, nid, soname))
 
 def check_natives_used(here, user_natives, linked_sonames, refuse = fail):
     """Every entry of `mojo_package(natives = {...})` names a library the package's graph links or builds: `linked_sonames` are the sonames of every unit's natives and of the
@@ -502,14 +512,16 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             u = us[i]
             if i == uid or is_native_unit(i):
                 # `loads` is for the test run, not for the compile: `mopm unit build` is given the unit without it (and the compile's own bytes do not move with a pin).
-                u = {k: v for k, v in u.items() if k not in ("key", "loads")}
+                # `link` is not given either: the system libraries end the link line with the archives the listed libraries bring, which only the unit rule knows
+                # (rules/native/link.bzl), so the unit rule writes them (toolchain.cfg) and mopm adds none.
+                u = {k: v for k, v in u.items() if k not in ("key", "loads", "link")}
                 if profile and i == uid:
                     u["profile"] = profile
             else:
                 u = {k: v for k, v in u.items() if k in _DEP_FIELDS}
             cut.append(u)
         return json.encode({
-            "unit_graph": _compile_format(g["unit_graph"]),
+            "unit_graph": _compile_format(g["unit_graph"], _slice_has_provided(cut)),
             "package": g["package"],
             "mojo": g["mojo"],
             "toolchain": g["toolchain"],
@@ -565,6 +577,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             mopm = mopm,
             native_sonames = sonames,
             natives = native_labels,
+            link = _unit_link(u),
             closure_ids = {units[c]["package"]: c for c in cl},
             graph_base = graph_from,
             package = u["package"],
@@ -595,6 +608,15 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         # Mojo sources. Its `includes` are directories below the package whichever base the graph prints (`native_include_dirs`: mopm prints them
         # package-relative, so they are not rooted again).
         srcs = [in_package(s["path"]) for s in u.get("srcs", [])]
+        if _is_provided(u):
+            # `provided = true` (graph format 4): the archive is the product of a rule of the build, so a target of `natives = {...}` must supply it. The graph has no sources for it, and
+            # an archive that nothing supplies is an empty one: refused, naming the library, rather than built from nothing.
+            soname = u.get("soname") or "lib{}.a".format(nid)
+            check_provided_native(here, nid, soname, natives)
+            own_native_ids[nid] = soname
+            provided_natives[soname] = True
+            native.alias(name = name_once("native_" + nid), actual = natives[soname], visibility = visibility)
+            continue
         if not srcs:
             fail("{}: the native unit {} has no source".format(here, uid))
         hdrs = [in_package(h["path"]) for h in u.get("hdrs", [])]
@@ -829,6 +851,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
                     native_needs = {n["soname"]: n["needs"] for n in u["natives"] if n.get("needs")},
                     native_sonames = pgo_sonames,
                     natives = pgo_natives,
+                    link = _unit_link(u),
                     toolchain = toolchain_base,
                     exec_compatible_with = LINUX_X86_64,
                     visibility = visibility,
@@ -923,6 +946,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             mojo = mojo,
             mopm = mopm,
             natives = {nid: ":native_" + nid for nid in own_native_ids.keys()},
+            link = _unit_link(own_lib) if own_lib else [],
             subdir = by_subdir(graphs, {sd: sd for sd in subdirs}),
             package = root,
             version = graph["package"].partition("@")[2],

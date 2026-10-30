@@ -3,10 +3,13 @@ name = "natlib_cuser"
 version = "0.1.0"
 mojo = ["1.0.0"]
 
-# `cuser` is C; the C++ library it calls is its dependency and is named nowhere here. The link needs the archive of the C++ library and the C++ runtime, both through `cuser`.
+# `cuser` is C; the C++ library it calls is its dependency and is named nowhere here. The link needs the archive of the C++ library through `cuser`, and the C++ runtime from `link`:
+# the member that ships the library says what its archives leave to the platform, whatever language its own sources are in. The other three names of mopm's list are given too, so the
+# link line of the test carries all four (`-lc++ -ldl -lm -lpthread`, in that order) on every platform it runs on.
 [native.cuser]
 kind = "static"
-srcs = ["native/cuser.c"]
+provided = true
+link = ["c++", "dl", "m", "pthread"]
 
 [targets]
 lib = { path = "src/natlib_cuser" }

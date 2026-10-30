@@ -31,7 +31,7 @@ What each argument is, and what may differ per platform:
     cflags, cxxflags, asm_flags   flags of the C, the C++ and the assembly compiles, after the defaults (-O2), so a later -O3 wins.
     deps               other `native_library` targets: this library's compiles see their exported headers and includes, and a program that links this library links their archives too: they end its link line, after the archives of its unit graph and before the C++ runtime, a library before the libraries it calls into, each once, a shared one after its last user (rules/native/link.bzl, rules/mojo/unit.bzl).
     exported_deps      like `deps`, and a dependent of this library sees their exported headers too.
-    cxx_runtime        optional statement of what the sources are: true when any source is C++ (a program that links the library then links the C++ runtime, once); a statement that
+    cxx_runtime        optional statement of what the sources are: true when any source is C++ (a program that links the library must name `c++` in the `link` of its unit (a field of the mopm unit graph), and then links the C++ runtime once); a statement that
                        is not what the sources are is refused. The value is derived from the sources whether it is stated or not.
     soname             the archive's file name (default `lib<name>.a`).
     asm_split          paths of `.S` sources (a directory ending in `/`, or one file ending in `.S`; a pattern that stops inside a name is refused) whose preprocessed text has its `;` turned into line breaks before it is assembled. Mach-O arm64 assembly reads `;` as a

@@ -36,6 +36,11 @@ CASES = [
     ("//ci/negative:mojo_instrumented_link_without_a_native_the_unit_links", PLATFORM, "the unit links the native library libbase_sys.a and the instrumented link of its branch coverage is not given it"),
     ("//ci/negative:mojo_instrumented_link_with_a_needed_archive_before_its_user", PLATFORM, "libbase_sys.a is linked before libprobe_sys.a, which needs it"),
     ("//ci/negative:native_library_stating_no_cxx_runtime_for_cxx_sources", PLATFORM, "cxx_runtime = False but the sources include C++"),
+    # A link of an archive with C++ sources whose `link` (mopm's field) lacks `c++` is refused, in the unit of a test, in the instrumented link of its branch coverage and in the `:conda`
+    # of the package that ships it (rules/native/link.bzl, `check_cxx_link`).
+    ("//ci/negative:mojo_unit_linking_a_cxx_archive_without_cxx_in_its_link", PLATFORM, "links a native library with C++ sources, and the link of the unit is []: `c++` must be in it"),
+    ("//ci/negative:mojo_instrumented_link_of_a_cxx_archive_without_cxx_in_its_link", PLATFORM, "links a native library with C++ sources, and the link of the unit is []: `c++` must be in it"),
+    ("//ci/negative:mojo_conda_of_a_cxx_archive_without_cxx_in_its_link", PLATFORM, "links a native library with C++ sources, and the link of the unit is []: `c++` must be in it"),
     ("//ci/negative:mojo_test_run_with_a_zero_hang_limit", PLATFORM, "test_hang_limit_s 0 is not a positive whole number of seconds"),
     # A path written in a BUCK file that leaves the archive (absolute, or with a .. component) is refused at analysis, whatever it is (rules/cxx/checks.bzl).
     ("//ci/faulty:archive_files_of_a_dot_dot_file", "buildrules//platforms:linux_x86_64", "file sub/../ok.c is not a path inside the archive: a path may not be absolute or hold a .. component"),

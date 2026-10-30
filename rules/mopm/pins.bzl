@@ -54,6 +54,12 @@ MOPM_VERSIONS = {
         "size": 1285004,
         "dir": "mopm-0.0.86-linux-x86_64",
     },
+    "0.0.101": {
+        "url": "https://github.com/komira-ai/mopm/releases/download/v0.0.101/mopm-0.0.101-linux-x86_64.tar.gz",
+        "sha256": "07a591f22f52f52f90599f7ac5de356ceface4ec4271d264de972cfc80e276f9",
+        "size": 1299129,
+        "dir": "mopm-0.0.101-linux-x86_64",
+    },
 }
 
 def vname(version):

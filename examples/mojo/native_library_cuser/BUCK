@@ -2,7 +2,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("@buildrules//rules/mojo:sync.bzl", "mojo_sync")
 load(":buildrules.mojo.bzl", "mojo_package")
 
-# Only `cuser` (C) is named. The C++ library behind it comes with it, and so does the C++ runtime: `NativeLibraryInfo.cxx_runtime` and the archives of `cuser` are those of its closure.
+# Only `cuser` (C) is named. The C++ library behind it comes with it (the archives of `cuser` are those of its closure), and the C++ runtime comes from `link = ["c++", ...]` of `[native.cuser]` in mopm.toml: the unit rule refuses a link that holds C++ archives and does not name `c++`.
 mojo_package(
     path = ".",
     natives = {"libcuser.a": "//examples/native/cxx:cuser"},
@@ -12,7 +12,7 @@ mojo_sync(
     name = "sync",
     committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
     files = [],
-    mopm = "0.0.73",
+    mopm = "0.0.101",
     visibility = ["//ci:"],
     workspaces = [":workspace"],
 )
