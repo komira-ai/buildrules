@@ -65,6 +65,7 @@ scrub_test(
     "//examples/mojo/member_native:scrub_files",
     "//examples/mojo/member_native_macos/cshim:scrub_files",
     "//examples/mojo/member_native_macos:scrub_files",
+    "//examples/mojo/upstream_native:scrub_files",
     "//examples/mojo/rooted/data:scrub_files",
     "//examples/mojo/rooted/native:scrub_files",
     "//examples/mojo/coverage_floors:scrub_files",

@@ -1,0 +1,62 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:pack.bzl", "mojo_conda_holds")
+load("@buildrules//rules/mojo:sync.bzl", "mojo_sync")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_test")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A package whose C library is not in the repository: SQLite 3.53.4, the amalgamation, is fetched from the archive `native_build` pins (url, sha256, size), staged
+# as `:native_sqlite_upstream`, and compiled by the pinned zig with the package's own file (native/upsql_sqlite3.c, which includes `sqlite3.c`) and the flags of
+# `[native.sqlite]`. Every symbol the library defines is renamed `upsql_sqlite3_*`: `:native_sqlite_unprefixed` is the library with SQLite's own names,
+# `:native_sqlite_prefix` the header that renames each of them, and `:native_sqlite` the library built with that header, held by the archive check to define
+# nothing without the prefix and to refer to none of the old names. The same targets build for macOS arm64 (a Mach-O archive) and for linux x86_64.
+mojo_package(
+    path = ".",
+    native_build = {
+        "sqlite": {
+            "upstream": {
+                "url": "https://www.sqlite.org/2026/sqlite-autoconf-3530400.tar.gz",
+                "sha256": "0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c",
+                "size": 3283177,
+                "strip": "sqlite-autoconf-3530400",
+                "files": ["sqlite3.c", "sqlite3.h"],
+            },
+            "prefix": {"name": "upsql_sqlite3_", "strip": "sqlite3_", "min": 200},
+        },
+    },
+)
+
+# The `.conda` holds the archive that was built and tested.
+mojo_conda_holds(
+    name = "conda_holds",
+    conda = ":conda",
+    natives = {"libsqlite.a": ":native_sqlite"},
+    package = "upsql",
+    visibility = ["//ci:"],
+)
+
+# What the renaming did to the symbols of the library (symbols_test.zig): the library with SQLite's names defines `sqlite3_open_v2`, the renamed one defines
+# `upsql_sqlite3_open_v2` and no name outside the prefix.
+zig_test(
+    name = "symbols",
+    exec_compatible_with = LINUX_X86_64,
+    src = "symbols_test.zig",
+    data = {
+        "renamed.txt": ":native_sqlite[symbols]",
+        "unprefixed.txt": ":native_sqlite_unprefixed[symbols]",
+        "header.h": ":native_sqlite_prefix",
+    },
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["//ci:"],
+)
+
+mojo_sync(
+    name = "sync",
+    committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
+    files = [],
+    mopm = "0.0.73",
+    visibility = ["//ci:"],
+    workspaces = [":workspace"],
+)
+
+scrub_files()

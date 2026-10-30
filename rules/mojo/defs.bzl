@@ -79,6 +79,7 @@ load("//rules/core:pinned_file.bzl", "pinned_file")
 load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/cxx:native.bzl", "native_static")
+load(":native_build.bzl", "check_native_build", "stage_upstream")
 load(":pack.bzl", "mojo_conda")
 load(":system_libs.bzl", _check_graph_format = "check_graph_format", _check_loads = "check_loads", _check_same_system_libs = "check_same_system_libs", _compile_format = "compile_format", _mojo_system_lib = "mojo_system_lib_rule", _system_libs_of = "system_libs_of")
 load(":subdirs.bzl", "BASE_SUBDIR", "by_subdir", "check_same_units", "subdir_suffix", "table_graphs", "unsupported_platform")
@@ -356,7 +357,7 @@ def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
         visibility = visibility,
     )
 
-def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, test_defines = {}, test_layout = "default", test_hang_limit_s = {}, conda = False, visibility = ["PUBLIC"]):
+def mojo_package(path = ".", table = None, natives = {}, native_build = {}, test_data = {}, test_env = {}, test_defines = {}, test_layout = "default", test_hang_limit_s = {}, conda = False, visibility = ["PUBLIC"]):
     if table == None:
         fail("mojo_package needs its table: load mojo_package from the buildrules.mojo.bzl next to mopm.toml (`buildrules mojo sync` writes it)")
     _check_table(table)
@@ -522,6 +523,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         return member_package_label(u["package"]) + ":native_" + nid
 
     native_units = [uid for uid in sorted(units.keys()) if is_native_unit(uid)]
+    check_native_build(here, native_build, [native_unit_id(uid) for uid in native_units if units[uid]["package"] == root])
     built_labels = {uid: native_label(uid) for uid in native_units}
 
     def target_of_soname(soname):
@@ -592,6 +594,14 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             needs.append(t)
         soname = u.get("soname") or "lib{}.a".format(nid)
         own_native_ids[nid] = soname
+        nb = native_build.get(nid, {})
+        extra = {}
+        if "upstream" in nb:
+            extra.update(stage_upstream(name_once("native_" + nid + "_upstream"), nb["upstream"], visibility))
+        if "prefix" in nb:
+            for part in ["_unprefixed_cxx", "_unprefixed", "_prefix"]:
+                name_once("native_" + nid + part)
+            extra.update(prefix = nb["prefix"]["name"], prefix_strip = nb["prefix"].get("strip", ""), prefix_min = nb["prefix"]["min"])
         name_once("native_" + nid + "_cxx")
         native_static(
             name = name_once("native_" + nid),
@@ -603,7 +613,9 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             soname = soname,
             needs = needs,
             file_prefix = here_repo,
+            allow = nb.get("allow", []),
             visibility = visibility,
+            **extra
         )
 
     libs = []

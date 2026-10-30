@@ -331,3 +331,55 @@ test "check: a names file that cannot be read, an archive that is not one and a 
     try expect(c.code == 1);
     try expect(std.mem.indexOf(u8, c.stderr, P.fmt("prefix_tool: elfsyms symtab {s} failed (", .{w.path("text.a")})) != null);
 }
+
+// ---- `header --defined`: the names from a file (archive_check's `--symbols`, which reads Mach-O as well as ELF) instead of an archive's symbol table --------------
+
+const header_defined = [_][]const u8{ "prefix_tool", "header", "--defined", "names.txt", "--header", "h", "--symbols", "s", "--style", "strip", "--strip", "s_", "--prefix", "k_", "--min", "2" };
+
+test "args: header --defined takes the place of --elfsyms and --archive, and is not given with either" {
+    const h = try M.Args.parse(&header_defined);
+    try eqs("names.txt", h.get("--defined"));
+    try eqs("", h.get("--elfsyms"));
+    // Neither source is a refusal; both are.
+    try expectFail(M.Args.parse(header_defined[0..2] ++ header_defined[4..]), "prefix_tool header: --elfsyms is required");
+    try expectFail(M.Args.parse(with(&header_defined, &.{ "--archive", "l.a" })), "prefix_tool header: --defined is given with --elfsyms or --archive");
+    try expectFail(M.Args.parse(with(&header_defined, &.{ "--elfsyms", "e" })), "prefix_tool header: --defined is given with --elfsyms or --archive");
+    // The rest stays required, and check has no such flag.
+    try expectFail(M.Args.parse(header_defined[0 .. header_defined.len - 2]), "prefix_tool header: --min is required");
+    try expectFail(M.Args.parse(with(&check_ok, &.{ "--defined", "x" })), "prefix_tool check: unknown flag --defined");
+    try expectFail(M.Args.parse(with(&header_defined, &.{ "--defined", "y" })), "prefix_tool: --defined given twice");
+}
+
+test "header --defined: the file's names give the same symbols file and header as an archive with those names" {
+    var w = try Work.init(try armapArchive(&.{ "s_open", "s_close", "tmp", "s_open" }));
+    defer w.tmp.cleanup();
+    try w.tmp.dir.writeFile(.{ .sub_path = "names.txt", .data = "tmp\ns_open\ns_close\n" });
+    const elfsyms = try elfsymsPath();
+    const from_archive = [_][]const u8{ "prefix_tool", "header", "--elfsyms", elfsyms, "--archive", w.path("lib.a"), "--header", w.path("a.h"), "--symbols", w.path("a.txt"), "--style", "strip", "--strip", "s_", "--prefix", "k_", "--min", "3" };
+    const from_file = [_][]const u8{ "prefix_tool", "header", "--defined", w.path("names.txt"), "--header", w.path("f.h"), "--symbols", w.path("f.txt"), "--style", "strip", "--strip", "s_", "--prefix", "k_", "--min", "3" };
+    try expect(M.outcome(&from_archive, "/w").code == 0);
+    const o = M.outcome(&from_file, "/w");
+    try expect(o.code == 0);
+    try eqs("", o.stderr);
+    try eqs(try w.read("a.txt"), try w.read("f.txt"));
+    try eqs(try w.read("a.h"), try w.read("f.h"));
+    try eqs("s_close\ns_open\ntmp\n", try w.read("f.txt"));
+    // strip style: s_open -> k_open, tmp -> k__tmp
+    try expect(std.mem.indexOf(u8, try w.read("f.h"), "#define s_open k_open\n") != null);
+    try expect(std.mem.indexOf(u8, try w.read("f.h"), "#define tmp k__tmp\n") != null);
+}
+
+test "header --defined: too few names is a refusal that names the file; a file that cannot be read is a refusal; neither writes anything" {
+    var w = try Work.init("x");
+    defer w.tmp.cleanup();
+    try w.tmp.dir.writeFile(.{ .sub_path = "names.txt", .data = "only_one\n" });
+    const few = [_][]const u8{ "prefix_tool", "header", "--defined", w.path("names.txt"), "--header", w.path("h.h"), "--symbols", w.path("s.txt"), "--style", "strip", "--strip", "s_", "--prefix", "k_", "--min", "2" };
+    const a = M.outcome(&few, "/w");
+    try expect(a.code == 1);
+    try eqs(P.fmt("prefix_header: only 1 names read from {s} (at least 2 expected)\n", .{w.path("names.txt")}), a.stderr);
+    const missing = [_][]const u8{ "prefix_tool", "header", "--defined", w.path("nope.txt"), "--header", w.path("h.h"), "--symbols", w.path("s.txt"), "--style", "strip", "--strip", "s_", "--prefix", "k_", "--min", "1" };
+    const b = M.outcome(&missing, "/w");
+    try expect(b.code == 1);
+    try eqs(P.fmt("prefix_tool: cannot read {s}: FileNotFound\n", .{w.path("nope.txt")}), b.stderr);
+    try expect(!w.exists("h.h") and !w.exists("s.txt"));
+}
