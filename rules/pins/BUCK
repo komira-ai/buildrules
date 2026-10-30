@@ -3,12 +3,18 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # the file utilities of every action), zig (the C link driver, and the compiler of the Zig tools),
 # zig 0.15.2 and the conda runtime libraries. Values in pins.bzl.
 load("//rules/core:pinned_file.bzl", "pinned_file")
-load("//rules/core:platform.bzl", "LINUX_X86_64")
-load("//rules/zig:zig.bzl", "zig_dist", "zig_test")
+load("//rules/core:platform.bzl", "MACOS_AARCH64", "TOOL_EXEC")
+load("//rules/zig:zig.bzl", "zig_bootstrap_exe", "zig_dist", "zig_test")
 load("//rules:matrix.bzl", "group")
 load(":bootstrap.bzl", "UNPACK_PINS")
 load(":hosts.bzl", "HOST_PINS", "host_downloads")
 load(":pins.bzl", "PINS", "strip_prefix")
+load(":tool_zig.bzl", "tool_zig")
+
+# On a Mac that runs Buck2 itself (`[buildrules_re] mode = local`, rules/core/platform.bzl: TOOL_EXEC) the tool tier runs on the Mac: its zig is the macOS
+# archive of the same release (hosts.bzl), unpacked by the pinned `unpack` program, and its busybox is the Zig program `busybox_macos` (busybox_macos.zig), which
+# is built by that zig. On a farm none of this exists and the targets below are what they always were.
+_LOCAL_MAC = TOOL_EXEC == MACOS_AARCH64
 
 [
     pinned_file(
@@ -20,31 +26,56 @@ load(":pins.bzl", "PINS", "strip_prefix")
         visibility = ["PUBLIC"],
     )
     for p in PINS.values()
+    if not (_LOCAL_MAC and p["name"] == "busybox")
 ]
 
 zig_dist(
     name = "zig",
-    exec_compatible_with = LINUX_X86_64,
-    archive = ":" + PINS["zig"]["name"],
-    busybox = ":busybox",
-    strip_prefix = strip_prefix("zig"),
     visibility = ["PUBLIC"],
+    **tool_zig("zig", _LOCAL_MAC)
 )
 
 zig_dist(
     name = "zig_next",
-    exec_compatible_with = LINUX_X86_64,
-    archive = ":" + PINS["zig_next"]["name"],
-    busybox = ":busybox",
-    strip_prefix = strip_prefix("zig_next"),
+    visibility = ["PUBLIC"],
+    **tool_zig("zig_next", _LOCAL_MAC)
+)
+
+# The busybox of a Mac (busybox_macos.zig). It is built by the pinned zig without a shell, so it can exist before any busybox does. Its tests run where a busybox
+# exists, which is not a Mac before this program is built: the farm and every Linux machine run them (`busybox_macos_unit`, the dispatch is not system specific), and
+# the program they gate is cross-compiled for macOS there as well, so the tree holds it whether or not a Mac is building. `:busybox` is it in local mode on a Mac.
+[
+    zig_test(
+        name = "busybox_macos_unit",
+        src = "busybox_macos_test.zig",
+        imports = ["busybox_macos.zig"],
+        busybox = ":busybox",
+        zig = ":zig",
+    )
+    for _ in [1]
+    if not _LOCAL_MAC
+]
+
+zig_bootstrap_exe(
+    name = "busybox_macos",
+    src = "busybox_macos.zig",
+    target = "aarch64-macos",
+    unit_tests = [] if _LOCAL_MAC else [":busybox_macos_unit"],
+    zig = ":zig",
     visibility = ["PUBLIC"],
 )
+
+[
+    alias(name = "busybox", actual = ":busybox_macos", visibility = ["PUBLIC"])
+    for _ in [1]
+    if _LOCAL_MAC
+]
 
 # `:zig_next` reports 0.15.2. Compiled and run by the 0.12 zig, so it does not depend on what it
 # checks. A target built with `:zig_next` lists this test in its `unit_tests`.
 zig_test(
     name = "zig_next_version",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     env_tools = {"ZIG_NEXT": ":zig_next"},
     src = "zig_next_version_test.zig",
     busybox = ":busybox",
