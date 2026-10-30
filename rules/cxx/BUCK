@@ -8,7 +8,7 @@ load(":defs.bzl", "c_exe")
 # zig_cc_launcher: runs `zig cc|c++|ar|ranlib` for the toolchain (toolchain.bzl): expands the nested response
 # files the prelude passes (zig refuses them) and gives zig a cache directory under the working directory.
 # Built by the pinned zig 0.12, as the Rust rules' link steps are.
-# asm_split.zig: what the launcher does to a source marked for splitting (the `;` of a Mach-O arm64 macro), tested on text (asm_split_test.zig).
+# The unit tests of asm_split (asm_split_test.zig).
 zig_test(
     name = "asm_split_unit",
     exec_compatible_with = LINUX_X86_64,
@@ -17,12 +17,20 @@ zig_test(
     zig = "buildrules//rules/pins:zig",
 )
 
+# asm_split (Zig): the text step of native_library's `asm_split` (rules/native/asm_split.bzl): runs the preprocessor and writes its output with every `;` a line break.
+zig_exe(
+    name = "asm_split",
+    exec_compatible_with = LINUX_X86_64,
+    src = "asm_split.zig",
+    unit_tests = [":asm_split_unit"],
+    zig = "buildrules//rules/pins:zig",
+    visibility = ["PUBLIC"],
+)
+
 zig_exe(
     name = "zig_cc_launcher",
     exec_compatible_with = LINUX_X86_64,
     src = "zig_cc_launcher.zig",
-    imports = ["asm_split.zig"],
-    unit_tests = [":asm_split_unit"],
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig",
     visibility = ["PUBLIC"],

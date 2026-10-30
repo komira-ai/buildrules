@@ -1,14 +1,15 @@
-//! asm_split: what zig_cc_launcher does to a source marked `--buildrules-split-semicolons` (rules/native/defs.bzl, `asm_split`).
+//! asm_split: the text step of `asm_split` (rules/native/asm_split.bzl).
 //!
-//! A `.S` file of a library such as s2n-bignum builds its routines out of macros whose instructions are joined with `;`. The assembler of Mach-O arm64 reads `;` as the start of a
-//! comment, so each macro keeps its first instruction: the file assembles and computes the wrong thing. The fix (aws-lc's CMake does the same, `s2n_asm_cpreprocess`) is to run the
-//! C preprocessor on the file, turn every `;` of its output into a line break, and assemble that. The launcher does it for the sources that carry the marker: one command
-//! preprocesses (the compile's own flags, `-E`), the text is split here, and a second command assembles it as assembly (`-x assembler`).
+//! A `.S` file of a library such as s2n-bignum builds its routines out of macros whose instructions are joined with `;`. The assembler of Mach-O arm64 reads `;` as the start of
+//! a comment, so each macro keeps its first instruction: the file assembles and computes the wrong thing. The fix (aws-lc's CMake does the same, `s2n_asm_cpreprocess`) is to run
+//! the C preprocessor on the file, turn every `;` of its output into a line break, and assemble that.
+//!
+//!   asm_split --out <file> -- <compiler> <args...>
+//!
+//! runs the compiler command (the preprocessor: `-E` is among its arguments), takes what it prints, writes it to `<file>` with every `;` a line break. Its standard error is
+//! passed on and its exit status is the tool's.
 
 const std = @import("std");
-
-/// The flag that marks a source; the launcher removes it before zig sees the command.
-pub const marker = "--buildrules-split-semicolons";
 
 /// `text` with every `;` a line break.
 pub fn splitSemicolons(a: std.mem.Allocator, text: []const u8) ![]u8 {
@@ -19,52 +20,67 @@ pub fn splitSemicolons(a: std.mem.Allocator, text: []const u8) ![]u8 {
     return out;
 }
 
-pub const Plan = struct {
-    /// The arguments of the preprocessing command (after `zig cc`): the compile's, with `-c` and `-o` replaced by `-E`.
-    pre: []const []const u8,
-    /// The arguments of the assembling command: the compile's, with the source replaced by `tmp` read as assembly.
-    post: []const []const u8,
+pub const Command = struct {
+    out: []const u8,
+    argv: []const []const u8,
 };
 
-pub const PlanError = error{ NoSource, NoOutput, OutOfMemory };
+pub const parse_usage = "usage: asm_split --out <file> -- <compiler> [args...]";
 
-/// The two commands for a compile `args` (the arguments after `zig cc`) that carries the marker, or null when it does not. `tmp` is where the split text is written.
-pub fn plan(a: std.mem.Allocator, args: []const []const u8, tmp: []const u8) PlanError!?Plan {
-    var marked = false;
-    for (args) |x| {
-        if (std.mem.eql(u8, x, marker)) marked = true;
+/// The command line, or null when it is not `--out <file> -- <command...>` with a command.
+pub fn parseArgs(args: []const []const u8) ?Command {
+    if (args.len < 4) return null;
+    if (!std.mem.eql(u8, args[0], "--out")) return null;
+    if (!std.mem.eql(u8, args[2], "--")) return null;
+    return .{ .out = args[1], .argv = args[3..] };
+}
+
+/// What the compiler did.
+pub const Result = struct {
+    term: std.process.Child.Term,
+    stdout: []const u8,
+    stderr: []const u8,
+};
+
+/// The tool's end: the compiler's standard error is passed on; when it exited 0 its output is written split to `out` and the status is 0, when it exited otherwise that
+/// status is returned and nothing is written, when it did not exit the status is 2.
+pub fn finish(a: std.mem.Allocator, out: []const u8, r: Result, stderr: anytype) !u8 {
+    stderr.writeAll(r.stderr) catch {};
+    switch (r.term) {
+        .Exited => |code| if (code != 0) return code,
+        else => {
+            stderr.writeAll("asm_split: the compiler did not exit\n") catch {};
+            return 2;
+        },
     }
-    if (!marked) return null;
-    var pre = std.ArrayList([]const u8).init(a);
-    var post = std.ArrayList([]const u8).init(a);
-    var src_seen = false;
-    var out_seen = false;
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const x = args[i];
-        if (std.mem.eql(u8, x, marker)) continue;
-        if (std.mem.eql(u8, x, "-c") and i + 1 < args.len) {
-            src_seen = true;
-            try pre.append("-E");
-            try pre.append(args[i + 1]);
-            try post.append(x);
-            try post.append("-x");
-            try post.append("assembler");
-            try post.append(tmp);
-            i += 1;
-            continue;
-        }
-        if (std.mem.eql(u8, x, "-o") and i + 1 < args.len) {
-            out_seen = true;
-            try post.append(x);
-            try post.append(args[i + 1]);
-            i += 1;
-            continue;
-        }
-        try pre.append(x);
-        try post.append(x);
-    }
-    if (!src_seen) return error.NoSource;
-    if (!out_seen) return error.NoOutput;
-    return .{ .pre = try pre.toOwnedSlice(), .post = try post.toOwnedSlice() };
+    const text = try splitSemicolons(a, r.stdout);
+    std.fs.cwd().writeFile(out, text) catch |e| {
+        stderr.print("asm_split: cannot write {s}: {s}\n", .{ out, @errorName(e) }) catch {};
+        return 2;
+    };
+    return 0;
+}
+
+/// Runs the command and finishes with what it did.
+pub fn run(a: std.mem.Allocator, cmd: Command, stderr: anytype) !u8 {
+    const r = std.process.Child.run(.{ .allocator = a, .argv = cmd.argv, .max_output_bytes = 1 << 28 }) catch |e| {
+        stderr.print("asm_split: cannot run {s}: {s}\n", .{ cmd.argv[0], @errorName(e) }) catch {};
+        return 2;
+    };
+    return finish(a, cmd.out, .{ .term = r.term, .stdout = r.stdout, .stderr = r.stderr }, stderr);
+}
+
+pub fn main() !void {
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena_state.allocator();
+    const args = try std.process.argsAlloc(a);
+    const cmd = parseArgs(args[1..]) orelse {
+        std.io.getStdErr().writeAll(parse_usage ++ "\n") catch {};
+        std.process.exit(2);
+    };
+    const code = run(a, cmd, std.io.getStdErr().writer()) catch |e| {
+        std.io.getStdErr().writer().print("asm_split: {s}\n", .{@errorName(e)}) catch {};
+        std.process.exit(2);
+    };
+    std.process.exit(code);
 }

@@ -35,8 +35,8 @@ What each argument is, and what may differ per platform:
                        is not what the sources are is refused. The value is derived from the sources whether it is stated or not.
     soname             the archive's file name (default `lib<name>.a`).
     asm_split          paths (beginnings) of `.S` sources whose preprocessed text has its `;` turned into line breaks before it is assembled. Mach-O arm64 assembly reads `;` as a
-                       comment, so a macro of `;`-joined instructions (s2n-bignum's) keeps only its first instruction: it assembles and computes the wrong result. The pinned zig runs
-                       the compile's own flags with `-E`, the text is split (rules/cxx/asm_split.zig) and assembled as assembly; harmless on Linux. A named source must be a `.S` file.
+                       comment, so a macro of `;`-joined instructions (s2n-bignum's) keeps only its first instruction: it assembles and computes the wrong result. The toolchain's compiler runs
+                       the library's flags with `-E` (rules/native/asm_split.bzl), the text is split (rules/cxx/asm_split.zig) and assembled as assembly; harmless on Linux. A named source must be a `.S` file.
     prefix             `{"name": "p", "min": N}` (and `"strip"`): every global symbol the library defines is renamed to start with `p` (aws-lc's style `p_name`, or the strip style),
                        C and assembly, ELF and Mach-O alike, and the archive check holds that nothing defined lacks the prefix and nothing refers to a replaced name. The library is
                        built as it is (`:<name>_unprefixed`), the names its archive defines are written as a header (`:<name>_prefix`: `#define name p_name`, and for the underscored
@@ -60,11 +60,10 @@ load("//rules/core:platform.bzl", "LINUX_X86_64", "by_os_cpu")
 load("//rules/cxx:archive.bzl", "archive_files")
 load("//rules/cxx:defs.bzl", "prefix_header")
 load("//rules/cxx:native.bzl", "native_archive")
+load(":asm_split.bzl", "asm_split_rule", "split_name")
 load(":checks.bzl", "archive_extension", "check_asm_split", "check_has_sources", "check_prefix", "check_sources", "check_upstream", "cxx_label", "is_split")
 load(":library.bzl", "native_library_rule")
 
-# The flag that marks a source for the launcher (rules/cxx/asm_split.zig, `marker`).
-SPLIT_MARKER = "--buildrules-split-semicolons"
 
 def _baseline():
     """The CPU flag of the platform's baseline (as rules/cxx/native.bzl): a library other people link must run on any machine of the family."""
@@ -150,9 +149,16 @@ def native_library(
     exported_includes = checked("exported_includes", exported_includes)
 
     def source_label(s):
-        label = "{}[{}]".format(tree, s) if s in files else s
-        # A source marked for splitting (asm_split.zig) carries a flag only the launcher reads: its preprocessed text has its `;` turned into line breaks before it is assembled.
-        return (label, [SPLIT_MARKER]) if is_split(asm_split, s) else label
+        return "{}[{}]".format(tree, s) if s in files else s
+
+    def plain(l):
+        return [source_label(s) for s in sorted(l) if not is_split(asm_split, s)]
+
+    def split(l):
+        return [source_label(s) for s in sorted(l) if is_split(asm_split, s)]
+
+    def split_names(l):
+        return [split_name(s) for s in sorted(l) if is_split(asm_split, s)]
 
     def tree_flags(dirs):
         return ["-I$(location {}){}".format(tree, "" if d == "." else "/" + d) for d in dirs]
@@ -178,9 +184,22 @@ def native_library(
         check_prefix(who, prefix)
 
     def library(lib_name, header = None):
+        # The sources `asm_split` names are preprocessed and split by a rule of their own (rules/native/asm_split.bzl) and compiled as the `.s` files it makes.
+        split_target = lib_name + "_asmsplit"
+        if asm_split:
+            asm_split_rule(
+                name = split_target,
+                srcs = _each(srcs, split),
+                names = _each(srcs, split_names),
+                hdrs = _each(hdrs, lambda l: l if type(l) == "dict" else {h: h for h in l}),
+                flags = base + asm_flags + (["-include", "$(location {})".format(header)] if header else []) + _each(includes, tree_flags),
+                deps = deps + exported_deps,
+                visibility = visibility,
+                **compat
+            )
         native.cxx_library(
             name = lib_name,
-            srcs = _each(srcs, lambda l: [source_label(s) for s in sorted(l)]),
+            srcs = _each(srcs, lambda l: plain(l) + [":{}[{}]".format(split_target, n) for n in split_names(l)]),
             headers = _each(hdrs, lambda l: l if type(l) == "dict" else sorted(l)),
             exported_headers = exported_headers,
             # A header is included by the name it is given (`exported_headers = {"zlib.h": ...}`); the prelude otherwise puts the package path in front.
