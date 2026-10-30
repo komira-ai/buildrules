@@ -245,27 +245,6 @@ archive_files(
 )
 
 archive_files(
-    name = "archive_files_of_a_path_with_a_dot_dot_component",
-    archive = ":archive_control.tar.gz",
-    strip_prefix = "pkg",
-    templates = {"out.h": "sub/../ok.c"},
-)
-
-archive_files(
-    name = "archive_files_of_an_absolute_path",
-    archive = ":archive_control.tar.gz",
-    strip_prefix = "pkg",
-    templates = {"out.h": "/ok.c"},
-)
-
-archive_files(
-    name = "archive_files_of_a_strip_prefix_with_a_dot_dot_component",
-    archive = ":archive_control.tar.gz",
-    files = ["ok.c"],
-    strip_prefix = "sub/../pkg",
-)
-
-archive_files(
     name = "archive_files_of_a_template_of_the_same_archive",
     archive = ":archive_template_link.tar.gz",
     strip_prefix = "pkg",
@@ -287,6 +266,34 @@ archive_files(
     files = ["ok.c"],
     strip_prefix = "pkg",
     visibility = ["//ci:"],
+)
+
+archive_files(
+    name = "archive_files_of_a_dot_dot_file",
+    archive = ":archive_control.tar.gz",
+    files = ["sub/../ok.c"],
+    strip_prefix = "pkg",
+)
+
+archive_files(
+    name = "archive_files_of_an_absolute_file",
+    archive = ":archive_control.tar.gz",
+    files = ["/etc/hostname"],
+    strip_prefix = "pkg",
+)
+
+archive_files(
+    name = "archive_files_of_a_dot_dot_template_source",
+    archive = ":archive_control.tar.gz",
+    strip_prefix = "pkg",
+    templates = {"out.h": "sub/../ok.c"},
+)
+
+archive_files(
+    name = "archive_files_of_a_dot_dot_strip_prefix",
+    archive = ":archive_control.tar.gz",
+    files = ["ok.c"],
+    strip_prefix = "sub/../pkg",
 )
 
 scrub_files()

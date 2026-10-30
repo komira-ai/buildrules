@@ -3,7 +3,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # (rules/rust/refusal.bzl): each target exists, and is green, only if the rule refused what a user would really write. Make a check accept the input and its
 # target stops existing (analysis fails with "expected a refusal"). The tools own refusals, at build time, are //rules/cxx/tests:cxx_tools_refuse.
 load("//rules/core:platform.bzl", "LINUX_X86_64")
-load("//rules/cxx:checks.bzl", "check_listed_once", "check_tree_dirs")
+load("//rules/cxx:checks.bzl", "check_inside_archive", "check_listed_once", "check_tree_dirs")
 load("//rules/rust:refusal.bzl", "accepts", "refuses")
 load("//rules:matrix.bzl", "group")
 load("//rules/zig:zig.bzl", "zig_test")
@@ -23,6 +23,15 @@ _ALL.append(accepts("archive_files_without_tree_dirs_is_accepted", check_tree_di
 _ALL.append(refuses("archive_files_name_listed_twice_is_refused", check_listed_once, [_WHO, "snappy.cc", {"snappy.cc": 1}], ["//third_party/lib:src", "snappy.cc is listed twice"]))
 
 _ALL.append(accepts("archive_files_new_name_is_accepted", check_listed_once, [_WHO, "snappy-stubs.cc", {"snappy.cc": 1}]))
+
+# A path written in a BUCK file stays inside the archive: not absolute, no `..` component (a name that only holds dots is a file name).
+_REASON = "is not a path inside the archive: a path may not be absolute or hold a .. component"
+_ALL.append(refuses("archive_files_absolute_file_is_refused", check_inside_archive, [_WHO, "file", "/etc/hostname"], ["//third_party/lib:src", "file /etc/hostname " + _REASON]))
+_ALL.append(refuses("archive_files_dot_dot_file_is_refused", check_inside_archive, [_WHO, "file", "sub/../a.c"], ["file sub/../a.c " + _REASON]))
+_ALL.append(refuses("archive_files_leading_dot_dot_template_source_is_refused", check_inside_archive, [_WHO, "template source", "../a.in"], ["template source ../a.in " + _REASON]))
+_ALL.append(refuses("archive_files_trailing_dot_dot_strip_prefix_is_refused", check_inside_archive, [_WHO, "strip_prefix", "pkg/.."], ["strip_prefix pkg/.. " + _REASON]))
+_ALL.append(accepts("archive_files_relative_file_is_accepted", check_inside_archive, [_WHO, "file", "src/a..b.c"]))
+_ALL.append(accepts("archive_files_empty_strip_prefix_is_accepted", check_inside_archive, [_WHO, "strip_prefix", ""]))
 
 # The tools as the processes the public targets hand out, over files the test writes: a bad command line, an archive that is not one, an ELF that depends on
 # its directory, a response file that cannot be read. glibc_floor and hermetic are also run on an ELF that passes.

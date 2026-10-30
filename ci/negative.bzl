@@ -35,6 +35,11 @@ CASES = [
     ("//ci/negative:mojo_instrumented_link_without_a_native_the_unit_links", PLATFORM, "the unit links the native library libbase_sys.a and the instrumented link of its branch coverage is not given it"),
     ("//ci/negative:mojo_instrumented_link_with_a_needed_archive_before_its_user", PLATFORM, "libbase_sys.a is linked before libprobe_sys.a, which needs it"),
     ("//ci/negative:mojo_test_run_with_a_zero_hang_limit", PLATFORM, "test_hang_limit_s 0 is not a positive whole number of seconds"),
+    # A path written in a BUCK file that leaves the archive (absolute, or with a .. component) is refused at analysis, whatever it is (rules/cxx/checks.bzl).
+    ("//ci/faulty:archive_files_of_a_dot_dot_file", "buildrules//platforms:linux_x86_64", "file sub/../ok.c is not a path inside the archive: a path may not be absolute or hold a .. component"),
+    ("//ci/faulty:archive_files_of_an_absolute_file", "buildrules//platforms:linux_x86_64", "file /etc/hostname is not a path inside the archive: a path may not be absolute or hold a .. component"),
+    ("//ci/faulty:archive_files_of_a_dot_dot_template_source", "buildrules//platforms:linux_x86_64", "template source sub/../ok.c is not a path inside the archive: a path may not be absolute or hold a .. component"),
+    ("//ci/faulty:archive_files_of_a_dot_dot_strip_prefix", "buildrules//platforms:linux_x86_64", "strip_prefix sub/../pkg is not a path inside the archive: a path may not be absolute or hold a .. component"),
     # A package that lists sources in coverage_unmeasured.txt but makes no coverage (no test here): refused at analysis naming the file, never ignored (rules/mojo/unit.bzl).
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "coverage_unmeasured.txt exists but this package has no library or no test"),
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
@@ -455,9 +460,6 @@ FAULTY = [
     ("//ci/faulty:archive_files_of_a_link_as_the_strip_prefix", "//ci/faulty:archive_files_of_the_files_behind_no_link_of_the_prefix", "archive_files: hostname is not staged: top in "),
     ("//ci/faulty:archive_files_of_a_file_behind_a_link_in_the_middle_of_its_path", "//ci/faulty:archive_files_of_the_files_beside_a_link_in_the_middle", "archive_files: a/mid/hostname is not staged: pkg/a/mid in "),
     ("//ci/faulty:archive_files_of_a_template_that_is_a_link", "//ci/faulty:archive_files_of_a_template_of_the_same_archive", "archive_files: tmpl.in is not staged: pkg/tmpl.in in "),
-    ("//ci/faulty:archive_files_of_a_path_with_a_dot_dot_component", "//ci/faulty:archive_files_of_files_without_links", "archive_files: sub/../ok.c is not a path inside the archive: a path may not be absolute or hold a .. component"),
-    ("//ci/faulty:archive_files_of_an_absolute_path", "//ci/faulty:archive_files_of_files_without_links", "archive_files: /ok.c is not a path inside the archive: a path may not be absolute or hold a .. component"),
-    ("//ci/faulty:archive_files_of_a_strip_prefix_with_a_dot_dot_component", "//ci/faulty:archive_files_of_files_without_links", "archive_files: sub/../pkg is not a path inside the archive: a path may not be absolute or hold a .. component"),
 ]
 
 def _failures(ctx, label):

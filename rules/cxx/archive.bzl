@@ -17,7 +17,7 @@ configure step of a CMake `configure_file`, without CMake).
 """
 
 load("//rules/zig:zig.bzl", "busybox_sh")
-load(":checks.bzl", "check_listed_once", "check_tree_dirs")
+load(":checks.bzl", "check_inside_archive", "check_listed_once", "check_tree_dirs")
 
 _SCRIPT = """
 BB="$1"; shift
@@ -47,16 +47,6 @@ SRC="$T/x/$PREFIX"
 # Staging never follows a symbolic link of the archive. A listed file that is a link, or lies behind one (a link to a directory, or in `strip_prefix`), would carry the copy to
 # a path of the machine that unpacks it: it is refused, naming the link. Links nothing lists are never read. (A hard link to a file of the archive is a second name of that
 # file; one to a path outside it fails the unpacking itself.)
-# A path written in a BUCK file (a listed file, a template's source, strip_prefix) names a place inside the archive: absolute, or with a `..` component, it does not.
-refuse_outside() {
-    case "$1" in
-        /*) ;;
-        *) case "/$1/" in */../*) ;; *) return 0 ;; esac ;;
-    esac
-    echo "archive_files: $1 is not a path inside the archive: a path may not be absolute or hold a .. component" >&2
-    exit 2
-}
-refuse_outside "$PREFIX"
 refuse_links() {
     walk="$T/x"; rest="$PREFIX/$1"
     while [ -n "$rest" ]; do
@@ -74,7 +64,6 @@ TREE=
 while [ "$#" -gt 0 ]; do
     if [ "$1" = --tree ]; then TREE="$2/"; shift 2; continue; fi
     kind="$1"; rel="$2"; out="$TREE$3"; shift 3
-    refuse_outside "$rel"
     refuse_links "$rel"
     if [ ! -f "$SRC/$rel" ]; then
         echo "archive_files: $rel is not a file in $ARCHIVE (under '$PREFIX')" >&2
@@ -114,6 +103,11 @@ def _archive_files_impl(ctx):
         for d in ctx.attrs.tree_dirs:
             sub_targets[d] = [DefaultInfo(default_output = tree.project(d))]
     check_tree_dirs(ctx.label, ctx.attrs.one_tree, ctx.attrs.tree_dirs)
+    check_inside_archive(ctx.label, "strip_prefix", ctx.attrs.strip_prefix)
+    for f in ctx.attrs.files:
+        check_inside_archive(ctx.label, "file", f)
+    for _, rel in sorted(ctx.attrs.templates.items()):
+        check_inside_archive(ctx.label, "template source", rel)
     for kind, pairs in [("file", [(f, f) for f in ctx.attrs.files]), ("template", sorted(ctx.attrs.templates.items()))]:
         for name, rel in pairs:
             check_listed_once(ctx.label, name, sub_targets)
