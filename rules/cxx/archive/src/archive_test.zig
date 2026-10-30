@@ -922,3 +922,63 @@ pub fn fuzz(a: std.mem.Allocator, good: []const u8, cases: usize, seed: u64) !vo
     }
     _ = a;
 }
+
+// ---- C++ names of a namespace in a library that renames only its C API (`cxx_namespaces`, `--cxx-namespace`) -------------------------------------------------------
+
+test "cxx namespace: a mangled name in the namespace is not a leak, in any of its forms; another namespace or a look-alike is" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const inside = [_][]const u8{ "_ZN6snappy6SourceD2Ev", "_ZNK6snappy6Source9AvailableEv", "_ZNKR6snappy3FooEv", "_ZNVK6snappy3BarEv", "_ZNO6snappy3BazEv", "_ZTVN6snappy6SourceE", "_ZTIN6snappy6SourceE", "_ZTSN6snappy6SourceE", "_ZGVN6snappy4onceE", "_ZN6snappy" };
+    for (inside) |n| {
+        const o = try object(a, &.{ .{ .name = "k_snappy_compress", .kind = .def }, .{ .name = n, .kind = .def } }, &.{});
+        const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} });
+        if (r.findings.len != 0) {
+            std.debug.print("refused {s}\n", .{n});
+            return error.TestUnexpectedResult;
+        }
+        // Without the namespace the same name is a leak.
+        try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_" }), n));
+    }
+    const outside = [_][]const u8{ "_Z3foov", "_ZN5other3fooEv", "_ZN7snappyx3fooEv", "_ZN5snapp3fooEv", "_ZN3foo6snappy3barEv", "_ZNSt6snappy", "_ZN99999999999999999999999snappy", "_ZN", "_ZN0", "_ZN6snap", "_ZTV6snappy", "snappy_x", "_ZN6snappyz" };
+    for (outside) |n| {
+        const o = try object(a, &.{ .{ .name = "k_snappy_compress", .kind = .def }, .{ .name = n, .kind = .def } }, &.{});
+        const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} });
+        // `_ZN6snappyz` has a component of six bytes, `snappy`, and a rest: the grammar allows it, so it is in the namespace.
+        const expected: usize = if (std.mem.eql(u8, n, "_ZN6snappyz")) 0 else 1;
+        try t.expectEqual(expected, r.findings.len);
+    }
+}
+
+test "cxx namespace: several namespaces, and the C names without the prefix are still leaks" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "_ZN6snappy1fEv", .kind = .def }, .{ .name = "_ZN3lz41gEv", .kind = .def }, .{ .name = "plain_c", .kind = .def } }, &.{});
+    const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .min_prefixed = 1, .cxx_namespaces = &.{ "snappy", "lz4" } });
+    try t.expectEqual(@as(usize, 1), r.findings.len);
+    try t.expect(hasFinding(r, "1 defined symbol(s) without the prefix k_: plain_c"));
+    // Not counted as prefixed.
+    try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .min_prefixed = 2, .cxx_namespaces = &.{ "snappy", "lz4" } }), "only 1 defined symbol(s)"));
+}
+
+test "cxx namespace: the command line takes it with a prefix only, and run honours it" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const c = (try A.parseArgs(a, &.{ "l.a", "r.json", "--prefix", "k_", "--cxx-namespace", "snappy", "--cxx-namespace", "lz4" })).?;
+    try t.expectEqual(@as(usize, 2), c.cxx_namespaces.len);
+    try t.expectEqualStrings("lz4", c.cxx_namespaces[1]);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--cxx-namespace", "snappy" })) == null);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--prefix", "k_", "--cxx-namespace", "" })) == null);
+    try t.expectEqual(@as(usize, 0), (try A.parseArgs(a, &.{ "l.a", "r.json" })).?.cxx_namespaces.len);
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const o = try object(a, &.{ .{ .name = "k_c_api", .kind = .def }, .{ .name = "_ZN6snappy3fooEv", .kind = .def } }, &.{});
+    try tmp.dir.writeFile(.{ .sub_path = "libx.a", .data = try archive(a, &.{.{ .name = "a.o", .data = o }}) });
+    var err = std.ArrayList(u8).empty;
+    try t.expectEqual(@as(u8, 1), try A.run(a, tmp.dir, "", &.{ "libx.a", "r1.json", "--prefix", "k_" }, &err));
+    err.clearRetainingCapacity();
+    try t.expectEqual(@as(u8, 0), try A.run(a, tmp.dir, "", &.{ "libx.a", "r2.json", "--prefix", "k_", "--cxx-namespace", "snappy" }, &err));
+    try t.expectEqual(@as(usize, 0), err.items.len);
+}
