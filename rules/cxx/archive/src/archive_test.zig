@@ -6,7 +6,7 @@ const A = @import("archive.zig");
 
 const t = std.testing;
 
-pub const Sym = struct { name: []const u8, kind: enum { def, undef, weak_undef, local } };
+pub const Sym = struct { name: []const u8, kind: enum { def, undef, weak_undef, local, weak_def, common, abs, tls } };
 
 /// A relocatable ELF64 object: .symtab (null symbol, then `syms`), .strtab, .shstrtab, and one empty section per `sections` name.
 pub fn object(a: std.mem.Allocator, syms: []const Sym, sections: []const []const u8) ![]u8 {
@@ -28,6 +28,22 @@ pub fn object(a: std.mem.Allocator, syms: []const Sym, sections: []const []const
             .weak_undef => e[4] = 2 << 4,
             .local => {
                 e[4] = 2;
+                std.mem.writeInt(u16, e[6..8], 1, .little);
+            },
+            .weak_def => {
+                e[4] = (2 << 4) | 2;
+                std.mem.writeInt(u16, e[6..8], 1, .little);
+            },
+            .common => {
+                e[4] = (1 << 4) | 1;
+                std.mem.writeInt(u16, e[6..8], 0xfff2, .little);
+            },
+            .abs => {
+                e[4] = (1 << 4) | 1;
+                std.mem.writeInt(u16, e[6..8], 0xfff1, .little);
+            },
+            .tls => {
+                e[4] = (1 << 4) | 6;
                 std.mem.writeInt(u16, e[6..8], 1, .little);
             },
         }
@@ -779,4 +795,129 @@ test "the C library list at the floor holds the names aws-lc needs, and the macO
     const a = ar.allocator();
     const elf = try object(a, &.{ .{ .name = "fopen64", .kind = .undef }, .{ .name = "__isoc99_sscanf", .kind = .undef }, .{ .name = "getauxval", .kind = .undef }, .{ .name = "sdallocx", .kind = .undef } }, &.{});
     try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = elf }}), .{})).findings.len);
+}
+
+// ---- what the verification of the prefix rules left open ------------------------------------------------------------------------------------------------------------
+
+test "members: only the exact names of the symbol tables are tables; a member whose name begins like one is a member and its symbols are read" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const good = try object(a, &.{.{ .name = "k_one", .kind = .def }}, &.{});
+    const leak = try object(a, &.{.{ .name = "leaked", .kind = .def }}, &.{});
+    const b = try archive(a, &.{ .{ .name = "a.o", .data = good }, .{ .name = "__.SYMDEF_x.o", .data = leak } });
+    const ms = try A.members(a, b);
+    try t.expectEqual(@as(usize, 2), ms.len);
+    try t.expectEqualStrings("__.SYMDEF_x.o", ms[1].name);
+    const r = try A.check(a, "libx.a", b, .{ .prefix = "k_" });
+    try t.expect(hasFinding(r, "without the prefix k_: leaked"));
+    // The same smuggled member in a GNU archive whose names fit the field, and a longer name that starts with a table's.
+    for ([_][]const u8{ "__.SYMDEF_64x.o", "__.SYMDEF SORTEDx", "__.SYMDEFS" }) |name| {
+        const c = try archive(a, &.{ .{ .name = "a.o", .data = good }, .{ .name = name, .data = leak } });
+        try t.expect(hasFinding(try A.check(a, "libx.a", c, .{ .prefix = "k_" }), "leaked"));
+    }
+}
+
+test "prefix: the prefix is a beginning, not something inside the name" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "xk_leaky", .kind = .def }, .{ .name = "leak_k_", .kind = .def } }, &.{});
+    const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_" });
+    try t.expect(hasFinding(r, "2 defined symbol(s) without the prefix k_: leak_k_ xk_leaky"));
+}
+
+test "prefix: a definition of any kind that lacks the prefix is a leak: weak, common, absolute and thread-local" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const kinds = [_]@FieldType(Sym, "kind"){ .def, .weak_def, .common, .abs, .tls };
+    for (kinds) |k| {
+        const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "leaked", .kind = k } }, &.{});
+        const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_" });
+        try t.expect(hasFinding(r, "without the prefix k_: leaked"));
+        // With the prefix it is clean, and a local of that name is never a leak.
+        const ok = try object(a, &.{ .{ .name = "k_leaked", .kind = k }, .{ .name = "leaked", .kind = .local } }, &.{});
+        try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = ok }}), .{ .prefix = "k_" })).findings.len);
+    }
+}
+
+test "prefix: a weak undefined reference to a replaced name is a finding too" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{ .{ .name = "k_use", .kind = .def }, .{ .name = "lib_hook", .kind = .weak_undef }, .{ .name = "other_hook", .kind = .weak_undef } }, &.{});
+    const b = try archive(a, &.{.{ .name = "a.o", .data = o }});
+    const r = try A.check(a, "libx.a", b, .{ .prefix = "k_", .original = &.{"lib_hook"} });
+    try t.expectEqual(@as(usize, 1), r.findings.len);
+    try t.expect(hasFinding(r, "undefined reference to lib_hook, a name the prefix header renames"));
+    // Without the names it is only a weak reference, which is not a defect.
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{ .prefix = "k_" })).findings.len);
+    // A strong and a weak reference to one name are one finding.
+    const both = try object(a, &.{ .{ .name = "k_use", .kind = .def }, .{ .name = "lib_hook", .kind = .weak_undef } }, &.{});
+    const strong = try object(a, &.{.{ .name = "lib_hook", .kind = .undef }}, &.{});
+    const c = try archive(a, &.{ .{ .name = "a.o", .data = both }, .{ .name = "b.o", .data = strong } });
+    try t.expectEqual(@as(usize, 1), (try A.check(a, "libx.a", c, .{ .prefix = "k_", .original = &.{"lib_hook"}, .allow = &.{"lib_hook"} })).findings.len);
+}
+
+test "runtime c++: a definition under a runtime prefix is not excused, with the prefix rule on" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    for ([_][]const u8{ "__cxa_mylib", "_ZNStmine", "_Unwind_Mine", "__dso_handle", "_Znwx", "__gxx_mine", "__dynamic_castX", "_ZTSStmine" }) |name| {
+        const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = name, .kind = .def } }, &.{});
+        const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .runtime_cxx = true });
+        try t.expect(hasFinding(r, name));
+    }
+}
+
+test "runtime c++: every prefix of the runtime is excused as an undefined name" {
+    for ([_][]const u8{ "_ZNStx", "_ZNKStx", "_ZStx", "_ZTVStx", "_ZTIStx", "_ZTSSt9exception", "_ZTVN10__cxxabiv1x", "_ZTIN10__cxxabiv117__class_type_infoE", "_ZTSN10__cxxabiv117__class_type_infoE", "_Znwm", "_Znam", "_Zdlx", "_Zdax", "__cxa_x", "__gxx_x", "__dynamic_cast", "_Unwind_x", "__dso_handle" }) |n| try t.expect(A.cxxRuntime(n));
+}
+
+test "the C library list at the floor accepts every name it lists, as an undefined symbol, and the same for the macOS list" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var syms = std.ArrayList(Sym).empty;
+    var it = std.mem.splitScalar(u8, A.floor_symbols, '\n');
+    while (it.next()) |l| {
+        const n = std.mem.trim(u8, l, " \r");
+        if (n.len != 0 and n[0] != '#') try syms.append(a, .{ .name = n, .kind = .undef });
+    }
+    try t.expect(syms.items.len > 500);
+    const b = try archive(a, &.{.{ .name = "a.o", .data = try object(a, syms.items, &.{}) }});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{})).findings.len);
+}
+
+test "fuzz: a malformed ELF archive is read or refused, whatever bytes were changed (seeded, so the same every run)" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o1 = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "memcpy", .kind = .undef }, .{ .name = "lib_hook", .kind = .weak_undef }, .{ .name = "leaked", .kind = .common } }, &.{ ".text", ".debug_info" });
+    const o2 = try object(a, &.{ .{ .name = "k_two", .kind = .def }, .{ .name = "k_one", .kind = .undef } }, &.{".text"});
+    const good = try archive(a, &.{ .{ .name = "a.o", .data = o1 }, .{ .name = "b.o", .data = o2 } });
+    try fuzz(a, good, 3000, 0x5eed);
+}
+
+/// `cases` copies of `good`, each with one to three bytes changed, or cut short, through `check` with every option on, then `members`. Nothing may panic or hang; the verdict is not judged.
+pub fn fuzz(a: std.mem.Allocator, good: []const u8, cases: usize, seed: u64) !void {
+    var prng = std.Random.DefaultPrng.init(seed);
+    const rnd = prng.random();
+    var i: usize = 0;
+    while (i < cases) : (i += 1) {
+        var arena_case = std.heap.ArenaAllocator.init(t.allocator);
+        defer arena_case.deinit();
+        const x = arena_case.allocator();
+        var b = try x.dupe(u8, good);
+        if (rnd.boolean()) {
+            const n = rnd.intRangeAtMost(usize, 1, 3);
+            for (0..n) |_| b[rnd.uintLessThan(usize, b.len)] = rnd.int(u8);
+        } else {
+            b = b[0..rnd.uintLessThan(usize, b.len)];
+        }
+        _ = try A.check(x, "fuzz.a", b, .{ .prefix = "k_", .min_prefixed = 1, .original = &.{"lib_hook"}, .runtime_cxx = true, .needs = &.{good} });
+        _ = A.members(x, b) catch {};
+    }
+    _ = a;
 }
