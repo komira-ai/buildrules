@@ -815,6 +815,7 @@ group(name = "all", deps = [
     "//ci/faulty:c_check_of_its_stdout",
     "//ci/faulty:native_good",
     "//ci/faulty:native_prefix_good",
+    "//ci/faulty:native_prefix_namespace_good",
     "//ci/faulty:table_in_sync",
     "//examples/mojo/copy_of_cshim:same_bytes",
     ":workflow",

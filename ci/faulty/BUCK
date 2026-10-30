@@ -198,4 +198,26 @@ native_static(
     validate = False,
 )
 
+# A library that renames its C API and keeps a mangled C++ name (`_ZN6snappy3fooEv`): it passes when it names the namespace (`prefix_cxx_namespaces`), and the same library
+# without the attribute is red, naming the symbol.
+native_static(
+    name = "native_prefix_namespace_good",
+    srcs = ["native/prefix_cxx_namespace.c"],
+    soname = "libfaulty_prefix_ns.a",
+    prefix = "faultyp",
+    prefix_min = 1,
+    prefix_cxx_namespaces = ["snappy"],
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_static(
+    name = "native_prefix_namespace_unnamed",
+    srcs = ["native/prefix_cxx_namespace.c"],
+    soname = "libfaulty_prefix_nsu.a",
+    prefix = "faultyp",
+    prefix_min = 1,
+    validate = False,
+)
+
 scrub_files()

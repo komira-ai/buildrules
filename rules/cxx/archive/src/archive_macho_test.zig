@@ -510,7 +510,7 @@ test "fuzz: a malformed Mach-O archive is read or refused, whatever bytes were c
     const o1 = try clean(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "memcpy", .kind = .undef }, .{ .name = "lib_hook", .kind = .weak_undef }, .{ .name = "tentative", .kind = .common }, .{ .name = "dbg", .kind = .stab } });
     const o2 = try object(a, &.{ .{ .name = "k_two", .kind = .def }, .{ .name = "k_one", .kind = .undef } }, &.{ "__TEXT,__text", "__DWARF,__debug_info" }, 1);
     const good = try archive(a, &.{ .{ .name = "a.o", .data = o1 }, .{ .name = "b.o", .data = o2 } });
-    try E.fuzz(a, good, 3000, 0x7ac0);
+    try E.fuzz(good, 3000, 0x7ac0);
 }
 
 test "cxx namespace: a Mach-O library's mangled names (one underscore more) are matched by their C names" {
@@ -524,4 +524,15 @@ test "cxx namespace: a Mach-O library's mangled names (one underscore more) are 
     const other = try clean(a, &.{ .{ .name = "k_c_api", .kind = .def }, .{ .name = "_ZN7snappyx3fooEv", .kind = .def }, .{ .name = "_Z3foov", .kind = .def } });
     const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = other }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} });
     try t.expect(hasFinding(r, "2 defined symbol(s) without the prefix k_: _Z3foov _ZN7snappyx3fooEv"));
+}
+
+test "cxx namespace: the local names, thunks, VTT and construction vtables of a namespace are matched in a Mach-O library, and those of another are not" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const inside = try clean(a, &.{ .{ .name = "k_c_api", .kind = .def }, .{ .name = "_ZZN6snappy3fooEvE1x", .kind = .def }, .{ .name = "_ZGVZN6snappy3fooEvE1x", .kind = .def }, .{ .name = "_ZThn8_N6snappy3Foo3barEv", .kind = .def }, .{ .name = "_ZTv0_n24_N6snappy3Foo3barEv", .kind = .def }, .{ .name = "_ZTTN6snappy3FooE", .kind = .def }, .{ .name = "_ZTCN6snappy3FooE0_N6snappy4BaseE", .kind = .def } });
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = inside }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} })).findings.len);
+    const outside = try clean(a, &.{ .{ .name = "k_c_api", .kind = .def }, .{ .name = "_ZZN5other3fooEvE1x", .kind = .def }, .{ .name = "_ZThn8_N5other3Foo3barEv", .kind = .def }, .{ .name = "_ZTTN5other3FooE", .kind = .def } });
+    const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = outside }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} });
+    try t.expect(hasFinding(r, "3 defined symbol(s) without the prefix k_"));
 }
