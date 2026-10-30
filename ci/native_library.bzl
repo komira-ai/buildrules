@@ -145,12 +145,12 @@ def native_link_cfg_problems(ctx):
             if cfg == None:
                 problems.append("{}: no toolchain.cfg among its actions".format(who))
                 continue
-            got = [l[len("link_archive=link_archives/"):] for l in cfg if l.startswith("link_archive=link_archives/")]
+            got = [l[len("link_archive=link_archives/000_"):] for l in cfg if l.startswith("link_archive=link_archives/")]
             if got != archives:
                 problems.append("{}: the archives appended to the link line are {}, not {}".format(who, got, archives))
             tails = [l for l in cfg if l.startswith("link_tail=")]
             if tails != (["link_tail=-lc++"] if cxx else []):
                 problems.append("{}: the link tail is {}, but the link {} the C++ runtime".format(who, tails, "needs" if cxx else "does not need"))
-            if cxx and cfg.index("link_tail=-lc++") < max([cfg.index(l) for l in cfg if l.startswith("link_archive=")] + [-1]):
+            if cxx and "link_tail=-lc++" in cfg and cfg.index("link_tail=-lc++") < max([i for i, l in enumerate(cfg) if l.startswith("link_archive=")] + [-1]):
                 problems.append("{}: the C++ runtime comes before an appended archive: {}".format(who, cfg))
     return problems

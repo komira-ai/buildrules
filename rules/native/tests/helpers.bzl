@@ -1,7 +1,7 @@
 """Values and checks the analysis tests of rules/native/tests/BUCK are made of (a BUCK file defines no function)."""
 
 load("//rules/native:checks.bzl", "archive_extension", "cxx_label", "link_order")
-load("//rules/native:link.bzl", "extra_link_archives", "link_cfg")
+load("//rules/native:link.bzl", "extra_link_archives", "link_archive_name", "link_cfg")
 
 SHA = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
 
@@ -34,3 +34,10 @@ def extras_are(who, archive_lists, linked, want, refuse = fail):
 
 def cfg_is(who, names, cxx, want, refuse = fail):
     _equal(who, link_cfg(names, cxx), want, refuse)
+
+def extras_by_path_are(who, archive_lists, linked, want, refuse = fail):
+    """Archives are told apart by the path they are at, not by their file name: the key is the whole string."""
+    _equal(who, extra_link_archives(archive_lists, linked, lambda a: a), want, refuse)
+
+def name_is(who, position, basename, want, refuse = fail):
+    _equal(who, link_archive_name(position, basename), want, refuse)

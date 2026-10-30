@@ -1,11 +1,16 @@
 from std.testing import TestSuite, assert_equal
 
-from natlib_deps import left_value, right_value, shared_base_value, shared_init_count, top_value
+from natlib_deps import base_value, left_value, right_value, shared_base_value, shared_init_count, top_value
 
 
 def test_top_is_linked_with_the_libraries_it_needs_through_deps() raises:
     # top -> mid -> base, only top is named in `natives`: 41 + 40 - 40 + 1.
     assert_equal(top_value(), 42)
+
+
+def test_a_library_the_graph_lists_and_an_extra_one_needs_still_links() raises:
+    # base is listed (in natives) and mid, brought by top, needs it: the line writes base again after mid.
+    assert_equal(base_value(), 40)
 
 
 def test_left_and_right_over_one_base() raises:

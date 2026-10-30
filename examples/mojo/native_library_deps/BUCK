@@ -2,11 +2,12 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("@buildrules//rules/mojo:sync.bzl", "mojo_sync")
 load(":buildrules.mojo.bzl", "mojo_package")
 
-# `natives` names `top`, `left` and `right`; the archives they need (`mid`, `base`, `shared_base`) are not named anywhere in this package: `NativeLibraryInfo.archives` of each
+# `natives` names `top`, `left`, `right` and `base`; the archives they need (`mid`, `shared_base`) are not named anywhere in this package, and `base`, which the graph lists, is written again after `mid` (which needs it): `NativeLibraryInfo.archives` of each
 # puts them on the link line after the archives of the graph, a shared one once, after its last user (rules/native/link.bzl). All C: the link has no C++ runtime.
 mojo_package(
     path = ".",
     natives = {
+        "libbase.a": "//examples/native/deps:base",
         "libleft.a": "//examples/native/shared:left",
         "libright.a": "//examples/native/shared:right",
         "libtop.a": "//examples/native/deps:top",

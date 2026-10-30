@@ -663,7 +663,7 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocat
     var allow = Acc([]const u8){ .a = a, .oom = &oom };
     var spaces = Acc([]const u8){ .a = a, .oom = &oom };
     var original = Acc([]const u8){ .a = a, .oom = &oom };
-    var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34", .prefix = "", .min_prefixed = 0, .original = &.{}, .runtime_cxx = false, .cxx_namespaces = &.{} };
+    var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34", .prefix = "", .min_prefixed = 0, .original = &.{}, .runtime_cxx = false, .cxx_namespaces = &.{}, .any_order = false };
     var i: usize = 2;
     while (i < args.len) : (i += 2) {
         if (i + 1 >= args.len) return null;
@@ -752,7 +752,7 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, dir: []const u8, args: []const
         }
     }
     const name = std.fs.path.basename(c.archive);
-    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir, .prefix = c.prefix, .min_prefixed = c.min_prefixed, .original = original.items.items, .runtime_cxx = c.runtime_cxx, .cxx_namespaces = c.cxx_namespaces });
+    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir, .prefix = c.prefix, .min_prefixed = c.min_prefixed, .original = original.items.items, .runtime_cxx = c.runtime_cxx, .cxx_namespaces = c.cxx_namespaces, .any_order = c.any_order });
     var out = Acc(u8){ .a = a, .oom = &oom };
     for (rep.defined) |s| {
         out.pushAll(s);

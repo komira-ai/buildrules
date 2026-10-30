@@ -17,7 +17,7 @@ A unit's output directory is the action's single output. A library's `.mojoc` is
 load("//rules:isa.bzl", "isa_satisfies")
 load("//rules/coverage/branch:llvm_branch.bzl", "CovBranchInfo", "RAW_PROFILE_VERSION")
 load("//rules/cxx:providers.bzl", "NativeArchiveInfo", "NativeLibraryInfo")
-load("//rules/native:link.bzl", "LINK_ARCHIVE_DIR", "extra_link_archives", "link_cfg")
+load("//rules/native:link.bzl", "LINK_ARCHIVE_DIR", "extra_link_archives", "link_archive_name", "link_cfg")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
 load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoSystemLibsInfo", "MojoTestRunInfo", "MojoToolchainInfo")
 load("//rules/core:hang_limit.bzl", "HANG_LIMIT_S", "check_hang_limit", "hang_limit_args")
@@ -67,10 +67,11 @@ def check_closure_ids(who, want, have, refuse = fail):
             refuse(("{}: the graph imports {} as {} but the dependency target provides {}: that library was built from another version of the package, " +
                     "or for another Mojo. Run `buildrules mojo sync` where the library is and where it is imported").format(who, package, want[package], have[package]))
 
-def link_extra_archives(natives, sonames):
-    """The archives a program links after the ones its graph lists (`extra_link_archives`): those the listed `native_library` targets bring with them through their deps."""
-    lists = [n[NativeLibraryInfo].archives for n in natives if NativeLibraryInfo in n]
-    return extra_link_archives(lists, {s: True for s in sonames}, lambda a: a.basename)
+def link_extra_archives(natives):
+    """The archives a program links after the ones its graph lists (`extra_link_archives`): those the listed `native_library` targets bring with them through their deps. An
+    archive is told from another by its identity, never by its file name."""
+    infos = [n[NativeLibraryInfo] for n in natives if NativeLibraryInfo in n]
+    return extra_link_archives([i.archives for i in infos], {str(i.archive): True for i in infos}, str)
 
 def link_needs_cxx_runtime(natives):
     """Whether the native libraries (dependencies that may provide `NativeArchiveInfo`; a prebuilt one does not) include one with C++ sources."""
@@ -137,10 +138,11 @@ def _unit_impl(ctx):
     # native library in the link, the C++ runtime: libc++ and libc++abi of the zig on Linux (`zig cc -lc++`), the host's libc++ on macOS. One `-lc++` ends the line, after every
     # archive, however many of the archives are C++.
     linked = [ctx.attrs.natives[s] for s in ctx.attrs.native_sonames if s in ctx.attrs.natives] if ctx.attrs.kind != "lib" else []
-    extras = link_extra_archives(linked, ctx.attrs.native_sonames)
-    cfg += link_cfg([a.basename for a in extras], link_needs_cxx_runtime(linked))
+    extras = link_extra_archives(linked)
+    extra_names = [link_archive_name(i, a.basename) for i, a in enumerate(extras)]
+    cfg += link_cfg(extra_names, link_needs_cxx_runtime(linked))
     zig = _file(ctx.attrs.zig_override) if ctx.attrs.zig_override else tc.zig
-    tc_dir = ctx.actions.copied_dir("toolchain", dict({LINK_ARCHIVE_DIR + "/" + a.basename: a for a in extras}, **{
+    tc_dir = ctx.actions.copied_dir("toolchain", dict({LINK_ARCHIVE_DIR + "/" + extra_names[i]: a for i, a in enumerate(extras)}, **{
         "CLOSURE_SHA256": ctx.actions.write("CLOSURE_SHA256", tc.closure_sha256 + "\n"),
         "compiler": tc.compiler,
         "mojo_compile": _file(ctx.attrs.launcher),
@@ -573,7 +575,7 @@ def _pgo_impl(ctx):
     # The archives the listed libraries bring through their deps, then the C++ runtime, end the line as they end the ordinary test link's (`link_extra_archives`,
     # `link_needs_cxx_runtime`).
     linked = [ctx.attrs.natives[s] for s in sonames]
-    for a in link_extra_archives(linked, sonames):
+    for a in link_extra_archives(linked):
         cmd.add("--link-tail", a)
     if link_needs_cxx_runtime(linked):
         cmd.add("--link-tail", "-lc++")

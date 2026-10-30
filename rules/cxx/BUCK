@@ -14,7 +14,6 @@ zig_test(
     exec_compatible_with = LINUX_X86_64,
     src = "asm_split_test.zig",
     imports = ["asm_split.zig"],
-    busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig",
 )
 

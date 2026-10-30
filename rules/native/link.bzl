@@ -1,24 +1,42 @@
 """The archives a program links beyond the ones its unit graph lists (rules/mojo/unit.bzl).
 
-mopm's unit graph lists the native libraries a unit links, one soname each, in link order. A `native_library` that has `deps` needs the archives of those too, and
-the graph does not list them: they come from `NativeLibraryInfo.archives` of each listed library. They end the link line, after every archive of the graph and before
-the C++ runtime (`-lc++`), in the order a linker needs them: a library before the libraries it calls into, each archive once, a shared one after its last user.
+mopm's unit graph lists the native libraries a unit links, one soname each, in link order. A `native_library` that has `deps` needs the archives of those too, and the graph
+does not list them: they come from `NativeLibraryInfo.archives` of each listed library. They end the link line, after every archive of the graph and before the C++ runtime
+(`-lc++`), in an order a ONE-PASS linker accepts (lld and ld64 do not need it, a GNU ld does): a library before every library it needs, each archive once, a shared one after its last
+user. An archive the graph lists is linked where the graph puts it, and is written again in the tail only when an archive of the tail needs it (it follows that archive in a
+library's list), because the graph's copy came first and would be passed over.
+
+An archive is told from another by its identity (`key`: its path, or its label), never by its file name: two packages may each have a `libx.a`.
 """
 
-def extra_link_archives(archive_lists, linked, name):
-    """The archives to append to the link line. `archive_lists` is the `archives` of each library the graph lists, in the graph's order; `linked` the file names the graph
-    links itself (they are not appended again); `name` maps an archive to its file name. Each archive appears once, at its LAST place in the concatenation, so an archive
-    two libraries share comes after both."""
+def extra_link_archives(archive_lists, linked, key):
+    """The archives to append to the link line. `archive_lists` is the `archives` of each library the graph lists, in the graph's order; `linked` the keys of the archives the
+    graph links itself; `key` maps an archive to its identity.
+
+    Each archive appears once, at its LAST place in the concatenation of the lists, so an archive two libraries share comes after both. One the graph links is left out, unless
+    an archive that is not the graph's comes before it in some list (that archive needs it, and the graph's copy is behind it): then it is written again after that archive."""
     flat = []
+    needed = {}
     for archives in archive_lists:
         flat.extend(archives)
+        seen_extra = False
+        for a in archives:
+            if key(a) in linked:
+                if seen_extra:
+                    needed[key(a)] = True
+            else:
+                seen_extra = True
     last = {}
     for i, a in enumerate(flat):
-        last[name(a)] = i
-    return [a for i, a in enumerate(flat) if last[name(a)] == i and name(a) not in linked]
+        last[key(a)] = i
+    return [a for i, a in enumerate(flat) if last[key(a)] == i and (key(a) not in linked or key(a) in needed)]
 
 # Where, in the toolchain directory of a unit's action, the extra archives are (mojo_launch.zig, `link_archive`).
 LINK_ARCHIVE_DIR = "link_archives"
+
+def link_archive_name(position, basename):
+    """The name of the `position`th extra archive in the toolchain directory: its place in the line and its own name, so two archives of one name are two files."""
+    return "{}_{}".format(("000" + str(position))[-3:], basename)
 
 def link_cfg(archive_names, cxx_runtime):
     """The lines of toolchain.cfg that end the link line: one `link_archive=` for each extra archive (a file of `LINK_ARCHIVE_DIR` of the toolchain directory), in order, and

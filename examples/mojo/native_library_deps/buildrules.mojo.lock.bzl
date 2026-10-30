@@ -7,7 +7,7 @@ CLOSURE_SHA256 = "fd654c4192487587d8f8d9402d060e45e218b79da7b8964503a703710e49b1
 MANIFEST_SHA256 = {
     "mopm-toolchain.toml": "64dd09d9912bc4be02bfbeaf1e3319e5d52cf8a075ae6d49eec0e32d7e4f38fc",
     "mopm.lock": "7f4f35c22bf38597c0688630cbc857ef8b71b9ebcced62dab4dea0c31274af98",
-    "mopm.toml": "7afdf188f00612d3a84311bcc397d994bce27ff23683eb52e681a4483df2cd2f",
+    "mopm.toml": "8f2eb55976fa1a5de3c528880f6aea208248520c36c9a79b786d4f86aee94ec7",
 }
 GRAPH_JSON = r'''{
   "unit_graph": 2,
@@ -26,6 +26,20 @@ GRAPH_JSON = r'''{
     ]
   },
   "units": [
+    {
+      "id": "native:natlib_deps/base",
+      "package": "natlib_deps",
+      "version": "0.1.0",
+      "kind": "native",
+      "soname": "libbase.a",
+      "srcs": [
+        {"path": "examples/mojo/native_library_deps/native/base.c", "sha256": "ddf80b2560d84dbaae6af6b3dd58b1ed96200f15fe449344fbdc754a76a70ad5"}
+      ],
+      "deps": [],
+      "natives": [],
+      "outputs": ["libbase.a"],
+      "key": "f08c0e70524bd31137f098dab1ac18a1b178b5fcd8a8bcb478200353d0d19b9a"
+    },
     {
       "id": "native:natlib_deps/left",
       "package": "natlib_deps",
@@ -75,17 +89,18 @@ GRAPH_JSON = r'''{
       "kind": "lib",
       "root": "examples/mojo/native_library_deps/src/natlib_deps",
       "srcs": [
-        {"path": "examples/mojo/native_library_deps/src/natlib_deps/__init__.mojo", "sha256": "eea0e076674526be83cd5b3ba234593bb8c7f552838d3630956dc4ec0f917da4"}
+        {"path": "examples/mojo/native_library_deps/src/natlib_deps/__init__.mojo", "sha256": "3fe4a970a96c774411595f7ce572260a2a5a8b9065acaab9dc9695b5fbad62d0"}
       ],
       "deps": [],
       "natives": [
+        {"id": "base", "soname": "libbase.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/base"},
         {"id": "left", "soname": "libleft.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/left"},
         {"id": "right", "soname": "libright.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/right"},
         {"id": "top", "soname": "libtop.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/top"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["natlib_deps.mojoc"],
-      "key": "24ea470d3acef028203e530f754a200555ce8022cabc6934af32c8cb726522ff"
+      "key": "c3bf5301a70011dcd57aac7692e23a7bcdcf9cad4154c108daac11f4eb3ac30a"
     },
     {
       "id": "natlib_deps@0.1.0#mojo1.0.0/test:examples/mojo/native_library_deps/tests/test_natlib_deps.mojo",
@@ -93,17 +108,18 @@ GRAPH_JSON = r'''{
       "version": "0.1.0",
       "kind": "test",
       "srcs": [
-        {"path": "examples/mojo/native_library_deps/tests/test_natlib_deps.mojo", "sha256": "3a1e9944a217705fd85f06a20f8479e22ece9281585ee6f1318a8cb103998d35"}
+        {"path": "examples/mojo/native_library_deps/tests/test_natlib_deps.mojo", "sha256": "78ec46ccfa5f220cbb4215c3945142e2c6cc114fb3b10c9fee68c08e3dac4f7a"}
       ],
       "deps": ["natlib_deps@0.1.0#mojo1.0.0/lib"],
       "natives": [
+        {"id": "base", "soname": "libbase.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/base"},
         {"id": "left", "soname": "libleft.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/left"},
         {"id": "right", "soname": "libright.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/right"},
         {"id": "top", "soname": "libtop.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/top"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_natlib_deps.pass"],
-      "key": "9f8b21bcd9ba78ada0499a48a4caeae089e3a7f47c4323dc3983a1aab16e8f3d"
+      "key": "719ba2dd390f3a1db838be318c5fd1f335622db43c1b021ff04e0c6aa864201e"
     }
   ]
 }
@@ -126,6 +142,20 @@ GRAPH_JSON_LINUX_AARCH64 = r'''{
     ]
   },
   "units": [
+    {
+      "id": "native:natlib_deps/base",
+      "package": "natlib_deps",
+      "version": "0.1.0",
+      "kind": "native",
+      "soname": "libbase.a",
+      "srcs": [
+        {"path": "examples/mojo/native_library_deps/native/base.c", "sha256": "ddf80b2560d84dbaae6af6b3dd58b1ed96200f15fe449344fbdc754a76a70ad5"}
+      ],
+      "deps": [],
+      "natives": [],
+      "outputs": ["libbase.a"],
+      "key": "d70e64524f222a120b6b0be94023d69241ec1188e381e2c8d38f4fd555aac528"
+    },
     {
       "id": "native:natlib_deps/left",
       "package": "natlib_deps",
@@ -175,17 +205,18 @@ GRAPH_JSON_LINUX_AARCH64 = r'''{
       "kind": "lib",
       "root": "examples/mojo/native_library_deps/src/natlib_deps",
       "srcs": [
-        {"path": "examples/mojo/native_library_deps/src/natlib_deps/__init__.mojo", "sha256": "eea0e076674526be83cd5b3ba234593bb8c7f552838d3630956dc4ec0f917da4"}
+        {"path": "examples/mojo/native_library_deps/src/natlib_deps/__init__.mojo", "sha256": "3fe4a970a96c774411595f7ce572260a2a5a8b9065acaab9dc9695b5fbad62d0"}
       ],
       "deps": [],
       "natives": [
+        {"id": "base", "soname": "libbase.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/base"},
         {"id": "left", "soname": "libleft.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/left"},
         {"id": "right", "soname": "libright.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/right"},
         {"id": "top", "soname": "libtop.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/top"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["natlib_deps.mojoc"],
-      "key": "0628d85d50f499fa0d6449d5f69c028efdc85a64abee827c8623fbee2aa4de5f"
+      "key": "6c888a148849c2470fd13480d46f9531afedb498a1361527731b268975698699"
     },
     {
       "id": "natlib_deps@0.1.0#mojo1.0.0/test:examples/mojo/native_library_deps/tests/test_natlib_deps.mojo",
@@ -193,17 +224,18 @@ GRAPH_JSON_LINUX_AARCH64 = r'''{
       "version": "0.1.0",
       "kind": "test",
       "srcs": [
-        {"path": "examples/mojo/native_library_deps/tests/test_natlib_deps.mojo", "sha256": "3a1e9944a217705fd85f06a20f8479e22ece9281585ee6f1318a8cb103998d35"}
+        {"path": "examples/mojo/native_library_deps/tests/test_natlib_deps.mojo", "sha256": "78ec46ccfa5f220cbb4215c3945142e2c6cc114fb3b10c9fee68c08e3dac4f7a"}
       ],
       "deps": ["natlib_deps@0.1.0#mojo1.0.0/lib"],
       "natives": [
+        {"id": "base", "soname": "libbase.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/base"},
         {"id": "left", "soname": "libleft.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/left"},
         {"id": "right", "soname": "libright.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/right"},
         {"id": "top", "soname": "libtop.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/top"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_natlib_deps.pass"],
-      "key": "8f41e2f09e3066d81d695d801ab613d042daf43ae96b28e871c1241e1a6f5b39"
+      "key": "76048407c5fc8fe7d5603f7a6cb3804698013cc8a3e33f05dfe3ed150703991c"
     }
   ]
 }
@@ -223,6 +255,20 @@ GRAPH_JSON_OSX_ARM64 = r'''{
     ]
   },
   "units": [
+    {
+      "id": "native:natlib_deps/base",
+      "package": "natlib_deps",
+      "version": "0.1.0",
+      "kind": "native",
+      "soname": "libbase.a",
+      "srcs": [
+        {"path": "examples/mojo/native_library_deps/native/base.c", "sha256": "ddf80b2560d84dbaae6af6b3dd58b1ed96200f15fe449344fbdc754a76a70ad5"}
+      ],
+      "deps": [],
+      "natives": [],
+      "outputs": ["libbase.a"],
+      "key": "79b17af81205a4526419ddf36e51b3606d3770e9741c9ae37e09d4a53e4fcdb7"
+    },
     {
       "id": "native:natlib_deps/left",
       "package": "natlib_deps",
@@ -272,17 +318,18 @@ GRAPH_JSON_OSX_ARM64 = r'''{
       "kind": "lib",
       "root": "examples/mojo/native_library_deps/src/natlib_deps",
       "srcs": [
-        {"path": "examples/mojo/native_library_deps/src/natlib_deps/__init__.mojo", "sha256": "eea0e076674526be83cd5b3ba234593bb8c7f552838d3630956dc4ec0f917da4"}
+        {"path": "examples/mojo/native_library_deps/src/natlib_deps/__init__.mojo", "sha256": "3fe4a970a96c774411595f7ce572260a2a5a8b9065acaab9dc9695b5fbad62d0"}
       ],
       "deps": [],
       "natives": [
+        {"id": "base", "soname": "libbase.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/base"},
         {"id": "left", "soname": "libleft.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/left"},
         {"id": "right", "soname": "libright.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/right"},
         {"id": "top", "soname": "libtop.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/top"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["natlib_deps.mojoc"],
-      "key": "96a3251c1530ebcf119f6397222789b9a236f9465e30bc54e4f4db2b471a09e6"
+      "key": "ef368dd6b0c2918f13c89e9eb7d2bb6794bcf3e20e9157276cbc474c1fe1b626"
     },
     {
       "id": "natlib_deps@0.1.0#mojo1.0.0/test:examples/mojo/native_library_deps/tests/test_natlib_deps.mojo",
@@ -290,17 +337,18 @@ GRAPH_JSON_OSX_ARM64 = r'''{
       "version": "0.1.0",
       "kind": "test",
       "srcs": [
-        {"path": "examples/mojo/native_library_deps/tests/test_natlib_deps.mojo", "sha256": "3a1e9944a217705fd85f06a20f8479e22ece9281585ee6f1318a8cb103998d35"}
+        {"path": "examples/mojo/native_library_deps/tests/test_natlib_deps.mojo", "sha256": "78ec46ccfa5f220cbb4215c3945142e2c6cc114fb3b10c9fee68c08e3dac4f7a"}
       ],
       "deps": ["natlib_deps@0.1.0#mojo1.0.0/lib"],
       "natives": [
+        {"id": "base", "soname": "libbase.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/base"},
         {"id": "left", "soname": "libleft.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/left"},
         {"id": "right", "soname": "libright.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/right"},
         {"id": "top", "soname": "libtop.a", "package": "natlib_deps", "kind": "static", "built": "native:natlib_deps/top"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_natlib_deps.pass"],
-      "key": "05ae3f2e56e4f4aeee7b0d390c6cefe6caf04a5b8cc74b0cdc18820fdc5b56a0"
+      "key": "faba05d9d5a1c1bb1714ae0c1f7affacdfdaa2757a1e044dbb4134fc50ed99d5"
     }
   ]
 }

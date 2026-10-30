@@ -4,7 +4,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # refusal"). Where the library is configured for a platform, and what its providers say, is held by ci/native_library.bzl.
 load("//rules:matrix.bzl", "group")
 load("//rules/native:checks.bzl", "check_asm_split", "check_cxx_runtime", "check_has_sources", "check_prefix", "check_sources", "check_upstream")
-load(":helpers.bzl", "cfg_is", "extension_is", "extras_are", "label_is", "link_order_is", "up")
+load(":helpers.bzl", "cfg_is", "extension_is", "extras_are", "extras_by_path_are", "label_is", "link_order_is", "name_is", "up")
 load("//rules/rust:refusal.bzl", "accepts", "refuses")
 
 _ALL = []
@@ -158,6 +158,22 @@ _ALL.append(accepts("extra_archives_leave_out_what_the_graph_links", extras_are,
 _ALL.append(accepts("extra_archives_of_libraries_without_deps_are_none", extras_are, ["extras", [["liba.a"], ["libb.a"]], {"liba.a": True, "libb.a": True}, []]))
 
 _ALL.append(refuses("extra_archives_that_keep_the_first_place_of_a_shared_one_are_refused", extras_are, ["extras", [["libleft.a", "libbase.a"], ["libright.a", "libbase.a"]], {"libleft.a": True, "libright.a": True}, ["libbase.a", "libx.a"]], ["got"]))
+
+# An extra archive that needs one the graph lists: the graph's copy is behind it, so the line writes it again after the archive that needs it (a one-pass linker).
+_ALL.append(accepts("extra_archives_write_a_graph_archive_again_after_the_extra_that_needs_it", extras_are, ["extras", [["libbase.a"], ["libtop.a", "libmid.a", "libbase.a"]], {"libbase.a": True, "libtop.a": True}, ["libmid.a", "libbase.a"]]))
+
+# A graph archive nothing in the tail needs is not written again: `top` is listed and `mid` does not need it.
+_ALL.append(accepts("extra_archives_do_not_repeat_a_graph_archive_nothing_needs", extras_are, ["extras", [["libtop.a", "libmid.a"]], {"libtop.a": True}, ["libmid.a"]]))
+
+# Two archives with one file name from different packages are two archives.
+_ALL.append(accepts("extra_archives_of_one_name_from_two_packages_stay_two", extras_by_path_are, ["extras", [["a/liblib.a", "a/libx.a"], ["b/liblib.a", "b/libx.a"]], {"a/liblib.a": True, "b/liblib.a": True}, ["a/libx.a", "b/libx.a"]]))
+
+_ALL.append(refuses("extra_archives_that_merge_two_packages_archives_of_one_name_are_refused", extras_by_path_are, ["extras", [["a/liblib.a", "a/libx.a"], ["b/liblib.a", "b/libx.a"]], {"a/liblib.a": True, "b/liblib.a": True}, ["b/libx.a"]], ["got"]))
+
+# The file of an extra archive in the toolchain directory is told by its place, so two of one name are two files.
+_ALL.append(accepts("extra_archive_files_of_one_name_differ_by_position", name_is, ["name", 1, "libx.a", "001_libx.a"]))
+
+_ALL.append(refuses("extra_archive_files_of_one_name_at_two_positions_are_not_one_file_is_refused", name_is, ["name", 2, "libx.a", "001_libx.a"], ["got"]))
 
 # toolchain.cfg: a link of C libraries gets no C++ runtime; one with C++ gets it once, after the archives.
 _ALL.append(accepts("link_cfg_of_c_libraries_has_no_cxx_runtime", cfg_is, ["cfg", ["libmid.a"], False, "link_archive=link_archives/libmid.a\n"]))

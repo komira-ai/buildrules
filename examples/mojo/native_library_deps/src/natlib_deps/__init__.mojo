@@ -3,6 +3,10 @@
 from std.ffi import external_call
 
 
+def base_value() -> Int:
+    return Int(external_call["base_value", Int32]())
+
+
 def top_value() -> Int:
     return Int(external_call["top_value", Int32]())
 
