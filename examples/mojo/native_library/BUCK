@@ -35,7 +35,7 @@ mojo_sync(
     name = "sync",
     committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
     files = [],
-    mopm = "0.0.73",
+    mopm = "0.0.101",
     visibility = ["//ci:"],
     workspaces = [":workspace"],
 )

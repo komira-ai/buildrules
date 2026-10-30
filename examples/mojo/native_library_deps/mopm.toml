@@ -4,22 +4,22 @@ version = "0.1.0"
 mojo = ["1.0.0"]
 
 # `top` needs `mid` and `base` and `left` and `right` share `shared_base`, all through `deps` of native_library targets (examples/native). Only `top`, `left`, `right` and `base` (which `mid`, brought by `top`, needs)
-# are named: the other archives come with them (rules/native/link.bzl). The manifest names a source for each only because mopm requires one until it has `provided = true`.
+# are named: the other archives come with them (rules/native/link.bzl). Each is `provided = true`: the archive is the product of a rule of the build, not compiled by mopm.
 [native.base]
 kind = "static"
-srcs = ["native/base.c"]
+provided = true
 
 [native.top]
 kind = "static"
-srcs = ["native/top.c"]
+provided = true
 
 [native.left]
 kind = "static"
-srcs = ["native/left.c"]
+provided = true
 
 [native.right]
 kind = "static"
-srcs = ["native/right.c"]
+provided = true
 
 [targets]
 lib = { path = "src/natlib_deps" }

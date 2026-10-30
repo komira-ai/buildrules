@@ -2,7 +2,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # mopm-toolchain.toml is required (docs/contract.md, section 12): the refusals of rules/mojo/defs.bzl as analysis tests (rules/rust/refusal.bzl).
 # Each target is green only if the rule refused as stated; make the rule fall back to a default and it stops existing (analysis fails).
 load("//rules/mojo:defs.bzl", "check_natives_used", "check_toolchain_file_present", "check_toolchain_file_recorded", "graph_path_in_package", "member_label", "native_wiring")
-load("//rules/mojo:unit.bzl", "check_closure_ids", "cov_link_natives")
+load("//rules/mojo:unit.bzl", "check_closure_ids", "check_closure_known", "cov_link_natives")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
 load(":generated.bzl", "generated_member_below_the_package_is_named_by_its_manifest_directory", "generated_sibling_is_named_by_its_manifest_directory", "longest_manifest_directory_wins", "manifest_directories_are_those_of_the_recorded_manifests", "src_name_is_read_before_the_manifests")
 load(":natives.bzl", "BUILT", "BUILT_UNIT", "PREBUILT", "UNIT", "USER", "built_natives_are_the_targets_of_their_units", "native_includes_are_below_the_package_in_both_bases", "native_includes_default_to_the_header_directories_below_the_package", "native_units_are_told_by_their_id", "own_natives", "reversed_graph_is_reversed", "wiring_is_as_the_graph_says")
@@ -12,7 +12,8 @@ load(":sync.bzl", "packages_are_normalized", "stage_holds_the_workspaces_and_the
 load(":subdirs.bzl", "LINUX_64", "LINUX_AARCH64", "OSX_ARM64", "a_table_with_graphs_per_subdir_is_read_as_it_is", "a_table_with_graphs_per_subdir_refuses_the_platforms_it_has_none_for", "a_table_with_the_linux_64_graph_alone_is_refused_on_arm_only", "a_table_without_graphs_per_subdir_has_the_linux_64_graph_alone", "every_vocabulary_of_a_subdir_chooses_its_value", "graph_with_a_unit_more", "graph_with_other_dependencies", "same_units_in_every_graph", "the_graph_of_a_single_subdir_gives_the_value_itself", "toolchain_rows_are_told_by_their_key")
 load("//rules/mojo:subdirs.bzl", "table_graphs")
 load(":test_data_targets.bzl", "test_data_targets")
-load(":system_libs.bzl", "a_graph_without_loads_needs_no_pin", "a_format_above_three_is_refused", "a_format_that_is_no_number_is_refused", "a_library_a_unit_loads_and_the_graph_does_not_pin_is_refused", "a_library_a_unit_loads_is_pinned", "a_library_pinned_twice_is_refused", "a_slice_for_the_compile_is_never_above_format_two", "a_subdir_that_pins_another_library_is_refused", "a_subdir_whose_unit_loads_another_library_is_refused", "an_entry_with_a_short_sha256_is_refused", "an_entry_without_a_size_is_refused", "loads_in_an_older_graph_are_refused", "pinned_system_libs_are_read_by_name", "subdirs_that_pin_the_same_libraries_are_accepted", "system_libs_in_an_older_graph_are_refused", "the_formats_of_the_rules_are_accepted")
+load(":link.bzl", "a_graph_of_format_five_with_link_and_a_provided_native_is_accepted", "a_graph_of_format_four_with_a_provided_native_and_no_link_is_accepted", "a_graph_of_format_three_without_either_key_is_accepted", "a_link_in_a_graph_older_than_five_is_refused", "a_link_name_outside_the_list_is_refused", "a_link_name_twice_is_refused", "a_link_on_a_native_unit_is_refused", "a_provided_native_in_a_graph_older_than_four_is_refused", "a_provided_that_is_not_a_bool_is_refused", "a_provided_unit_that_is_not_native_is_refused", "a_subdir_that_provides_another_unit_is_refused", "a_subdir_whose_unit_links_other_libraries_is_refused", "a_unit_link_is_what_the_graph_says_and_none_is_empty", "an_empty_link_in_an_old_graph_is_the_same_as_none", "subdirs_with_one_link_are_accepted")
+load(":system_libs.bzl", "a_graph_without_loads_needs_no_pin", "a_format_above_five_is_refused", "a_slice_with_a_provided_native_unit_says_format_four", "a_format_that_is_no_number_is_refused", "a_library_a_unit_loads_and_the_graph_does_not_pin_is_refused", "a_library_a_unit_loads_is_pinned", "a_library_pinned_twice_is_refused", "a_slice_for_the_compile_is_never_above_format_two", "a_subdir_that_pins_another_library_is_refused", "a_subdir_whose_unit_loads_another_library_is_refused", "an_entry_with_a_short_sha256_is_refused", "an_entry_without_a_size_is_refused", "loads_in_an_older_graph_are_refused", "pinned_system_libs_are_read_by_name", "subdirs_that_pin_the_same_libraries_are_accepted", "system_libs_in_an_older_graph_are_refused", "the_formats_of_the_rules_are_accepted")
 
 _NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.48\"", "mojo = \"1.0.0\""]
 
@@ -447,13 +448,13 @@ refuses(
 )
 
 # The system libraries a graph of format 3 pins for the tests to load (rules/mojo/system_libs.bzl, docs/contract.md section 12.11; the checks are in tests/system_libs.bzl).
-accepts(name = "graph_formats_1_to_3_are_accepted", check = the_formats_of_the_rules_are_accepted, args = [])
+accepts(name = "graph_formats_1_to_5_are_accepted", check = the_formats_of_the_rules_are_accepted, args = [])
 
 refuses(
-    name = "graph_format_4_is_refused",
-    check = a_format_above_three_is_refused,
+    name = "graph_format_6_is_refused",
+    check = a_format_above_five_is_refused,
     args = [],
-    contains = ["the committed unit graph is format 4", "formats 1 to 3", "update buildrules"],
+    contains = ["the committed unit graph is format 6", "formats 1 to 5", "update buildrules"],
 )
 
 refuses(
@@ -528,3 +529,94 @@ refuses(
 )
 
 accepts(name = "compile_slice_is_never_above_format_two", check = a_slice_for_the_compile_is_never_above_format_two, args = [])
+
+accepts(name = "compile_slice_with_a_provided_native_says_format_four", check = a_slice_with_a_provided_native_unit_says_format_four, args = [])
+
+# What a graph of format 4 and 5 says about linking (rules/mojo/link.bzl, docs/contract.md section 12.4; the checks are in tests/link.bzl).
+accepts(name = "graph_of_format_5_with_link_and_provided_is_accepted", check = a_graph_of_format_five_with_link_and_a_provided_native_is_accepted, args = [])
+
+accepts(name = "graph_of_format_4_with_provided_and_no_link_is_accepted", check = a_graph_of_format_four_with_a_provided_native_and_no_link_is_accepted, args = [])
+
+accepts(name = "graph_of_format_3_without_link_or_provided_is_accepted", check = a_graph_of_format_three_without_either_key_is_accepted, args = [])
+
+accepts(name = "empty_link_and_provided_false_are_what_no_key_says", check = an_empty_link_in_an_old_graph_is_the_same_as_none, args = [])
+
+refuses(
+    name = "link_name_outside_mopms_list_in_a_graph_is_refused",
+    check = a_link_name_outside_the_list_is_refused,
+    args = [],
+    contains = ["p@1.0.0#mojo1.0.0/lib", "link names \"X11\"", "c++, dl, m, pthread"],
+)
+
+refuses(
+    name = "link_name_twice_in_a_graph_is_refused",
+    check = a_link_name_twice_is_refused,
+    args = [],
+    contains = ["link names m twice"],
+)
+
+refuses(
+    name = "link_in_a_graph_older_than_format_5_is_refused",
+    check = a_link_in_a_graph_older_than_five_is_refused,
+    args = [],
+    contains = ["has `link` in a graph of format 4", "format 5 key"],
+)
+
+refuses(
+    name = "link_on_a_native_unit_is_refused",
+    check = a_link_on_a_native_unit_is_refused,
+    args = [],
+    contains = ["native:p/shim is a native unit and has a `link`", "an archive is not linked"],
+)
+
+refuses(
+    name = "provided_in_a_graph_older_than_format_4_is_refused",
+    check = a_provided_native_in_a_graph_older_than_four_is_refused,
+    args = [],
+    contains = ["native:p/shim has `provided` in a graph of format 3", "format 4 key"],
+)
+
+refuses(
+    name = "provided_that_is_not_a_bool_is_refused",
+    check = a_provided_that_is_not_a_bool_is_refused,
+    args = [],
+    contains = ["native:p/shim has `provided` \"yes\", which is not true or false"],
+)
+
+refuses(
+    name = "provided_on_a_unit_that_is_not_native_is_refused",
+    check = a_provided_unit_that_is_not_native_is_refused,
+    args = [],
+    contains = ["p@1.0.0#mojo1.0.0/test:t has `provided`, which is a key of a native unit"],
+)
+
+accepts(name = "subdirs_with_one_link_are_accepted", check = subdirs_with_one_link_are_accepted, args = [])
+
+refuses(
+    name = "subdir_whose_unit_links_other_libraries_is_refused",
+    check = a_subdir_whose_unit_links_other_libraries_is_refused,
+    args = [],
+    contains = ["the unit graph of osx-arm64 gives p@1.0.0#mojo1.0.0/lib the link [\"c++\"]", "the graph of linux-64 gives it [\"c++\", \"m\"]"],
+)
+
+refuses(
+    name = "subdir_that_provides_another_unit_is_refused",
+    check = a_subdir_that_provides_another_unit_is_refused,
+    args = [],
+    contains = ["native:p/shim"],
+)
+
+accepts(name = "unit_link_is_what_the_graph_says", check = a_unit_link_is_what_the_graph_says_and_none_is_empty, args = [])
+
+# The toolchain closure a unit's graph pins is one the toolchain holds (rules/mojo/unit.bzl, `check_closure_known`): a toolchain shared by packages of two mopm releases holds both
+# closures, and each unit is told its own; a closure it was not declared for is refused.
+accepts(name = "toolchain_closure_the_graph_pins_is_held", check = check_closure_known, args = ["u", "toolchains//:mojo_1_0_0", ["a" * 64, "b" * 64], "b" * 64])
+
+accepts(name = "toolchain_closure_of_a_single_pin_is_held", check = check_closure_known, args = ["u", "toolchains//:mojo_1_0_0", ["a" * 64], "a" * 64])
+
+refuses(
+    name = "toolchain_closure_the_graph_pins_and_the_toolchain_lacks_is_refused",
+    check = check_closure_known,
+    args = ["u", "toolchains//:mojo_1_0_0", ["a" * 64, "b" * 64], "c" * 64],
+    contains = ["the graph pins the toolchain closure " + "c" * 64, "toolchains//:mojo_1_0_0 does not hold", "it holds " + "a" * 64 + ", " + "b" * 64, "buildrules mojo sync"],
+)

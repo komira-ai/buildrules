@@ -32,8 +32,8 @@ def extras_are(who, archive_lists, linked, want, refuse = fail):
     got = extra_link_archives(archive_lists, linked, lambda a: a)
     _equal(who, got, want, refuse)
 
-def cfg_is(who, names, cxx, want, refuse = fail):
-    _equal(who, link_cfg(names, cxx), want, refuse)
+def cfg_is(who, names, link, want, refuse = fail):
+    _equal(who, link_cfg(names, link), want, refuse)
 
 def extras_by_path_are(who, archive_lists, linked, want, refuse = fail):
     """Archives are told apart by the path they are at, not by their file name: the key is the whole string."""
