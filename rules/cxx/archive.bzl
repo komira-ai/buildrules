@@ -33,6 +33,8 @@ esac
 "$BB" mkdir -p "$T/bin" "$T/x"
 "$BB" --install -s "$T/bin"
 PATH="$T/bin"; export PATH
+# The scratch goes with the action, a refusal included: a local action leaves it under buck-out, and a link of the archive in it would be walked by the file watcher.
+trap 'rm -rf "$T"' EXIT
 ARCHIVE="$1"; PREFIX="$2"; SED="$3"; shift 3
 case "$ARCHIVE" in
     *.tar.gz | *.tgz) tar -xzf "$ARCHIVE" -C "$T/x" ;;
@@ -84,7 +86,6 @@ while [ "$#" -gt 0 ]; do
         template) sed -f "$SED" "$SRC/$rel" > "$out" ;;
     esac
 done
-rm -rf "$T"
 """
 
 def _sed_escape(s, specials):
