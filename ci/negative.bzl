@@ -456,6 +456,9 @@ FAULTY = [
     ("//ci/faulty:archive_files_of_a_link_to_an_absolute_path", "//ci/faulty:archive_files_of_files_without_links", "archive_files: link.c is not staged: pkg/link.c in "),
     ("//ci/faulty:archive_files_of_a_link_out_of_the_tree", "//ci/faulty:archive_files_of_separate_files_without_links", "archive_files: link.c is not staged: pkg/link.c in "),
     ("//ci/faulty:archive_files_of_a_file_behind_a_link_to_a_directory", "//ci/faulty:archive_files_of_files_without_links", "archive_files: etc/hostname is not staged: pkg/etc in "),
+    # A member hard linked to a path of the machine that unpacks it: on the farm's workers the unpack itself refuses (the kernel or the file system does), and that is what is held
+    # here. The staging script refuses a listed file with a name outside the unpacked tree too (archive_files: ... hard link to a file outside it), for a host that lets the link be made.
+    ("//ci/faulty:archive_files_of_a_hard_link_to_a_file_outside", "//ci/faulty:archive_files_of_files_without_links", "tar: can't create hardlink 'pkg/hl.c' to '/etc/hostname'"),
     # A link as a component of strip_prefix, in the middle of a path, and as the source of a template; and a path written in a BUCK file that leaves the archive.
     ("//ci/faulty:archive_files_of_a_link_as_the_strip_prefix", "//ci/faulty:archive_files_of_the_files_behind_no_link_of_the_prefix", "archive_files: hostname is not staged: top in "),
     ("//ci/faulty:archive_files_of_a_file_behind_a_link_in_the_middle_of_its_path", "//ci/faulty:archive_files_of_the_files_beside_a_link_in_the_middle", "archive_files: a/mid/hostname is not staged: pkg/a/mid in "),

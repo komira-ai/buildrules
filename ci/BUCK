@@ -823,6 +823,7 @@ group(name = "all", deps = [
     "//ci/faulty:archive_prefix_link.tar.gz",
     "//ci/faulty:archive_mid_link.tar.gz",
     "//ci/faulty:archive_template_link.tar.gz",
+    "//ci/faulty:archive_hard_link_outside.tar.gz",
     "//ci/faulty:archive_files_of_a_template_of_the_same_archive",
     "//ci/faulty:archive_files_of_the_files_behind_no_link_of_the_prefix",
     "//ci/faulty:archive_files_of_the_files_beside_a_link_in_the_middle",

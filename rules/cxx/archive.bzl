@@ -34,7 +34,9 @@ esac
 "$BB" --install -s "$T/bin"
 PATH="$T/bin"; export PATH
 # The scratch goes with the action, a refusal included: a local action leaves it under buck-out, and a link of the archive in it would be walked by the file watcher.
-trap 'rm -rf "$T"' EXIT
+# Directories are made writable first (find does not follow links; chmod -R would), so one the archive made unreadable does not keep the rest. A process that is
+# killed (a timeout, SIGKILL) runs no trap and can still leave its scratch.
+trap 'find "$T" -type d -exec chmod u+rwx {} + 2>/dev/null; rm -rf "$T"' EXIT
 ARCHIVE="$1"; PREFIX="$2"; SED="$3"; shift 3
 case "$ARCHIVE" in
     *.tar.gz | *.tgz) tar -xzf "$ARCHIVE" -C "$T/x" ;;
@@ -45,8 +47,17 @@ case "$ARCHIVE" in
 esac
 SRC="$T/x/$PREFIX"
 # Staging never follows a symbolic link of the archive. A listed file that is a link, or lies behind one (a link to a directory, or in `strip_prefix`), would carry the copy to
-# a path of the machine that unpacks it: it is refused, naming the link. Links nothing lists are never read. (A hard link to a file of the archive is a second name of that
-# file; one to a path outside it fails the unpacking itself.)
+# a path of the machine that unpacks it: it is refused, naming the link. Links nothing lists are never read.
+# A hard link is not a link to follow: it is a second name of a file. When a listed file has more names than there are inside the unpacked tree, one is outside it (tar does
+# not stop a member from being hard linked to a path of the machine, though the kernel or the file system often does), and the file is refused.
+refuse_outside_names() {
+    names=$(stat -c %h "$SRC/$1")
+    inside=$(find "$T" -samefile "$SRC/$1" | wc -l)
+    if [ "$names" -ne "$inside" ]; then
+        echo "archive_files: $1 is not staged: it has $names names and $inside of them are in the unpacked tree of $ARCHIVE; staging does not take a hard link to a file outside it" >&2
+        exit 2
+    fi
+}
 refuse_links() {
     walk="$T/x"; rest="$PREFIX/$1"
     while [ -n "$rest" ]; do
@@ -69,6 +80,7 @@ while [ "$#" -gt 0 ]; do
         echo "archive_files: $rel is not a file in $ARCHIVE (under '$PREFIX')" >&2
         exit 2
     fi
+    refuse_outside_names "$rel"
     mkdir -p "$(dirname "$out")"
     case "$kind" in
         file) cp -P "$SRC/$rel" "$out" ;;
