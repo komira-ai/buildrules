@@ -1,7 +1,7 @@
 """Downloads of the hosts other than linux x86_64: URL, sha256, size in bytes. Read by BUCK in this directory.
 
 buildrules v0 runs its actions on linux x86_64 (`pins.bzl`, `rules/rust/pins.bzl`, `rules/node/pins.bzl`). The rows below are what the other
-hosts need from the same upstream releases, so that a runner of that kind (GitHub's `ubuntu-24.04-arm`, `macos-14`) can fetch them. A host is a
+hosts need from the same upstream releases, so that a runner of that kind (GitHub's `ubuntu-24.04-arm`, `macos-15`) can fetch them. A host is a
 key of `HOST_PINS`: `<os>-<cpu>`, the spelling `host_info()` and tools/buck2 use.
 
 Where each value comes from (the same rule as docs/pins.md): zig and node from the release index of the vendor (ziglang.org/download/index.json,

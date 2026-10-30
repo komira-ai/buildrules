@@ -540,7 +540,7 @@ channels are planned (section 9).
 ### Limits today (built behaviour)
 
 - **Linux x86_64 only**, for clients and workers. macOS, Windows and Arm are *planned*; nothing is
-  built for them. `beta.yml` runs the command line of each (`ubuntu-24.04-arm`, `macos-14`) natively on a
+  built for them. `beta.yml` runs the command line of each (`ubuntu-24.04-arm`, `macos-15`) natively on a
   hello-world repository, up to the build: its version, `init`, Buck2 loading the candidate. It cannot
   build there: no toolchain of the rules runs on those hosts.
 - **Rust:** crates.io only; the workspace root is the repository root and must be a virtual workspace;

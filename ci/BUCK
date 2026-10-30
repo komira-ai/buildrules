@@ -1020,7 +1020,7 @@ zig_coverage(
     expect = ["ci/workflow_check.zig", "ci/release_check.zig", "ci/stages_check.zig", "ci/lintian_check.zig", "ci/no_shell_check.zig"],
 )
 
-# The `unpack_macos` job of ci.yml (tools/bootstrap): GitHub's macos-14 runner builds the program, runs its tests and unpacks the real darwin zig tarball; ci/unpack_macos_check.zig
+# The `unpack_macos` job of ci.yml (tools/bootstrap): GitHub's macos-15 runner builds the program, runs its tests and unpacks the real darwin zig tarball; ci/unpack_macos_check.zig
 # holds the job's urls and digests to rules/pins/hosts.bzl and every step of it to its text, and injects a defect for each.
 zig_test(
     name = "unpack_macos_check",

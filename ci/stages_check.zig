@@ -30,7 +30,7 @@ const cli_target = "//cli:buildrules";
 const Native = struct { job: []const u8, runner: []const u8, host: []const u8, stage_target: []const u8, buck2_platform: []const u8 };
 const natives = [_]Native{
     .{ .job = "beta_arm", .runner = "ubuntu-24.04-arm", .host = "linux-aarch64", .stage_target = "//tools/stage:stage_linux_aarch64", .buck2_platform = "linux-aarch64" },
-    .{ .job = "beta_macos", .runner = "macos-14", .host = "macos-arm64", .stage_target = "//tools/stage:stage_macos_arm64", .buck2_platform = "macos-aarch64" },
+    .{ .job = "beta_macos", .runner = "macos-15", .host = "macos-arm64", .stage_target = "//tools/stage:stage_macos_arm64", .buck2_platform = "macos-aarch64" },
 };
 /// The languages the native legs walk: the ones whose STEPS need nothing but `buildrules init` and `config` before the first `build` (the others run `cargo new`,
 /// `npm sync` or `mojo sync` first, each of which builds a pinned tool, and nothing builds on these hosts yet). `stage native` is red on one that does.
@@ -531,8 +531,8 @@ const fixture_wf =
     \\
     \\  beta_macos:
     \\    needs: [tools]
-    \\    name: beta ${{ matrix.lang }} (macos-14) native, no build yet
-    \\    runs-on: macos-14
+    \\    name: beta ${{ matrix.lang }} (macos-15) native, no build yet
+    \\    runs-on: macos-15
     \\    timeout-minutes: 30
     \\    permissions:
     \\      contents: read

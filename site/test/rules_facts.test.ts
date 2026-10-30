@@ -660,7 +660,7 @@ describe('the stages of the release: the page, RELEASING.md, beta.yml and releas
   test('arm and macos run natively up to the build, and say they do not build; the Mojo leg runs', () => {
     expect(beta).toMatch(/\n {2}beta_mojo:\n/);
     expect(beta).toContain('runs-on: ubuntu-24.04-arm');
-    expect(beta).toContain('runs-on: macos-14');
+    expect(beta).toContain('runs-on: macos-15');
     // no job of beta.yml is skipped any more, and the two native ones say in their names that they do not build
     expect(beta).not.toContain("github.event_name == 'planned'");
     expect(beta.match(/native, no build yet/g)!.length).toBe(2);
