@@ -303,6 +303,7 @@ jobs:
         run: |
           ./buck2 build --console simple -c buildrules_re.mode=local \
             -c buildrules_re.macos_library_dirs=/opt/homebrew/lib \
+            --target-platforms buildrules//platforms:macos_aarch64 \
             //examples/mojo/subdirs:lib
 
       - name: Stop buck2
