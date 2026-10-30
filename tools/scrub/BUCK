@@ -62,6 +62,8 @@ scrub_test(
     "//examples/mojo/native_library_deps:scrub_files",
     "//examples/native/shared:scrub_files",
     "//examples/native/asm:scrub_files",
+    "//examples/native/asm_split:scrub_files",
+    "//examples/native/hooks:scrub_files",
     "//examples/native/cxx:scrub_files",
     "//examples/native/deps:scrub_files",
     "//examples/native/zlib:scrub_files",

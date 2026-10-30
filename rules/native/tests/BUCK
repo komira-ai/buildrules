@@ -3,7 +3,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # if the rule refused (or accepted) what a user would really write. Make a check accept the input and its target stops existing (analysis fails with "expected a
 # refusal"). Where the library is configured for a platform, and what its providers say, is held by ci/native_library.bzl.
 load("//rules:matrix.bzl", "group")
-load("//rules/native:checks.bzl", "check_cxx_runtime", "check_has_sources", "check_prefix", "check_sources", "check_upstream")
+load("//rules/native:checks.bzl", "check_asm_split", "check_cxx_runtime", "check_has_sources", "check_prefix", "check_sources", "check_upstream")
 load(":helpers.bzl", "cfg_is", "extension_is", "extras_are", "label_is", "link_order_is", "up")
 load("//rules/rust:refusal.bzl", "accepts", "refuses")
 
@@ -91,7 +91,7 @@ _ALL.append(accepts("prefix_with_a_name_and_a_minimum_is_accepted", check_prefix
 
 _ALL.append(accepts("prefix_of_the_strip_style_is_accepted", check_prefix, [_WHO, {"name": "k_s2n_", "strip": "s2n_", "min": 10}]))
 
-_ALL.append(refuses("prefix_that_is_not_a_table_is_refused", check_prefix, [_WHO, "widget"], ["a table of name, strip and min"]))
+_ALL.append(refuses("prefix_that_is_not_a_table_is_refused", check_prefix, [_WHO, "widget"], ["a table of name, strip, min and extra_symbols"]))
 
 _ALL.append(refuses("prefix_with_an_unknown_key_is_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "style": "x"}], ['has the key "style"']))
 
@@ -104,6 +104,24 @@ _ALL.append(refuses("prefix_without_a_minimum_is_refused", check_prefix, [_WHO, 
 _ALL.append(refuses("prefix_with_a_zero_minimum_is_refused", check_prefix, [_WHO, {"name": "k", "min": 0}], ["the least number of symbols"]))
 
 _ALL.append(refuses("prefix_strip_that_is_not_an_identifier_is_refused", check_prefix, [_WHO, {"name": "k_", "strip": "s2n-", "min": 1}], ["prefix strip"]))
+
+# ---- extra_symbols of a prefix, asm_split ----
+
+_ALL.append(accepts("prefix_with_hooks_to_rename_is_accepted", check_prefix, [_WHO, {"name": "hk", "min": 1, "extra_symbols": ["hook_alloc", "hook_free"]}]))
+
+_ALL.append(refuses("prefix_extra_symbols_that_are_not_identifiers_are_refused", check_prefix, [_WHO, {"name": "hk", "min": 1, "extra_symbols": ["hook-alloc"]}], ["extra_symbols", "a list of identifiers"]))
+
+_ALL.append(refuses("prefix_extra_symbols_that_are_not_a_list_are_refused", check_prefix, [_WHO, {"name": "hk", "min": 1, "extra_symbols": "hook_alloc"}], ["extra_symbols"]))
+
+_ALL.append(accepts("asm_split_of_s_files_is_accepted", check_asm_split, [_WHO, ["arm/", "native/split_"], ["arm/a.S", "arm/b.S", "x.c"]]))
+
+_ALL.append(refuses("asm_split_naming_a_file_that_is_not_preprocessed_is_refused", check_asm_split, [_WHO, ["arm/"], ["arm/a.s"]], ["is not a .S file"]))
+
+_ALL.append(refuses("asm_split_naming_a_c_file_is_refused", check_asm_split, [_WHO, ["native/"], ["native/x.c"]], ["is not a .S file"]))
+
+_ALL.append(refuses("asm_split_leaving_the_package_is_refused", check_asm_split, [_WHO, ["../x/"], []], ["is not the beginning of a path"]))
+
+_ALL.append(refuses("asm_split_that_is_not_a_list_is_refused", check_asm_split, [_WHO, "arm/", []], ["a list of path beginnings"]))
 
 # ---- pure functions ----
 

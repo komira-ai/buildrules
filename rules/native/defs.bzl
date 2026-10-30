@@ -34,11 +34,15 @@ What each argument is, and what may differ per platform:
     cxx_runtime        optional statement of what the sources are: true when any source is C++ (a program that links the library then links the C++ runtime, once); a statement that
                        is not what the sources are is refused. The value is derived from the sources whether it is stated or not.
     soname             the archive's file name (default `lib<name>.a`).
+    asm_split          paths (beginnings) of `.S` sources whose preprocessed text has its `;` turned into line breaks before it is assembled. Mach-O arm64 assembly reads `;` as a
+                       comment, so a macro of `;`-joined instructions (s2n-bignum's) keeps only its first instruction: it assembles and computes the wrong result. The pinned zig runs
+                       the compile's own flags with `-E`, the text is split (rules/cxx/asm_split.zig) and assembled as assembly; harmless on Linux. A named source must be a `.S` file.
     prefix             `{"name": "p", "min": N}` (and `"strip"`): every global symbol the library defines is renamed to start with `p` (aws-lc's style `p_name`, or the strip style),
                        C and assembly, ELF and Mach-O alike, and the archive check holds that nothing defined lacks the prefix and nothing refers to a replaced name. The library is
                        built as it is (`:<name>_unprefixed`), the names its archive defines are written as a header (`:<name>_prefix`: `#define name p_name`, and for the underscored
                        names the assembly of a Mach-O library carries `#define _name _p_name`), and it is built again with the header included. `min` is the least number of
-                       symbols it defines. The compiler-rt builtins the library defines (`__umodti3` and its kin, an exact list in archive_check) are not renamed and are not held to the prefix; `allow` names symbols that may stay UNDEFINED, never one that may lack the prefix.
+                       symbols it defines. `extra_symbols` names the symbols the library refers to and does not define (a weak hook a program defines: aws-lc's `OPENSSL_memory_*`),
+                       which the prefix renames too; derived names cover only what the archive defines. The compiler-rt builtins the library defines (`__umodti3` and its kin, an exact list in archive_check) are not renamed and are not held to the prefix; `allow` names symbols that may stay UNDEFINED, never one that may lack the prefix.
     validate           False makes the archive check an output of the target and not a validation: for tests that need the failure to be one failed action (ci/faulty). Leave it True.
     target_compatible_with   as for any target, on every target the macro makes.
     allow              symbols the archive check may find undefined (something it cannot see provides them).
@@ -56,8 +60,11 @@ load("//rules/core:platform.bzl", "LINUX_X86_64", "by_os_cpu")
 load("//rules/cxx:archive.bzl", "archive_files")
 load("//rules/cxx:defs.bzl", "prefix_header")
 load("//rules/cxx:native.bzl", "native_archive")
-load(":checks.bzl", "archive_extension", "check_has_sources", "check_prefix", "check_sources", "check_upstream", "cxx_label")
+load(":checks.bzl", "archive_extension", "check_asm_split", "check_has_sources", "check_prefix", "check_sources", "check_upstream", "cxx_label", "is_split")
 load(":library.bzl", "native_library_rule")
+
+# The flag that marks a source for the launcher (rules/cxx/asm_split.zig, `marker`).
+SPLIT_MARKER = "--buildrules-split-semicolons"
 
 def _baseline():
     """The CPU flag of the platform's baseline (as rules/cxx/native.bzl): a library other people link must run on any machine of the family."""
@@ -82,6 +89,7 @@ def native_library(
         cflags = [],
         cxxflags = [],
         asm_flags = [],
+        asm_split = [],
         upstream = None,
         prefix = None,
         deps = [],
@@ -126,8 +134,10 @@ def native_library(
         return _each(value, f)
 
     src_parts = []
+    check_asm_split(who, asm_split, [])
 
     def record(v):
+        check_asm_split(who, asm_split, v)
         src_parts.append(v)
         return v
 
@@ -140,7 +150,9 @@ def native_library(
     exported_includes = checked("exported_includes", exported_includes)
 
     def source_label(s):
-        return "{}[{}]".format(tree, s) if s in files else s
+        label = "{}[{}]".format(tree, s) if s in files else s
+        # A source marked for splitting (asm_split.zig) carries a flag only the launcher reads: its preprocessed text has its `;` turned into line breaks before it is assembled.
+        return (label, [SPLIT_MARKER]) if is_split(asm_split, s) else label
 
     def tree_flags(dirs):
         return ["-I$(location {}){}".format(tree, "" if d == "." else "/" + d) for d in dirs]
@@ -217,6 +229,7 @@ def native_library(
             min_symbols = prefix["min"],
             prefix = prefix["name"],
             strip = prefix.get("strip", ""),
+            extra_symbols = prefix.get("extra_symbols", []),
             style = "strip" if prefix.get("strip") else "boringssl",
             macho_asm = True,
             exec_compatible_with = LINUX_X86_64,

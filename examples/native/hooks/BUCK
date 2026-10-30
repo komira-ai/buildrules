@@ -1,0 +1,17 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/native:defs.bzl", "native_library")
+
+# A library with a weak hook (`hook_alloc`) that a program may define, as aws-lc has for its allocator. `prefix` renames what the library defines (`hooks_alloc` becomes
+# `hk_hooks_alloc`); the hook it only refers to is renamed too because the prefix names it in `extra_symbols`, so `provider` (which defines `hk_hook_alloc`) answers it.
+native_library(
+    name = "hooks",
+    srcs = ["native/hooks.c"],
+    prefix = {"name": "hk", "min": 1, "extra_symbols": ["hook_alloc"]},
+)
+
+native_library(
+    name = "hooks_provider",
+    srcs = ["native/provider.c"],
+)
+
+scrub_files()

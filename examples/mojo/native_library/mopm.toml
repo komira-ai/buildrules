@@ -17,6 +17,18 @@ srcs = ["native/cxxlib.c"]
 kind = "static"
 srcs = ["native/asm_prefixed.c"]
 
+[native.asm_split]
+kind = "static"
+srcs = ["native/asm_split.c"]
+
+[native.hooks]
+kind = "static"
+srcs = ["native/hooks.c"]
+
+[native.hooks_provider]
+kind = "static"
+srcs = ["native/hooks_provider.c"]
+
 [native.asm_add]
 kind = "static"
 srcs = ["native/asm_add.c"]

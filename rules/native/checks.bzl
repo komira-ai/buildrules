@@ -143,7 +143,7 @@ def cxx_label(label):
         fail("native_library: dep {} is not a target label".format(repr(label)))
     return label + "_cxx"
 
-_PREFIX_KEYS = ["name", "strip", "min"]
+_PREFIX_KEYS = ["name", "strip", "min", "extra_symbols"]
 
 def _identifier(s):
     return type(s) == "string" and len(s) > 0 and all([c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for c in s.elems()])
@@ -152,7 +152,7 @@ def check_prefix(who, pfx, refuse = fail):
     """The `prefix` table: every global symbol the library defines is renamed to start with `name` (`strip` selects the strip style); `min` is the least number of
     symbols the library defines, which stops a header made from the wrong archive."""
     if type(pfx) != "dict":
-        refuse("{}: prefix is {}, a table of name, strip and min".format(who, repr(pfx)))
+        refuse("{}: prefix is {}, a table of name, strip, min and extra_symbols".format(who, repr(pfx)))
         return
     for k in sorted(pfx.keys()):
         if k not in _PREFIX_KEYS:
@@ -165,6 +165,10 @@ def check_prefix(who, pfx, refuse = fail):
     if strip != "" and not _identifier(strip):
         refuse("{}: prefix strip {} is not an identifier (letters, digits and _)".format(who, repr(strip)))
         return
+    extra = pfx.get("extra_symbols", [])
+    if type(extra) != "list" or any([not _identifier(x) for x in extra]):
+        refuse("{}: prefix extra_symbols {} is a list of identifiers (names the library refers to and does not define, such as a weak hook a program defines)".format(who, repr(extra)))
+        return
     least = pfx.get("min")
     if type(least) != "int" or least <= 0:
         refuse("{}: prefix min is the least number of symbols the library defines, a positive integer (it stops a header made from the wrong archive), got {}".format(who, repr(least)))
@@ -175,3 +179,22 @@ def check_has_sources(who, parts, refuse = fail):
     not is a library with no source on that platform, which the archive of that platform shows."""
     if not any([len(p) > 0 for p in parts]):
         refuse("{}: srcs names no file, in any arm of its select(): a native_library has at least one source (.c, .cc, .cpp, .cxx, .c++, .S, .s)".format(who))
+
+def check_asm_split(who, patterns, srcs, refuse = fail):
+    """`asm_split` names the sources whose preprocessed text has its `;` turned into line breaks before it is assembled (rules/cxx/asm_split.zig): by the beginning of the
+    path (`s2n-bignum/arm/`). A source it names must be a `.S` file, the only kind that is preprocessed. `srcs` are the files of one resolved arm."""
+    if type(patterns) != "list":
+        refuse("{}: asm_split is {}, a list of path beginnings".format(who, repr(patterns)))
+        return
+    for p in patterns:
+        if type(p) != "string" or not p or p.startswith("/") or ".." in p.split("/"):
+            refuse("{}: asm_split {} is not the beginning of a path below the package or the upstream tree".format(who, repr(p)))
+            return
+    for s in srcs:
+        if is_split(patterns, s) and not s.endswith(".S"):
+            refuse("{}: asm_split names {}, which is not a .S file (only a .S file is preprocessed)".format(who, s))
+            return
+
+def is_split(patterns, src):
+    """Whether `asm_split` names the source `src`."""
+    return any([src.startswith(p) for p in patterns])

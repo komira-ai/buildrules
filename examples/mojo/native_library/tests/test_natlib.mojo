@@ -6,9 +6,12 @@ from natlib import (
     asm_add,
     asm_isa,
     asm_twice,
+    hooks_alloc,
     prefixed_asm_add,
     prefixed_asm_isa,
     prefixed_asm_twice,
+    provider_alloc,
+    split_value,
     caught,
     compile_flags,
     compress_bound,
@@ -73,6 +76,17 @@ def test_prefixed_asm_is_renamed_and_links_beside_the_unprefixed_one() raises:
     assert_equal(prefixed_asm_add(20, 22), 49)
     assert_equal(prefixed_asm_twice(10), 27)
     assert_equal(prefixed_asm_isa(), asm_isa())
+
+
+def test_asm_macro_joined_with_semicolons_is_split_before_it_is_assembled() raises:
+    # mov 7; add 35. A Mach-O arm64 assembler that read the `;` as a comment would return 7.
+    assert_equal(split_value(), 42)
+
+
+def test_a_weak_hook_named_in_the_prefix_is_renamed_and_answered() raises:
+    assert_equal(provider_alloc(2), 42)
+    # hooks_alloc calls hook_alloc if it is defined; renamed to hk_hook_alloc it finds the provider, unrenamed it would find nothing and return 0.
+    assert_equal(hooks_alloc(2), 42)
 
 
 def main() raises:

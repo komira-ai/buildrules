@@ -6,6 +6,9 @@ load(":buildrules.mojo.bzl", "mojo_package")
 _NATIVES = {
     "libasm_add.a": "//examples/native/asm:asm_add",
     "libasm_prefixed.a": "//examples/native/asm:asm_prefixed",
+    "libasm_split.a": "//examples/native/asm_split:asm_split",
+    "libhooks.a": "//examples/native/hooks:hooks",
+    "libhooks_provider.a": "//examples/native/hooks:hooks_provider",
     "libcxxlib.a": "//examples/native/cxx:cxxlib",
     "libzlib.a": "//examples/native/zlib:zlib",
 }

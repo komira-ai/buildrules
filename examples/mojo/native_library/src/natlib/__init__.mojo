@@ -62,3 +62,18 @@ def prefixed_asm_twice(x: Int) -> Int:
 
 def prefixed_asm_isa() -> Int:
     return Int(external_call["natlib_asm_isa", Int32]())
+
+
+# asm_split: assembly whose macro joins two instructions with `;` (a comment in Mach-O arm64 assembly): 42 only if the preprocessed text was split.
+def split_value() -> Int:
+    return Int(external_call["split_value", Int32]())
+
+
+# hooks: a library renamed with `prefix` (hk_) that calls a weak hook a program may define. The prefix names the hook in `extra_symbols`, so the library asks for hk_hook_alloc, which
+# hooks_provider defines. `provider_alloc` calls the provider directly: nothing else would pull its member out of the archive (a weak reference does not).
+def hooks_alloc(n: Int) -> Int:
+    return Int(external_call["hk_hooks_alloc", Int64](Int64(n)))
+
+
+def provider_alloc(n: Int) -> Int:
+    return Int(external_call["hk_hook_alloc", Int64](Int64(n)))

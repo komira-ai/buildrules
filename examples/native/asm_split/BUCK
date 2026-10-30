@@ -1,0 +1,17 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/native:defs.bzl", "native_library")
+
+# An assembly macro whose instructions are joined with `;` (the way s2n-bignum builds its routines). Mach-O arm64 assembly reads `;` as a comment, so assembled as it is the function
+# returns 7 on macOS; `asm_split` names the sources whose preprocessed text has its `;` turned into line breaks before it is assembled, and then it returns 42 everywhere. The CPU
+# picks the file, as in examples/native/asm.
+native_library(
+    name = "asm_split",
+    srcs = select({
+        "buildrules//platforms:aarch64": ["native/split_aarch64.S"],
+        "buildrules//platforms:x86_64": ["native/split_x86_64.S"],
+    }),
+    hdrs = {"compat/asm_names.h": "native/asm_names.h"},
+    asm_split = ["native/split_"],
+)
+
+scrub_files()
