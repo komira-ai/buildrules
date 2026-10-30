@@ -431,6 +431,9 @@ FAULTY = [
     ("//ci/faulty:native_with_an_undefined_symbol", "//ci/faulty:native_good", "undefined symbol: faulty_missing_helper"),
     ("//ci/faulty:native_newer_than_the_floor", "//ci/faulty:native_good", "undefined symbol: arc4random"),
     ("//ci/faulty:native_with_debug_info", "//ci/faulty:native_good", "member debug_info.c.pic.o has 1 debug section(s), first .debug_faulty"),
+    # A renamed library (`prefix`): a symbol the renaming header cannot reach is defined without the prefix, and a call it cannot reach is left to resolve to another copy.
+    ("//ci/faulty:native_prefix_leaks_a_symbol", "//ci/faulty:native_prefix_good", "1 defined symbol(s) without the prefix faultyp: faulty_prefixed_fixed"),
+    ("//ci/faulty:native_prefix_misses_a_reference", "//ci/faulty:native_prefix_good", "undefined reference to faulty_prefixed_target, a name the prefix header renames"),
     # A dependent of a `native_library` sees what its dependency exports (rules/native/defs.bzl): its header only through `deps`, a header of the dependency's dependency only
     # through `exported_deps`, and the include directory of an upstream tree only when the dependency exports it. The compile is what fails.
     ("//ci/faulty:nl_user_without_the_dependency", "//ci/faulty:nl_user", "'nl/lib.h' file not found"),

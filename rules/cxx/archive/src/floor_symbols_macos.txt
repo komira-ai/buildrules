@@ -534,3 +534,18 @@ getattrlist
 setattrlist
 utimensat
 futimens
+# What SQLite's unix VFS and memory subsystem call on macOS (found by building it for aarch64-macos): the checked string copies of <secure/_string.h>, confstr,
+# futimes and srandomdev of libc, fsctl and gethostuuid of the kernel interface, and the malloc zone functions of <malloc/malloc.h>.
+__strlcat_chk
+__strlcpy_chk
+confstr
+fsctl
+futimes
+gethostuuid
+malloc_create_zone
+malloc_default_zone
+malloc_set_zone_name
+malloc_zone_free
+malloc_zone_malloc
+malloc_zone_realloc
+srandomdev

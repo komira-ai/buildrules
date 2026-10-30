@@ -27,6 +27,11 @@ table (`elfsyms`) and writes the renaming header; `<lib>_prefixed` force-include
 prefixed archive back and fails unless every defined symbol carries the prefix. All checks are `ValidationInfo`,
 which Buck2 runs in every build whose graph holds the library.
 
+A native library of a Mojo package is renamed the same way with `native_static(prefix = ...)` (native.bzl): `<name>_unprefixed` is built first, and `prefix_header(defined = ...)` takes the names from
+what `archive_check --symbols` lists out of that archive instead of from `elfsyms`, which reads ELF only; a macOS arm64 archive is Mach-O, and `archive_check` reads both. The check of the renamed
+archive is `archive_check --prefix` (rules/cxx/archive): every defined symbol starts with the prefix, at least `--min-prefixed` do, and none of the `--original` names is left undefined.
+`ci/faulty` holds the two defects it refuses (a symbol named by an assembler label, which a header of macros cannot rename, and a call by such a label).
+
 Example: `third_party/aws-lc` (aws-lc 1.39.0, libcrypto only, linux x86_64): `crypto[static-pic]`, prefix
 `buildrules_awslc_`, gated by `crypto_symbols`, `selfcheck_runs` (known-answer tests through the public API) and
 `selfcheck_floor`.

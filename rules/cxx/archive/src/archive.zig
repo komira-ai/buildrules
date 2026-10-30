@@ -1,13 +1,15 @@
 //! archive_check: the validation of a native static library (`native_archive`, rules/cxx/native.bzl).
 //!
-//!   archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>] [--runtime c++] [--members any]
+//!   archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>]
+//!       [--prefix <p> [--min-prefixed <n>] [--original <names.txt>]...]
+//!       [--runtime c++]
 //!
 //! A static library a Mojo package ships is linked into other people's programs, so it is held to what a library must be:
 //!
 //!  - an archive of 64-bit little-endian ELF relocatable objects, or of 64-bit little-endian Mach-O relocatable objects (a library built for macOS arm64:
 //!    BSD-style member names, `__.SYMDEF` as the symbol table), nothing else and not both;
-//!  - deterministic: every member header has time, owner and group 0, and the members are in the order of their names (with `--members any` they may be in any order: a library whose
-//!    sources are a `select()` of lists has them in the order the target lists them, which is fixed for a target but not sorted by name);
+//!  - deterministic: every member header has time, owner and group 0, and the members are in the order of their names (with `--members any` they may be in any order: a library
+//!    whose sources are a `select()` of lists has them in the order the target lists them, which is fixed for a target but not sorted by name);
 //!  - hermetic: no object has a `.debug_*` section (a Mach-O object: a `__DWARF` section or a debug-map symbol) and no byte of the archive holds the absolute path of the directory it was built in
 //!    (`hermetic.zig`, the check of the C++ rules, applied to each member);
 //!  - at the glibc floor: no object needs a glibc symbol version newer than `--max-glibc` (`floor.zig`, applied to each member). A relocatable
@@ -17,11 +19,15 @@
 //!    removed), or is named by an `--allow`. A weak undefined symbol resolves to zero and is not a defect.
 //!    Whatever else is undefined is named: it is a symbol the final link will not find.
 //!
-//! With `--runtime c++`, the library is C++ (`native_static` sets it when a source is C++): the symbols the C++ runtime (libc++, libc++abi, the unwinder) defines
-//! may stay undefined as well (`cxxRuntime`), because the final link of a program that links a C++ native adds the runtime once (rules/mojo/unit.bzl, `link_tail`).
-//!
 //! Writes a validation result (`{"version":1,"data":{"status",...}}`) and exits 0 when every rule holds; exits 1 after writing "failure" when
 //! one does not, and prints every finding. With `--symbols`, writes the sorted defined global symbols, one per line.
+//!
+//! With `--prefix`, the library is a renamed one (rules/cxx/prefix, `native_static(prefix = ...)`): every defined global symbol must start with the prefix, at least
+//! `--min-prefixed` of them must (a library the renaming missed is not empty by accident), and no undefined symbol may be one of the names in the `--original`
+//! files (the library's own names before the renaming, one per line): a reference the renaming missed would resolve to another copy of the library at the final link.
+//!
+//! With `--runtime c++`, the library is C++ and the final link brings the C++ runtime: the undefined names of libc++, libc++abi and the unwinder (`cxxRuntime`: `_ZNSt*`, `_Znw*`, `__cxa_*`,
+//! `_Unwind_*`, `__dso_handle`, ...) are not findings. Any other undefined name still is.
 //!
 //! Allocation: the lists are built with `Acc` and `Set`, which note a failed allocation in one flag instead of returning it from each of the
 //! many places that add to them; the function that owns the flag returns `OutOfMemory` once, at its end. What they return stays with the
@@ -365,33 +371,37 @@ fn lessThan(_: void, x: []const u8, y: []const u8) bool {
     return std.mem.lessThan(u8, x, y);
 }
 
-/// Whether `name` (an ELF symbol, or a Mach-O one with its leading underscore removed) is one the C++ runtime defines: the Itanium names of the standard library
-/// (`std::` and libc++'s `std::__1`, with its virtual tables and type information), of `operator new` and `operator delete`, of the C++ ABI (`__cxa_*`,
-/// `__cxxabiv1`, `__dynamic_cast`, the personality routine, `__dso_handle`) and the unwinder (`_Unwind_*`).
-pub fn cxxRuntime(name: []const u8) bool {
-    const prefixes = [_][]const u8{
-        "_ZNSt", "_ZNKSt", "_ZSt", "_ZTVSt", "_ZTISt", "_ZTSSt", "_ZGVNSt", "_ZNSt3__1", "_ZTVN10__cxxabiv", "_ZTIN10__cxxabiv", "_ZTSN10__cxxabiv",
-        "_Znw",  "_Zna",   "_Zdl", "_Zda",  "__cxa_", "__gxx_", "__dynamic_cast", "_Unwind_",
-        // The handle a static object's destructor is registered with (`__cxa_atexit(d, o, &__dso_handle)`): the start-up object of the link defines it.
-        "__dso_handle",
-    };
-    for (prefixes) |p| if (std.mem.startsWith(u8, name, p)) return true;
-    return false;
-}
-
 pub const Options = struct {
     /// The members may be in any order (`--members any`); by default they are in the order of their names.
     any_order: bool = false,
-    /// The library is C++: what the C++ runtime defines may stay undefined (`cxxRuntime`).
-    cxx: bool = false,
     /// The archives of the libraries this one needs (`needs`): what they define may be left undefined here.
     needs: []const []const u8 = &.{},
     /// Symbols the author names as provided by something the check cannot see.
     allow: []const []const u8 = &.{},
     max_glibc: []const u8 = "2.34",
+    /// The library is C++ (`--runtime c++`): the names of the C++ runtime (libc++, libc++abi, the unwinder) may stay undefined, the final link brings the runtime.
+    runtime_cxx: bool = false,
     /// The absolute path of the directory the archive was built in ("" skips the test: a unit test has none).
     dir: []const u8 = "",
+    /// A renamed library (`--prefix`): every defined global symbol starts with this ("" skips the rule and the two below).
+    prefix: []const u8 = "",
+    /// At least this many defined symbols start with `prefix`.
+    min_prefixed: usize = 0,
+    /// The names the renaming replaced: none of them may be left undefined.
+    original: []const []const u8 = &.{},
 };
+
+/// The prefixes of the names the C++ runtime defines (Itanium ABI: libc++'s `std`, `operator new` and `delete`, the vtables and type information of the ABI's own classes,
+/// `__cxa_*`, the unwinder) and the names the link's start-up object defines. A prefix match, so it allows more than the runtime has: the link is the real check.
+const cxx_runtime_prefixes = [_][]const u8{ "_ZNSt", "_ZNKSt", "_ZSt", "_ZTVSt", "_ZTISt", "_ZTSSt", "_ZTVN10__cxxabiv", "_ZTIN10__cxxabiv", "_ZTSN10__cxxabiv", "_Znw", "_Zna", "_Zdl", "_Zda", "__cxa_", "__gxx_", "__dynamic_cast", "_Unwind_", "__dso_handle" };
+
+/// Whether `name` (the C name: a Mach-O symbol's leading underscore removed) belongs to the C++ runtime.
+pub fn cxxRuntime(name: []const u8) bool {
+    for (cxx_runtime_prefixes) |p| {
+        if (std.mem.startsWith(u8, name, p)) return true;
+    }
+    return false;
+}
 
 pub const Report = struct {
     findings: []const []const u8,
@@ -497,13 +507,13 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     }
     var seen = Set.init(a, &oom);
     for (undef.items.items) |u| {
-        if (!(defined.m.contains(u) or known.m.contains(u) or seen.m.contains(u) or (o.cxx and cxxRuntime(u)))) {
+        if (!(defined.m.contains(u) or known.m.contains(u) or seen.m.contains(u) or (o.runtime_cxx and cxxRuntime(u)))) {
             seen.add(u);
             say(&f, "{s}: undefined symbol: {s} (not defined by this library, a `needs` library, the C library at the floor or the compiler runtime)", .{ name, u });
         }
     }
     for (undef_macho.items.items) |u| {
-        if (!(defined.m.contains(u) or known_macho.m.contains(u) or seen.m.contains(u) or (o.cxx and cxxRuntime(u)))) {
+        if (!(defined.m.contains(u) or known_macho.m.contains(u) or seen.m.contains(u) or (o.runtime_cxx and cxxRuntime(u)))) {
             seen.add(u);
             say(&f, "{s}: undefined symbol: {s} (not defined by this library, a `needs` library, libSystem or the compiler runtime)", .{ name, u });
         }
@@ -513,7 +523,45 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     var it = defined.m.keyIterator();
     while (it.next()) |k| all.push(k.*);
     std.mem.sort([]const u8, all.items.items, {}, lessThan);
+    if (o.prefix.len != 0) prefixFindings(a, &f, &oom, name, o, all.items.items, &.{ undef.items.items, undef_macho.items.items });
     return report(oom, f.items.items, all.items.items);
+}
+
+/// The most names one finding lists.
+const listed = 20;
+
+/// The findings of a renamed library (`Options.prefix`): defined symbols without the prefix, too few with it, and undefined references to a name the renaming replaced.
+/// `defined` is sorted; `undefs` are the undefined symbols of each object format.
+fn prefixFindings(a: std.mem.Allocator, f: *Acc([]const u8), oom: *bool, name: []const u8, o: Options, defined: []const []const u8, undefs: []const []const []const u8) void {
+    var bare = Acc(u8){ .a = a, .oom = oom };
+    var n_bare: usize = 0;
+    var n_prefixed: usize = 0;
+    for (defined) |d| {
+        if (std.mem.startsWith(u8, d, o.prefix)) {
+            n_prefixed += 1;
+            continue;
+        }
+        if (n_bare < listed) {
+            bare.push(' ');
+            bare.pushAll(d);
+        }
+        n_bare += 1;
+    }
+    if (n_bare != 0)
+        say(f, "{s}: {d} defined symbol(s) without the prefix {s}:{s}{s}", .{ name, n_bare, o.prefix, bare.items.items, if (n_bare > listed) " ..." else "" });
+    if (n_prefixed < o.min_prefixed)
+        say(f, "{s}: only {d} defined symbol(s) start with the prefix {s} (at least {d} expected): the renaming did not reach the library", .{ name, n_prefixed, o.prefix, o.min_prefixed });
+    var original = Set.init(a, oom);
+    for (o.original) |n| original.add(n);
+    var seen = Set.init(a, oom);
+    for (undefs) |list| {
+        for (list) |u| {
+            if (original.m.contains(u) and !seen.m.contains(u)) {
+                seen.add(u);
+                say(f, "{s}: undefined reference to {s}, a name the prefix header renames: the renaming missed it, and the final link would resolve it to another copy of the library", .{ name, u });
+            }
+        }
+    }
 }
 
 /// The JSON a validation result is: only the first finding is the message.
@@ -541,18 +589,22 @@ pub const Cli = struct {
     allow: []const []const u8,
     symbols: ?[]const u8,
     max_glibc: []const u8,
-    cxx: bool,
+    prefix: []const u8,
+    min_prefixed: usize,
+    original: []const []const u8,
+    runtime_cxx: bool,
     any_order: bool,
 };
 
-pub const usage = "usage: archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>] [--runtime c++] [--members any]";
+pub const usage = "usage: archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>] [--prefix <p> [--min-prefixed <n>] [--original <names.txt>]...] [--runtime c++] [--members any]";
 
 pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocator.Error!?Cli {
     if (args.len < 2) return null;
     var oom = false;
     var needs = Acc([]const u8){ .a = a, .oom = &oom };
     var allow = Acc([]const u8){ .a = a, .oom = &oom };
-    var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34", .cxx = false, .any_order = false };
+    var original = Acc([]const u8){ .a = a, .oom = &oom };
+    var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34", .prefix = "", .min_prefixed = 0, .original = &.{}, .runtime_cxx = false, .any_order = false };
     var i: usize = 2;
     while (i < args.len) : (i += 2) {
         if (i + 1 >= args.len) return null;
@@ -571,12 +623,22 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocat
             c.any_order = true;
         } else if (std.mem.eql(u8, flag, "--runtime")) {
             if (!std.mem.eql(u8, val, "c++")) return null;
-            c.cxx = true;
+            c.runtime_cxx = true;
+        } else if (std.mem.eql(u8, flag, "--prefix")) {
+            if (val.len == 0) return null;
+            c.prefix = val;
+        } else if (std.mem.eql(u8, flag, "--min-prefixed")) {
+            c.min_prefixed = std.fmt.parseUnsigned(usize, val, 10) catch return null;
+        } else if (std.mem.eql(u8, flag, "--original")) {
+            original.push(val);
         } else return null;
     }
     if (oom) return error.OutOfMemory;
     c.needs = needs.items.items;
     c.allow = allow.items.items;
+    c.original = original.items.items;
+    // The two options of a renamed library mean nothing without the prefix.
+    if (c.prefix.len == 0 and (c.min_prefixed != 0 or c.original.len != 0)) return null;
     return c;
 }
 
@@ -616,8 +678,18 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, dir: []const u8, args: []const
         const nb = cwd.readFileAlloc(a, n, 1 << 30) catch |e| return unreadable(a, err, n, e);
         needs.push(nb);
     }
+    // The names the renaming replaced: the lines of each file.
+    var original = Acc([]const u8){ .a = a, .oom = &oom };
+    for (c.original) |p| {
+        const text = cwd.readFileAlloc(a, p, 1 << 28) catch |e| return unreadable(a, err, p, e);
+        var ls = std.mem.splitScalar(u8, text, '\n');
+        while (ls.next()) |l| {
+            const n = std.mem.trim(u8, l, " \r");
+            if (n.len != 0) original.push(n);
+        }
+    }
     const name = std.fs.path.basename(c.archive);
-    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir, .cxx = c.cxx, .any_order = c.any_order });
+    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir, .prefix = c.prefix, .min_prefixed = c.min_prefixed, .original = original.items.items, .runtime_cxx = c.runtime_cxx, .any_order = c.any_order });
     var out = Acc(u8){ .a = a, .oom = &oom };
     for (rep.defined) |s| {
         out.pushAll(s);
