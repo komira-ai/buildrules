@@ -35,6 +35,7 @@
 const std = @import("std");
 const hermetic = @import("cxx_hermetic");
 const floor = @import("cxx_floor");
+const builtins = @import("cxx_builtins");
 
 pub const floor_symbols = @embedFile("floor_symbols.txt");
 pub const floor_symbols_macos = @embedFile("floor_symbols_macos.txt");
@@ -153,9 +154,9 @@ pub fn members(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.
             body = data[n..];
         }
         if (bsd_name) |bn| {
-            if (!std.mem.startsWith(u8, bn, "__.SYMDEF"))
+            if (!isSymdef(bn))
                 out.push(.{ .name = bn, .data = body, .time = trim(h[16..28]), .owner = trim(h[28..34]), .group = trim(h[34..40]) });
-        } else if (std.mem.startsWith(u8, raw, "__.SYMDEF")) {
+        } else if (isSymdef(raw)) {
             // A BSD symbol table whose name fits the field is written without `#1/N`.
         } else if (std.mem.eql(u8, raw, "//")) {
             long = data;
@@ -181,6 +182,8 @@ pub const Syms = struct {
     defined: []const []const u8,
     /// Undefined global symbols (a weak undefined one is not listed: it resolves to zero).
     undef: []const []const u8,
+    /// Weak undefined symbols: not a defect by themselves (they resolve to zero), but a reference to a name a renaming replaced.
+    weak_undef: []const []const u8 = &.{},
 };
 
 /// The global symbols of one relocatable ELF64 little-endian object, from its `.symtab`.
@@ -193,6 +196,7 @@ pub fn symbols(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.
     const shnum: usize = get(u16, b, 0x3C);
     var oom = false;
     var def = Acc([]const u8){ .a = a, .oom = &oom };
+    var weak = Acc([]const u8){ .a = a, .oom = &oom };
     var und = Acc([]const u8){ .a = a, .oom = &oom };
     var i: usize = 0;
     while (i < shnum) : (i += 1) {
@@ -223,13 +227,15 @@ pub fn symbols(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.
                         def.push(name);
                     } else if (name.len != 0 and bind != 2) {
                         und.push(name);
+                    } else if (name.len != 0) {
+                        weak.push(name);
                     }
                 }
             }
         }
     }
     if (oom) return error.OutOfMemory;
-    return .{ .defined = def.items.items, .undef = und.items.items };
+    return .{ .defined = def.items.items, .undef = und.items.items, .weak_undef = weak.items.items };
 }
 
 const macho_magic: u32 = 0xfeedfacf;
@@ -321,6 +327,7 @@ const SymScan = struct {
     b: []const u8,
     def: *Acc([]const u8),
     und: *Acc([]const u8),
+    weak: *Acc([]const u8),
 
     fn visit(self: SymScan, cmd: u32, at: usize, size: u32) Error!void {
         if (cmd != LC_SYMTAB) return;
@@ -344,8 +351,10 @@ const SymScan = struct {
             // N_UNDF with a value is a common symbol: a definition. N_ABS, N_SECT and N_INDR define the name.
             if (kind != 0 or value != 0) {
                 self.def.push(name);
-            } else if (desc & 0x40 == 0) { // N_WEAK_REF: resolves to zero, not a defect
+            } else if (desc & 0x40 == 0) {
                 self.und.push(name);
+            } else {
+                self.weak.push(name); // N_WEAK_REF: resolves to zero, not a defect by itself
             }
         }
     }
@@ -356,9 +365,10 @@ pub fn machoSymbols(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Alloc
     var oom = false;
     var def = Acc([]const u8){ .a = a, .oom = &oom };
     var und = Acc([]const u8){ .a = a, .oom = &oom };
-    try machoCommands(b, SymScan{ .b = b, .def = &def, .und = &und }, SymScan.visit);
+    var weak = Acc([]const u8){ .a = a, .oom = &oom };
+    try machoCommands(b, SymScan{ .b = b, .def = &def, .und = &und, .weak = &weak }, SymScan.visit);
     if (oom) return error.OutOfMemory;
-    return .{ .defined = def.items.items, .undef = und.items.items };
+    return .{ .defined = def.items.items, .undef = und.items.items, .weak_undef = weak.items.items };
 }
 
 /// The symbols of one object of either format.
@@ -426,6 +436,7 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     var defined = Set.init(a, &oom);
     var undef = Acc([]const u8){ .a = a, .oom = &oom };
     var undef_macho = Acc([]const u8){ .a = a, .oom = &oom };
+    var weak = Acc([]const u8){ .a = a, .oom = &oom };
     // The object format of the library is the one of its first object: a member of the other is a finding.
     var macho_lib: ?bool = null;
     var prev: []const u8 = "";
@@ -447,6 +458,7 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
             if (machoSymbols(a, m.data)) |s| {
                 for (s.defined) |d| defined.add(d);
                 for (s.undef) |u| undef_macho.push(u);
+                for (s.weak_undef) |u| weak.push(u);
             } else |e| {
                 blame(&f, e, "{s}: member {s} is not a relocatable Mach-O object: {s}", .{ name, m.name, @errorName(e) });
             }
@@ -462,6 +474,7 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
             if (symbols(a, m.data)) |s| {
                 for (s.defined) |d| defined.add(d);
                 for (s.undef) |u| undef.push(u);
+                for (s.weak_undef) |u| weak.push(u);
             } else |e| {
                 blame(&f, e, "{s}: member {s} is not a relocatable object: {s}", .{ name, m.name, @errorName(e) });
             }
@@ -520,18 +533,14 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     var it = defined.m.keyIterator();
     while (it.next()) |k| all.push(k.*);
     std.mem.sort([]const u8, all.items.items, {}, lessThan);
-    if (o.prefix.len != 0) prefixFindings(a, &f, &oom, name, o, all.items.items, &.{ undef.items.items, undef_macho.items.items });
+    if (o.prefix.len != 0) prefixFindings(a, &f, &oom, name, o, all.items.items, &.{ undef.items.items, undef_macho.items.items, weak.items.items });
     return report(oom, f.items.items, all.items.items);
 }
 
-/// The integer builtins of the compiler runtime (compiler-rt, 128-bit arithmetic) a library may define itself so that the link does not need the runtime: the compiler calls
-/// them by these names, a header of macros cannot rename them, and `prefix_tool` leaves them out of the header too. They do not count against a prefix.
-const compiler_builtins = [_][]const u8{ "__divti3", "__modti3", "__udivti3", "__umodti3", "__multi3", "__udivmodti4", "__ashlti3", "__ashrti3", "__lshrti3" };
-
-/// Whether `name` is one of `compiler_builtins`.
-pub fn compilerBuiltin(name: []const u8) bool {
-    for (compiler_builtins) |b| {
-        if (std.mem.eql(u8, name, b)) return true;
+/// Whether `name` is the name of a BSD symbol table member (not a member of the library): exactly one of the four the toolchains write.
+fn isSymdef(name: []const u8) bool {
+    for ([_][]const u8{ "__.SYMDEF", "__.SYMDEF SORTED", "__.SYMDEF_64", "__.SYMDEF_64 SORTED" }) |t| {
+        if (std.mem.eql(u8, name, t)) return true;
     }
     return false;
 }
@@ -546,7 +555,7 @@ fn prefixFindings(a: std.mem.Allocator, f: *Acc([]const u8), oom: *bool, name: [
     var n_bare: usize = 0;
     var n_prefixed: usize = 0;
     for (defined) |d| {
-        if (compilerBuiltin(d)) continue;
+        if (builtins.isBuiltin(d)) continue;
         if (std.mem.startsWith(u8, d, o.prefix)) {
             n_prefixed += 1;
             continue;

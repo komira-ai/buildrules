@@ -786,7 +786,8 @@ test "prefix: the compiler's 128-bit builtins a library defines itself do not co
     try t.expect(hasFinding(try A.check(a, "libx.a", b, .{ .prefix = "k_", .min_prefixed = 2 }), "only 1 defined symbol(s)"));
     const near = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "__umodti4", .kind = .def } }, &.{});
     try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = near }}), .{ .prefix = "k_" }), "without the prefix k_: __umodti4"));
-    try t.expect(A.compilerBuiltin("__umodti3") and !A.compilerBuiltin("__umodti4") and !A.compilerBuiltin("memcpy"));
+    const builtins = @import("cxx_builtins");
+    try t.expect(builtins.isBuiltin("__umodti3") and !builtins.isBuiltin("__umodti4") and !builtins.isBuiltin("memcpy"));
 }
 
 test "the C library list at the floor holds the names aws-lc needs, and the macOS list the one it calls" {
