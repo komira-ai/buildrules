@@ -3,6 +3,7 @@
     ws/                    app -> util -> base: three workspace members, each a package of its own (mopm.toml, mopm.lock, BUCK)
       util/base/           the leaf; util/ imports it; ws/ (app) imports util and the registry package cnative
     registry/cnative/      the publisher's side of cnative: a Mojo package over a C library
+    registry/conda_bins/   a package with `[targets] bins` (mopm 0.0.86): its `:conda` is `mopm pack`, which reads the program's source, so `mojo_conda` stages it (`bins`, rules/mojo/pack.bzl) from the unit graph
     registry/probe_sys/    the publisher's side of probe_sys: a `-sys` package (an empty Mojo module over a static C library) that needs base_sys's
       base_sys/            the other `-sys` package, a workspace member of probe_sys
     sys_app/               imports probe_sys from the registry stand-in: both static archives come out of the `.conda` files, with no `natives` in its BUCK file; its test takes both arms of a decision in the library, so the package has branch records of its own through the native link and a `coverage_floor.txt` of `lines 100.00` and `branches 100.00`
