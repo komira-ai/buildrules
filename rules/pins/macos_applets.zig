@@ -9,7 +9,8 @@
 //!
 //! An applet is resolved in /bin and /usr/bin only, which on macOS belong to the operating system (the sealed system volume), never to a developer tool
 //! installation, and only if it is in the fixed list `applets`. Anything else is refused (exit 127), so a script cannot reach a tool the platform does not
-//! declare. It is built by the pinned zig (`zig_bootstrap_exe`, no shell), so nothing here needs the thing it replaces.
+//! declare by name. This is dispatch control, not a sandbox: sh, env, find, awk and sed can themselves start any program by path, so the list names what a rule
+//! asks for, it does not confine what a script can run. It is built by the pinned zig (`zig_bootstrap_exe`, no shell), so nothing here needs the thing it replaces.
 //!
 //! Exit status: the applet's (it replaces this process); 127 for an applet outside the list or missing from /bin and /usr/bin; 2 for a usage error or a failure
 //! to link.

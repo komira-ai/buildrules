@@ -160,8 +160,8 @@ test "copy: a source that is missing or is a directory is status 1, and nothing 
     try kit.expectResult(try c.run(&.{ "copy", "nope", "dst" }), 1, "", "check copy: cannot copy nope to dst: FileNotFound\n");
     try t.expectEqualStrings("keep me", try c.read("dst"));
     try c.tmp.dir.makePath("d");
-    // A directory as the source is refused by the kernel's read on Linux. macOS's copyfile accepts it and reports success, which no gate relies on (they copy
-    // files), so the case is held where the refusal exists.
+    // A directory as the source is refused by the kernel's read on Linux. macOS's copyfile accepts it and reports success; the case is held where the refusal is
+    // asserted, and the macOS behaviour is not asserted here.
     if (@import("builtin").os.tag == .linux) {
         try kit.expectFailure(try c.run(&.{ "copy", "d", "dst" }), 1, "check copy: cannot copy d to dst: ");
         try t.expectEqualStrings("keep me", try c.read("dst"));
