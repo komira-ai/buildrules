@@ -40,6 +40,7 @@ What each argument is, and what may differ per platform:
                        names the assembly of a Mach-O library carries `#define _name _p_name`), and it is built again with the header included. `min` is the least number of
                        symbols it defines. The compiler-rt builtins the library defines (`__umodti3` and its kin, an exact list in archive_check) are not renamed and are not held to the prefix; `allow` names symbols that may stay UNDEFINED, never one that may lack the prefix.
     validate           False makes the archive check an output of the target and not a validation: for tests that need the failure to be one failed action (ci/faulty). Leave it True.
+    target_compatible_with   as for any target, on every target the macro makes.
     allow              symbols the archive check may find undefined (something it cannot see provides them).
 
 `srcs`, `hdrs`, `exported_headers`, `includes`, `exported_includes`, `cflags`, `cxxflags` and `asm_flags` may each be a `select()` (or a list plus one) on the target platform's OS and CPU:

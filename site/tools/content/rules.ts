@@ -306,6 +306,7 @@ export const cxx: Page = {
       ['`allow`', 'symbols the archive check may find undefined'],
       ['`validate`', 'test-only: `False` makes the archive check an output of the target and not a validation, so a test can count the failed action (`ci/faulty`); leave it `True`'],
       ['`file_prefix`', 'the directory mapped to `.` in every path the compiler records; the default is the package'],
+      ['`target_compatible_with`', 'as for any target; the platforms the library and its checks exist on (the fixtures of `ci/negative` use it)'],
       ['`visibility`', 'as for any target'],
     ),
     p('`srcs`, `hdrs`, `exported_headers`, `includes`, `exported_includes`, `cflags`, `cxxflags` and `asm_flags` may each be a `select()` on the target platform\'s OS and CPU: `buildrules//platforms:linux`, `:macos`, `:x86_64` and `:aarch64` are separate constraint values, and `:is_linux_x86_64`, `:is_macos_aarch64` select a pair. Every arm is checked when the package is loaded.'),
