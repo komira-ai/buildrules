@@ -57,6 +57,10 @@ const Fake = struct {
     index_entry: ?[]const u8 = null,
     commit_msg: ?[]const u8 = null,
     committed: ?[]const u8 = null,
+    /// The .buckconfig the clone leaves in the work directory (null: none), the one the pushed branch holds, and what `git add` was given.
+    buckconfig: ?[]const u8 = null,
+    branch_buckconfig: []const u8 = "",
+    added: std.ArrayList([]const u8) = .empty,
 
     fn runner(f: *Fake) bump.Runner {
         return .{ .ctx = f, .run_fn = runFn };
@@ -111,6 +115,7 @@ const Fake = struct {
                 }
                 return bad("Not Found (HTTP 404)");
             }
+            if (std.mem.startsWith(u8, path, "repos/" ++ internal ++ "/contents/.buckconfig")) return good(try f.pf("{s}\n", .{f.branch_buckconfig}));
             if (std.mem.startsWith(u8, path, "repos/" ++ internal ++ "/contents/")) return good(try f.pf("{s}\n", .{f.branch_gitlink}));
             return error.UnexpectedApiCall;
         }
@@ -192,9 +197,17 @@ const Fake = struct {
         }));
         if (std.mem.eql(u8, verb, "clone")) {
             if (f.clone_fail) return bad("could not read from the remote repository");
+            if (f.buckconfig) |text| {
+                const file = try std.fs.path.join(f.a, &.{ argv[argv.len - 1], ".buckconfig" });
+                try std.fs.cwd().writeFile(.{ .sub_path = file, .data = text });
+            }
             return good("");
         }
         if (std.mem.eql(u8, verb, "ls-tree")) return good(f.committed orelse f.ls_tree);
+        if (std.mem.eql(u8, verb, "add")) {
+            try f.added.append(f.a, try std.mem.join(f.a, " ", args));
+            return good("");
+        }
         if (std.mem.eql(u8, verb, "update-index")) {
             f.index_entry = args[1];
             return good("");
@@ -204,7 +217,7 @@ const Fake = struct {
             if (f.index_entry) |e| {
                 const path = e[std.mem.lastIndexOfScalar(u8, e, ',').? + 1 ..];
                 const zeros = "0" ** 40;
-                return good(try f.pf(":160000 160000 {s} {s} M\x00{s}\x00", .{ zeros, zeros, path }));
+                return good(try f.pf("{s}:160000 160000 {s} {s} M\x00{s}\x00", .{ if (f.added.items.len > 0) ":100644 100644 x y M\x00.buckconfig\x00" else "", zeros, zeros, path }));
             }
             return good("");
         }
@@ -679,4 +692,140 @@ test "bump-internal: the names the step accepts" {
 test "bump-internal: the identity is the release bot's login and the noreply address of its user id" {
     try t.expectEqualStrings(bot, bump.bot_name);
     try t.expectEqualStrings(bot_mail, bump.bot_email);
+}
+
+// ---- a submodule that the internal repository mounts as an external cell: .buckconfig's commit_hash moves with the gitlink ----
+
+/// The internal repository's .buckconfig: the section `[external_cell_<submodule>]` holds the second pin; another cell's commit_hash and a
+/// comment that mentions the key stand next to it and must stay as they are.
+fn cfgWith(comptime pin: []const u8) []const u8 {
+    return "[cells]\n  rules = rules-ext\n\n[external_cell_other]\n  commit_hash = " ++ other ++ "\n\n[external_cell_rules]\n  git_origin = https://example.test/rules.git\n" ++
+        "  # the pin: commit_hash = " ++ old ++ "\n  commit_hash = " ++ pin ++ "\n\n[buildfile]\n  name = BUCK\n";
+}
+
+fn workText(a: Allocator, w: *World, name: []const u8) ![]const u8 {
+    const file = try std.fs.path.join(a, &.{ w.o.workdir, name });
+    return std.fs.cwd().readFileAlloc(a, file, 1 << 20);
+}
+
+test "bump-internal: a submodule with an external cell has the commit_hash line set to the commit in the same commit as the gitlink" {
+    var arena = arenaOf();
+    defer arena.deinit();
+    const a = arena.allocator();
+    const w = try World.init(a);
+    defer w.deinit();
+    const f = &w.fake;
+    f.buckconfig = cfgWith(old);
+    const r = w.go();
+    try check(r.ok and has(r.text, "opened " ++ pr_head ++ "100 with auto-merge"), "pin: ok, and the pull request is opened");
+    try check(std.mem.eql(u8, try workText(a, w, ".buckconfig"), cfgWith(sha)), "pin: exactly the commit_hash line of [external_cell_rules] is the new commit; the other cell's key, the comment and every other line are as they were");
+    try check(f.added.items.len == 1 and std.mem.eql(u8, f.added.items[0], "-- .buckconfig"), "pin: .buckconfig is staged by path, once");
+    try check(Fake.countPrefix(f.git_log.items, "-C ") > 0 and Fake.countHas(f.git_log.items, "add -- .buckconfig") == 1 and Fake.countHas(f.git_log.items, "add -A") == 0 and Fake.countHas(f.git_log.items, "commit -a") == 0, "pin: no add -A, no commit -a");
+    try check(f.pushed.items.len == 1 and f.created() == 1 and std.mem.eql(u8, f.index_entry.?, "160000," ++ sha ++ "," ++ submodule), "pin: the gitlink is moved in the same commit, pushed once");
+}
+
+test "bump-internal: no .buckconfig, or no cell section for the submodule, leaves the bump a gitlink alone" {
+    var arena = arenaOf();
+    defer arena.deinit();
+    const a = arena.allocator();
+    {
+        const w = try World.init(a);
+        defer w.deinit();
+        const r = w.go();
+        try check(r.ok and w.fake.added.items.len == 0 and w.fake.created() == 1, "no .buckconfig in the clone: a gitlink alone");
+    }
+    {
+        const w = try World.init(a);
+        defer w.deinit();
+        const text = "[cells]\n  rules = rules-ext\n\n[external_cell_other]\n  commit_hash = " ++ other ++ "\n";
+        w.fake.buckconfig = text;
+        const r = w.go();
+        try check(r.ok and w.fake.added.items.len == 0 and w.fake.created() == 1 and std.mem.eql(u8, try workText(a, w, ".buckconfig"), text), "another cell's commit_hash is not touched and not staged");
+    }
+}
+
+test "bump-internal: a cell section with no commit_hash, or two, is refused before the commit" {
+    var arena = arenaOf();
+    defer arena.deinit();
+    const a = arena.allocator();
+    const bad = [_]struct { text: []const u8, why: []const u8 }{
+        .{ .text = "[external_cell_rules]\n  git_origin = https://example.test/rules.git\n", .why = "no commit_hash" },
+        .{ .text = "[external_cell_rules]\n  commit_hash = " ++ old ++ "\n  commit_hash = " ++ other ++ "\n", .why = "two commit_hash lines" },
+        .{ .text = "[external_cell_rules]\n  commit_hash = v1.2.3\n", .why = "a commit_hash that is not a commit id" },
+    };
+    for (bad) |c| {
+        const w = try World.init(a);
+        defer w.deinit();
+        w.fake.buckconfig = c.text;
+        const r = w.go();
+        try check(!r.ok and has(r.text, "commit_hash") and w.fake.commit_msg == null and w.fake.added.items.len == 0 and w.fake.untouched(), c.why);
+    }
+}
+
+test "bump-internal: a gitlink already at the commit with another commit_hash is refused, with both it is nothing to do" {
+    var arena = arenaOf();
+    defer arena.deinit();
+    const a = arena.allocator();
+    {
+        const w = try World.init(a);
+        defer w.deinit();
+        w.fake.ls_tree = "160000 commit " ++ sha ++ "\trules\n";
+        w.fake.buckconfig = cfgWith(old);
+        const r = w.go();
+        try check(!r.ok and has(r.text, "commit_hash") and has(r.text, old) and w.fake.commit_msg == null and w.fake.untouched(), "the gitlink moved alone earlier: refused, a person fixes the two pins");
+    }
+    {
+        const w = try World.init(a);
+        defer w.deinit();
+        w.fake.ls_tree = "160000 commit " ++ sha ++ "\trules\n";
+        w.fake.buckconfig = cfgWith(sha);
+        const r = w.go();
+        try check(r.ok and has(r.text, "is already at") and w.fake.commit_msg == null and w.fake.untouched(), "both pins already at the commit: nothing to open");
+    }
+}
+
+test "bump-internal: with a commit_hash to move, the staged change must be exactly .buckconfig and the gitlink" {
+    var arena = arenaOf();
+    defer arena.deinit();
+    const a = arena.allocator();
+    const bad = [_]struct { diff: []const u8, why: []const u8 }{
+        .{ .diff = ":160000 160000 x y M\x00rules\x00", .why = "the gitlink alone" },
+        .{ .diff = ":100644 100644 x y M\x00.buckconfig\x00", .why = ".buckconfig alone" },
+        .{ .diff = ":100644 100644 x y M\x00.buckconfig\x00:100644 100644 x y M\x00README.md\x00:160000 160000 x y M\x00rules\x00", .why = "a third path" },
+        .{ .diff = ":100644 100755 x y M\x00.buckconfig\x00:160000 160000 x y M\x00rules\x00", .why = ".buckconfig made executable" },
+        .{ .diff = ":100644 100644 x y M\x00.buckconfig\x00:100644 100644 x y M\x00.gitmodules\x00", .why = ".gitmodules instead of the gitlink" },
+        .{ .diff = ":100644 100644 x y M\x00.buckconfig\x00:160000 160000 x y M\x00other\x00", .why = "another submodule's gitlink" },
+    };
+    for (bad) |c| {
+        const w = try World.init(a);
+        defer w.deinit();
+        w.fake.buckconfig = cfgWith(old);
+        w.fake.git_diff = c.diff;
+        const r = w.go();
+        try check(!r.ok and has(r.text, "not exactly the gitlink of rules and .buckconfig") and w.fake.commit_msg == null and w.fake.untouched(), c.why);
+    }
+}
+
+test "bump-internal: a pushed branch is reused only when its gitlink and its commit_hash are both the commit" {
+    var arena = arenaOf();
+    defer arena.deinit();
+    const a = arena.allocator();
+    {
+        const w = try World.init(a);
+        defer w.deinit();
+        w.fake.existing_branch = branch;
+        w.fake.branch_gitlink = sha;
+        w.fake.branch_buckconfig = cfgWith(sha);
+        const r = w.go();
+        try check(r.ok and w.fake.clones() == 0 and w.fake.pushed.items.len == 0 and w.fake.created() == 1, "retry: both pins right: reused");
+    }
+    {
+        const w = try World.init(a);
+        defer w.deinit();
+        w.fake.existing_branch = branch;
+        w.fake.branch_gitlink = sha;
+        w.fake.branch_buckconfig = cfgWith(old);
+        const r = w.go();
+        try check(!r.ok and has(r.text, "commit_hash") and has(r.text, old) and w.fake.untouched() and w.fake.clones() == 0, "retry: the branch holds the gitlink but another commit_hash: refused, not reused");
+    }
 }
