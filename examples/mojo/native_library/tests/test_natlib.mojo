@@ -6,6 +6,9 @@ from natlib import (
     asm_add,
     asm_isa,
     asm_twice,
+    prefixed_asm_add,
+    prefixed_asm_isa,
+    prefixed_asm_twice,
     caught,
     compile_flags,
     compress_bound,
@@ -64,6 +67,12 @@ def test_asm_is_the_one_of_the_cpu() raises:
         assert_equal(asm_isa(), 1)
     else:
         assert_equal(asm_isa(), 2)
+
+
+def test_prefixed_asm_is_renamed_and_links_beside_the_unprefixed_one() raises:
+    assert_equal(prefixed_asm_add(20, 22), 49)
+    assert_equal(prefixed_asm_twice(10), 27)
+    assert_equal(prefixed_asm_isa(), asm_isa())
 
 
 def main() raises:

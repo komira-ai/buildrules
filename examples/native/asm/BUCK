@@ -3,15 +3,30 @@ load("@buildrules//rules/native:defs.bzl", "native_library")
 
 # Assembly chosen by the target platform's CPU, as `select()` on the separate constraint values of platforms/BUCK (`:x86_64`, `:aarch64`): the same C and the same header
 # for both, the x86-64 `.S` on x86_64 and the AArch64 `.S` on arm64 (Linux and Apple, which differ in the symbol's underscore only: native/asm_names.h). The `.S` files are
-# preprocessed and assembled by the pinned zig, with the flags of `asm_flags`.
+# preprocessed and assembled by the pinned zig, with the flags of `asm_flags`. `hdrs` is a dict: the header is included by the name `compat/asm_names.h`, a path the file does not
+# have in the package, as a header of an SDK is included as `<CommonCrypto/CommonRandom.h>`.
 native_library(
     name = "asm_add",
     srcs = ["native/asm_twice.c"] + select({
         "buildrules//platforms:aarch64": ["native/asm_add_aarch64.S"],
         "buildrules//platforms:x86_64": ["native/asm_add_x86_64.S"],
     }),
-    hdrs = ["native/asm_names.h"],
+    hdrs = {"compat/asm_names.h": "native/asm_names.h"},
     asm_flags = ["-DASM_BIAS=7"],
+)
+
+# The same library with every global symbol it defines renamed to start with `natlib_` (`prefix`): the library is built as it is, the names its archive defines are written as a
+# header (`#define asm_add natlib_asm_add`, and for a Mach-O library `#define _asm_add _natlib_asm_add` for the underscored names its assembly carries), and it is built again
+# with the header included. `archive_check` then holds that nothing it defines lacks the prefix and nothing refers to a replaced name, for the C and the assembly of either format.
+native_library(
+    name = "asm_prefixed",
+    srcs = ["native/asm_twice.c"] + select({
+        "buildrules//platforms:aarch64": ["native/asm_add_aarch64.S"],
+        "buildrules//platforms:x86_64": ["native/asm_add_x86_64.S"],
+    }),
+    hdrs = {"compat/asm_names.h": "native/asm_names.h"},
+    asm_flags = ["-DASM_BIAS=7"],
+    prefix = {"name": "natlib", "min": 3},
 )
 
 scrub_files()

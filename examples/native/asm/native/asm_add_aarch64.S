@@ -1,5 +1,5 @@
 /* asm_add(a, b) = a + b + ASM_BIAS, and asm_isa() = 2, in AArch64 assembly (AAPCS64; the Apple arm64 ABI differs from it only in the symbol's underscore). */
-#include "asm_names.h"
+#include "compat/asm_names.h"
 
     .text
     .globl SYM(asm_add)

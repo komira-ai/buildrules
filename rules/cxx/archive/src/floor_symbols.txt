@@ -73,6 +73,7 @@ atexit
 __cxa_atexit
 __cxa_finalize
 getenv
+getauxval
 secure_getenv
 setenv
 unsetenv
@@ -137,6 +138,7 @@ getchar
 fread
 fwrite
 fopen
+fopen64
 fclose
 fflush
 fseek
@@ -158,6 +160,7 @@ feof
 ferror
 clearerr
 sscanf
+__isoc99_sscanf
 fscanf
 scanf
 getline

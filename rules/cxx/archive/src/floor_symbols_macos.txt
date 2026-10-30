@@ -549,3 +549,4 @@ malloc_zone_free
 malloc_zone_malloc
 malloc_zone_realloc
 srandomdev
+CCRandomGenerateBytes

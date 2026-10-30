@@ -14,6 +14,7 @@ builds, in the calling package:
     :zlib_upstream_download<ext>, :zlib_upstream   the pinned download, and the files of `upstream.files` as one tree (an input of every compile)
     :zlib_cxx                                      the `cxx_library` of the sources
     :zlib_archive                                  its `native_archive`: `libzlib.a`, behind the checks of rules/cxx/archive
+    :zlib_unprefixed_cxx, :zlib_unprefixed, :zlib_prefix   only with `prefix`: the library as it is, and the renaming header made from its archive
     :zlib                                          the archive with `NativeLibraryInfo` (rules/cxx/providers.bzl)
 
 and the default output of `:zlib` is the one static archive `libzlib.a`.
@@ -23,7 +24,7 @@ What each argument is, and what may differ per platform:
     upstream           a pinned tarball: `url` (https), `sha256`, `size` (bytes), `strip` (the directory every file is below), `files` (the explicit list staged; nothing else is).
     srcs               sources: a file of `upstream.files` (a path in the tree) or a file of the package. `.c`, `.cc .cpp .cxx .c++` (C++) and `.S .s` (assembly, assembled
                        by the pinned zig).
-    hdrs               headers of the package the sources include (private).
+    hdrs               headers of the package the sources include (private): a list, or a dict `{"<include name>": "<file>"}` (a header of an SDK is included as `<CommonCrypto/CommonRandom.h>`).
     exported_headers   headers of the package a dependent includes: a list, or a dict `{"<include name>": "<file>"}`.
     includes           directories of the upstream tree given to this library's compiles as -I (`.` is the tree).
     exported_includes  directories of the upstream tree given to a dependent's compiles as -I, and to those of its dependents that re-export (`exported_deps`).
@@ -33,6 +34,11 @@ What each argument is, and what may differ per platform:
     cxx_runtime        optional statement of what the sources are: true when any source is C++ (a program that links the library then links the C++ runtime, once); a statement that
                        is not what the sources are is refused. The value is derived from the sources whether it is stated or not.
     soname             the archive's file name (default `lib<name>.a`).
+    prefix             `{"name": "p", "min": N}` (and `"strip"`): every global symbol the library defines is renamed to start with `p` (aws-lc's style `p_name`, or the strip style),
+                       C and assembly, ELF and Mach-O alike, and the archive check holds that nothing defined lacks the prefix and nothing refers to a replaced name. The library is
+                       built as it is (`:<name>_unprefixed`), the names its archive defines are written as a header (`:<name>_prefix`: `#define name p_name`, and for the underscored
+                       names the assembly of a Mach-O library carries `#define _name _p_name`), and it is built again with the header included. `min` is the least number of
+                       symbols it defines. A compiler builtin the library defines (`__umodti3`) is not renamed: name it in `allow`.
     allow              symbols the archive check may find undefined (something it cannot see provides them).
 
 `srcs`, `hdrs`, `exported_headers`, `includes`, `exported_includes`, `cflags`, `cxxflags` and `asm_flags` may each be a `select()` (or a list plus one) on the target platform's OS and CPU:
@@ -46,8 +52,9 @@ load("//rules:isa.bzl", "ISA_LEVELS", "isa_select")
 load("//rules/core:pinned_file.bzl", "pinned_file")
 load("//rules/core:platform.bzl", "LINUX_X86_64", "by_os_cpu")
 load("//rules/cxx:archive.bzl", "archive_files")
+load("//rules/cxx:defs.bzl", "prefix_header")
 load("//rules/cxx:native.bzl", "native_archive")
-load(":checks.bzl", "archive_extension", "check_sources", "check_upstream", "cxx_label")
+load(":checks.bzl", "archive_extension", "check_prefix", "check_sources", "check_upstream", "cxx_label")
 load(":library.bzl", "native_library_rule")
 
 def _baseline():
@@ -74,6 +81,7 @@ def native_library(
         cxxflags = [],
         asm_flags = [],
         upstream = None,
+        prefix = None,
         deps = [],
         exported_deps = [],
         cxx_runtime = None,
@@ -141,38 +149,76 @@ def native_library(
     cxx_flags = ["-O2", "-fno-sanitize=undefined", "-std=c++17"] + base + cxxflags
     asm_all = base + asm_flags
 
-    native.cxx_library(
-        name = name + "_cxx",
-        srcs = _each(srcs, lambda l: [source_label(s) for s in sorted(l)]),
-        headers = _each(hdrs, lambda l: sorted(l)),
-        exported_headers = exported_headers,
-        # A header is included by the name it is given (`exported_headers = {"zlib.h": ...}`); the prelude otherwise puts the package path in front.
-        header_namespace = "",
-        deps = [cxx_label(d) for d in deps],
-        exported_deps = [cxx_label(d) for d in exported_deps],
-        preprocessor_flags = ffile + _each(includes, tree_flags),
-        exported_preprocessor_flags = _each(exported_includes, tree_flags),
-        lang_compiler_flags = {
-            "assembler": asm_all,
-            "c_cpp_output": c_flags,
-            "cxx_cpp_output": cxx_flags,
-        },
-        preferred_linkage = "static",
-        visibility = visibility,
-    )
     soname = soname or "lib{}.a".format(name)
-    native_archive(
-        name = name + "_archive",
-        lib = ":" + name + "_cxx[static-pic]",
-        soname = soname,
-        sources = srcs,
-        # The prelude archives the objects in the order of `srcs`, and a `select()` of lists cannot be sorted by the name of the object each makes.
-        members_any = True,
-        needs = deps + exported_deps,
-        allow = allow,
-        validate = validate,
-        visibility = visibility,
-    )
+    if prefix != None:
+        check_prefix(who, prefix)
+
+    def library(lib_name, header = None):
+        native.cxx_library(
+            name = lib_name,
+            srcs = _each(srcs, lambda l: [source_label(s) for s in sorted(l)]),
+            headers = _each(hdrs, lambda l: l if type(l) == "dict" else sorted(l)),
+            exported_headers = exported_headers,
+            # A header is included by the name it is given (`exported_headers = {"zlib.h": ...}`); the prelude otherwise puts the package path in front.
+            header_namespace = "",
+            deps = [cxx_label(d) for d in deps],
+            exported_deps = [cxx_label(d) for d in exported_deps],
+            preprocessor_flags = ffile + (["-include", "$(location {})".format(header)] if header else []) + _each(includes, tree_flags),
+            exported_preprocessor_flags = _each(exported_includes, tree_flags),
+            lang_compiler_flags = {
+                "assembler": asm_all,
+                "c_cpp_output": c_flags,
+                "cxx_cpp_output": cxx_flags,
+            },
+            preferred_linkage = "static",
+            visibility = visibility,
+        )
+
+    def archive(archive_name, lib, archive_soname, **more):
+        native_archive(
+            name = archive_name,
+            lib = ":" + lib + "[static-pic]",
+            soname = archive_soname,
+            sources = srcs,
+            needs = deps + exported_deps,
+            allow = allow,
+            # The prelude archives the objects in the order of `srcs`, and a `select()` of lists cannot be sorted by the name of the object each makes.
+            members_any = True,
+            visibility = visibility,
+            **more
+        )
+
+    if prefix == None:
+        library(name + "_cxx")
+        archive(name + "_archive", name + "_cxx", soname, validate = validate)
+    else:
+        # The library with its own names, which nothing links: the symbols its archive defines are the names the header renames. Its check is the action that lists
+        # them. The header renames the C names and, for a Mach-O library, the underscored names its assembly carries (`macho_asm`); the library built again with the
+        # header included is the one checked to define nothing without the prefix (and to refer to no replaced name).
+        library(name + "_unprefixed_cxx")
+        archive(name + "_unprefixed", name + "_unprefixed_cxx", soname.removesuffix(".a") + ".unprefixed.a", validate = False)
+        prefix_header(
+            name = name + "_prefix",
+            defined = ":" + name + "_unprefixed[symbols]",
+            header = name + "_prefix_symbols.h",
+            min_symbols = prefix["min"],
+            prefix = prefix["name"],
+            strip = prefix.get("strip", ""),
+            style = "strip" if prefix.get("strip") else "boringssl",
+            macho_asm = True,
+            exec_compatible_with = LINUX_X86_64,
+            visibility = visibility,
+        )
+        library(name + "_cxx", ":" + name + "_prefix")
+        archive(
+            name + "_archive",
+            name + "_cxx",
+            soname,
+            validate = validate,
+            prefix = prefix["name"],
+            min_prefixed = prefix["min"],
+            original_names = [":" + name + "_prefix[symbols]"],
+        )
     native_library_rule(
         name = name,
         archive = ":" + name + "_archive",

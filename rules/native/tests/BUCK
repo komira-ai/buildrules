@@ -3,7 +3,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # if the rule refused (or accepted) what a user would really write. Make a check accept the input and its target stops existing (analysis fails with "expected a
 # refusal"). Where the library is configured for a platform, and what its providers say, is held by ci/native_library.bzl.
 load("//rules:matrix.bzl", "group")
-load("//rules/native:checks.bzl", "check_cxx_runtime", "check_sources", "check_upstream")
+load("//rules/native:checks.bzl", "check_cxx_runtime", "check_prefix", "check_sources", "check_upstream")
 load(":helpers.bzl", "extension_is", "label_is", "link_order_is", "up")
 load("//rules/rust:refusal.bzl", "accepts", "refuses")
 
@@ -76,6 +76,26 @@ _ALL.append(accepts("cxx_runtime_not_stated_is_accepted", check_cxx_runtime, [_W
 _ALL.append(refuses("cxx_runtime_stated_false_for_cxx_sources_is_refused", check_cxx_runtime, [_WHO, False, True], ["cxx_runtime = False", "the sources include C++"]))
 
 _ALL.append(refuses("cxx_runtime_stated_true_for_c_sources_is_refused", check_cxx_runtime, [_WHO, True, False], ["cxx_runtime = True", "no source is C++"]))
+
+# ---- prefix ----
+
+_ALL.append(accepts("prefix_with_a_name_and_a_minimum_is_accepted", check_prefix, [_WHO, {"name": "komira_awslc", "min": 1000}]))
+
+_ALL.append(accepts("prefix_of_the_strip_style_is_accepted", check_prefix, [_WHO, {"name": "k_s2n_", "strip": "s2n_", "min": 10}]))
+
+_ALL.append(refuses("prefix_that_is_not_a_table_is_refused", check_prefix, [_WHO, "komira"], ["a table of name, strip and min"]))
+
+_ALL.append(refuses("prefix_with_an_unknown_key_is_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "style": "x"}], ['has the key "style"']))
+
+_ALL.append(refuses("prefix_that_is_not_an_identifier_is_refused", check_prefix, [_WHO, {"name": "k-x", "min": 1}], ["is not an identifier"]))
+
+_ALL.append(refuses("prefix_without_a_name_is_refused", check_prefix, [_WHO, {"min": 1}], ["prefix name None is not an identifier"]))
+
+_ALL.append(refuses("prefix_without_a_minimum_is_refused", check_prefix, [_WHO, {"name": "k"}], ["the least number of symbols"]))
+
+_ALL.append(refuses("prefix_with_a_zero_minimum_is_refused", check_prefix, [_WHO, {"name": "k", "min": 0}], ["the least number of symbols"]))
+
+_ALL.append(refuses("prefix_strip_that_is_not_an_identifier_is_refused", check_prefix, [_WHO, {"name": "k_", "strip": "s2n-", "min": 1}], ["prefix strip"]))
 
 # ---- pure functions ----
 

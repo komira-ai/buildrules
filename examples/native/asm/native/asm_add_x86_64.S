@@ -1,5 +1,5 @@
 /* asm_add(a, b) = a + b + ASM_BIAS, and asm_isa() = 1, in x86-64 assembly (System V). ASM_BIAS is a flag of the library (`asm_flags`). */
-#include "asm_names.h"
+#include "compat/asm_names.h"
 
     .text
     .globl SYM(asm_add)

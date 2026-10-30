@@ -7,7 +7,7 @@ CLOSURE_SHA256 = "fd654c4192487587d8f8d9402d060e45e218b79da7b8964503a703710e49b1
 MANIFEST_SHA256 = {
     "mopm-toolchain.toml": "64dd09d9912bc4be02bfbeaf1e3319e5d52cf8a075ae6d49eec0e32d7e4f38fc",
     "mopm.lock": "7f4f35c22bf38597c0688630cbc857ef8b71b9ebcced62dab4dea0c31274af98",
-    "mopm.toml": "468b0f05b3f8794ada151d15697170832def7e6e735c5ef760a476c972d137e8",
+    "mopm.toml": "1bd4b0e99511d5a24b1cd326fd102b75680e7414214e504435759ad903af0d3c",
 }
 GRAPH_JSON = r'''{
   "unit_graph": 2,
@@ -39,6 +39,20 @@ GRAPH_JSON = r'''{
       "natives": [],
       "outputs": ["libasm_add.a"],
       "key": "0c6c5f2ae8829db13a1300bcd0f9779e75f65fb5ca8a86e78483ffb976569788"
+    },
+    {
+      "id": "native:natlib/asm_prefixed",
+      "package": "natlib",
+      "version": "0.1.0",
+      "kind": "native",
+      "soname": "libasm_prefixed.a",
+      "srcs": [
+        {"path": "examples/mojo/native_library/native/asm_prefixed.c", "sha256": "1641a926595e60cd5d59d95fb45a886620045becf4630ed6ceadc5916ab9cba0"}
+      ],
+      "deps": [],
+      "natives": [],
+      "outputs": ["libasm_prefixed.a"],
+      "key": "40da6e014d984ecc3fa3236e281b7fca4a7c014b16ba5a55f443f983ddaf55a7"
     },
     {
       "id": "native:natlib/cxxlib",
@@ -75,17 +89,18 @@ GRAPH_JSON = r'''{
       "kind": "lib",
       "root": "examples/mojo/native_library/src/natlib",
       "srcs": [
-        {"path": "examples/mojo/native_library/src/natlib/__init__.mojo", "sha256": "229b6fc803c8ba76d51109f2628c3d5386af855ad550e8913581986b08cafdbe"}
+        {"path": "examples/mojo/native_library/src/natlib/__init__.mojo", "sha256": "bb7ef3787d76a3f1241abc80a15d51acd48c09bcd62577da431ed9c8e9759b3b"}
       ],
       "deps": [],
       "natives": [
         {"id": "asm_add", "soname": "libasm_add.a", "package": "natlib", "kind": "static", "built": "native:natlib/asm_add"},
+        {"id": "asm_prefixed", "soname": "libasm_prefixed.a", "package": "natlib", "kind": "static", "built": "native:natlib/asm_prefixed"},
         {"id": "cxxlib", "soname": "libcxxlib.a", "package": "natlib", "kind": "static", "built": "native:natlib/cxxlib"},
         {"id": "zlib", "soname": "libzlib.a", "package": "natlib", "kind": "static", "built": "native:natlib/zlib"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["natlib.mojoc"],
-      "key": "b2763832f8187c9eaec93b234ade6405d696d19cc395321dee39730feaa6dde8"
+      "key": "25eaddf1a7fc334649b0004ac4f229ca419c329ad2b4b077a86fc1dd3f2d42d7"
     },
     {
       "id": "natlib@0.1.0#mojo1.0.0/test:examples/mojo/native_library/tests/test_natlib.mojo",
@@ -93,17 +108,18 @@ GRAPH_JSON = r'''{
       "version": "0.1.0",
       "kind": "test",
       "srcs": [
-        {"path": "examples/mojo/native_library/tests/test_natlib.mojo", "sha256": "7f38442e95efa7a71ce8616889c4766cb66d8ae470bc77911e95c29107b96013"}
+        {"path": "examples/mojo/native_library/tests/test_natlib.mojo", "sha256": "a93a8d9ace2f26fd9daa8288a5e09fc099288cf75b5d7748d0e835e4f4b05793"}
       ],
       "deps": ["natlib@0.1.0#mojo1.0.0/lib"],
       "natives": [
         {"id": "asm_add", "soname": "libasm_add.a", "package": "natlib", "kind": "static", "built": "native:natlib/asm_add"},
+        {"id": "asm_prefixed", "soname": "libasm_prefixed.a", "package": "natlib", "kind": "static", "built": "native:natlib/asm_prefixed"},
         {"id": "cxxlib", "soname": "libcxxlib.a", "package": "natlib", "kind": "static", "built": "native:natlib/cxxlib"},
         {"id": "zlib", "soname": "libzlib.a", "package": "natlib", "kind": "static", "built": "native:natlib/zlib"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_natlib.pass"],
-      "key": "3c290c558347e58b07bfe6600249550e9760a9089d381763ae093a52bf47c461"
+      "key": "1b78404daab087caf92d550e60c6b17f7f024a4704818d2a08157e04d9ff9851"
     }
   ]
 }
@@ -141,6 +157,20 @@ GRAPH_JSON_LINUX_AARCH64 = r'''{
       "key": "fdb3af1f69e11820daceaefa2ee333153474d7eaea175efcc25fefb0d7d692ab"
     },
     {
+      "id": "native:natlib/asm_prefixed",
+      "package": "natlib",
+      "version": "0.1.0",
+      "kind": "native",
+      "soname": "libasm_prefixed.a",
+      "srcs": [
+        {"path": "examples/mojo/native_library/native/asm_prefixed.c", "sha256": "1641a926595e60cd5d59d95fb45a886620045becf4630ed6ceadc5916ab9cba0"}
+      ],
+      "deps": [],
+      "natives": [],
+      "outputs": ["libasm_prefixed.a"],
+      "key": "1a13853fdbd41ee4864f4d4d842bb594342958f775088dd6f4d5a7fcec128fb1"
+    },
+    {
       "id": "native:natlib/cxxlib",
       "package": "natlib",
       "version": "0.1.0",
@@ -175,17 +205,18 @@ GRAPH_JSON_LINUX_AARCH64 = r'''{
       "kind": "lib",
       "root": "examples/mojo/native_library/src/natlib",
       "srcs": [
-        {"path": "examples/mojo/native_library/src/natlib/__init__.mojo", "sha256": "229b6fc803c8ba76d51109f2628c3d5386af855ad550e8913581986b08cafdbe"}
+        {"path": "examples/mojo/native_library/src/natlib/__init__.mojo", "sha256": "bb7ef3787d76a3f1241abc80a15d51acd48c09bcd62577da431ed9c8e9759b3b"}
       ],
       "deps": [],
       "natives": [
         {"id": "asm_add", "soname": "libasm_add.a", "package": "natlib", "kind": "static", "built": "native:natlib/asm_add"},
+        {"id": "asm_prefixed", "soname": "libasm_prefixed.a", "package": "natlib", "kind": "static", "built": "native:natlib/asm_prefixed"},
         {"id": "cxxlib", "soname": "libcxxlib.a", "package": "natlib", "kind": "static", "built": "native:natlib/cxxlib"},
         {"id": "zlib", "soname": "libzlib.a", "package": "natlib", "kind": "static", "built": "native:natlib/zlib"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["natlib.mojoc"],
-      "key": "939fbe82f71b1eb7944b76b61df0e3c53ca7e5f41c388e73634dd481aecd9855"
+      "key": "3a335cbc3f20e935d2cb7b0ee29fbe2e4ba4c95ed4b5bfbc98c0e49b0dcfec78"
     },
     {
       "id": "natlib@0.1.0#mojo1.0.0/test:examples/mojo/native_library/tests/test_natlib.mojo",
@@ -193,17 +224,18 @@ GRAPH_JSON_LINUX_AARCH64 = r'''{
       "version": "0.1.0",
       "kind": "test",
       "srcs": [
-        {"path": "examples/mojo/native_library/tests/test_natlib.mojo", "sha256": "7f38442e95efa7a71ce8616889c4766cb66d8ae470bc77911e95c29107b96013"}
+        {"path": "examples/mojo/native_library/tests/test_natlib.mojo", "sha256": "a93a8d9ace2f26fd9daa8288a5e09fc099288cf75b5d7748d0e835e4f4b05793"}
       ],
       "deps": ["natlib@0.1.0#mojo1.0.0/lib"],
       "natives": [
         {"id": "asm_add", "soname": "libasm_add.a", "package": "natlib", "kind": "static", "built": "native:natlib/asm_add"},
+        {"id": "asm_prefixed", "soname": "libasm_prefixed.a", "package": "natlib", "kind": "static", "built": "native:natlib/asm_prefixed"},
         {"id": "cxxlib", "soname": "libcxxlib.a", "package": "natlib", "kind": "static", "built": "native:natlib/cxxlib"},
         {"id": "zlib", "soname": "libzlib.a", "package": "natlib", "kind": "static", "built": "native:natlib/zlib"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_natlib.pass"],
-      "key": "b8d5d91804df9d1482ad1b09e8d0fb50271cc65fd3de3d2034d0a81c358861d2"
+      "key": "2150beaf38a53bb0d25f5b3cc4afcb121ab45b543bb88828a9df48b50ed32883"
     }
   ]
 }
@@ -236,6 +268,20 @@ GRAPH_JSON_OSX_ARM64 = r'''{
       "natives": [],
       "outputs": ["libasm_add.a"],
       "key": "959ad68d14846c46add529ee0ab53391348ebc99957d93c486e93e5bf346e7f5"
+    },
+    {
+      "id": "native:natlib/asm_prefixed",
+      "package": "natlib",
+      "version": "0.1.0",
+      "kind": "native",
+      "soname": "libasm_prefixed.a",
+      "srcs": [
+        {"path": "examples/mojo/native_library/native/asm_prefixed.c", "sha256": "1641a926595e60cd5d59d95fb45a886620045becf4630ed6ceadc5916ab9cba0"}
+      ],
+      "deps": [],
+      "natives": [],
+      "outputs": ["libasm_prefixed.a"],
+      "key": "27cac2a6a1a93caabf19c941d2ad1eafaf76535e1acfe5a34331b97427109606"
     },
     {
       "id": "native:natlib/cxxlib",
@@ -272,17 +318,18 @@ GRAPH_JSON_OSX_ARM64 = r'''{
       "kind": "lib",
       "root": "examples/mojo/native_library/src/natlib",
       "srcs": [
-        {"path": "examples/mojo/native_library/src/natlib/__init__.mojo", "sha256": "229b6fc803c8ba76d51109f2628c3d5386af855ad550e8913581986b08cafdbe"}
+        {"path": "examples/mojo/native_library/src/natlib/__init__.mojo", "sha256": "bb7ef3787d76a3f1241abc80a15d51acd48c09bcd62577da431ed9c8e9759b3b"}
       ],
       "deps": [],
       "natives": [
         {"id": "asm_add", "soname": "libasm_add.a", "package": "natlib", "kind": "static", "built": "native:natlib/asm_add"},
+        {"id": "asm_prefixed", "soname": "libasm_prefixed.a", "package": "natlib", "kind": "static", "built": "native:natlib/asm_prefixed"},
         {"id": "cxxlib", "soname": "libcxxlib.a", "package": "natlib", "kind": "static", "built": "native:natlib/cxxlib"},
         {"id": "zlib", "soname": "libzlib.a", "package": "natlib", "kind": "static", "built": "native:natlib/zlib"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["natlib.mojoc"],
-      "key": "3c117cfd828ec61a9b6b8169bcc859edf4a694e9f240ab566e43e1fd2f14f167"
+      "key": "95dc50c58bbde9098d59b1257ac082972d5feb209aaf37f686c16bad14f0267b"
     },
     {
       "id": "natlib@0.1.0#mojo1.0.0/test:examples/mojo/native_library/tests/test_natlib.mojo",
@@ -290,17 +337,18 @@ GRAPH_JSON_OSX_ARM64 = r'''{
       "version": "0.1.0",
       "kind": "test",
       "srcs": [
-        {"path": "examples/mojo/native_library/tests/test_natlib.mojo", "sha256": "7f38442e95efa7a71ce8616889c4766cb66d8ae470bc77911e95c29107b96013"}
+        {"path": "examples/mojo/native_library/tests/test_natlib.mojo", "sha256": "a93a8d9ace2f26fd9daa8288a5e09fc099288cf75b5d7748d0e835e4f4b05793"}
       ],
       "deps": ["natlib@0.1.0#mojo1.0.0/lib"],
       "natives": [
         {"id": "asm_add", "soname": "libasm_add.a", "package": "natlib", "kind": "static", "built": "native:natlib/asm_add"},
+        {"id": "asm_prefixed", "soname": "libasm_prefixed.a", "package": "natlib", "kind": "static", "built": "native:natlib/asm_prefixed"},
         {"id": "cxxlib", "soname": "libcxxlib.a", "package": "natlib", "kind": "static", "built": "native:natlib/cxxlib"},
         {"id": "zlib", "soname": "libzlib.a", "package": "natlib", "kind": "static", "built": "native:natlib/zlib"}
       ],
       "profile": {"opt": 1, "assert": "all", "debug": false},
       "outputs": ["test_natlib.pass"],
-      "key": "4e1bb60d3a4eaacfb8875b71d939a80eb4bc2092219f75b1ef02abeca81f4f90"
+      "key": "e019f4e860db3e63b00f2f36851fa1604bd72555ab0ae72f36e301eb3b75b65e"
     }
   ]
 }

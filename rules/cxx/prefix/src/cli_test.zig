@@ -383,3 +383,20 @@ test "header --defined: too few names is a refusal that names the file; a file t
     try eqs(P.fmt("prefix_tool: cannot read {s}: FileNotFound\n", .{w.path("nope.txt")}), b.stderr);
     try expect(!w.exists("h.h") and !w.exists("s.txt"));
 }
+
+test "header --asm macho: the header also renames the underscored assembly names, under __ASSEMBLER__ and __APPLE__; any other value is a refusal" {
+    var w = try Work.init(try armapArchive(&.{"s_open"}));
+    defer w.tmp.cleanup();
+    try w.tmp.dir.writeFile(.{ .sub_path = "names.txt", .data = "tmp\ns_open\n" });
+    const plain = [_][]const u8{ "prefix_tool", "header", "--defined", w.path("names.txt"), "--header", w.path("p.h"), "--symbols", w.path("p.txt"), "--style", "strip", "--strip", "s_", "--prefix", "k_", "--min", "2" };
+    try expect(M.outcome(&plain, "/w").code == 0);
+    try expect(std.mem.indexOf(u8, try w.read("p.h"), "__ASSEMBLER__") == null);
+    const o = M.outcome(&.{ "prefix_tool", "header", "--defined", w.path("names.txt"), "--header", w.path("m.h"), "--symbols", w.path("m.txt"), "--style", "strip", "--strip", "s_", "--prefix", "k_", "--min", "2", "--asm", "macho" }, "/w");
+    try eqs("", o.stderr);
+    try expect(o.code == 0);
+    try expect(std.mem.indexOf(u8, try w.read("m.h"), "#define s_open k_open\n") != null);
+    try expect(std.mem.indexOf(u8, try w.read("m.h"), "#if defined(__ASSEMBLER__) && defined(__APPLE__)\n#define _s_open _k_open\n") != null);
+    const bad = M.outcome(&.{ "prefix_tool", "header", "--defined", w.path("names.txt"), "--header", w.path("b.h"), "--symbols", w.path("b.txt"), "--style", "strip", "--strip", "s_", "--prefix", "k_", "--min", "2", "--asm", "elf" }, "/w");
+    try expect(bad.code == 1);
+    try expect(std.mem.indexOf(u8, bad.stderr, "--asm takes macho") != null);
+}

@@ -142,3 +142,29 @@ def cxx_label(label):
     if ":" not in label:
         fail("native_library: dep {} is not a target label".format(repr(label)))
     return label + "_cxx"
+
+_PREFIX_KEYS = ["name", "strip", "min"]
+
+def _identifier(s):
+    return type(s) == "string" and len(s) > 0 and all([c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for c in s.elems()])
+
+def check_prefix(who, pfx, refuse = fail):
+    """The `prefix` table: every global symbol the library defines is renamed to start with `name` (`strip` selects the strip style); `min` is the least number of
+    symbols the library defines, which stops a header made from the wrong archive."""
+    if type(pfx) != "dict":
+        refuse("{}: prefix is {}, a table of name, strip and min".format(who, repr(pfx)))
+        return
+    for k in sorted(pfx.keys()):
+        if k not in _PREFIX_KEYS:
+            refuse("{}: prefix has the key {}; the keys are {}".format(who, repr(k), ", ".join(_PREFIX_KEYS)))
+            return
+    if not _identifier(pfx.get("name")):
+        refuse("{}: prefix name {} is not an identifier (letters, digits and _)".format(who, repr(pfx.get("name"))))
+        return
+    strip = pfx.get("strip", "")
+    if strip != "" and not _identifier(strip):
+        refuse("{}: prefix strip {} is not an identifier (letters, digits and _)".format(who, repr(strip)))
+        return
+    least = pfx.get("min")
+    if type(least) != "int" or least <= 0:
+        refuse("{}: prefix min is the least number of symbols the library defines, a positive integer (it stops a header made from the wrong archive), got {}".format(who, repr(least)))

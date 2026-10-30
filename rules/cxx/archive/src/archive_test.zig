@@ -780,3 +780,15 @@ test "parseArgs: --members takes any and nothing else" {
     try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--members", "name" })) == null);
     try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--members" })) == null);
 }
+
+test "prefix: a defined symbol that --allow names may lack the prefix (a compiler builtin the library defines); another still may not" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{ .{ .name = "k_open", .kind = .def }, .{ .name = "__umodti3", .kind = .def }, .{ .name = "leaked", .kind = .def } }, &.{});
+    const b = try archive(a, &.{.{ .name = "a.o", .data = o }});
+    const without = try A.check(a, "libx.a", b, .{ .prefix = "k_" });
+    try t.expect(hasFinding(without, "2 defined symbol(s) without the prefix k_: __umodti3 leaked"));
+    const allowed = try A.check(a, "libx.a", b, .{ .prefix = "k_", .allow = &.{"__umodti3"} });
+    try t.expect(hasFinding(allowed, "1 defined symbol(s) without the prefix k_: leaked"));
+}

@@ -901,6 +901,7 @@ group(name = "all", deps = [
     # native_library (rules/native): the pinned-tarball zlib, the C++ library, the assembly chosen by the CPU, and a chain of dependencies; the Mojo package that
     # links them is in //ci:mojo. The faulty ones (ci/faulty) are held by ci/negative.bzl, their controls are built here.
     "//examples/native/asm:asm_add",
+    "//examples/native/asm:asm_prefixed",
     "//examples/native/cxx:cxxlib",
     "//examples/native/deps:top",
     "//examples/native/zlib:zlib",

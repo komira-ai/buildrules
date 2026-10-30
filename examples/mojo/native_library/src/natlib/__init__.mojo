@@ -49,3 +49,16 @@ def asm_twice(x: Int) -> Int:
 
 def asm_isa() -> Int:
     return Int(external_call["asm_isa", Int32]())
+
+
+# asm_prefixed: the same library with every symbol it defines renamed to start with `natlib_` (`prefix`), assembly included, so it links beside the unprefixed one.
+def prefixed_asm_add(a: Int, b: Int) -> Int:
+    return Int(external_call["natlib_asm_add", Int64](Int64(a), Int64(b)))
+
+
+def prefixed_asm_twice(x: Int) -> Int:
+    return Int(external_call["natlib_asm_twice", Int64](Int64(x)))
+
+
+def prefixed_asm_isa() -> Int:
+    return Int(external_call["natlib_asm_isa", Int32]())

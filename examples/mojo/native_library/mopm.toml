@@ -13,6 +13,10 @@ srcs = ["native/zlib.c"]
 kind = "static"
 srcs = ["native/cxxlib.c"]
 
+[native.asm_prefixed]
+kind = "static"
+srcs = ["native/asm_prefixed.c"]
+
 [native.asm_add]
 kind = "static"
 srcs = ["native/asm_add.c"]

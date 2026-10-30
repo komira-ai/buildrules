@@ -107,6 +107,8 @@ def _prefix_header_impl(ctx):
     hdr = ctx.actions.declare_output(ctx.attrs.header)
     syms = ctx.actions.declare_output("symbols.txt")
     more = ["--strip", ctx.attrs.strip] if ctx.attrs.strip else []
+    if ctx.attrs.macho_asm:
+        more.extend(["--asm", "macho"])
     for name in ctx.attrs.extra_symbols:
         more.extend(["--extra", name])
     if (ctx.attrs.archive == None) == (ctx.attrs.defined == None):
@@ -139,6 +141,7 @@ _prefix_header = rule(
         "defined": attrs.option(attrs.source(), default = None, doc = "Instead of `archive`: a file listing the library's defined global symbols, one per line (the `[symbols]` of a native_archive, which reads Mach-O archives too)."),
         "extra_symbols": attrs.list(attrs.string(), default = [], doc = "Names the library references but does not define (a weak hook a program may define), renamed too."),
         "header": attrs.string(default = "prefix_symbols.h", doc = "The output's file name."),
+        "macho_asm": attrs.bool(default = False, doc = "Also rename the assembly symbols of a Mach-O library, which carry a leading underscore (`#define _name _prefix_name` under `__ASSEMBLER__` and `__APPLE__`); a header made this way renames C and assembly of either format."),
         "min_symbols": attrs.int(doc = "Fewer names than this fails the action: the archive was not the library."),
         "prefix": attrs.string(),
         "strip": attrs.string(default = "", doc = "style strip: the library's own prefix, replaced by `prefix`."),
