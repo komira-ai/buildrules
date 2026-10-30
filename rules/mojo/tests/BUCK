@@ -5,6 +5,8 @@ load("//rules/mojo:defs.bzl", "check_toolchain_file_present", "check_toolchain_f
 load("//rules/mojo:unit.bzl", "check_closure_ids", "cov_link_natives")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
 load(":generated.bzl", "generated_member_below_the_package_is_named_by_its_manifest_directory", "generated_sibling_is_named_by_its_manifest_directory", "longest_manifest_directory_wins", "manifest_directories_are_those_of_the_recorded_manifests", "src_name_is_read_before_the_manifests")
+load("//rules/mojo:native_build.bzl", "check_native_build")
+load(":native_build.bzl", "archive_extensions_are_read_from_the_file_name", "up_with")
 load(":natives.bzl", "BUILT", "BUILT_UNIT", "PREBUILT", "UNIT", "USER", "built_natives_are_the_targets_of_their_units", "native_includes_are_below_the_package_in_both_bases", "native_includes_default_to_the_header_directories_below_the_package", "native_units_are_told_by_their_id", "own_natives", "reversed_graph_is_reversed", "wiring_is_as_the_graph_says")
 load(":siblings.bzl", "graph_paths_below_the_package", "nested_member_keeps_its_target", "sibling_is_named_by_its_directory", "sibling_with_a_path_up_is_named_by_its_directory", "workspace_is_flat_at_repository_paths")
 load("//rules/mojo:sync.bzl", "sync_packages", "sync_stage_tree")
@@ -513,3 +515,223 @@ refuses(
 )
 
 accepts(name = "compile_slice_is_never_above_format_two", check = a_slice_for_the_compile_is_never_above_format_two, args = [])
+
+# `native_build` of `mojo_package` (rules/mojo/native_build.bzl): what a package may say about how a native library is built beyond its own sources. Each refusal is a
+# target that exists only if the check refused as stated (the other half of each is the `accepts` of a spelling that must pass).
+_SQLITE_UP = {
+    "url": "https://www.sqlite.org/2026/sqlite-autoconf-3530400.tar.gz",
+    "sha256": "0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c",
+    "size": 3283177,
+    "strip": "sqlite-autoconf-3530400",
+    "files": ["sqlite3.c", "sqlite3.h"],
+}
+_SQLITE = {"upstream": _SQLITE_UP, "prefix": {"name": "pkg_sqlite3_", "strip": "sqlite3_", "min": 200}, "allow": ["fdatasync"]}
+
+accepts(name = "native_build_with_upstream_prefix_and_allow_is_accepted", check = check_native_build, args = ["//p", {"sqlite": _SQLITE}, ["sqlite"]])
+
+accepts(name = "native_build_empty_is_accepted", check = check_native_build, args = ["//p", {}, ["sqlite"]])
+
+accepts(name = "native_build_of_a_package_without_natives_is_empty_and_accepted", check = check_native_build, args = ["//p", {}, []])
+
+accepts(name = "native_build_prefix_without_upstream_is_accepted", check = check_native_build, args = ["//p", {"sqlite": {"prefix": {"name": "pkg_", "min": 1}}}, ["sqlite"]])
+
+accepts(name = "native_build_upstream_srcs_includes_and_a_directory_are_accepted", check = check_native_build, args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, files = ["src/a.c", "include/a.h"], srcs = ["src/a.c"], includes = [".", "include"])}}, ["sqlite"]])
+
+refuses(
+    name = "native_build_of_a_library_the_package_does_not_build_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqllite": _SQLITE}, ["sqlite"]],
+    contains = ["//p native_build[\"sqllite\"]", "is not a native library of this package's graph (sqlite)"],
+)
+
+refuses(
+    name = "native_build_in_a_package_without_natives_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": _SQLITE}, []],
+    contains = ["is not a native library of this package's graph (it has none)"],
+)
+
+refuses(
+    name = "native_build_that_is_no_table_is_refused",
+    check = check_native_build,
+    args = ["//p", ["sqlite"], ["sqlite"]],
+    contains = ["native_build is [\"sqlite\"], a dict by the id of a native library"],
+)
+
+refuses(
+    name = "native_build_entry_with_an_unknown_key_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": _SQLITE_UP, "patches": []}}, ["sqlite"]],
+    contains = ["the entry has the key \"patches\"", "the keys are upstream, prefix, allow"],
+)
+
+refuses(
+    name = "native_build_upstream_with_an_unknown_key_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, mirror = "x")}}, ["sqlite"]],
+    contains = ["upstream has the key \"mirror\""],
+)
+
+refuses(
+    name = "native_build_upstream_without_a_digest_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": {k: v for k, v in _SQLITE_UP.items() if k != "sha256"}}}, ["sqlite"]],
+    contains = ["upstream has no sha256"],
+)
+
+refuses(
+    name = "native_build_upstream_without_a_size_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": {k: v for k, v in _SQLITE_UP.items() if k != "size"}}}, ["sqlite"]],
+    contains = ["upstream has no size"],
+)
+
+refuses(
+    name = "native_build_upstream_with_a_short_digest_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, sha256 = "0e9483")}}, ["sqlite"]],
+    contains = ["sha256` must be 64 lower-case hex digits"],
+)
+
+refuses(
+    name = "native_build_upstream_with_an_upper_case_digest_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, sha256 = "0E9483900E92CD5DE8FD48D16BF9200145A61F7FD5BE542A5AC81D8A9516EB9C")}}, ["sqlite"]],
+    contains = ["sha256` must be 64 lower-case hex digits"],
+)
+
+refuses(
+    name = "native_build_upstream_with_no_length_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, size = 0)}}, ["sqlite"]],
+    contains = ["`size_bytes` must be the file's positive length in bytes"],
+)
+
+refuses(
+    name = "native_build_upstream_with_a_size_that_is_no_number_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, size = "3283177")}}, ["sqlite"]],
+    contains = ["sha256 is a string of 64 hex digits and size an integer of bytes"],
+)
+
+refuses(
+    name = "native_build_upstream_over_plain_http_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, url = "http://www.sqlite.org/2026/sqlite-autoconf-3530400.tar.gz")}}, ["sqlite"]],
+    contains = ["is not an https:// URL"],
+)
+
+refuses(
+    name = "native_build_upstream_that_is_no_archive_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, url = "https://www.sqlite.org/2026/sqlite3.c")}}, ["sqlite"]],
+    contains = ["does not name an archive", ".tar.gz, .tgz, .tar.xz, .tar, .zip"],
+)
+
+refuses(
+    name = "native_build_upstream_naming_only_an_extension_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, url = "https://example.invalid/.tar.gz")}}, ["sqlite"]],
+    contains = ["does not name an archive"],
+)
+
+refuses(
+    name = "native_build_upstream_without_files_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, files = [])}}, ["sqlite"]],
+    contains = ["upstream files lists the files to stage"],
+)
+
+refuses(
+    name = "native_build_upstream_file_that_leaves_the_archive_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, files = ["sqlite3.c", "../etc/passwd"])}}, ["sqlite"]],
+    contains = ["upstream file \"../etc/passwd\" is not a path below the archive"],
+)
+
+refuses(
+    name = "native_build_upstream_absolute_file_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, files = ["/sqlite3.c"])}}, ["sqlite"]],
+    contains = ["upstream file \"/sqlite3.c\" is not a path below the archive"],
+)
+
+refuses(
+    name = "native_build_upstream_file_listed_twice_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, files = ["sqlite3.c", "sqlite3.c"])}}, ["sqlite"]],
+    contains = ["upstream file sqlite3.c is listed twice"],
+)
+
+refuses(
+    name = "native_build_upstream_strip_that_leaves_the_archive_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, strip = "../x")}}, ["sqlite"]],
+    contains = ["upstream strip \"../x\" is not a directory below the archive's root"],
+)
+
+refuses(
+    name = "native_build_upstream_src_that_is_not_staged_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, srcs = ["shell.c"])}}, ["sqlite"]],
+    contains = ["upstream src \"shell.c\" is not among its files"],
+)
+
+refuses(
+    name = "native_build_upstream_include_that_holds_no_file_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"upstream": up_with(_SQLITE_UP, includes = ["include"])}}, ["sqlite"]],
+    contains = ["upstream include \"include\" is `.` or a directory that holds a staged file"],
+)
+
+refuses(
+    name = "native_build_prefix_that_is_no_identifier_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"prefix": {"name": "pkg-sqlite3_", "min": 200}}}, ["sqlite"]],
+    contains = ["prefix name \"pkg-sqlite3_\" is not an identifier"],
+)
+
+refuses(
+    name = "native_build_prefix_without_a_name_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"prefix": {"min": 200}}}, ["sqlite"]],
+    contains = ["prefix name None is not an identifier"],
+)
+
+refuses(
+    name = "native_build_prefix_strip_that_is_no_identifier_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"prefix": {"name": "pkg_sqlite3_", "strip": "sqlite3 ", "min": 200}}}, ["sqlite"]],
+    contains = ["prefix strip \"sqlite3 \" is not an identifier"],
+)
+
+refuses(
+    name = "native_build_prefix_without_a_minimum_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"prefix": {"name": "pkg_sqlite3_"}}}, ["sqlite"]],
+    contains = ["prefix min is the least number of symbols the library defines", "stops a header made from the wrong archive"],
+)
+
+refuses(
+    name = "native_build_prefix_with_a_zero_minimum_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"prefix": {"name": "pkg_sqlite3_", "min": 0}}}, ["sqlite"]],
+    contains = ["prefix min is the least number of symbols"],
+)
+
+refuses(
+    name = "native_build_prefix_with_an_unknown_key_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"prefix": {"name": "pkg_", "min": 1, "style": "boringssl"}}}, ["sqlite"]],
+    contains = ["prefix has the key \"style\""],
+)
+
+refuses(
+    name = "native_build_allow_of_an_empty_name_is_refused",
+    check = check_native_build,
+    args = ["//p", {"sqlite": {"allow": ["fdatasync", ""]}}, ["sqlite"]],
+    contains = ["allow lists symbol names"],
+)
+
+# The extension of an archive's name decides how it is unpacked.
+accepts(name = "archive_extension_of_a_tarball_is_read_from_the_file_name", check = archive_extensions_are_read_from_the_file_name, args = [])

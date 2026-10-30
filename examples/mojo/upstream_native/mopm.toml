@@ -1,0 +1,15 @@
+[package]
+name = "upsql"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+# SQLite's amalgamation is not in this repository: BUCK's `native_build` pins the archive it comes from (url, sha256, size) and the rules stage `sqlite3.c` and
+# `sqlite3.h` for the compile. The one file of the package, native/upsql_sqlite3.c, includes the amalgamation, so the library's compile flags live here.
+[native.sqlite]
+kind = "static"
+srcs = ["native/upsql_sqlite3.c"]
+cflags = ["-DNDEBUG", "-DSQLITE_OMIT_LOAD_EXTENSION", "-DSQLITE_THREADSAFE=1"]
+
+[targets]
+lib = { path = "src/upsql" }
+tests = ["tests"]

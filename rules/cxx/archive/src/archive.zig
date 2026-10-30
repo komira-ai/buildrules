@@ -1,6 +1,7 @@
 //! archive_check: the validation of a native static library (`native_archive`, rules/cxx/native.bzl).
 //!
 //!   archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>]
+//!       [--prefix <p> [--min-prefixed <n>] [--original <names.txt>]...]
 //!
 //! A static library a Mojo package ships is linked into other people's programs, so it is held to what a library must be:
 //!
@@ -18,6 +19,10 @@
 //!
 //! Writes a validation result (`{"version":1,"data":{"status",...}}`) and exits 0 when every rule holds; exits 1 after writing "failure" when
 //! one does not, and prints every finding. With `--symbols`, writes the sorted defined global symbols, one per line.
+//!
+//! With `--prefix`, the library is a renamed one (rules/cxx/prefix, `native_static(prefix = ...)`): every defined global symbol must start with the prefix, at least
+//! `--min-prefixed` of them must (a library the renaming missed is not empty by accident), and no undefined symbol may be one of the names in the `--original`
+//! files (the library's own names before the renaming, one per line): a reference the renaming missed would resolve to another copy of the library at the final link.
 //!
 //! Allocation: the lists are built with `Acc` and `Set`, which note a failed allocation in one flag instead of returning it from each of the
 //! many places that add to them; the function that owns the flag returns `OutOfMemory` once, at its end. What they return stays with the
@@ -369,6 +374,12 @@ pub const Options = struct {
     max_glibc: []const u8 = "2.34",
     /// The absolute path of the directory the archive was built in ("" skips the test: a unit test has none).
     dir: []const u8 = "",
+    /// A renamed library (`--prefix`): every defined global symbol starts with this ("" skips the rule and the two below).
+    prefix: []const u8 = "",
+    /// At least this many defined symbols start with `prefix`.
+    min_prefixed: usize = 0,
+    /// The names the renaming replaced: none of them may be left undefined.
+    original: []const []const u8 = &.{},
 };
 
 pub const Report = struct {
@@ -491,7 +502,45 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     var it = defined.m.keyIterator();
     while (it.next()) |k| all.push(k.*);
     std.mem.sort([]const u8, all.items.items, {}, lessThan);
+    if (o.prefix.len != 0) prefixFindings(a, &f, &oom, name, o, all.items.items, &.{ undef.items.items, undef_macho.items.items });
     return report(oom, f.items.items, all.items.items);
+}
+
+/// The most names one finding lists.
+const listed = 20;
+
+/// The findings of a renamed library (`Options.prefix`): defined symbols without the prefix, too few with it, and undefined references to a name the renaming replaced.
+/// `defined` is sorted; `undefs` are the undefined symbols of each object format.
+fn prefixFindings(a: std.mem.Allocator, f: *Acc([]const u8), oom: *bool, name: []const u8, o: Options, defined: []const []const u8, undefs: []const []const []const u8) void {
+    var bare = Acc(u8){ .a = a, .oom = oom };
+    var n_bare: usize = 0;
+    var n_prefixed: usize = 0;
+    for (defined) |d| {
+        if (std.mem.startsWith(u8, d, o.prefix)) {
+            n_prefixed += 1;
+            continue;
+        }
+        if (n_bare < listed) {
+            bare.push(' ');
+            bare.pushAll(d);
+        }
+        n_bare += 1;
+    }
+    if (n_bare != 0)
+        say(f, "{s}: {d} defined symbol(s) without the prefix {s}:{s}{s}", .{ name, n_bare, o.prefix, bare.items.items, if (n_bare > listed) " ..." else "" });
+    if (n_prefixed < o.min_prefixed)
+        say(f, "{s}: only {d} defined symbol(s) start with the prefix {s} (at least {d} expected): the renaming did not reach the library", .{ name, n_prefixed, o.prefix, o.min_prefixed });
+    var original = Set.init(a, oom);
+    for (o.original) |n| original.add(n);
+    var seen = Set.init(a, oom);
+    for (undefs) |list| {
+        for (list) |u| {
+            if (original.m.contains(u) and !seen.m.contains(u)) {
+                seen.add(u);
+                say(f, "{s}: undefined reference to {s}, a name the prefix header renames: the renaming missed it, and the final link would resolve it to another copy of the library", .{ name, u });
+            }
+        }
+    }
 }
 
 /// The JSON a validation result is: only the first finding is the message.
@@ -519,16 +568,20 @@ pub const Cli = struct {
     allow: []const []const u8,
     symbols: ?[]const u8,
     max_glibc: []const u8,
+    prefix: []const u8,
+    min_prefixed: usize,
+    original: []const []const u8,
 };
 
-pub const usage = "usage: archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>]";
+pub const usage = "usage: archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>] [--prefix <p> [--min-prefixed <n>] [--original <names.txt>]...]";
 
 pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocator.Error!?Cli {
     if (args.len < 2) return null;
     var oom = false;
     var needs = Acc([]const u8){ .a = a, .oom = &oom };
     var allow = Acc([]const u8){ .a = a, .oom = &oom };
-    var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34" };
+    var original = Acc([]const u8){ .a = a, .oom = &oom };
+    var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34", .prefix = "", .min_prefixed = 0, .original = &.{} };
     var i: usize = 2;
     while (i < args.len) : (i += 2) {
         if (i + 1 >= args.len) return null;
@@ -542,11 +595,21 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocat
             c.symbols = val;
         } else if (std.mem.eql(u8, flag, "--max-glibc")) {
             c.max_glibc = val;
+        } else if (std.mem.eql(u8, flag, "--prefix")) {
+            if (val.len == 0) return null;
+            c.prefix = val;
+        } else if (std.mem.eql(u8, flag, "--min-prefixed")) {
+            c.min_prefixed = std.fmt.parseUnsigned(usize, val, 10) catch return null;
+        } else if (std.mem.eql(u8, flag, "--original")) {
+            original.push(val);
         } else return null;
     }
     if (oom) return error.OutOfMemory;
     c.needs = needs.items.items;
     c.allow = allow.items.items;
+    c.original = original.items.items;
+    // The two options of a renamed library mean nothing without the prefix.
+    if (c.prefix.len == 0 and (c.min_prefixed != 0 or c.original.len != 0)) return null;
     return c;
 }
 
@@ -586,8 +649,18 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, dir: []const u8, args: []const
         const nb = cwd.readFileAlloc(a, n, 1 << 30) catch |e| return unreadable(a, err, n, e);
         needs.push(nb);
     }
+    // The names the renaming replaced: the lines of each file.
+    var original = Acc([]const u8){ .a = a, .oom = &oom };
+    for (c.original) |p| {
+        const text = cwd.readFileAlloc(a, p, 1 << 28) catch |e| return unreadable(a, err, p, e);
+        var ls = std.mem.splitScalar(u8, text, '\n');
+        while (ls.next()) |l| {
+            const n = std.mem.trim(u8, l, " \r");
+            if (n.len != 0) original.push(n);
+        }
+    }
     const name = std.fs.path.basename(c.archive);
-    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir });
+    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir, .prefix = c.prefix, .min_prefixed = c.min_prefixed, .original = original.items.items });
     var out = Acc(u8){ .a = a, .oom = &oom };
     for (rep.defined) |s| {
         out.pushAll(s);

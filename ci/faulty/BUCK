@@ -168,4 +168,34 @@ native_static(
     validate = False,
 )
 
+# A renamed native library (`prefix`, rules/cxx/README.md): it is built as it is, the names its archive defines are written as a header, and it is built again with
+# that header included. `native_prefix_good` is the control; the other two carry what the prefix rules of the archive check refuse.
+native_static(
+    name = "native_prefix_good",
+    srcs = ["native/prefix_good_a.c", "native/prefix_good_b.c"],
+    soname = "libfaulty_prefix_good.a",
+    prefix = "faultyp",
+    prefix_min = 3,
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_static(
+    name = "native_prefix_leaks_a_symbol",
+    srcs = ["native/prefix_leaks_a_symbol.c"],
+    soname = "libfaulty_prefix_leak.a",
+    prefix = "faultyp",
+    prefix_min = 1,
+    validate = False,
+)
+
+native_static(
+    name = "native_prefix_misses_a_reference",
+    srcs = ["native/prefix_missed_reference_a.c", "native/prefix_missed_reference_b.c"],
+    soname = "libfaulty_prefix_miss.a",
+    prefix = "faultyp",
+    prefix_min = 3,
+    validate = False,
+)
+
 scrub_files()
