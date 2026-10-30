@@ -37,6 +37,11 @@ CASES = [
     ("//ci/negative:mojo_instrumented_link_with_a_needed_archive_before_its_user", PLATFORM, "libbase_sys.a is linked before libprobe_sys.a, which needs it"),
     ("//ci/negative:native_library_stating_no_cxx_runtime_for_cxx_sources", PLATFORM, "cxx_runtime = False but the sources include C++"),
     ("//ci/negative:mojo_test_run_with_a_zero_hang_limit", PLATFORM, "test_hang_limit_s 0 is not a positive whole number of seconds"),
+    # A path written in a BUCK file that leaves the archive (absolute, or with a .. component) is refused at analysis, whatever it is (rules/cxx/checks.bzl).
+    ("//ci/faulty:archive_files_of_a_dot_dot_file", "buildrules//platforms:linux_x86_64", "file sub/../ok.c is not a path inside the archive: a path may not be absolute or hold a .. component"),
+    ("//ci/faulty:archive_files_of_an_absolute_file", "buildrules//platforms:linux_x86_64", "file /etc/hostname is not a path inside the archive: a path may not be absolute or hold a .. component"),
+    ("//ci/faulty:archive_files_of_a_dot_dot_template_source", "buildrules//platforms:linux_x86_64", "template source sub/../ok.c is not a path inside the archive: a path may not be absolute or hold a .. component"),
+    ("//ci/faulty:archive_files_of_a_dot_dot_strip_prefix", "buildrules//platforms:linux_x86_64", "strip_prefix sub/../pkg is not a path inside the archive: a path may not be absolute or hold a .. component"),
     # A package that lists sources in coverage_unmeasured.txt but makes no coverage (no test here): refused at analysis naming the file, never ignored (rules/mojo/unit.bzl).
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "coverage_unmeasured.txt exists but this package has no library or no test"),
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
@@ -460,6 +465,18 @@ FAULTY = [
     ("//ci/mojo_syslibs:run_red_one_missing", "//ci/mojo_syslibs:run_green", "system_probe: no directory after the compiler's lib on LD_LIBRARY_PATH holds libz.so.1"),
     # The directories a gated library exports for the label that adopts its package: a library that exports none leaves the run without them.
     ("//ci/mojo_syslibs:run_red_via_lib_without", "//ci/mojo_syslibs:run_green_via_lib", "system_probe: no directory after the compiler's lib on LD_LIBRARY_PATH holds libsqlite3.so.0"),
+    # archive_files never follows a symbolic link of an archive (ci/faulty/BUCK): a listed file that is a link to a path of the machine that unpacks it, or out of the unpacked tree,
+    # or that lies behind a link to a directory, is refused with the file named. The controls are the same rule over an archive whose listed files are not links.
+    ("//ci/faulty:archive_files_of_a_link_to_an_absolute_path", "//ci/faulty:archive_files_of_files_without_links", "archive_files: link.c is not staged: pkg/link.c in "),
+    ("//ci/faulty:archive_files_of_a_link_out_of_the_tree", "//ci/faulty:archive_files_of_separate_files_without_links", "archive_files: link.c is not staged: pkg/link.c in "),
+    ("//ci/faulty:archive_files_of_a_file_behind_a_link_to_a_directory", "//ci/faulty:archive_files_of_files_without_links", "archive_files: etc/hostname is not staged: pkg/etc in "),
+    # A member hard linked to a path of the machine that unpacks it: on the farm's workers the unpack itself refuses (the kernel or the file system does), and that is what is held
+    # here. The staging script refuses a listed file with a name outside the unpacked tree too (archive_files: ... hard link to a file outside it), for a host that lets the link be made.
+    ("//ci/faulty:archive_files_of_a_hard_link_to_a_file_outside", "//ci/faulty:archive_files_of_files_without_links", "tar: can't create hardlink 'pkg/hl.c' to '/etc/hostname'"),
+    # A link as a component of strip_prefix, in the middle of a path, and as the source of a template; and a path written in a BUCK file that leaves the archive.
+    ("//ci/faulty:archive_files_of_a_link_as_the_strip_prefix", "//ci/faulty:archive_files_of_the_files_behind_no_link_of_the_prefix", "archive_files: hostname is not staged: top in "),
+    ("//ci/faulty:archive_files_of_a_file_behind_a_link_in_the_middle_of_its_path", "//ci/faulty:archive_files_of_the_files_beside_a_link_in_the_middle", "archive_files: a/mid/hostname is not staged: pkg/a/mid in "),
+    ("//ci/faulty:archive_files_of_a_template_that_is_a_link", "//ci/faulty:archive_files_of_a_template_of_the_same_archive", "archive_files: tmpl.in is not staged: pkg/tmpl.in in "),
 ]
 
 def _failures(ctx, label):
