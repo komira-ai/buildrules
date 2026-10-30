@@ -428,7 +428,7 @@ def _zig_bootstrap_exe_impl(ctx):
 # the unit tests in `test_src` (which imports `src`): the launchers of the
 # other rules are built this way, so those rules need no shell either. Built
 # `-OReleaseSafe -fstrip` like `zig_exe`. A program built for another system
-# than the one it is built on (`busybox_macos`) has no `test_src` (`zig test`
+# than the one it is built on (`macos_applets`) has no `test_src` (`zig test`
 # would run the tests on the system it is built for) and waits for `unit_tests`
 # instead, `zig_test` targets that run on this one.
 zig_bootstrap_exe_rule = rule(
@@ -473,8 +473,8 @@ conda_libs = _on_tool_exec(conda_libs_rule)
 _zig_dist_on_tool_exec = _on_tool_exec(zig_dist_rule)
 
 def zig_dist(**kwargs):
-    """The zig distribution unpacked from `archive`: by the pinned busybox's `tar`, or, on a Mac that runs Buck2 itself (`TOOL_EXEC`), by the pinned `unpack` program, which
-    needs no busybox (a Mac has none before busybox_macos is built, and that is built by a zig). `busybox` or `unpack` in the call chooses."""
+    """The zig distribution unpacked from `archive`: by the pinned applets' `tar`, or, on a Mac that runs Buck2 itself (`TOOL_EXEC`), by the pinned `unpack` program, which
+    needs no applets (a Mac has none before macos_applets is built, and that is built by a zig). The call's own `busybox` or `unpack` chooses."""
     if "busybox" not in kwargs and "unpack" not in kwargs:
         if TOOL_EXEC == MACOS_AARCH64:
             kwargs["unpack"] = "buildrules//rules/pins:bootstrap_unpack_macos_aarch64"

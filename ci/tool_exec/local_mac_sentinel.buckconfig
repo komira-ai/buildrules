@@ -1,0 +1,6 @@
+# ci/tool_exec.bxl:check --state local_mac_sentinel: the local host sentinel named as an identity, where identities are named (local mode on a Mac, analysis only),
+# which a compile must refuse: the sentinel is what the rules choose when none is named, never something a configuration names.
+[buildrules_re]
+  mode = local
+  local_host = macos-aarch64
+  darwin_macos_hosts = local

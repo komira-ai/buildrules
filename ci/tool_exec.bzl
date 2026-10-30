@@ -1,8 +1,8 @@
 """The tools of the Mojo rules run on the tool execution platform, and a compile names the macOS hosts it may run on (rules/core/platform.bzl, rules/platforms.bzl).
 
-On a farm the tool tier (the Zig tools, the pinned zig and busybox, the unpackers, `:check`) runs on linux x86_64 and cross-compiles for the host that will run it, as it
+On a farm the tool tier (the Zig tools, the pinned zig and applets, the unpackers, `:check`) runs on linux x86_64 and cross-compiles for the host that will run it, as it
 always did. On a Mac that runs Buck2 itself (`[buildrules_re] mode = local`) there is no other execution platform, so the tier runs on the Mac: the zig is the macOS
-archive unpacked by `unpack`, the busybox is `busybox_macos`, and the one macOS host of a compile is the sentinel `local`. No Mac is needed to hold that: `[buildrules_re]
+archive unpacked by `unpack`, the applets are `macos_applets`, and the one macOS host of a compile is the sentinel `local`. No Mac is needed to hold that: `[buildrules_re]
 local_host` names the machine of local mode, so the placement is analysed on any machine (ci/tool_exec/*.buckconfig). `tool_exec_problems(ctx, state)` is a list of strings,
 empty when all is as the state holds it; ci/tool_exec.bxl runs it. The states:
 
@@ -11,13 +11,14 @@ empty when all is as the state holds it; ci/tool_exec.bxl runs it. The states:
   local_mac         local mode on a Mac, no identity named: every target of a macOS package is placed on the Mac, the pins are the Mac's, the host is `local`.
   local_mac_named   as local_mac with identities named: those identities, unchanged, and not the sentinel.
   local_mac_mixed   the sentinel named beside an identity: a macOS compile is refused.
-  sentinel_on_farm  the sentinel named where it is not allowed (a farm): a macOS compile is refused.
+  local_mac_sentinel  the sentinel named alone as if it were an identity: a macOS compile is refused.
+  sentinel_on_farm  the same on a farm (property sets set, ci/tool_exec/sentinel_on_farm.buckconfig): refused.
 """
 
 load("//rules:platforms.bzl", "DARWIN_LOCAL_HOST", "darwin_hosts_for", "darwin_local_hosts_refusal")
 load("//rules/core:platform.bzl", "LINUX_X86_64", "MACOS_AARCH64", "machine_of", "tool_exec_for", "tool_target_for")
 
-STATES = ["local_linux", "farm", "local_mac", "local_mac_named", "local_mac_mixed", "sentinel_on_farm"]
+STATES = ["local_linux", "farm", "local_mac", "local_mac_named", "local_mac_mixed", "local_mac_sentinel", "sentinel_on_farm"]
 
 PACKAGE = "//examples/mojo/subdirs"
 MAC = "buildrules//platforms:macos_aarch64"
@@ -67,7 +68,7 @@ def _unit(ctx, platform):
     return ctx.configured_targets(PACKAGE + ":lib_ungated", target_platform = platform)
 
 def _tier_problems(ctx, platform, exec, local_mac):
-    """The pinned zig and busybox, and `:check`, on `platform`: placed on `exec`; a Mac's zig is unpacked by `unpack`, a farm's by the busybox."""
+    """The pinned zig and applets, and the Zig tools, on `platform`: placed on `exec`; a Mac's zig is unpacked by `unpack`, a farm's by the pinned applets."""
     problems = []
     for name in ["zig", "zig_next"]:
         node = ctx.configured_targets("//rules/pins:" + name, target_platform = platform)
@@ -76,15 +77,15 @@ def _tier_problems(ctx, platform, exec, local_mac):
             problems.append("{} is placed on {}, not on {}".format(who, _exec(node), exec))
         attrs = node.resolved_attrs_eager(ctx)
         if local_mac and (attrs.unpack == None or attrs.busybox != None):
-            problems.append("{} is not unpacked by `unpack` alone: unpack {}, busybox {}".format(who, attrs.unpack, attrs.busybox))
+            problems.append("{} is not unpacked by `unpack` alone: unpack {}, applets {}".format(who, attrs.unpack, attrs.busybox))
         if not local_mac and (attrs.unpack != None or attrs.busybox == None):
-            problems.append("{} is not unpacked by the busybox alone: unpack {}, busybox {}".format(who, attrs.unpack, attrs.busybox))
+            problems.append("{} is not unpacked by the pinned applets alone: unpack {}, applets {}".format(who, attrs.unpack, attrs.busybox))
         archive = str(attrs.archive)
         if local_mac != ("macos-aarch64" in archive):
             problems.append("{} unpacks {}, not the archive of {}".format(who, archive, "macOS" if local_mac else "linux x86_64"))
-    busybox = ctx.configured_targets("//rules/pins:busybox", target_platform = platform)
-    if local_mac != ("busybox_macos" in str(busybox.label) or busybox.rule_type.endswith("alias")):
-        problems.append("//rules/pins:busybox on {} is {} ({}): {}".format(platform, busybox.label, busybox.rule_type, "the Mac's busybox is busybox_macos" if local_mac else "a farm's is the pinned download"))
+    applets = ctx.configured_targets("//rules/pins:busybox", target_platform = platform)
+    if local_mac != applets.rule_type.endswith("alias"):
+        problems.append("//rules/pins:busybox on {} is a {}: {}".format(platform, applets.rule_type, "a Mac's is the alias of macos_applets" if local_mac else "a farm's is the pinned download"))
     for name in ["conda_unpack", "mojo_launch", "mojo_compile_macos"]:
         node = ctx.configured_targets("//rules/mojo:" + name, target_platform = platform)
         want = "aarch64-macos" if name == "mojo_compile_macos" or local_mac else "x86_64-linux-musl"
@@ -149,4 +150,4 @@ def tool_exec_problems(ctx, state):
         return problems
     if state == "local_mac_mixed":
         return problems + _refused_problem(ctx, "is mixed with other hosts")
-    return problems + _refused_problem(ctx, "is not allowed here")
+    return problems + _refused_problem(ctx, "is not allowed here")  # local_mac_sentinel, sentinel_on_farm

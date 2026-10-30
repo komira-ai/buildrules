@@ -17,7 +17,7 @@
       machine's CPU: a test that needs `x86-64-v3` fails on a CPU without it, as it would on a worker without it.
 
       On a macOS arm64 machine the Mac is the one execution platform (`buildrules//platforms:macos_aarch64`), so the tool tier of the Mojo rules runs on it too: the Zig
-      tools are built for the Mac by the pinned macOS zig (unpacked by `unpack`, rules/pins/tool_zig.bzl), the busybox is `busybox_macos` (rules/pins/busybox_macos.zig, a
+      tools are built for the Mac by the pinned macOS zig (unpacked by `unpack`, rules/pins/tool_zig.bzl), the applets are `macos_applets` (rules/pins/macos_applets.zig, a
       Zig program over /bin and /usr/bin), and a macOS compile names the one host `local` (below). Linux machines and farms are unchanged. Nothing here is hermetic
       beyond the pins: the machine's /bin, /usr/bin, C driver and SDK are what the actions meet, and none is in an action key.
 

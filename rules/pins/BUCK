@@ -12,7 +12,7 @@ load(":pins.bzl", "PINS", "strip_prefix")
 load(":tool_zig.bzl", "tool_zig")
 
 # On a Mac that runs Buck2 itself (`[buildrules_re] mode = local`, rules/core/platform.bzl: TOOL_EXEC) the tool tier runs on the Mac: its zig is the macOS
-# archive of the same release (hosts.bzl), unpacked by the pinned `unpack` program, and its busybox is the Zig program `busybox_macos` (busybox_macos.zig), which
+# archive of the same release (hosts.bzl), unpacked by the pinned `unpack` program, and its busybox is the Zig program `macos_applets` (macos_applets.zig), which
 # is built by that zig. On a farm none of this exists and the targets below are what they always were.
 _LOCAL_MAC = TOOL_EXEC == MACOS_AARCH64
 
@@ -41,14 +41,14 @@ zig_dist(
     **tool_zig("zig_next", _LOCAL_MAC)
 )
 
-# The busybox of a Mac (busybox_macos.zig). It is built by the pinned zig without a shell, so it can exist before any busybox does. Its tests run where a busybox
-# exists, which is not a Mac before this program is built: the farm and every Linux machine run them (`busybox_macos_unit`, the dispatch is not system specific), and
+# The busybox of a Mac (macos_applets.zig). It is built by the pinned zig without a shell, so it can exist before any busybox does. Its tests run where a busybox
+# exists, which is not a Mac before this program is built: the farm and every Linux machine run them (`macos_applets_unit`, the dispatch is not system specific), and
 # the program they gate is cross-compiled for macOS there as well, so the tree holds it whether or not a Mac is building. `:busybox` is it in local mode on a Mac.
 [
     zig_test(
-        name = "busybox_macos_unit",
-        src = "busybox_macos_test.zig",
-        imports = ["busybox_macos.zig"],
+        name = "macos_applets_unit",
+        src = "macos_applets_test.zig",
+        imports = ["macos_applets.zig"],
         busybox = ":busybox",
         zig = ":zig",
     )
@@ -57,16 +57,16 @@ zig_dist(
 ]
 
 zig_bootstrap_exe(
-    name = "busybox_macos",
-    src = "busybox_macos.zig",
+    name = "macos_applets",
+    src = "macos_applets.zig",
     target = "aarch64-macos",
-    unit_tests = [] if _LOCAL_MAC else [":busybox_macos_unit"],
+    unit_tests = [] if _LOCAL_MAC else [":macos_applets_unit"],
     zig = ":zig",
     visibility = ["PUBLIC"],
 )
 
 [
-    alias(name = "busybox", actual = ":busybox_macos", visibility = ["PUBLIC"])
+    alias(name = "busybox", actual = ":macos_applets", visibility = ["PUBLIC"])
     for _ in [1]
     if _LOCAL_MAC
 ]

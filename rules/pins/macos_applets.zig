@@ -1,10 +1,10 @@
-//! busybox_macos: the busybox calling convention over the macOS base system.
+//! macos_applets: the calling convention of the pinned static busybox over the macOS base system.
 //!
 //! A Mac that runs Buck2 itself (`[buildrules_re] mode = local`) has no static busybox, and every Zig rule runs its scripts through one (`busybox sh -euc`, the
 //! applets as the PATH of a test). This program stands in for it. It accepts exactly the forms the rules use:
 //!
-//!   busybox_macos <applet> <args...>      run one applet
-//!   busybox_macos --install -s <dir>      link every applet in <dir> to this program
+//!   macos_applets <applet> <args...>      run one applet
+//!   macos_applets --install -s <dir>      link every applet in <dir> to this program
 //!   <dir>/<applet> <args...>              (such a link) run that applet
 //!
 //! An applet is resolved in /bin and /usr/bin only, which on macOS belong to the operating system (the sealed system volume), never to a developer tool
@@ -80,7 +80,7 @@ fn executable(path: []const u8) bool {
 }
 
 fn say(comptime fmt: []const u8, args: anytype) void {
-    std.io.getStdErr().writer().print("busybox_macos: " ++ fmt ++ "\n", args) catch {};
+    std.io.getStdErr().writer().print("macos_applets: " ++ fmt ++ "\n", args) catch {};
 }
 
 pub fn main() u8 {
@@ -92,7 +92,7 @@ pub fn main() u8 {
     };
     switch (plan(std.fs.path.basename(argv[0]), argv[1..])) {
         .usage => {
-            say("usage: busybox_macos <applet> <args...> | --install -s <dir>", .{});
+            say("usage: macos_applets <applet> <args...> | --install -s <dir>", .{});
             return 2;
         },
         .refuse => |name| {
