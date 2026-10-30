@@ -134,7 +134,9 @@ def _cfg(ctx, node):
 
 def native_link_cfg_problems(ctx):
     problems = []
-    for platform in [LINUX, MACOS]:
+    # Linux only: the configuration of a Mojo unit for macOS needs a macOS execution platform (a runner in local mode has none, and analysis refuses it); the lines are the same
+    # for both, and the macOS run of the packages is //ci:mojo.
+    for platform in [LINUX]:
         for target, archives, cxx in LINKS:
             who = "{} on {}".format(target, platform)
             node = ctx.configured_targets(target, target_platform = platform)
