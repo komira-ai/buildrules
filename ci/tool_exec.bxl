@@ -1,0 +1,29 @@
+# Where the tools of the Mojo rules run, and which macOS hosts a compile may run on (ci/tool_exec.bzl says what is held). The public CI runs the first; the others
+# are analysis too and need no machine of the kind they describe:
+#
+#   buck2 bxl -c buildrules_re.mode=local //ci:tool_exec.bxl:check -- --state local_linux
+#   buck2 bxl -c buildrules_re.mode=local --config-file ci/tool_exec/local_mac.buckconfig //ci:tool_exec.bxl:check -- --state local_mac
+#   buck2 bxl -c buildrules_re.mode=local --config-file ci/tool_exec/local_mac_named.buckconfig //ci:tool_exec.bxl:check -- --state local_mac_named
+#   buck2 bxl -c buildrules_re.mode=local --config-file ci/tool_exec/local_mac_mixed.buckconfig //ci:tool_exec.bxl:check -- --state local_mac_mixed
+#   buck2 bxl -c buildrules_re.mode=local --config-file ci/tool_exec/local_mac_sentinel.buckconfig //ci:tool_exec.bxl:check -- --state local_mac_sentinel
+#
+# The two states of a farm's configuration (remote mode, property sets of placeholders) cannot be run by a public runner, which builds in local mode; they are run by
+# hand, with no endpoint configured (the placeholders name no worker):
+#
+#   buck2 bxl --config-file ci/exec_select.buckconfig //ci:tool_exec.bxl:check -- --state farm
+#   buck2 bxl --config-file ci/tool_exec/sentinel_on_farm.buckconfig //ci:tool_exec.bxl:check -- --state sentinel_on_farm
+
+load("@buildrules//ci:tool_exec.bzl", "STATES", "tool_exec_problems")
+
+def _impl(ctx):
+    problems = tool_exec_problems(ctx, ctx.cli_args.state)
+    if problems:
+        fail("ci/tool_exec ({}): {} problem(s):\n  ".format(ctx.cli_args.state, len(problems)) + "\n  ".join(problems))
+    ctx.output.print("ok ({}): the tools of the Mojo rules and the macOS hosts of a compile are as this state holds them".format(ctx.cli_args.state))
+
+check = bxl_main(
+    impl = _impl,
+    cli_args = {
+        "state": cli_args.enum(STATES),
+    },
+)

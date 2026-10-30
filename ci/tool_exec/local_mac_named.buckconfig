@@ -1,0 +1,5 @@
+# ci/tool_exec.bxl:check --state local_mac_named: local mode on a macOS arm64 machine that names its host identities anyway (a farm's identities, analysis only).
+[buildrules_re]
+  mode = local
+  local_host = macos-aarch64
+  darwin_macos_hosts = 27.0-0123456789abcdef

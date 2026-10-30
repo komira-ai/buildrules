@@ -879,6 +879,8 @@ group(name = "all", deps = [
     "//rules/toolbox:toolbox_exe_test",
     "//rules/toolbox:linux_aarch64_is_aarch64_linux_musl",
     "//rules/toolbox:macos_arm64_is_aarch64_macos",
+    "//rules/pins:macos_applets",
+    "//rules/pins:macos_applets_unit",
     "//rules/kpin:kpin",
     "//rules/node:esbuild_linux-x64",
     "//third_party/aws-lc:crypto",

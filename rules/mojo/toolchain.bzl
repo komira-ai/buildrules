@@ -14,7 +14,7 @@ toolchains/mojo_pins.bzl and `mojo_toolchains()` (one call of toolchains/BUCK) d
 """
 
 load("//rules/core:pinned_file.bzl", "pinned_file")
-load("//rules/core:platform.bzl", "LINUX_X86_64", "exec_for_target")
+load("//rules/core:platform.bzl", "LINUX_X86_64", "TOOL_EXEC", "exec_for_target")
 load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/coverage:defs.bzl", "cov_link")
 load("//rules/coverage/branch:llvm_branch.bzl", "RAW_PROFILE_VERSION", "cov_branch_toolchain", "llvm_branch_check", "llvm_branch_unpack")
@@ -63,9 +63,8 @@ def _mojo_zig(v, archive, zig_url):
     zig_dist(
         name = "mojo_{}_zig".format(v),
         archive = archive,
-        busybox = "buildrules//rules/pins:busybox",
         strip_prefix = zig_url.split("/")[-1][:-len(".tar.xz")],
-        exec_compatible_with = LINUX_X86_64,
+        exec_compatible_with = TOOL_EXEC,
     )
 
 def split_toolchain_table(table):

@@ -1,7 +1,7 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # The Mojo rules (docs/contract.md, section 12): the tools their actions run, built by the pinned zig behind their unit tests.
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
-load("//rules/core:platform.bzl", "LINUX_X86_64", "by_host", "by_os_cpu")
+load("//rules/core:platform.bzl", "TOOL_EXEC", "by_host", "by_os_cpu")
 load("//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
 
 # The tools the unit, test, conda and closure actions run are built for the host that runs them (rules/mojo/exec.bzl): `zig_exe` is a build on the linux x86_64
@@ -13,7 +13,7 @@ _HOST_TARGET = by_host("x86_64-linux-musl", "aarch64-linux-musl", "aarch64-macos
 # drive on a manual clock.
 zig_test(
     name = "proc_tree_unit",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/proc_tree.zig",
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
@@ -24,7 +24,7 @@ zig_test(
 zig_exe(
     name = "mojo_compile",
     target = _HOST_TARGET,
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/mojo_compile.zig",
     imports = [
         "tools/cc_shim.zig",
@@ -53,7 +53,7 @@ _MOJO_COMPILE_MACOS_SRCS = [
 
 zig_test(
     name = "mojo_compile_macos_unit",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     imports = _MOJO_COMPILE_MACOS_SRCS,
     src = "tools/mojo_compile_macos.zig",
     busybox = "buildrules//rules/pins:busybox",
@@ -63,7 +63,7 @@ zig_test(
 zig_exe(
     name = "mojo_compile_macos",
     target = "aarch64-macos",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     imports = _MOJO_COMPILE_MACOS_SRCS,
     src = "tools/mojo_compile_macos.zig",
     busybox = "buildrules//rules/pins:busybox",
@@ -85,7 +85,7 @@ alias(
 # `conda_unpack --all-libs`: every shared library of a package's lib/ (conda_libs.zig), behind its unit tests. The rest of conda_unpack (the compiler closure) has no unit test.
 zig_test(
     name = "conda_libs_unit",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/conda_libs_test.zig",
     imports = ["tools/conda_libs.zig", "tools/prebuilt_unpack.zig"],
     busybox = "buildrules//rules/pins:busybox",
@@ -96,7 +96,7 @@ zig_test(
 zig_exe(
     name = "conda_unpack",
     target = _HOST_TARGET,
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/conda_unpack.zig",
     imports = ["tools/conda_libs.zig", "tools/prebuilt_unpack.zig"],
     busybox = "buildrules//rules/pins:busybox",
@@ -109,7 +109,7 @@ zig_exe(
 # of mopm's arguments. Behind its unit tests.
 zig_test(
     name = "mojo_launch_unit",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/mojo_launch_test.zig",
     imports = ["tools/mojo_launch.zig"],
     busybox = "buildrules//rules/pins:busybox",
@@ -119,7 +119,7 @@ zig_test(
 zig_exe(
     name = "mojo_launch",
     target = _HOST_TARGET,
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/mojo_launch.zig",
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
@@ -130,7 +130,7 @@ zig_exe(
 # The `.mojoc` of a registry package, out of its `.conda`. Behind its unit tests.
 zig_test(
     name = "prebuilt_unpack_unit",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/prebuilt_unpack_test.zig",
     imports = ["tools/prebuilt_unpack.zig"],
     busybox = "buildrules//rules/pins:busybox",
@@ -140,7 +140,7 @@ zig_test(
 zig_exe(
     name = "prebuilt_unpack",
     target = _HOST_TARGET,
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/prebuilt_unpack.zig",
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
@@ -151,7 +151,7 @@ zig_exe(
 # The comparison of the files a Mojo table was made from with what is on disk now (`:check`, rules/mojo/check.bzl).
 zig_test(
     name = "files_check_unit",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/files_check_test.zig",
     imports = ["tools/files_check.zig"],
     busybox = "buildrules//rules/pins:busybox",
@@ -160,7 +160,7 @@ zig_test(
 
 zig_exe(
     name = "files_check",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/files_check.zig",
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
@@ -172,7 +172,7 @@ zig_exe(
 # A module of its own: the command line (cli/) and table_check both import it, and neither is built unless its tests passed.
 zig_test(
     name = "graph_norm_unit",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/graph_norm_test.zig",
     imports = ["tools/graph_norm.zig"],
     zig = "buildrules//rules/pins:zig_next",
@@ -188,7 +188,7 @@ zig_module(
 # The comparison of a committed table's graph with what the pinned mopm prints now (`:table`, rules/mojo/check.bzl).
 zig_test(
     name = "table_check_unit",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/table_check_test.zig",
     imports = ["tools/table_check.zig"],
     deps = [":mojo_graph_norm"],
@@ -198,7 +198,7 @@ zig_test(
 
 zig_exe(
     name = "table_check",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/table_check.zig",
     deps = [":mojo_graph_norm"],
     busybox = "buildrules//rules/pins:busybox",
@@ -210,7 +210,7 @@ zig_exe(
 # `buildrules mojo sync` as a farm action, and the copy of the files it writes back into a working tree (`mojo_sync`, rules/mojo/sync.bzl).
 zig_test(
     name = "mojo_sync_unit",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/mojo_sync_test.zig",
     imports = ["tools/mojo_sync.zig"],
     zig = "buildrules//rules/pins:zig_next",
@@ -218,7 +218,7 @@ zig_test(
 
 zig_exe(
     name = "mojo_sync",
-    exec_compatible_with = LINUX_X86_64,
+    exec_compatible_with = TOOL_EXEC,
     src = "tools/mojo_sync_main.zig",
     imports = ["tools/mojo_sync.zig"],
     zig = "buildrules//rules/pins:zig_next",
