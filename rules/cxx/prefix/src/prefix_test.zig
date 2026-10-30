@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const P = @import("prefix.zig");
+const B = @import("cxx_builtins");
 
 const eqs = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
@@ -234,6 +235,21 @@ test "check: an archive with no symbols is red" {
     try expect(v.red);
     try eqs("archive_check RED: only 0 defined symbols start with widget_s2n_ in /x/lib.a (at least 1 expected)\n", v.stderr);
 }
+
+test "no compiler builtin is renamed: the header and the list of names leave out all nine, and only them" {
+    var armap = std.ArrayList(u8).empty;
+    for (B.names) |n| {
+        try expect(P.skipped(n));
+        try armap.appendSlice(P.a(), n);
+        try armap.append(P.a(), '\n');
+    }
+    // Near misses are renamed like any name.
+    try armap.appendSlice(P.a(), "__umodti4\n__divti3x\nk__divti3\nreal_name\n");
+    try strs(&.{ "__divti3x", "__umodti4", "k__divti3", "real_name" }, try P.symbols(armap.items, &.{}, "lib.a", 1));
+    const h = try P.header(.boringssl, "p", "", &.{"real_name"});
+    try expect(std.mem.indexOf(u8, h, "__umodti3") == null);
+}
+
 
 test "header: with the Mach-O assembly, boringssl style, the underscored names are renamed to the underscored new names written out, after the C names" {
     const want =

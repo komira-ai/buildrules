@@ -453,3 +453,75 @@ test "the libSystem list holds CCRandomGenerateBytes, which aws-lc calls for ran
     const o = try clean(a, &.{ .{ .name = "k_rand", .kind = .def }, .{ .name = "CCRandomGenerateBytes", .kind = .undef } });
     try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{})).findings.len);
 }
+
+test "members: a Mach-O archive's own table is not a member by any of its four names, and a member that begins like one is" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const good = try clean(a, &.{.{ .name = "k_one", .kind = .def }});
+    const leak = try clean(a, &.{.{ .name = "leaked", .kind = .def }});
+    for ([_][]const u8{ "__.SYMDEF", "__.SYMDEF SORTED", "__.SYMDEF_64", "__.SYMDEF_64 SORTED" }) |table| {
+        var out = std.ArrayList(u8).empty;
+        try out.appendSlice(a, "!<arch>\n");
+        try member(&out, a, table, "\x00\x00\x00\x00", "0");
+        try member(&out, a, "a.o", good, "0");
+        try t.expectEqual(@as(usize, 1), (try A.members(a, out.items)).len);
+    }
+    const b = try archive(a, &.{ .{ .name = "a.o", .data = good }, .{ .name = "__.SYMDEF_x.o", .data = leak } });
+    try t.expectEqual(@as(usize, 2), (try A.members(a, b)).len);
+    try t.expect(hasFinding(try A.check(a, "libx.a", b, .{ .prefix = "k_" }), "without the prefix k_: leaked"));
+}
+
+test "prefix: a weak reference to a replaced name is a finding in a Mach-O library too, and a common symbol without the prefix is a leak" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try clean(a, &.{ .{ .name = "k_use", .kind = .def }, .{ .name = "lib_hook", .kind = .weak_undef } });
+    const b = try archive(a, &.{.{ .name = "a.o", .data = o }});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{ .prefix = "k_" })).findings.len);
+    const r = try A.check(a, "libx.a", b, .{ .prefix = "k_", .original = &.{"lib_hook"} });
+    try t.expect(hasFinding(r, "undefined reference to lib_hook, a name the prefix header renames"));
+    const c = try clean(a, &.{ .{ .name = "k_use", .kind = .def }, .{ .name = "tentative", .kind = .common } });
+    try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = c }}), .{ .prefix = "k_" }), "without the prefix k_: tentative"));
+    // An infix is not the prefix.
+    const infix = try clean(a, &.{ .{ .name = "k_use", .kind = .def }, .{ .name = "xk_leaky", .kind = .def } });
+    try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = infix }}), .{ .prefix = "k_" }), "xk_leaky"));
+}
+
+test "every name the macOS list holds is accepted as an undefined symbol of a Mach-O library" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var syms = std.ArrayList(Sym).empty;
+    var it = std.mem.splitScalar(u8, A.floor_symbols_macos, '\n');
+    while (it.next()) |l| {
+        const n = std.mem.trim(u8, l, " \r");
+        if (n.len != 0 and n[0] != '#') try syms.append(a, .{ .name = n, .kind = .undef });
+    }
+    try t.expect(syms.items.len > 500);
+    const b = try archive(a, &.{.{ .name = "a.o", .data = try clean(a, syms.items) }});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{})).findings.len);
+}
+
+test "fuzz: a malformed Mach-O archive is read or refused, whatever bytes were changed (seeded)" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o1 = try clean(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "memcpy", .kind = .undef }, .{ .name = "lib_hook", .kind = .weak_undef }, .{ .name = "tentative", .kind = .common }, .{ .name = "dbg", .kind = .stab } });
+    const o2 = try object(a, &.{ .{ .name = "k_two", .kind = .def }, .{ .name = "k_one", .kind = .undef } }, &.{ "__TEXT,__text", "__DWARF,__debug_info" }, 1);
+    const good = try archive(a, &.{ .{ .name = "a.o", .data = o1 }, .{ .name = "b.o", .data = o2 } });
+    try E.fuzz(a, good, 3000, 0x7ac0);
+}
+
+test "cxx namespace: a Mach-O library's mangled names (one underscore more) are matched by their C names" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try clean(a, &.{ .{ .name = "k_c_api", .kind = .def }, .{ .name = "_ZN6snappy3fooEv", .kind = .def }, .{ .name = "_ZTVN6snappy6SourceE", .kind = .def } });
+    const b = try archive(a, &.{.{ .name = "a.o", .data = o }});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} })).findings.len);
+    try t.expect(hasFinding(try A.check(a, "libx.a", b, .{ .prefix = "k_" }), "_ZN6snappy3fooEv"));
+    const other = try clean(a, &.{ .{ .name = "k_c_api", .kind = .def }, .{ .name = "_ZN7snappyx3fooEv", .kind = .def }, .{ .name = "_Z3foov", .kind = .def } });
+    const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = other }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} });
+    try t.expect(hasFinding(r, "2 defined symbol(s) without the prefix k_: _Z3foov _ZN7snappyx3fooEv"));
+}

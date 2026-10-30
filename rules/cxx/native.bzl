@@ -46,8 +46,10 @@ def _impl(ctx):
         rest.extend(["--prefix", ctx.attrs.prefix, "--min-prefixed", str(ctx.attrs.min_prefixed)])
         for names in ctx.attrs.original_names:
             rest.extend(["--original", names])
-    elif ctx.attrs.min_prefixed or ctx.attrs.original_names:
-        fail("{}: min_prefixed and original_names need a prefix".format(ctx.label))
+        for ns in ctx.attrs.cxx_namespaces:
+            rest.extend(["--cxx-namespace", ns])
+    elif ctx.attrs.min_prefixed or ctx.attrs.original_names or ctx.attrs.cxx_namespaces:
+        fail("{}: min_prefixed, original_names and cxx_namespaces need a prefix".format(ctx.label))
     cxx = ctx.attrs.cxx or any([s.endswith(CXX_SUFFIXES) for s in ctx.attrs.sources])
     if ctx.attrs.members_any:
         rest.extend(["--members", "any"])
@@ -84,6 +86,8 @@ native_archive = rule(
         "sources": attrs.list(attrs.string(), default = []),
         # A renamed library (rules/cxx/prefix): every symbol it defines starts with `prefix`, at least `min_prefixed` do, and none of `original_names` (files, one
         # name per line: the names before the renaming) is referenced undefined.
+        # C++ namespaces whose mangled names the library may define without the prefix (a header of macros cannot rename them).
+        "cxx_namespaces": attrs.list(attrs.string(), default = []),
         "min_prefixed": attrs.int(default = 0),
         "needs": attrs.list(attrs.dep(), default = []),
         "original_names": attrs.list(attrs.source(), default = []),
@@ -137,6 +141,7 @@ def native_static(
         prefix = None,
         prefix_strip = "",
         prefix_min = 0,
+        prefix_cxx_namespaces = [],
         visibility = ["PUBLIC"]):
     """A native static library: `<name>_cxx` (the `cxx_library`) and `<name>` (the `native_archive`). `includes` are directories (relative to the repository root)
     given to the compiler as `-I`; `cflags_by_os` maps `linux` and `macos` to flags added on that OS after `cflags`; `file_prefix` (default: the package
@@ -147,13 +152,16 @@ def native_static(
     as `<name>_prefix` (a header of `#define old new`), which `<name>_cxx` includes in every compile, and `<name>`, behind the same checks, fails unless every
     symbol it defines starts with the prefix (at least `prefix_min` do) and none of the replaced names is referenced undefined. `prefix_strip` selects the
     `strip` style: a name that starts with it has it replaced by `prefix` (`sqlite3_open` to `pkg_sqlite3_open` for `prefix = "pkg_sqlite3_"`, `prefix_strip =
-    "sqlite3_"`), any other name gets `prefix + "_"` ahead of it; without it the style is aws-lc's, `prefix + "_" + name`."""
+    "sqlite3_"`), any other name gets `prefix + "_"` ahead of it; without it the style is aws-lc's, `prefix + "_" + name`.
+
+    `prefix_cxx_namespaces` names C++ namespaces (`["snappy"]`) whose mangled names (`_ZN6snappy...`) the archive may define without the prefix: a header of macros cannot rename them, so
+    a library that renames its C API only says so here (`archive_check --cxx-namespace`)."""
     if file_prefix == None:
         file_prefix = native.package_name()
     if prefix and prefix_min <= 0:
         fail("{}: prefix_min must be the least number of symbols the library defines (it stops a header made from the wrong archive)".format(name))
-    if not prefix and (prefix_strip or prefix_min):
-        fail("{}: prefix_strip and prefix_min need a prefix".format(name))
+    if not prefix and (prefix_strip or prefix_min or prefix_cxx_namespaces):
+        fail("{}: prefix_strip, prefix_min and prefix_cxx_namespaces need a prefix".format(name))
 
     # What every native library is compiled with, before the manifest's flags (which may override it): optimised, and without the undefined-behaviour
     # instrumentation zig cc turns on when no optimisation is asked for, which records the source path and the toolchain's header paths in `.rodata`.
@@ -227,6 +235,7 @@ def native_static(
         validate = validate,
         prefix = prefix,
         min_prefixed = prefix_min,
+        cxx_namespaces = prefix_cxx_namespaces,
         original_names = [":" + name + "_prefix[symbols]"],
         visibility = visibility,
     )

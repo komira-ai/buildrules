@@ -51,6 +51,7 @@ zig_test(
     env_tools = {"ELFSYMS": ":elfsyms"},
     exec_compatible_with = LINUX_X86_64,
     imports = _SRCS,
+    deps = [":cxx_builtins"],
     src = "prefix/src/main.zig",
     busybox = "buildrules//rules/pins:busybox",
     zig = _ZIG,
@@ -62,6 +63,7 @@ zig_exe(
     name = "prefix_tool",
     exec_compatible_with = LINUX_X86_64,
     imports = _SRCS,
+    deps = [":cxx_builtins"],
     src = "prefix/src/main.zig",
     unit_tests = [":prefix_tool_unit", _ZIG_VERSION],
     busybox = "buildrules//rules/pins:busybox",
@@ -113,6 +115,22 @@ zig_exe(
     visibility = ["PUBLIC"],
 )
 
+# The compiler builtins a library may define itself (builtins/src/builtins.zig): one list for prefix_tool and archive_check.
+zig_test(
+    name = "builtins_unit",
+    exec_compatible_with = LINUX_X86_64,
+    imports = ["builtins/src/builtins_test.zig"],
+    src = "builtins/src/builtins.zig",
+    zig = _ZIG,
+)
+
+zig_module(
+    name = "cxx_builtins",
+    src = "builtins/src/builtins.zig",
+    imports = ["builtins/src/builtins_test.zig"],
+    unit_tests = [":builtins_unit"],
+)
+
 # The checks above as modules, so the archive check applies the same code to each member of a native library.
 zig_module(
     name = "cxx_hermetic",
@@ -137,7 +155,7 @@ zig_test(
     exec_compatible_with = LINUX_X86_64,
     imports = _ARCHIVE_SRCS,
     src = "archive/src/archive.zig",
-    deps = [":cxx_hermetic", ":cxx_floor"],
+    deps = [":cxx_hermetic", ":cxx_floor", ":cxx_builtins"],
     zig = _ZIG,
 )
 
@@ -146,7 +164,7 @@ zig_exe(
     exec_compatible_with = LINUX_X86_64,
     imports = _ARCHIVE_SRCS,
     src = "archive/src/archive.zig",
-    deps = [":cxx_hermetic", ":cxx_floor"],
+    deps = [":cxx_hermetic", ":cxx_floor", ":cxx_builtins"],
     unit_tests = [":archive_check_unit", _ZIG_VERSION],
     zig = _ZIG,
     visibility = ["PUBLIC"],
@@ -176,8 +194,8 @@ export_file(
 # The coverage of the sources the tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. zig_cc_launcher.zig and
 # elfsyms.c have no unit test and are not measured.
 zig_coverage(
-    test_targets = [":prefix_tool_unit", ":glibc_floor_unit", ":hermetic_unit", ":archive_check_unit"],
-    expect = ["rules/cxx/" + f for f in glob(["prefix/src/*.zig", "floor/src/*.zig", "hermetic/src/*.zig", "archive/src/*.zig"], exclude = ["**/*_test.zig"])],
+    test_targets = [":prefix_tool_unit", ":glibc_floor_unit", ":hermetic_unit", ":archive_check_unit", ":builtins_unit"],
+    expect = ["rules/cxx/" + f for f in glob(["prefix/src/*.zig", "floor/src/*.zig", "hermetic/src/*.zig", "archive/src/*.zig", "builtins/src/*.zig"], exclude = ["**/*_test.zig"])],
 )
 
 scrub_files()

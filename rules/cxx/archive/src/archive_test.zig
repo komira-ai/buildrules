@@ -6,7 +6,7 @@ const A = @import("archive.zig");
 
 const t = std.testing;
 
-pub const Sym = struct { name: []const u8, kind: enum { def, undef, weak_undef, local } };
+pub const Sym = struct { name: []const u8, kind: enum { def, undef, weak_undef, local, weak_def, common, abs, tls } };
 
 /// A relocatable ELF64 object: .symtab (null symbol, then `syms`), .strtab, .shstrtab, and one empty section per `sections` name.
 pub fn object(a: std.mem.Allocator, syms: []const Sym, sections: []const []const u8) ![]u8 {
@@ -28,6 +28,22 @@ pub fn object(a: std.mem.Allocator, syms: []const Sym, sections: []const []const
             .weak_undef => e[4] = 2 << 4,
             .local => {
                 e[4] = 2;
+                std.mem.writeInt(u16, e[6..8], 1, .little);
+            },
+            .weak_def => {
+                e[4] = (2 << 4) | 2;
+                std.mem.writeInt(u16, e[6..8], 1, .little);
+            },
+            .common => {
+                e[4] = (1 << 4) | 1;
+                std.mem.writeInt(u16, e[6..8], 0xfff2, .little);
+            },
+            .abs => {
+                e[4] = (1 << 4) | 1;
+                std.mem.writeInt(u16, e[6..8], 0xfff1, .little);
+            },
+            .tls => {
+                e[4] = (1 << 4) | 6;
                 std.mem.writeInt(u16, e[6..8], 1, .little);
             },
         }
@@ -770,7 +786,8 @@ test "prefix: the compiler's 128-bit builtins a library defines itself do not co
     try t.expect(hasFinding(try A.check(a, "libx.a", b, .{ .prefix = "k_", .min_prefixed = 2 }), "only 1 defined symbol(s)"));
     const near = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "__umodti4", .kind = .def } }, &.{});
     try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = near }}), .{ .prefix = "k_" }), "without the prefix k_: __umodti4"));
-    try t.expect(A.compilerBuiltin("__umodti3") and !A.compilerBuiltin("__umodti4") and !A.compilerBuiltin("memcpy"));
+    const builtins = @import("cxx_builtins");
+    try t.expect(builtins.isBuiltin("__umodti3") and !builtins.isBuiltin("__umodti4") and !builtins.isBuiltin("memcpy"));
 }
 
 test "the C library list at the floor holds the names aws-lc needs, and the macOS list the one it calls" {
@@ -780,6 +797,192 @@ test "the C library list at the floor holds the names aws-lc needs, and the macO
     const elf = try object(a, &.{ .{ .name = "fopen64", .kind = .undef }, .{ .name = "__isoc99_sscanf", .kind = .undef }, .{ .name = "getauxval", .kind = .undef }, .{ .name = "sdallocx", .kind = .undef } }, &.{});
     try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = elf }}), .{})).findings.len);
 }
+
+// ---- what the verification of the prefix rules left open ------------------------------------------------------------------------------------------------------------
+
+test "members: only the exact names of the symbol tables are tables; a member whose name begins like one is a member and its symbols are read" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const good = try object(a, &.{.{ .name = "k_one", .kind = .def }}, &.{});
+    const leak = try object(a, &.{.{ .name = "leaked", .kind = .def }}, &.{});
+    const b = try archive(a, &.{ .{ .name = "a.o", .data = good }, .{ .name = "__.SYMDEF_x.o", .data = leak } });
+    const ms = try A.members(a, b);
+    try t.expectEqual(@as(usize, 2), ms.len);
+    try t.expectEqualStrings("__.SYMDEF_x.o", ms[1].name);
+    const r = try A.check(a, "libx.a", b, .{ .prefix = "k_" });
+    try t.expect(hasFinding(r, "without the prefix k_: leaked"));
+    // The same smuggled member in a GNU archive whose names fit the field, and a longer name that starts with a table's.
+    for ([_][]const u8{ "__.SYMDEF_64x.o", "__.SYMDEF SORTEDx", "__.SYMDEFS" }) |name| {
+        const c = try archive(a, &.{ .{ .name = "a.o", .data = good }, .{ .name = name, .data = leak } });
+        try t.expect(hasFinding(try A.check(a, "libx.a", c, .{ .prefix = "k_" }), "leaked"));
+    }
+}
+
+test "prefix: the prefix is a beginning, not something inside the name" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "xk_leaky", .kind = .def }, .{ .name = "leak_k_", .kind = .def } }, &.{});
+    const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_" });
+    try t.expect(hasFinding(r, "2 defined symbol(s) without the prefix k_: leak_k_ xk_leaky"));
+}
+
+test "prefix: a definition of any kind that lacks the prefix is a leak: weak, common, absolute and thread-local" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const kinds = [_]@FieldType(Sym, "kind"){ .def, .weak_def, .common, .abs, .tls };
+    for (kinds) |k| {
+        const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "leaked", .kind = k } }, &.{});
+        const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_" });
+        try t.expect(hasFinding(r, "without the prefix k_: leaked"));
+        // With the prefix it is clean, and a local of that name is never a leak.
+        const ok = try object(a, &.{ .{ .name = "k_leaked", .kind = k }, .{ .name = "leaked", .kind = .local } }, &.{});
+        try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = ok }}), .{ .prefix = "k_" })).findings.len);
+    }
+}
+
+test "prefix: a weak undefined reference to a replaced name is a finding too" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{ .{ .name = "k_use", .kind = .def }, .{ .name = "lib_hook", .kind = .weak_undef }, .{ .name = "other_hook", .kind = .weak_undef } }, &.{});
+    const b = try archive(a, &.{.{ .name = "a.o", .data = o }});
+    const r = try A.check(a, "libx.a", b, .{ .prefix = "k_", .original = &.{"lib_hook"} });
+    try t.expectEqual(@as(usize, 1), r.findings.len);
+    try t.expect(hasFinding(r, "undefined reference to lib_hook, a name the prefix header renames"));
+    // Without the names it is only a weak reference, which is not a defect.
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{ .prefix = "k_" })).findings.len);
+    // A strong and a weak reference to one name are one finding.
+    const both = try object(a, &.{ .{ .name = "k_use", .kind = .def }, .{ .name = "lib_hook", .kind = .weak_undef } }, &.{});
+    const strong = try object(a, &.{.{ .name = "lib_hook", .kind = .undef }}, &.{});
+    const c = try archive(a, &.{ .{ .name = "a.o", .data = both }, .{ .name = "b.o", .data = strong } });
+    try t.expectEqual(@as(usize, 1), (try A.check(a, "libx.a", c, .{ .prefix = "k_", .original = &.{"lib_hook"}, .allow = &.{"lib_hook"} })).findings.len);
+}
+
+test "runtime c++: a definition under a runtime prefix is not excused, with the prefix rule on" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    for ([_][]const u8{ "__cxa_mylib", "_ZNStmine", "_Unwind_Mine", "__dso_handle", "_Znwx", "__gxx_mine", "__dynamic_castX", "_ZTSStmine" }) |name| {
+        const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = name, .kind = .def } }, &.{});
+        const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .runtime_cxx = true });
+        try t.expect(hasFinding(r, name));
+    }
+}
+
+test "runtime c++: every prefix of the runtime is excused as an undefined name" {
+    for ([_][]const u8{ "_ZNStx", "_ZNKStx", "_ZStx", "_ZTVStx", "_ZTIStx", "_ZTSSt9exception", "_ZTVN10__cxxabiv1x", "_ZTIN10__cxxabiv117__class_type_infoE", "_ZTSN10__cxxabiv117__class_type_infoE", "_Znwm", "_Znam", "_Zdlx", "_Zdax", "__cxa_x", "__gxx_x", "__dynamic_cast", "_Unwind_x", "__dso_handle" }) |n| try t.expect(A.cxxRuntime(n));
+}
+
+test "the C library list at the floor accepts every name it lists, as an undefined symbol, and the same for the macOS list" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var syms = std.ArrayList(Sym).empty;
+    var it = std.mem.splitScalar(u8, A.floor_symbols, '\n');
+    while (it.next()) |l| {
+        const n = std.mem.trim(u8, l, " \r");
+        if (n.len != 0 and n[0] != '#') try syms.append(a, .{ .name = n, .kind = .undef });
+    }
+    try t.expect(syms.items.len > 500);
+    const b = try archive(a, &.{.{ .name = "a.o", .data = try object(a, syms.items, &.{}) }});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{})).findings.len);
+}
+
+test "fuzz: a malformed ELF archive is read or refused, whatever bytes were changed (seeded, so the same every run)" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o1 = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "memcpy", .kind = .undef }, .{ .name = "lib_hook", .kind = .weak_undef }, .{ .name = "leaked", .kind = .common } }, &.{ ".text", ".debug_info" });
+    const o2 = try object(a, &.{ .{ .name = "k_two", .kind = .def }, .{ .name = "k_one", .kind = .undef } }, &.{".text"});
+    const good = try archive(a, &.{ .{ .name = "a.o", .data = o1 }, .{ .name = "b.o", .data = o2 } });
+    try fuzz(a, good, 3000, 0x5eed);
+}
+
+/// `cases` copies of `good`, each with one to three bytes changed, or cut short, through `check` with every option on, then `members`. Nothing may panic or hang; the verdict is not judged.
+pub fn fuzz(a: std.mem.Allocator, good: []const u8, cases: usize, seed: u64) !void {
+    var prng = std.Random.DefaultPrng.init(seed);
+    const rnd = prng.random();
+    var i: usize = 0;
+    while (i < cases) : (i += 1) {
+        var arena_case = std.heap.ArenaAllocator.init(t.allocator);
+        defer arena_case.deinit();
+        const x = arena_case.allocator();
+        var b = try x.dupe(u8, good);
+        if (rnd.boolean()) {
+            const n = rnd.intRangeAtMost(usize, 1, 3);
+            for (0..n) |_| b[rnd.uintLessThan(usize, b.len)] = rnd.int(u8);
+        } else {
+            b = b[0..rnd.uintLessThan(usize, b.len)];
+        }
+        _ = try A.check(x, "fuzz.a", b, .{ .prefix = "k_", .min_prefixed = 1, .original = &.{"lib_hook"}, .runtime_cxx = true, .needs = &.{good} });
+        _ = A.members(x, b) catch {};
+    }
+    _ = a;
+}
+
+// ---- C++ names of a namespace in a library that renames only its C API (`cxx_namespaces`, `--cxx-namespace`) -------------------------------------------------------
+
+test "cxx namespace: a mangled name in the namespace is not a leak, in any of its forms; another namespace or a look-alike is" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const inside = [_][]const u8{ "_ZN6snappy6SourceD2Ev", "_ZNK6snappy6Source9AvailableEv", "_ZNKR6snappy3FooEv", "_ZNVK6snappy3BarEv", "_ZNO6snappy3BazEv", "_ZTVN6snappy6SourceE", "_ZTIN6snappy6SourceE", "_ZTSN6snappy6SourceE", "_ZGVN6snappy4onceE", "_ZN6snappy" };
+    for (inside) |n| {
+        const o = try object(a, &.{ .{ .name = "k_snappy_compress", .kind = .def }, .{ .name = n, .kind = .def } }, &.{});
+        const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} });
+        if (r.findings.len != 0) {
+            std.debug.print("refused {s}\n", .{n});
+            return error.TestUnexpectedResult;
+        }
+        // Without the namespace the same name is a leak.
+        try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_" }), n));
+    }
+    const outside = [_][]const u8{ "_Z3foov", "_ZN5other3fooEv", "_ZN7snappyx3fooEv", "_ZN5snapp3fooEv", "_ZN3foo6snappy3barEv", "_ZNSt6snappy", "_ZN99999999999999999999999snappy", "_ZN", "_ZN0", "_ZN6snap", "_ZTV6snappy", "snappy_x", "_ZN6snappyz" };
+    for (outside) |n| {
+        const o = try object(a, &.{ .{ .name = "k_snappy_compress", .kind = .def }, .{ .name = n, .kind = .def } }, &.{});
+        const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} });
+        // `_ZN6snappyz` has a component of six bytes, `snappy`, and a rest: the grammar allows it, so it is in the namespace.
+        const expected: usize = if (std.mem.eql(u8, n, "_ZN6snappyz")) 0 else 1;
+        try t.expectEqual(expected, r.findings.len);
+    }
+}
+
+test "cxx namespace: several namespaces, and the C names without the prefix are still leaks" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "_ZN6snappy1fEv", .kind = .def }, .{ .name = "_ZN3lz41gEv", .kind = .def }, .{ .name = "plain_c", .kind = .def } }, &.{});
+    const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .min_prefixed = 1, .cxx_namespaces = &.{ "snappy", "lz4" } });
+    try t.expectEqual(@as(usize, 1), r.findings.len);
+    try t.expect(hasFinding(r, "1 defined symbol(s) without the prefix k_: plain_c"));
+    // Not counted as prefixed.
+    try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .min_prefixed = 2, .cxx_namespaces = &.{ "snappy", "lz4" } }), "only 1 defined symbol(s)"));
+}
+
+test "cxx namespace: the command line takes it with a prefix only, and run honours it" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const c = (try A.parseArgs(a, &.{ "l.a", "r.json", "--prefix", "k_", "--cxx-namespace", "snappy", "--cxx-namespace", "lz4" })).?;
+    try t.expectEqual(@as(usize, 2), c.cxx_namespaces.len);
+    try t.expectEqualStrings("lz4", c.cxx_namespaces[1]);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--cxx-namespace", "snappy" })) == null);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--prefix", "k_", "--cxx-namespace", "" })) == null);
+    try t.expectEqual(@as(usize, 0), (try A.parseArgs(a, &.{ "l.a", "r.json" })).?.cxx_namespaces.len);
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const o = try object(a, &.{ .{ .name = "k_c_api", .kind = .def }, .{ .name = "_ZN6snappy3fooEv", .kind = .def } }, &.{});
+    try tmp.dir.writeFile(.{ .sub_path = "libx.a", .data = try archive(a, &.{.{ .name = "a.o", .data = o }}) });
+    var err = std.ArrayList(u8).empty;
+    try t.expectEqual(@as(u8, 1), try A.run(a, tmp.dir, "", &.{ "libx.a", "r1.json", "--prefix", "k_" }, &err));
+    err.clearRetainingCapacity();
+    try t.expectEqual(@as(u8, 0), try A.run(a, tmp.dir, "", &.{ "libx.a", "r2.json", "--prefix", "k_", "--cxx-namespace", "snappy" }, &err));
+    try t.expectEqual(@as(usize, 0), err.items.len);
+}
+
 
 test "--members any: members out of the order of their names are not a finding, and the other rules still hold" {
     var ar = arena();
@@ -804,3 +1007,189 @@ test "parseArgs: --members takes any and nothing else" {
     try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--members" })) == null);
 }
 
+=======
+// ---- what the verification of the prefix rules left open ------------------------------------------------------------------------------------------------------------
+
+test "members: only the exact names of the symbol tables are tables; a member whose name begins like one is a member and its symbols are read" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const good = try object(a, &.{.{ .name = "k_one", .kind = .def }}, &.{});
+    const leak = try object(a, &.{.{ .name = "leaked", .kind = .def }}, &.{});
+    const b = try archive(a, &.{ .{ .name = "a.o", .data = good }, .{ .name = "__.SYMDEF_x.o", .data = leak } });
+    const ms = try A.members(a, b);
+    try t.expectEqual(@as(usize, 2), ms.len);
+    try t.expectEqualStrings("__.SYMDEF_x.o", ms[1].name);
+    const r = try A.check(a, "libx.a", b, .{ .prefix = "k_" });
+    try t.expect(hasFinding(r, "without the prefix k_: leaked"));
+    // The same smuggled member in a GNU archive whose names fit the field, and a longer name that starts with a table's.
+    for ([_][]const u8{ "__.SYMDEF_64x.o", "__.SYMDEF SORTEDx", "__.SYMDEFS" }) |name| {
+        const c = try archive(a, &.{ .{ .name = "a.o", .data = good }, .{ .name = name, .data = leak } });
+        try t.expect(hasFinding(try A.check(a, "libx.a", c, .{ .prefix = "k_" }), "leaked"));
+    }
+}
+
+test "prefix: the prefix is a beginning, not something inside the name" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "xk_leaky", .kind = .def }, .{ .name = "leak_k_", .kind = .def } }, &.{});
+    const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_" });
+    try t.expect(hasFinding(r, "2 defined symbol(s) without the prefix k_: leak_k_ xk_leaky"));
+}
+
+test "prefix: a definition of any kind that lacks the prefix is a leak: weak, common, absolute and thread-local" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const kinds = [_]@FieldType(Sym, "kind"){ .def, .weak_def, .common, .abs, .tls };
+    for (kinds) |k| {
+        const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "leaked", .kind = k } }, &.{});
+        const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_" });
+        try t.expect(hasFinding(r, "without the prefix k_: leaked"));
+        // With the prefix it is clean, and a local of that name is never a leak.
+        const ok = try object(a, &.{ .{ .name = "k_leaked", .kind = k }, .{ .name = "leaked", .kind = .local } }, &.{});
+        try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = ok }}), .{ .prefix = "k_" })).findings.len);
+    }
+}
+
+test "prefix: a weak undefined reference to a replaced name is a finding too" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{ .{ .name = "k_use", .kind = .def }, .{ .name = "lib_hook", .kind = .weak_undef }, .{ .name = "other_hook", .kind = .weak_undef } }, &.{});
+    const b = try archive(a, &.{.{ .name = "a.o", .data = o }});
+    const r = try A.check(a, "libx.a", b, .{ .prefix = "k_", .original = &.{"lib_hook"} });
+    try t.expectEqual(@as(usize, 1), r.findings.len);
+    try t.expect(hasFinding(r, "undefined reference to lib_hook, a name the prefix header renames"));
+    // Without the names it is only a weak reference, which is not a defect.
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{ .prefix = "k_" })).findings.len);
+    // A strong and a weak reference to one name are one finding.
+    const both = try object(a, &.{ .{ .name = "k_use", .kind = .def }, .{ .name = "lib_hook", .kind = .weak_undef } }, &.{});
+    const strong = try object(a, &.{.{ .name = "lib_hook", .kind = .undef }}, &.{});
+    const c = try archive(a, &.{ .{ .name = "a.o", .data = both }, .{ .name = "b.o", .data = strong } });
+    try t.expectEqual(@as(usize, 1), (try A.check(a, "libx.a", c, .{ .prefix = "k_", .original = &.{"lib_hook"}, .allow = &.{"lib_hook"} })).findings.len);
+}
+
+test "runtime c++: a definition under a runtime prefix is not excused, with the prefix rule on" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    for ([_][]const u8{ "__cxa_mylib", "_ZNStmine", "_Unwind_Mine", "__dso_handle", "_Znwx", "__gxx_mine", "__dynamic_castX", "_ZTSStmine" }) |name| {
+        const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = name, .kind = .def } }, &.{});
+        const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .runtime_cxx = true });
+        try t.expect(hasFinding(r, name));
+    }
+}
+
+test "runtime c++: every prefix of the runtime is excused as an undefined name" {
+    for ([_][]const u8{ "_ZNStx", "_ZNKStx", "_ZStx", "_ZTVStx", "_ZTIStx", "_ZTSSt9exception", "_ZTVN10__cxxabiv1x", "_ZTIN10__cxxabiv117__class_type_infoE", "_ZTSN10__cxxabiv117__class_type_infoE", "_Znwm", "_Znam", "_Zdlx", "_Zdax", "__cxa_x", "__gxx_x", "__dynamic_cast", "_Unwind_x", "__dso_handle" }) |n| try t.expect(A.cxxRuntime(n));
+}
+
+test "the C library list at the floor accepts every name it lists, as an undefined symbol, and the same for the macOS list" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var syms = std.ArrayList(Sym).empty;
+    var it = std.mem.splitScalar(u8, A.floor_symbols, '\n');
+    while (it.next()) |l| {
+        const n = std.mem.trim(u8, l, " \r");
+        if (n.len != 0 and n[0] != '#') try syms.append(a, .{ .name = n, .kind = .undef });
+    }
+    try t.expect(syms.items.len > 500);
+    const b = try archive(a, &.{.{ .name = "a.o", .data = try object(a, syms.items, &.{}) }});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{})).findings.len);
+}
+
+test "fuzz: a malformed ELF archive is read or refused, whatever bytes were changed (seeded, so the same every run)" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o1 = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "memcpy", .kind = .undef }, .{ .name = "lib_hook", .kind = .weak_undef }, .{ .name = "leaked", .kind = .common } }, &.{ ".text", ".debug_info" });
+    const o2 = try object(a, &.{ .{ .name = "k_two", .kind = .def }, .{ .name = "k_one", .kind = .undef } }, &.{".text"});
+    const good = try archive(a, &.{ .{ .name = "a.o", .data = o1 }, .{ .name = "b.o", .data = o2 } });
+    try fuzz(a, good, 3000, 0x5eed);
+}
+
+/// `cases` copies of `good`, each with one to three bytes changed, or cut short, through `check` with every option on, then `members`. Nothing may panic or hang; the verdict is not judged.
+pub fn fuzz(a: std.mem.Allocator, good: []const u8, cases: usize, seed: u64) !void {
+    var prng = std.Random.DefaultPrng.init(seed);
+    const rnd = prng.random();
+    var i: usize = 0;
+    while (i < cases) : (i += 1) {
+        var arena_case = std.heap.ArenaAllocator.init(t.allocator);
+        defer arena_case.deinit();
+        const x = arena_case.allocator();
+        var b = try x.dupe(u8, good);
+        if (rnd.boolean()) {
+            const n = rnd.intRangeAtMost(usize, 1, 3);
+            for (0..n) |_| b[rnd.uintLessThan(usize, b.len)] = rnd.int(u8);
+        } else {
+            b = b[0..rnd.uintLessThan(usize, b.len)];
+        }
+        _ = try A.check(x, "fuzz.a", b, .{ .prefix = "k_", .min_prefixed = 1, .original = &.{"lib_hook"}, .runtime_cxx = true, .needs = &.{good} });
+        _ = A.members(x, b) catch {};
+    }
+    _ = a;
+}
+
+// ---- C++ names of a namespace in a library that renames only its C API (`cxx_namespaces`, `--cxx-namespace`) -------------------------------------------------------
+
+test "cxx namespace: a mangled name in the namespace is not a leak, in any of its forms; another namespace or a look-alike is" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const inside = [_][]const u8{ "_ZN6snappy6SourceD2Ev", "_ZNK6snappy6Source9AvailableEv", "_ZNKR6snappy3FooEv", "_ZNVK6snappy3BarEv", "_ZNO6snappy3BazEv", "_ZTVN6snappy6SourceE", "_ZTIN6snappy6SourceE", "_ZTSN6snappy6SourceE", "_ZGVN6snappy4onceE", "_ZN6snappy" };
+    for (inside) |n| {
+        const o = try object(a, &.{ .{ .name = "k_snappy_compress", .kind = .def }, .{ .name = n, .kind = .def } }, &.{});
+        const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} });
+        if (r.findings.len != 0) {
+            std.debug.print("refused {s}\n", .{n});
+            return error.TestUnexpectedResult;
+        }
+        // Without the namespace the same name is a leak.
+        try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_" }), n));
+    }
+    const outside = [_][]const u8{ "_Z3foov", "_ZN5other3fooEv", "_ZN7snappyx3fooEv", "_ZN5snapp3fooEv", "_ZN3foo6snappy3barEv", "_ZNSt6snappy", "_ZN99999999999999999999999snappy", "_ZN", "_ZN0", "_ZN6snap", "_ZTV6snappy", "snappy_x", "_ZN6snappyz" };
+    for (outside) |n| {
+        const o = try object(a, &.{ .{ .name = "k_snappy_compress", .kind = .def }, .{ .name = n, .kind = .def } }, &.{});
+        const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} });
+        // `_ZN6snappyz` has a component of six bytes, `snappy`, and a rest: the grammar allows it, so it is in the namespace.
+        const expected: usize = if (std.mem.eql(u8, n, "_ZN6snappyz")) 0 else 1;
+        try t.expectEqual(expected, r.findings.len);
+    }
+}
+
+test "cxx namespace: several namespaces, and the C names without the prefix are still leaks" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "_ZN6snappy1fEv", .kind = .def }, .{ .name = "_ZN3lz41gEv", .kind = .def }, .{ .name = "plain_c", .kind = .def } }, &.{});
+    const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .min_prefixed = 1, .cxx_namespaces = &.{ "snappy", "lz4" } });
+    try t.expectEqual(@as(usize, 1), r.findings.len);
+    try t.expect(hasFinding(r, "1 defined symbol(s) without the prefix k_: plain_c"));
+    // Not counted as prefixed.
+    try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .min_prefixed = 2, .cxx_namespaces = &.{ "snappy", "lz4" } }), "only 1 defined symbol(s)"));
+}
+
+test "cxx namespace: the command line takes it with a prefix only, and run honours it" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const c = (try A.parseArgs(a, &.{ "l.a", "r.json", "--prefix", "k_", "--cxx-namespace", "snappy", "--cxx-namespace", "lz4" })).?;
+    try t.expectEqual(@as(usize, 2), c.cxx_namespaces.len);
+    try t.expectEqualStrings("lz4", c.cxx_namespaces[1]);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--cxx-namespace", "snappy" })) == null);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--prefix", "k_", "--cxx-namespace", "" })) == null);
+    try t.expectEqual(@as(usize, 0), (try A.parseArgs(a, &.{ "l.a", "r.json" })).?.cxx_namespaces.len);
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const o = try object(a, &.{ .{ .name = "k_c_api", .kind = .def }, .{ .name = "_ZN6snappy3fooEv", .kind = .def } }, &.{});
+    try tmp.dir.writeFile(.{ .sub_path = "libx.a", .data = try archive(a, &.{.{ .name = "a.o", .data = o }}) });
+    var err = std.ArrayList(u8).empty;
+    try t.expectEqual(@as(u8, 1), try A.run(a, tmp.dir, "", &.{ "libx.a", "r1.json", "--prefix", "k_" }, &err));
+    err.clearRetainingCapacity();
+    try t.expectEqual(@as(u8, 0), try A.run(a, tmp.dir, "", &.{ "libx.a", "r2.json", "--prefix", "k_", "--cxx-namespace", "snappy" }, &err));
+    try t.expectEqual(@as(usize, 0), err.items.len);
+}
+>>>>>>> origin/tools/archive-check-prefix
