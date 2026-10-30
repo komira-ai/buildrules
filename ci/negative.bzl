@@ -446,6 +446,11 @@ FAULTY = [
     ("//ci/mojo_syslibs:run_red_one_missing", "//ci/mojo_syslibs:run_green", "system_probe: no directory after the compiler's lib on LD_LIBRARY_PATH holds libz.so.1"),
     # The directories a gated library exports for the label that adopts its package: a library that exports none leaves the run without them.
     ("//ci/mojo_syslibs:run_red_via_lib_without", "//ci/mojo_syslibs:run_green_via_lib", "system_probe: no directory after the compiler's lib on LD_LIBRARY_PATH holds libsqlite3.so.0"),
+    # archive_files never follows a symbolic link of an archive (ci/faulty/BUCK): a listed file that is a link to a path of the machine that unpacks it, or out of the unpacked tree,
+    # or that lies behind a link to a directory, is refused with the file named. The controls are the same rule over an archive whose listed files are not links.
+    ("//ci/faulty:archive_files_of_a_link_to_an_absolute_path", "//ci/faulty:archive_files_of_files_without_links", "archive_files: link.c is not staged: pkg/link.c in "),
+    ("//ci/faulty:archive_files_of_a_link_out_of_the_tree", "//ci/faulty:archive_files_of_separate_files_without_links", "archive_files: link.c is not staged: pkg/link.c in "),
+    ("//ci/faulty:archive_files_of_a_file_behind_a_link_to_a_directory", "//ci/faulty:archive_files_of_files_without_links", "archive_files: etc/hostname is not staged: pkg/etc in "),
 ]
 
 def _failures(ctx, label):

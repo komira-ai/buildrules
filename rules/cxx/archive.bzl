@@ -4,7 +4,9 @@ A remote action unpacks the archive with the declared busybox and copies out
 exactly the files listed in `files` (and `templates`); each becomes its own
 output and a sub-target named by its path, so a `cxx_library` can name
 `:<target>[snappy.cc]` as a source. A listed file missing from the archive
-fails the action.
+fails the action. A listed file that is a symbolic link of the archive, or lies
+behind one, fails the action too: staging does not follow symbolic links from
+an archive (links nothing lists are left alone).
 
 With `one_tree`, the files are one directory output instead, and each
 sub-target is a projection of it (see the attribute).
@@ -40,17 +42,34 @@ case "$ARCHIVE" in
     *) echo "archive_files: unsupported archive type: $ARCHIVE" >&2; exit 2 ;;
 esac
 SRC="$T/x/$PREFIX"
+# Staging never follows a symbolic link of the archive. A listed file that is a link, or lies behind one (a link to a directory, or in `strip_prefix`), would carry the copy to
+# a path of the machine that unpacks it: it is refused, naming the link. Links nothing lists are never read. (A hard link to a file of the archive is a second name of that
+# file; one to a path outside it fails the unpacking itself.)
+refuse_links() {
+    walk="$T/x"; rest="$PREFIX/$1"
+    while [ -n "$rest" ]; do
+        part="${rest%%/*}"
+        case "$rest" in */*) rest="${rest#*/}" ;; *) rest= ;; esac
+        [ -n "$part" ] || continue
+        walk="$walk/$part"
+        if [ -L "$walk" ]; then
+            echo "archive_files: $1 is not staged: ${walk#"$T/x/"} in $ARCHIVE is a symbolic link; staging does not follow symbolic links from an archive" >&2
+            exit 2
+        fi
+    done
+}
 TREE=
 while [ "$#" -gt 0 ]; do
     if [ "$1" = --tree ]; then TREE="$2/"; shift 2; continue; fi
     kind="$1"; rel="$2"; out="$TREE$3"; shift 3
+    refuse_links "$rel"
     if [ ! -f "$SRC/$rel" ]; then
         echo "archive_files: $rel is not a file in $ARCHIVE (under '$PREFIX')" >&2
         exit 2
     fi
     mkdir -p "$(dirname "$out")"
     case "$kind" in
-        file) cp "$SRC/$rel" "$out" ;;
+        file) cp -P "$SRC/$rel" "$out" ;;
         template) sed -f "$SED" "$SRC/$rel" > "$out" ;;
     esac
 done

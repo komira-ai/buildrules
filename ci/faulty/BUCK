@@ -2,6 +2,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("@buildrules//ci/mojo_gate:fixture.bzl", "gate_fixture_lib")
 load("@buildrules//rules:isa.bzl", "test_exec_compatible_with")
 load("@buildrules//rules/core:run_check.bzl", "run_check")
+load("@buildrules//rules/cxx:archive.bzl", "archive_files")
 load("@buildrules//rules/cxx:defs.bzl", "c_check")
 load("@buildrules//rules/cxx:native.bzl", "native_static")
 load("@buildrules//rules/mojo:same.bzl", "mojo_same")
@@ -166,6 +167,57 @@ native_static(
     srcs = ["native/debug_info.c"],
     soname = "libfaulty_debug.a",
     validate = False,
+)
+
+# archive_files stages the listed files of an archive, and never follows a symbolic link of the archive: a listed file that is a link, or lies behind a link, is refused. Each
+# archive below is a `pkg/` tree (ci/faulty/links, made with `tar --sort=name --format=ustar`, then `gzip -n`) with `ok.c` and:
+#   abs_link: link.c, a link to an absolute path of the machine that unpacks it;  rel_link: link.c, a link to a path that climbs out of the unpacked tree;
+#   dir_link: etc, a link to the directory /etc (so `etc/hostname` lies behind a link);
+#   control: no link that is listed: copy.c and ok.c are the same file (a hard link), sub/inner.c, and `unlisted`, a link nothing lists, which stays unread.
+# (Control of each: the same rule on the control archive, which must build.)
+[
+    export_file(name = name + ".tar.gz", src = "links/" + src + ".tar.gz", visibility = ["//ci:"])
+    for name, src in [("archive_abs_link", "abs_link"), ("archive_rel_link", "rel_link"), ("archive_dir_link", "dir_link"), ("archive_control", "control")]
+]
+
+archive_files(
+    name = "archive_files_of_a_link_to_an_absolute_path",
+    archive = ":archive_abs_link.tar.gz",
+    files = ["link.c", "ok.c"],
+    one_tree = True,
+    strip_prefix = "pkg",
+)
+
+archive_files(
+    name = "archive_files_of_a_link_out_of_the_tree",
+    archive = ":archive_rel_link.tar.gz",
+    files = ["link.c", "ok.c"],
+    strip_prefix = "pkg",
+)
+
+archive_files(
+    name = "archive_files_of_a_file_behind_a_link_to_a_directory",
+    archive = ":archive_dir_link.tar.gz",
+    files = ["etc/hostname", "ok.c"],
+    one_tree = True,
+    strip_prefix = "pkg",
+)
+
+archive_files(
+    name = "archive_files_of_files_without_links",
+    archive = ":archive_control.tar.gz",
+    files = ["copy.c", "ok.c", "sub/inner.c"],
+    one_tree = True,
+    strip_prefix = "pkg",
+    visibility = ["//ci:"],
+)
+
+archive_files(
+    name = "archive_files_of_separate_files_without_links",
+    archive = ":archive_control.tar.gz",
+    files = ["copy.c", "ok.c", "sub/inner.c"],
+    strip_prefix = "pkg",
+    visibility = ["//ci:"],
 )
 
 scrub_files()
