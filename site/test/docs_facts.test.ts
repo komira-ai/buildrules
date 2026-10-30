@@ -412,7 +412,7 @@ describe('the release pipeline', () => {
       expect(beta.slice(start, start + 200)).toContain('native, no build yet');
     }
     expect(beta).toContain('runs-on: ubuntu-24.04-arm');
-    expect(beta).toContain('runs-on: macos-14');
+    expect(beta).toContain('runs-on: macos-15');
     expect(plannedText(WHY)).toMatch(/natively on an Arm Linux and a macOS runner, up to the build/);
   });
 });

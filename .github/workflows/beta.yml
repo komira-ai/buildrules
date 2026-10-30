@@ -10,7 +10,7 @@
 #   beta_mojo     the Mojo leg: ubuntu x86_64, the pinned mopm release (rules/mopm/pins.bzl) building a Mojo package
 #   beta_arm      ubuntu-24.04-arm: the command line the release ships for linux-aarch64, run natively on a hello-world repository (zig, cxx): the version
 #                 it says, `init` writing the same bytes at two paths, Buck2 loading the candidate and listing the targets. Not a build: no rule runs on this host yet
-#   beta_macos    macos-14: the same for macos-arm64
+#   beta_macos    macos-15: the same for macos-arm64
 #   beta_farm     the same repositories built on a remote-execution farm, only when the repository variable FARM_ADDRESS is set (RELEASING.md)
 #
 # ci/stages_check.zig (`//ci:workflow`) holds this file to all of that.
@@ -112,6 +112,11 @@ jobs:
         with:
           name: ${{ inputs.cli-bins-artifact }}
           path: cli-bins
+
+      # The runner of the native macOS leg is macos-15, but the command line it runs is cross-built here; its minimum macOS must stay at the pinned 13.0 (ci/macho_minos.zig
+      # reads the Mach-O's minos, on any host).
+      - name: The macOS command line is built for a macOS at most 13.0
+        run: ./buck2 run --console simple -c buildrules_re.mode=local //ci:macho_minos_exe -- --max 13.0 cli-bins/macos-arm64/buildrules
 
       - name: The command line and buck2 of the other hosts
         run: |
@@ -238,8 +243,8 @@ jobs:
 
   beta_macos:
     needs: [tools]
-    name: beta ${{ matrix.lang }} (macos-14) native, no build yet
-    runs-on: macos-14
+    name: beta ${{ matrix.lang }} (macos-15) native, no build yet
+    runs-on: macos-15
     timeout-minutes: 30
     permissions:
       contents: read

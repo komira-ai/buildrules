@@ -86,7 +86,7 @@ and then, from nothing, builds again.
 | `node` | a Node package: `npm sync`, `npm check`, test and build scripts, a `dist` directory | ubuntu x86_64 |
 | `mixed` | a Rust package, a C program, a Zig program and a Node package in one repository | ubuntu x86_64 |
 | `mojo` | a Mojo package, built by the pinned mopm 0.0.48 release | ubuntu x86_64 |
-| `ubuntu-24.04-arm`, `macos-14` (native) | `zig` and `cxx`, with the command line the release ships for `linux-aarch64` and `macos-arm64`, run on that machine: `--version` says the planned version, `init` writes the same bytes in two directories, Buck2 loads the candidate as the external cell and lists the targets. **No build**: see "The native legs" | arm Linux, macOS (Apple silicon) |
+| `ubuntu-24.04-arm`, `macos-15` (native) | `zig` and `cxx`, with the command line the release ships for `linux-aarch64` and `macos-arm64`, run on that machine: `--version` says the planned version, `init` writes the same bytes in two directories, Buck2 loads the candidate as the external cell and lists the targets. **No build**: see "The native legs" | arm Linux, macOS (Apple silicon) |
 | farm | the ubuntu legs again, built on the farm | only when the repository variables `FARM_ADDRESS` and `FARM_CONNECT_REF` are set |
 
 The runner legs run every action on the runner (`-c buildrules_re.mode=local`; nothing is built anywhere else), and each is built **twice, in two different
@@ -112,7 +112,7 @@ is kept as `BUCK.beta`, so that the directories are not packages here. `//beta:b
 
 ### The native legs (`beta_arm`, `beta_macos`)
 
-The release ships a command line for `linux-aarch64` and `macos-arm64`; these legs run that very file, on a runner of that kind (`ubuntu-24.04-arm`, `macos-14`), so a binary
+The release ships a command line for `linux-aarch64` and `macos-arm64`; these legs run that very file, on a runner of that kind (`ubuntu-24.04-arm`, `macos-15`), so a binary
 that does not start, or says another version, is red before the tag. `tools` builds `stage` for both hosts (`//tools/stage:stage_linux_aarch64`, `stage_macos_arm64`, cross-compiled on the
 x86_64 runner like the command line) and takes the files of the release (`release-cli-bins`, the directory `build-cli` packaged the tarballs from; built from the commit when the call names none),
 and the buck2 that `tools/buck2` pins for each host (url and sha256, checked before use). On the host, `stage native` does, for `beta/zig` and `beta/cxx` (the languages whose STEPS need only

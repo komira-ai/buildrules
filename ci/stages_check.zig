@@ -28,9 +28,12 @@ const cli_target = "//cli:buildrules";
 /// The hosts of the native legs: job, runner, the release target (the name of its directory in the artifact `beta-native`), the zig_exe of the stage tool for it, the
 /// platform of tools/buck2 whose release it runs.
 const Native = struct { job: []const u8, runner: []const u8, host: []const u8, stage_target: []const u8, buck2_platform: []const u8 };
+/// The lowest macOS the macOS programs of buildrules run on (the same pin as ci/unpack_macos_check.zig): the macos-arm64 command line is read against it.
+const macos_min = "13.0";
+
 const natives = [_]Native{
     .{ .job = "beta_arm", .runner = "ubuntu-24.04-arm", .host = "linux-aarch64", .stage_target = "//tools/stage:stage_linux_aarch64", .buck2_platform = "linux-aarch64" },
-    .{ .job = "beta_macos", .runner = "macos-14", .host = "macos-arm64", .stage_target = "//tools/stage:stage_macos_arm64", .buck2_platform = "macos-aarch64" },
+    .{ .job = "beta_macos", .runner = "macos-15", .host = "macos-arm64", .stage_target = "//tools/stage:stage_macos_arm64", .buck2_platform = "macos-aarch64" },
 };
 /// The languages the native legs walk: the ones whose STEPS need nothing but `buildrules init` and `config` before the first `build` (the others run `cargo new`,
 /// `npm sync` or `mojo sync` first, each of which builds a pinned tool, and nothing builds on these hosts yet). `stage native` is red on one that does.
@@ -248,6 +251,13 @@ pub fn checkBeta(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, dir
             try add(a, &f, "the job `tools` does not download the artifact `inputs.cli-bins-artifact` into `cli-bins` when the release names it", .{});
         if (!contains(jt, "run: mkdir -p native/linux-aarch64 native/macos-arm64\n")) try add(a, &f, "the job `tools` does not make a directory for each other host", .{});
         if (!contains(jt, "name: beta-native\npath: native\n")) try add(a, &f, "the job `tools` does not upload the directory `native` as the artifact `beta-native`", .{});
+        // the macOS command line is read for its minimum macOS before it is handed on
+        const minos_run = "run: ./buck2 run --console simple -c buildrules_re.mode=local //ci:macho_minos_exe -- --max " ++ macos_min ++ " cli-bins/macos-arm64/buildrules\n";
+        if (std.mem.indexOf(u8, jt, minos_run)) |at| {
+            const have = std.mem.indexOf(u8, jt, "path: cli-bins\n");
+            const handed = std.mem.indexOf(u8, jt, "cp cli-bins/linux-aarch64/buildrules");
+            if (have == null or handed == null or at < have.? or at > handed.?) try add(a, &f, "the job `tools` reads the minimum macOS of the macos-arm64 command line before it has `cli-bins` or after it hands the file on", .{});
+        } else try add(a, &f, "the job `tools` does not check the minimum macOS of the macos-arm64 command line (`" ++ minos_run[5 .. minos_run.len - 1] ++ "`)", .{});
         for (natives) |n| {
             const build = try std.fmt.allocPrint(a, "run: ./buck2 build --console simple -c buildrules_re.mode=local --out native/{s}/stage {s}\n", .{ n.host, n.stage_target });
             if (!contains(jt, build)) try add(a, &f, "the job `tools` does not build the stage tool for {s} (`--out native/{s}/stage {s}`)", .{ n.host, n.host, n.stage_target });
@@ -412,6 +422,9 @@ const fixture_wf =
     \\          name: ${{ inputs.cli-bins-artifact }}
     \\          path: cli-bins
     \\
+    \\      - name: The macOS command line is built for a macOS at most 13.0
+    \\        run: ./buck2 run --console simple -c buildrules_re.mode=local //ci:macho_minos_exe -- --max 13.0 cli-bins/macos-arm64/buildrules
+    \\
     \\      - name: The command line and buck2 of the other hosts
     \\        run: |
     \\          cp cli-bins/linux-aarch64/buildrules native/linux-aarch64/buildrules
@@ -531,8 +544,8 @@ const fixture_wf =
     \\
     \\  beta_macos:
     \\    needs: [tools]
-    \\    name: beta ${{ matrix.lang }} (macos-14) native, no build yet
-    \\    runs-on: macos-14
+    \\    name: beta ${{ matrix.lang }} (macos-15) native, no build yet
+    \\    runs-on: macos-15
     \\    timeout-minutes: 30
     \\    permissions:
     \\      contents: read
@@ -845,6 +858,12 @@ test "rule: the tools job builds the stage tool and takes the command line and t
     try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "mkdir -p native/linux-aarch64 native/macos-arm64", "mkdir -p native"), "does not make a directory for each other host");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "name: beta-native\n          path: native", "name: beta-native\n          path: tool"), "does not upload the directory `native` as the artifact `beta-native`");
     try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "name: beta-native\n          path: native", "name: beta-other\n          path: native"), "does not upload the directory `native` as the artifact `beta-native`");
+    // the minimum macOS of the shipped macos-arm64 command line is read, from the file the tools job hands on
+    const minos_line = "run: ./buck2 run --console simple -c buildrules_re.mode=local //ci:macho_minos_exe -- --max 13.0 cli-bins/macos-arm64/buildrules\n";
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", minos_line, "run: true\n"), "does not check the minimum macOS of the macos-arm64 command line");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "--max 13.0 cli-bins/macos-arm64", "--max 15.0 cli-bins/macos-arm64"), "does not check the minimum macOS of the macos-arm64 command line");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "--max 13.0 cli-bins/macos-arm64", "--max 13.0 cli-bins/linux-aarch64"), "does not check the minimum macOS of the macos-arm64 command line");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "tools", "          path: cli-bins\n", "          path: other\n"), "before it has `cli-bins`");
     for (natives) |n| {
         // the stage tool of the host, and the command line of the host
         const stage = try std.fmt.allocPrint(a, "does not build the stage tool for {s}", .{n.host});
