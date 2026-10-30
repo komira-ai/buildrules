@@ -499,6 +499,73 @@ test "renderPins: a toolchain field that is not there at all is the same refusal
     }
 }
 
+const CLOSURE_OLD = "fd654c4192487587d8f8d9402d060e45e218b79da7b8964503a703710e49b15d";
+const CLOSURE_NEW = "3ed75e01401544e0d660ee48dc387dacce437e3833ac296d4a0601f28abd4aec";
+
+// Defect caught: two releases of mopm that pin the same compiler, runtime packages and zig but hash their whole solve differently refused as "different toolchains", so a repository
+// could name only one mopm release for its packages; or the row naming one closure and the other package's unit being given a closure its toolchain does not hold.
+test "renderPins: graphs that differ only in the closure share one row that names every closure, in the same order whichever graph comes first" {
+    var e = Env.init();
+    defer e.deinit();
+    const a = e.a();
+    const old = try toolchainOf(&e, graph);
+    const new_text = try std.mem.replaceOwned(u8, a, graph, CLOSURE_OLD, CLOSURE_NEW);
+    const new = try toolchainOf(&e, new_text);
+    var d = Diag.init(a);
+    const one = try lockm.renderPins(a, &.{ .{ .mojo = "1.0.0", .toolchain = old }, .{ .mojo = "1.0.0", .toolchain = new } }, &d);
+    const other = try lockm.renderPins(a, &.{ .{ .mojo = "1.0.0", .toolchain = new }, .{ .mojo = "1.0.0", .toolchain = old }, .{ .mojo = "1.0.0", .toolchain = new } }, &d);
+    try t.expectEqualStrings(one, other);
+    try t.expectEqual(@as(usize, 1), kit.count(one, "\"1.0.0\": {"));
+    // The row's `closure_sha256` is the smaller closure and `closures` lists both, sorted.
+    try t.expect(kit.contains(one, "\"closure_sha256\": \"" ++ CLOSURE_NEW ++ "\",\n"));
+    try t.expect(kit.contains(one, "\"closures\": [\"" ++ CLOSURE_NEW ++ "\", \"" ++ CLOSURE_OLD ++ "\"],\n"));
+    // One closure, however many graphs, is the row it always was: no `closures` line.
+    const same = try lockm.renderPins(a, &.{ .{ .mojo = "1.0.0", .toolchain = old }, .{ .mojo = "1.0.0", .toolchain = old } }, &d);
+    try t.expect(!kit.contains(same, "closures"));
+    try t.expect(kit.contains(same, "\"closure_sha256\": \"" ++ CLOSURE_OLD ++ "\",\n"));
+}
+
+test "renderPins: graphs that differ in the closure and in anything else are refused, and so is a closure that is no digest" {
+    var e = Env.init();
+    defer e.deinit();
+    const a = e.a();
+    const old = try toolchainOf(&e, graph);
+    const both = try toolchainOf(&e, try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, graph, CLOSURE_OLD, CLOSURE_NEW), "x86_64-linux-gnu.2.34", "x86_64-linux-gnu.2.28"));
+    var d = Diag.init(a);
+    try t.expectError(error.Invalid, lockm.renderPins(a, &.{ .{ .mojo = "1.0.0", .toolchain = old }, .{ .mojo = "1.0.0", .toolchain = both } }, &d));
+    try expectMsg(&d, "pin different toolchains for Mojo 1.0.0");
+    const wrong_zig = try toolchainOf(&e, try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, graph, CLOSURE_OLD, CLOSURE_NEW), "\"size\": 45480516", "\"size\": 45480517"));
+    var d2 = Diag.init(a);
+    try t.expectError(error.Invalid, lockm.renderPins(a, &.{ .{ .mojo = "1.0.0", .toolchain = old }, .{ .mojo = "1.0.0", .toolchain = wrong_zig } }, &d2));
+    try expectMsg(&d2, "pin different toolchains for Mojo 1.0.0");
+    const bad = try toolchainOf(&e, try std.mem.replaceOwned(u8, a, graph, CLOSURE_OLD, "Z" ++ CLOSURE_NEW[1..]));
+    var d3 = Diag.init(a);
+    try t.expectError(error.Invalid, lockm.renderPins(a, &.{ .{ .mojo = "1.0.0", .toolchain = old }, .{ .mojo = "1.0.0", .toolchain = bad } }, &d3));
+    try expectMsg(&d3, "closure_sha256 is missing or has characters");
+    // Another subdir's closure is its own row, never a closure of this one.
+    const arm = try std.mem.replaceOwned(u8, a, graph, "\"subdir\": \"linux-64\"", "\"subdir\": \"linux-aarch64\"");
+    var d4 = Diag.init(a);
+    const rows = try lockm.renderPins(a, &.{ .{ .mojo = "1.0.0", .toolchain = old }, .{ .mojo = "1.0.0", .toolchain = try toolchainOf(&e, arm), .subdir = "linux-aarch64" } }, &d4);
+    try t.expect(!kit.contains(rows, "closures"));
+}
+
+const ClosuresCall = struct {
+    a: std.json.Value,
+    b: std.json.Value,
+    pub fn call(self: @This(), x: std.mem.Allocator) !bool {
+        var dd = Diag.init(x);
+        const text = lockm.renderPins(x, &.{ .{ .mojo = "1.0.0", .toolchain = self.a }, .{ .mojo = "1.0.0", .toolchain = self.b } }, &dd) catch return false;
+        return text.len > 0;
+    }
+};
+
+test "out of memory: the toolchain table with two closures is written whole or not at all" {
+    var e = Env.init();
+    defer e.deinit();
+    const a = e.a();
+    try kit.sweepOom(ClosuresCall{ .a = try toolchainOf(&e, graph), .b = try toolchainOf(&e, try std.mem.replaceOwned(u8, a, graph, CLOSURE_OLD, CLOSURE_NEW)) }, true);
+}
+
 const PinsCall = struct {
     tc: std.json.Value,
     pub fn call(self: @This(), a: std.mem.Allocator) !bool {

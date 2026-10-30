@@ -414,8 +414,9 @@ fn sizeOf(v: ?std.json.Value) ?i64 {
     return if (x == .integer and x.integer > 0) x.integer else null;
 }
 
-/// One toolchain object as a Starlark dict entry, or null with the reason in `diag`.
-fn renderToolchain(a: std.mem.Allocator, d: *Diag, o: *std.ArrayList(u8), tc: std.json.Value) !bool {
+/// One toolchain object as a Starlark dict entry, or null with the reason in `diag`. `closures` are the closure hashes of every graph that pinned this toolchain (sorted, the
+/// first is `closure_sha256` of the row); a row with more than one lists them all as `closures`.
+fn renderToolchain(a: std.mem.Allocator, d: *Diag, o: *std.ArrayList(u8), tc: std.json.Value, closures: []const []const u8) !bool {
     const before = d.count();
     const t = if (tc == .object) tc.object else {
         d.add("the unit graph's toolchain is not an object", .{});
@@ -435,7 +436,12 @@ fn renderToolchain(a: std.mem.Allocator, d: *Diag, o: *std.ArrayList(u8), tc: st
     const comps = if (t.get("components")) |c| (if (c == .array) c.array.items else null) else null;
     if (comps == null) d.add("the unit graph's toolchain has no components", .{});
     if (zv == null or zu == null or zs == null or zz == null or comps == null) return false;
-    try o.print(a, "        \"subdir\": \"{s}\",\n        \"cc_target\": \"{s}\",\n        \"closure_sha256\": \"{s}\",\n", .{ subdir.?, cc.?, closure.? });
+    try o.print(a, "        \"subdir\": \"{s}\",\n        \"cc_target\": \"{s}\",\n        \"closure_sha256\": \"{s}\",\n", .{ subdir.?, cc.?, if (closures.len > 1) closures[0] else closure.? });
+    if (closures.len > 1) {
+        try o.appendSlice(a, "        \"closures\": [");
+        for (closures, 0..) |c, i| try o.print(a, "{s}\"{s}\"", .{ if (i == 0) "" else ", ", c });
+        try o.appendSlice(a, "],\n");
+    }
     try o.print(a, "        \"zig\": {{\"version\": \"{s}\", \"url\": \"{s}\", \"sha256\": \"{s}\", \"size\": {d}}},\n", .{ zv.?, zu.?, zs.?, zz.? });
     try o.appendSlice(a, "        \"components\": [\n");
     for (comps.?) |cv| {
@@ -458,25 +464,43 @@ fn renderToolchain(a: std.mem.Allocator, d: *Diag, o: *std.ArrayList(u8), tc: st
 
 pub const Tc = struct { mojo: []const u8, toolchain: std.json.Value, subdir: []const u8 = base_subdir };
 
-/// toolchains/mojo_pins.bzl for the toolchains of the graphs: one entry of `MOJO_TOOLCHAINS` per Mojo version and subdir (two graphs of one version and
-/// subdir must have the same toolchain object). The key of a linux-64 entry is the version, as it always was; the key of another subdir's is
+/// toolchains/mojo_pins.bzl for the toolchains of the graphs: one entry of `MOJO_TOOLCHAINS` per Mojo version and subdir. Two graphs of one version and subdir must have the
+/// same toolchain object but for `closure_sha256`: mopm hashes its whole solve of the Mojo environment (the packages the compiler's own tooling needs as well as the three
+/// buildrules unpacks), and two releases of mopm that pin the same compiler, runtime packages and zig may still hash differently. The entry then holds every closure its graphs
+/// pinned (`closures`, sorted; `closure_sha256` is the first), and a unit is given the closure of its own graph (rules/mojo/unit.bzl). Any other difference is refused.
+/// The key of a linux-64 entry is the version, as it always was; the key of another subdir's is
 /// `<version>@<subdir>` (`1.0.0@linux-aarch64`), which `mojo_toolchains()` declares as `mojo_1_0_0_linux_aarch64`. Sorted by version, then by subdir with
-/// linux-64 first. Without graphs for other subdirs the file is what it was before they existed.
+/// linux-64 first. Without graphs for other subdirs, or with one closure, the file is what it was before they existed.
 pub fn renderPins(a: std.mem.Allocator, tcs: []const Tc, diag: *Diag) error{Invalid}![]const u8 {
     const before = diag.count();
     var order = std.ArrayList(usize).empty;
+    // The closures of each entry, by the index of its first graph.
+    var closures = std.AutoHashMap(usize, std.ArrayList([]const u8)).init(a);
     for (tcs, 0..) |x, i| {
         var seen: ?usize = null;
         for (order.items) |j| if (std.mem.eql(u8, tcs[j].mojo, x.mojo) and std.mem.eql(u8, tcs[j].subdir, x.subdir)) {
             seen = j;
         };
+        const mine = closureOf(x.toolchain);
         if (seen) |j| {
-            if (!jsonEqual(a, tcs[j].toolchain, x.toolchain)) {
+            if (!sameButClosure(a, tcs[j].toolchain, x.toolchain)) {
                 diag.add("two packages' unit graphs pin different toolchains for Mojo {s}{s}{s}: mopm pins one", .{ x.mojo, if (std.mem.eql(u8, x.subdir, base_subdir)) "" else " on ", if (std.mem.eql(u8, x.subdir, base_subdir)) "" else x.subdir });
+                continue;
             }
+            if (!valid.isSha256(mine)) {
+                diag.add("the unit graph's toolchain: closure_sha256 is missing or has characters a table may not carry", .{});
+                continue;
+            }
+            const list = closures.getPtr(j).?;
+            var have = false;
+            for (list.items) |c| have = have or std.mem.eql(u8, c, mine);
+            if (!have) list.append(a, mine) catch return error.Invalid;
             continue;
         }
         order.append(a, i) catch return error.Invalid;
+        var list = std.ArrayList([]const u8).empty;
+        list.append(a, mine) catch return error.Invalid;
+        closures.put(i, list) catch return error.Invalid;
     }
     if (diag.count() != before) return error.Invalid;
     std.mem.sort(usize, order.items, tcs, struct {
@@ -502,7 +526,13 @@ pub fn renderPins(a: std.mem.Allocator, tcs: []const Tc, diag: *Diag) error{Inva
         } else {
             o.print(a, "    \"{s}@{s}\": {{\n", .{ tcs[i].mojo, tcs[i].subdir }) catch return error.Invalid;
         }
-        const ok = renderToolchain(a, diag, &o, tcs[i].toolchain) catch return error.Invalid;
+        const list = closures.getPtr(i).?;
+        std.mem.sort([]const u8, list.items, {}, struct {
+            fn lt(_: void, x: []const u8, y: []const u8) bool {
+                return std.mem.lessThan(u8, x, y);
+            }
+        }.lt);
+        const ok = renderToolchain(a, diag, &o, tcs[i].toolchain, list.items) catch return error.Invalid;
         if (!ok) continue;
         o.appendSlice(a, "    },\n") catch return error.Invalid;
     }
@@ -511,6 +541,23 @@ pub fn renderPins(a: std.mem.Allocator, tcs: []const Tc, diag: *Diag) error{Inva
     return o.toOwnedSlice(a) catch error.Invalid;
 }
 
+
+/// The `closure_sha256` of a graph's toolchain object ("" when it has none as a string).
+fn closureOf(tc: std.json.Value) []const u8 {
+    if (tc != .object) return "";
+    const v = tc.object.get("closure_sha256") orelse return "";
+    return if (v == .string) v.string else "";
+}
+
+/// Whether two toolchain objects are the same but for `closure_sha256`.
+fn sameButClosure(a: std.mem.Allocator, x: std.json.Value, y: std.json.Value) bool {
+    if (x != .object or y != .object) return jsonEqual(a, x, y);
+    var cx = x.object.clone() catch return false;
+    var cy = y.object.clone() catch return false;
+    _ = cx.orderedRemove("closure_sha256");
+    _ = cy.orderedRemove("closure_sha256");
+    return jsonEqual(a, .{ .object = cx }, .{ .object = cy });
+}
 
 fn jsonEqual(a: std.mem.Allocator, x: std.json.Value, y: std.json.Value) bool {
     const sx = std.json.Stringify.valueAlloc(a, x, .{}) catch return false;
