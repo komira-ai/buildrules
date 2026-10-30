@@ -299,6 +299,15 @@ jobs:
             //rules/pins:zig //rules/pins:zig_next //rules/pins:macos_applets //rules/pins:macos_applets_unit \
             //rules/mojo:mojo_launch //rules/mojo:mojo_compile_macos //rules/mojo:conda_unpack
 
+      # Every unit test of the tools the Mojo build reaches, run on the Mac, with --keep-going so that one run names every test that assumes Linux.
+      - name: The unit tests of the Mojo tools pass on the Mac
+        run: |
+          ./buck2 build --console simple --keep-going -c buildrules_re.mode=local \
+            //rules/check:check_unit //rules/check:cmds_unit //rules/check:files_unit //rules/check:hang_unit //rules/check:install_root_unit \
+            //rules/check:isa_unit //rules/check:oom_unit //rules/check:runspec_libdir_unit //rules/check:runspec_unit \
+            //rules/mojo:conda_libs_unit //rules/mojo:files_check_unit //rules/mojo:graph_norm_unit //rules/mojo:mojo_compile_macos_unit \
+            //rules/mojo:mojo_launch_unit //rules/mojo:table_check_unit //rules/pins:zig_next_version //rules/toolbox:toolbox_unit
+
       - name: A Mojo package builds and passes its tests on the Mac
         run: |
           ./buck2 build --console simple -c buildrules_re.mode=local \
