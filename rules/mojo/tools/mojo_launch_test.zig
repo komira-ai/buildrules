@@ -162,3 +162,34 @@ test "cfg: link_tail lines reach the wrapper as --link-tail options, in order, a
     const plain = try L.buildArgv(a, "/tc", none, &.{ "--", "build" });
     for (plain) |x| try t.expect(!std.mem.startsWith(u8, x, "--link-tail"));
 }
+
+test "cfg and argv: every allocation failing in turn is an out-of-memory error, never a wrong result" {
+    const text = cfg_text ++ "link_tail=-lc++\nlink_tail=-lm\n";
+    var fail_at: usize = 0;
+    var failed_once = false;
+    while (fail_at < 400) : (fail_at += 1) {
+        var arena = std.heap.ArenaAllocator.init(t.allocator);
+        defer arena.deinit();
+        var failing = t.FailingAllocator.init(arena.allocator(), .{ .fail_index = fail_at });
+        var why: []const u8 = "";
+        const c = L.parseCfg(failing.allocator(), text, &why) catch |e| {
+            try t.expectEqual(error.OutOfMemory, e);
+            failed_once = true;
+            continue;
+        };
+        const argv = L.buildArgv(failing.allocator(), "/tc", c, &.{ "--", "build" }) catch |e| {
+            try t.expectEqual(error.OutOfMemory, e);
+            failed_once = true;
+            continue;
+        };
+        // No allocation failed any more: the result is the whole one.
+        try t.expectEqual(@as(usize, 2), c.link_tail.len);
+        var tails: usize = 0;
+        for (argv) |x| {
+            if (std.mem.startsWith(u8, x, "--link-tail=")) tails += 1;
+        }
+        try t.expectEqual(@as(usize, 2), tails);
+        break;
+    }
+    try t.expect(failed_once);
+}
