@@ -451,6 +451,13 @@ FAULTY = [
     ("//ci/faulty:archive_files_of_a_link_to_an_absolute_path", "//ci/faulty:archive_files_of_files_without_links", "archive_files: link.c is not staged: pkg/link.c in "),
     ("//ci/faulty:archive_files_of_a_link_out_of_the_tree", "//ci/faulty:archive_files_of_separate_files_without_links", "archive_files: link.c is not staged: pkg/link.c in "),
     ("//ci/faulty:archive_files_of_a_file_behind_a_link_to_a_directory", "//ci/faulty:archive_files_of_files_without_links", "archive_files: etc/hostname is not staged: pkg/etc in "),
+    # A link as a component of strip_prefix, in the middle of a path, and as the source of a template; and a path written in a BUCK file that leaves the archive.
+    ("//ci/faulty:archive_files_of_a_link_as_the_strip_prefix", "//ci/faulty:archive_files_of_the_files_behind_no_link_of_the_prefix", "archive_files: hostname is not staged: top in "),
+    ("//ci/faulty:archive_files_of_a_file_behind_a_link_in_the_middle_of_its_path", "//ci/faulty:archive_files_of_the_files_beside_a_link_in_the_middle", "archive_files: a/mid/hostname is not staged: pkg/a/mid in "),
+    ("//ci/faulty:archive_files_of_a_template_that_is_a_link", "//ci/faulty:archive_files_of_a_template_of_the_same_archive", "archive_files: tmpl.in is not staged: pkg/tmpl.in in "),
+    ("//ci/faulty:archive_files_of_a_path_with_a_dot_dot_component", "//ci/faulty:archive_files_of_files_without_links", "archive_files: sub/../ok.c is not a path inside the archive: a path may not be absolute or hold a .. component"),
+    ("//ci/faulty:archive_files_of_an_absolute_path", "//ci/faulty:archive_files_of_files_without_links", "archive_files: /ok.c is not a path inside the archive: a path may not be absolute or hold a .. component"),
+    ("//ci/faulty:archive_files_of_a_strip_prefix_with_a_dot_dot_component", "//ci/faulty:archive_files_of_files_without_links", "archive_files: sub/../pkg is not a path inside the archive: a path may not be absolute or hold a .. component"),
 ]
 
 def _failures(ctx, label):
