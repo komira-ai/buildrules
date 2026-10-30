@@ -134,7 +134,7 @@ def _archive_files_impl(ctx):
                 sub_targets[name] = [DefaultInfo(default_output = out)]
                 outs.append(out)
     ctx.actions.run(
-        busybox_sh(bb, _SCRIPT, archive, ctx.attrs.strip_prefix, sed, args),
+        cmd_args(busybox_sh(bb, _SCRIPT, archive, ctx.attrs.strip_prefix, sed, args), hidden = ctx.attrs.busybox[DefaultInfo].other_outputs),
         category = "archive_files",
     )
     return [DefaultInfo(default_outputs = outs, sub_targets = sub_targets)]

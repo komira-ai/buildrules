@@ -6,7 +6,10 @@ ci/BUCK	busybox	1
 ci/negative/BUCK	busybox	2
 ci/pin_mirrors_check.zig	busybox	42
 ci/tool_exec.bzl	busybox	6
-ci/faulty/BUCK	busybox	1
+ci/faulty/BUCK	busybox	3
+ci/faulty/applets.bzl	busybox	1
+ci/faulty/applets.bzl	bin-sh	1
+ci/faulty/applets.bzl	shebang	1
 ci/workflow_check.zig	shell-word	7
 ci/workflow_lint.bzl	busybox	4
 ci/workflow_lint.bzl	heredoc	1

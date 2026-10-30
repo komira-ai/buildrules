@@ -113,11 +113,15 @@ _ALL.append(refuses("prefix_extra_symbols_that_are_not_identifiers_are_refused",
 
 _ALL.append(refuses("prefix_extra_symbols_that_are_not_a_list_are_refused", check_prefix, [_WHO, {"name": "hk", "min": 1, "extra_symbols": "hook_alloc"}], ["extra_symbols"]))
 
-_ALL.append(accepts("asm_split_of_s_files_is_accepted", check_asm_split, [_WHO, ["arm/", "native/split_"], ["arm/a.S", "arm/b.S", "x.c"]]))
+_ALL.append(accepts("asm_split_of_s_files_is_accepted", check_asm_split, [_WHO, ["arm/", "native/split_a.S", "x/y.s"], ["arm/a.S", "arm/b.S", "native/split_a.S", "x.c"]]))
 
 _ALL.append(refuses("asm_split_naming_a_file_that_is_not_preprocessed_is_refused", check_asm_split, [_WHO, ["arm/"], ["arm/a.s"]], ["is not a .S file"]))
 
 _ALL.append(refuses("asm_split_naming_a_c_file_is_refused", check_asm_split, [_WHO, ["native/"], ["native/x.c"]], ["is not a .S file"]))
+
+_ALL.append(refuses("asm_split_pattern_that_stops_inside_a_directory_name_is_refused", check_asm_split, [_WHO, ["arm"], ["arm/a.S", "armv8/b.S"]], ["ends in neither / nor .S nor .s", "also begins `armv8/`"]))
+
+_ALL.append(refuses("asm_split_pattern_that_stops_inside_a_file_name_is_refused", check_asm_split, [_WHO, ["native/split_"], ["native/split_a.S"]], ["ends in neither"]))
 
 _ALL.append(refuses("asm_split_leaving_the_package_is_refused", check_asm_split, [_WHO, ["../x/"], []], ["is not the beginning of a path"]))
 
@@ -142,6 +146,8 @@ _ALL.append(refuses("prefix_empty_cxx_namespace_is_refused", check_prefix, [_WHO
 _ALL.append(refuses("prefix_cxx_namespace_std_is_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["snappy", "std"]}], ["never `std`"]))
 
 _ALL.append(refuses("prefix_cxx_namespaces_that_are_not_identifiers_are_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["a::b"]}], ["cxx_namespaces"]))
+
+_ALL.append(refuses("prefix_cxx_namespace_starting_with_a_digit_is_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["1abc"]}], ["cxx_namespaces", "do not start with a digit"]))
 
 _ALL.append(refuses("prefix_cxx_namespaces_that_are_not_a_list_are_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": "snappy"}], ["cxx_namespaces"]))
 

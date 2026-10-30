@@ -1,4 +1,5 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//ci/faulty:applets.bzl", "applets_without_link_counts")
 load("@buildrules//ci/mojo_gate:fixture.bzl", "gate_fixture_lib")
 load("@buildrules//rules:isa.bzl", "test_exec_compatible_with")
 load("@buildrules//rules/core:run_check.bzl", "run_check")
@@ -223,6 +224,35 @@ archive_files(
     files = ["copy.c", "ok.c", "sub/inner.c"],
     strip_prefix = "pkg",
     visibility = ["//ci:"],
+)
+
+# `archive_files` counts the names of a listed file with `stat -c %h`, and refuses the file when the count is not a number. The applets below stand in for the pinned ones but print
+# nothing, or a word, for that one call; the control is the same file of the same archive (copy.c, a hard link to ok.c) staged by the pinned ones, in
+# archive_files_of_files_without_links.
+applets_without_link_counts(
+    name = "applets_printing_no_link_count",
+    output = "",
+)
+
+applets_without_link_counts(
+    name = "applets_printing_a_word_for_the_link_count",
+    output = "unknown",
+)
+
+archive_files(
+    name = "archive_files_with_no_link_count",
+    archive = ":archive_control.tar.gz",
+    busybox = ":applets_printing_no_link_count",
+    files = ["copy.c"],
+    strip_prefix = "pkg",
+)
+
+archive_files(
+    name = "archive_files_with_a_word_for_the_link_count",
+    archive = ":archive_control.tar.gz",
+    busybox = ":applets_printing_a_word_for_the_link_count",
+    files = ["copy.c"],
+    strip_prefix = "pkg",
 )
 
 archive_files(

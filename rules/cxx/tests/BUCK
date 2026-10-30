@@ -3,7 +3,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # (rules/rust/refusal.bzl): each target exists, and is green, only if the rule refused what a user would really write. Make a check accept the input and its
 # target stops existing (analysis fails with "expected a refusal"). The tools own refusals, at build time, are //rules/cxx/tests:cxx_tools_refuse.
 load("//rules/core:platform.bzl", "LINUX_X86_64")
-load("//rules/cxx:checks.bzl", "check_inside_archive", "check_listed_once", "check_tree_dirs")
+load("//rules/cxx:checks.bzl", "check_cxx_namespaces", "check_inside_archive", "check_listed_once", "check_tree_dirs")
 load("//rules/rust:refusal.bzl", "accepts", "refuses")
 load("//rules:matrix.bzl", "group")
 load("//rules/zig:zig.bzl", "zig_test")
@@ -32,6 +32,14 @@ _ALL.append(refuses("archive_files_leading_dot_dot_template_source_is_refused", 
 _ALL.append(refuses("archive_files_trailing_dot_dot_strip_prefix_is_refused", check_inside_archive, [_WHO, "strip_prefix", "pkg/.."], ["strip_prefix pkg/.. " + _REASON]))
 _ALL.append(accepts("archive_files_relative_file_is_accepted", check_inside_archive, [_WHO, "file", "src/a..b.c"]))
 _ALL.append(accepts("archive_files_empty_strip_prefix_is_accepted", check_inside_archive, [_WHO, "strip_prefix", ""]))
+
+# A C++ namespace a renamed library keeps (`prefix_cxx_namespaces`) is an identifier that does not start with a digit, and not `std` (`stdx` is a namespace).
+_NS = "namespace is an identifier: letters, digits and _, not starting with a digit, and not empty or std"
+_ALL.append(accepts("cxx_namespaces_that_are_identifiers_are_accepted", check_cxx_namespaces, [_WHO, ["snappy", "_lz4", "a1", "stdx", "std_"]]))
+_ALL.append(refuses("cxx_namespace_starting_with_a_digit_is_refused", check_cxx_namespaces, [_WHO, ["snappy", "1abc"]], ["//third_party/lib:src", 'holds "1abc"', _NS]))
+_ALL.append(refuses("cxx_namespace_std_is_refused", check_cxx_namespaces, [_WHO, ["std"]], ['holds "std"']))
+_ALL.append(refuses("cxx_namespace_empty_is_refused", check_cxx_namespaces, [_WHO, [""]], ['holds ""']))
+_ALL.append(refuses("cxx_namespace_with_a_colon_is_refused", check_cxx_namespaces, [_WHO, ["a::b"]], ['holds "a::b"']))
 
 # The tools as the processes the public targets hand out, over files the test writes: a bad command line, an archive that is not one, an ELF that depends on
 # its directory, a response file that cannot be read. glibc_floor and hermetic are also run on an ELF that passes.
