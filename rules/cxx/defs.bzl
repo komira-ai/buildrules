@@ -109,13 +109,13 @@ def _prefix_header_impl(ctx):
     more = ["--strip", ctx.attrs.strip] if ctx.attrs.strip else []
     for name in ctx.attrs.extra_symbols:
         more.extend(["--extra", name])
+    if (ctx.attrs.archive == None) == (ctx.attrs.defined == None):
+        fail("{}: give exactly one of archive (an unprefixed ELF archive, read with elfsyms) and defined (a file of its defined names, one per line)".format(ctx.label))
+    source = ["--defined", ctx.attrs.defined] if ctx.attrs.defined != None else ["--elfsyms", ctx.attrs._elfsyms[RunInfo], "--archive", ctx.attrs.archive]
     cmd = cmd_args(
         ctx.attrs._tool[RunInfo],
         "header",
-        "--elfsyms",
-        ctx.attrs._elfsyms[RunInfo],
-        "--archive",
-        ctx.attrs.archive,
+        source,
         "--header",
         hdr.as_output(),
         "--symbols",
@@ -135,7 +135,8 @@ _prefix_header = rule(
     impl = _prefix_header_impl,
     doc = "The header renaming every defined global symbol of `archive` (an unprefixed build of the library), plus `extra_symbols`, to its prefixed name; `[symbols]` is the list of the original names, one per line. `prefix_tool header` writes it (src/prefix.zig says what each `style` writes).",
     attrs = {
-        "archive": attrs.source(doc = "The unprefixed static archive whose symbol table names what to rename."),
+        "archive": attrs.option(attrs.source(), default = None, doc = "The unprefixed static archive (ELF) whose symbol table names what to rename."),
+        "defined": attrs.option(attrs.source(), default = None, doc = "Instead of `archive`: a file listing the library's defined global symbols, one per line (the `[symbols]` of a native_archive, which reads Mach-O archives too)."),
         "extra_symbols": attrs.list(attrs.string(), default = [], doc = "Names the library references but does not define (a weak hook a program may define), renamed too."),
         "header": attrs.string(default = "prefix_symbols.h", doc = "The output's file name."),
         "min_symbols": attrs.int(doc = "Fewer names than this fails the action: the archive was not the library."),

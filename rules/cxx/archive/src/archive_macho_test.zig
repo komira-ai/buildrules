@@ -408,3 +408,40 @@ test "members: a symbol table whose name fits the header field (no #1/N) is not 
     try t.expectEqualStrings("a.o", ms[0].name);
     try t.expectEqualStrings("abcd", ms[0].data);
 }
+
+// ---- a renamed library built for macOS arm64: the same rules, the names without the compiler's underscore ----------------------------------------------------------
+
+test "prefix: a Mach-O library is held to the prefix by its C names, and a reference to a replaced name is found in it" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const good = try clean(a, &.{ .{ .name = "k_open", .kind = .def }, .{ .name = "memcpy", .kind = .undef } });
+    const g = try archive(a, &.{.{ .name = "a.o", .data = good }});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", g, .{ .prefix = "k_", .min_prefixed = 1, .original = &.{"open"} })).findings.len);
+    // A symbol the renaming missed is defined without the prefix.
+    const leaked = try clean(a, &.{ .{ .name = "k_open", .kind = .def }, .{ .name = "open", .kind = .def } });
+    const l = try archive(a, &.{.{ .name = "a.o", .data = leaked }});
+    const r = try A.check(a, "libx.a", l, .{ .prefix = "k_" });
+    try t.expect(hasFinding(r, "1 defined symbol(s) without the prefix k_: open"));
+    // A call the renaming missed is an undefined reference to the replaced name (here a libSystem name, so the closure rule alone says nothing).
+    const calls = try clean(a, &.{ .{ .name = "k_call", .kind = .def }, .{ .name = "close", .kind = .undef } });
+    const c = try archive(a, &.{.{ .name = "a.o", .data = calls }});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", c, .{ .prefix = "k_" })).findings.len);
+    const rc = try A.check(a, "libx.a", c, .{ .prefix = "k_", .original = &.{"close"} });
+    try t.expectEqual(@as(usize, 1), rc.findings.len);
+    try t.expect(hasFinding(rc, "undefined reference to close, a name the prefix header renames"));
+    // Too few prefixed names.
+    try t.expect(hasFinding(try A.check(a, "libx.a", g, .{ .prefix = "k_", .min_prefixed = 2 }), "only 1 defined symbol(s) start with the prefix k_ (at least 2 expected)"));
+}
+
+test "runtime c++: a Mach-O library's mangled runtime names (one underscore more) are matched by their C names" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try clean(a, &.{ .{ .name = "cxx_entry", .kind = .def }, .{ .name = "_ZNSt3__16localeC1Ev", .kind = .undef }, .{ .name = "_Znwm", .kind = .undef }, .{ .name = "__cxa_throw", .kind = .undef }, .{ .name = "__gxx_personality_v0", .kind = .undef } });
+    const b = try archive(a, &.{.{ .name = "a.o", .data = o }});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{ .runtime_cxx = true })).findings.len);
+    try t.expectEqual(@as(usize, 4), (try A.check(a, "libx.a", b, .{})).findings.len);
+    const own = try clean(a, &.{ .{ .name = "cxx_entry", .kind = .def }, .{ .name = "_ZN3app4helpEv", .kind = .undef } });
+    try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = own }}), .{ .runtime_cxx = true }), "undefined symbol: _ZN3app4helpEv"));
+}
