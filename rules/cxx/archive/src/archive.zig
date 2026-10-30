@@ -527,23 +527,29 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     return report(oom, f.items.items, all.items.items);
 }
 
+/// The integer builtins of the compiler runtime (compiler-rt, 128-bit arithmetic) a library may define itself so that the link does not need the runtime: the compiler calls
+/// them by these names, a header of macros cannot rename them, and `prefix_tool` leaves them out of the header too. They do not count against a prefix.
+const compiler_builtins = [_][]const u8{ "__divti3", "__modti3", "__udivti3", "__umodti3", "__multi3", "__udivmodti4", "__ashlti3", "__ashrti3", "__lshrti3" };
+
+/// Whether `name` is one of `compiler_builtins`.
+pub fn compilerBuiltin(name: []const u8) bool {
+    for (compiler_builtins) |b| {
+        if (std.mem.eql(u8, name, b)) return true;
+    }
+    return false;
+}
+
 /// The most names one finding lists.
 const listed = 20;
 
 /// The findings of a renamed library (`Options.prefix`): defined symbols without the prefix, too few with it, and undefined references to a name the renaming replaced.
 /// `defined` is sorted; `undefs` are the undefined symbols of each object format.
-fn isAllowed(allow: []const []const u8, name: []const u8) bool {
-    for (allow) |x| if (std.mem.eql(u8, x, name)) return true;
-    return false;
-}
-
 fn prefixFindings(a: std.mem.Allocator, f: *Acc([]const u8), oom: *bool, name: []const u8, o: Options, defined: []const []const u8, undefs: []const []const []const u8) void {
     var bare = Acc(u8){ .a = a, .oom = oom };
     var n_bare: usize = 0;
     var n_prefixed: usize = 0;
     for (defined) |d| {
-        // A name the author allows (a compiler builtin the library defines, `__umodti3`, which the compiler calls by that name and the renaming never touches) may lack the prefix.
-        if (isAllowed(o.allow, d)) continue;
+        if (compilerBuiltin(d)) continue;
         if (std.mem.startsWith(u8, d, o.prefix)) {
             n_prefixed += 1;
             continue;

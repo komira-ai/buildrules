@@ -73,7 +73,6 @@ atexit
 __cxa_atexit
 __cxa_finalize
 getenv
-getauxval
 secure_getenv
 setenv
 unsetenv
@@ -138,7 +137,6 @@ getchar
 fread
 fwrite
 fopen
-fopen64
 fclose
 fflush
 fseek
@@ -160,7 +158,6 @@ feof
 ferror
 clearerr
 sscanf
-__isoc99_sscanf
 fscanf
 scanf
 getline
@@ -615,3 +612,8 @@ __atomic_fetch_xor_2
 __atomic_fetch_xor_4
 __atomic_fetch_xor_8
 __atomic_fetch_xor_16
+# What a renamed aws-lc leaves to the C library at the floor (found by building it): the 64-bit file functions glibc names separately, the C99 scanf, the auxiliary vector and jemalloc's sized free, a weak hook.
+fopen64
+__isoc99_sscanf
+getauxval
+sdallocx

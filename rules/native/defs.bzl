@@ -38,7 +38,7 @@ What each argument is, and what may differ per platform:
                        C and assembly, ELF and Mach-O alike, and the archive check holds that nothing defined lacks the prefix and nothing refers to a replaced name. The library is
                        built as it is (`:<name>_unprefixed`), the names its archive defines are written as a header (`:<name>_prefix`: `#define name p_name`, and for the underscored
                        names the assembly of a Mach-O library carries `#define _name _p_name`), and it is built again with the header included. `min` is the least number of
-                       symbols it defines. A compiler builtin the library defines (`__umodti3`) is not renamed: name it in `allow`.
+                       symbols it defines. The compiler-rt builtins the library defines (`__umodti3` and its kin, an exact list in archive_check) are not renamed and are not held to the prefix; `allow` names symbols that may stay UNDEFINED, never one that may lack the prefix.
     allow              symbols the archive check may find undefined (something it cannot see provides them).
 
 `srcs`, `hdrs`, `exported_headers`, `includes`, `exported_includes`, `cflags`, `cxxflags` and `asm_flags` may each be a `select()` (or a list plus one) on the target platform's OS and CPU:
