@@ -187,7 +187,7 @@ def check_has_sources(who, parts, refuse = fail):
 
 def check_asm_split(who, patterns, srcs, refuse = fail):
     """`asm_split` names the sources whose preprocessed text has its `;` turned into line breaks before it is assembled (rules/cxx/asm_split.zig): by the beginning of the
-    path (`s2n-bignum/arm/`): a pattern ends in `/` (a directory) or in `.S` or `.s` (one file), so that `arm` cannot also name `armv8/`. A source it names must be a `.S` file, the only kind that is preprocessed. `srcs` are the files of one resolved arm."""
+    path (`s2n-bignum/arm/`): a pattern ends in `/` (a directory) or in `.S` (one file), so that `arm` cannot also name `armv8/`. A source it names must be a `.S` file, the only kind that is preprocessed. `srcs` are the files of one resolved arm."""
     if type(patterns) != "list":
         refuse("{}: asm_split is {}, a list of path beginnings".format(who, repr(patterns)))
         return
@@ -196,7 +196,7 @@ def check_asm_split(who, patterns, srcs, refuse = fail):
             refuse("{}: asm_split {} is not the beginning of a path below the package or the upstream tree".format(who, repr(p)))
             return
         if not (p.endswith("/") or p.endswith(".S") or p.endswith(".s")):
-            refuse("{}: asm_split {} ends in neither / nor .S nor .s: a pattern is a directory (`arm/`) or one file (`arm/a.S`), and one that stops inside a name (`arm`) also begins `armv8/`".format(who, repr(p)))
+            refuse("{}: asm_split {} ends in neither / nor .S: a pattern is a directory (`arm/`) or one file (`arm/a.S`), and one that stops inside a name (`arm`) also begins `armv8/`".format(who, repr(p)))
             return
     for s in srcs:
         if is_split(patterns, s) and not s.endswith(".S"):

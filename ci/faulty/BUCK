@@ -122,8 +122,6 @@ mojo_test_run_rule(
     exec_compatible_with = test_exec_compatible_with(),
 )
 
-# The run of a Mojo test that hangs: the program blocks forever (it reads a pipe nobody writes). Its hang limit is one second (`test_hang_limit_s`, rules/core/hang_limit.bzl):
-# the run must be stopped at it, red, with the hang-limit verdict and not a pass or a time-out of the executor. Only the verdict is held, never the time it took.
 # The multi-call shim of applets_without_link_counts (ci/faulty/applets.bzl).
 zig_exe(
     name = "applets",
@@ -131,6 +129,8 @@ zig_exe(
     zig = "buildrules//rules/pins:zig_next",
 )
 
+# The run of a Mojo test that hangs: the program blocks forever (it reads a pipe nobody writes). Its hang limit is one second (`test_hang_limit_s`, rules/core/hang_limit.bzl):
+# the run must be stopped at it, red, with the hang-limit verdict and not a pass or a time-out of the executor. Only the verdict is held, never the time it took.
 zig_exe(
     name = "hang",
     src = "hang.zig",
@@ -239,6 +239,8 @@ archive_files(
 archive_files_over_applets("no_link_count", "")
 
 archive_files_over_applets("a_word_for_the_link_count", "unknown")
+
+archive_files_over_applets("a_link_count_too_long_to_compare", "99999999999999999999")
 
 archive_files(
     name = "archive_files_of_a_link_as_the_strip_prefix",

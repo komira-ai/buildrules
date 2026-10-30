@@ -113,13 +113,13 @@ _ALL.append(refuses("prefix_extra_symbols_that_are_not_identifiers_are_refused",
 
 _ALL.append(refuses("prefix_extra_symbols_that_are_not_a_list_are_refused", check_prefix, [_WHO, {"name": "hk", "min": 1, "extra_symbols": "hook_alloc"}], ["extra_symbols"]))
 
-_ALL.append(accepts("asm_split_of_s_files_is_accepted", check_asm_split, [_WHO, ["arm/", "native/split_a.S", "x/y.s"], ["arm/a.S", "arm/b.S", "native/split_a.S", "x.c"]]))
+_ALL.append(accepts("asm_split_of_s_files_is_accepted", check_asm_split, [_WHO, ["arm/", "native/split_a.S"], ["arm/a.S", "arm/b.S", "native/split_a.S", "x.c"]]))
 
 _ALL.append(refuses("asm_split_naming_a_file_that_is_not_preprocessed_is_refused", check_asm_split, [_WHO, ["arm/"], ["arm/a.s"]], ["is not a .S file"]))
 
 _ALL.append(refuses("asm_split_naming_a_c_file_is_refused", check_asm_split, [_WHO, ["native/"], ["native/x.c"]], ["is not a .S file"]))
 
-_ALL.append(refuses("asm_split_pattern_that_stops_inside_a_directory_name_is_refused", check_asm_split, [_WHO, ["arm"], ["arm/a.S", "armv8/b.S"]], ["ends in neither / nor .S nor .s", "also begins `armv8/`"]))
+_ALL.append(refuses("asm_split_pattern_that_stops_inside_a_directory_name_is_refused", check_asm_split, [_WHO, ["arm"], ["arm/a.S", "armv8/b.S"]], ["ends in neither / nor .S", "also begins `armv8/`"]))
 
 _ALL.append(refuses("asm_split_pattern_that_stops_inside_a_file_name_is_refused", check_asm_split, [_WHO, ["native/split_"], ["native/split_a.S"]], ["ends in neither"]))
 

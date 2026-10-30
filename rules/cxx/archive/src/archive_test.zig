@@ -950,7 +950,7 @@ test "cxx namespace: a mangled name in the namespace is not a leak, in any of it
 }
 
 test "cxx namespace: a name cut at any length is read or refused, and one cut inside the namespace is never taken as in it" {
-    const whole = [_][]const u8{ "_ZN6snappy6SourceD2Ev", "_ZTVN6snappy6SourceE", "_ZZN6snappy3fooEvE1x", "_ZGVZN6snappy3fooEvE1x", "_ZThn8_N6snappy3Foo3barEv", "_ZTv0_n24_N6snappy3Foo3barEv", "_ZTv16_24_NK6snappy3Foo3barEv", "_ZTCN6snappy3FooE0_N6snappy4BaseE" };
+    const whole = [_][]const u8{ "_ZN6snappy6SourceD2Ev", "_ZTVN6snappy6SourceE", "_ZTIN6snappy6SourceE", "_ZTSN6snappy6SourceE", "_ZTTN6snappy3FooE", "_ZGVN6snappy4onceE", "_ZZN6snappy3fooEvE1x", "_ZGVZN6snappy3fooEvE1x", "_ZThn8_N6snappy3Foo3barEv", "_ZTv0_n24_N6snappy3Foo3barEv", "_ZTv16_24_NK6snappy3Foo3barEv", "_ZTCN6snappy3FooE0_N6snappy4BaseE" };
     for (whole) |w| {
         try t.expect(A.inCxxNamespace(w, &.{"snappy"}));
         var n: usize = 0;
