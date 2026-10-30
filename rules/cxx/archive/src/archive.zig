@@ -1,6 +1,9 @@
 //! archive_check: the validation of a native static library (`native_archive`, rules/cxx/native.bzl).
 //!
 //!   archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>]
+//!       [--prefix <p> [--min-prefixed <n>] [--original <names.txt>]...]
+//!       [--cxx-namespace <ns>]...
+//!       [--runtime c++]
 //!
 //! A static library a Mojo package ships is linked into other people's programs, so it is held to what a library must be:
 //!
@@ -19,6 +22,16 @@
 //! Writes a validation result (`{"version":1,"data":{"status",...}}`) and exits 0 when every rule holds; exits 1 after writing "failure" when
 //! one does not, and prints every finding. With `--symbols`, writes the sorted defined global symbols, one per line.
 //!
+//! With `--prefix`, the library is a renamed one (rules/cxx/prefix, `native_static(prefix = ...)`): every defined global symbol must start with the prefix, at least
+//! `--min-prefixed` of them must (a library the renaming missed is not empty by accident), and no undefined symbol may be one of the names in the `--original`
+//! files (the library's own names before the renaming, one per line): a reference the renaming missed would resolve to another copy of the library at the final link.
+//!
+//! With `--cxx-namespace <ns>` (repeatable, only with `--prefix`), a defined C++ name in that namespace (`_ZN6snappy...`, its vtable, type information and guards) is not a leak: a header of macros
+//! cannot rename a mangled name, and a library may rename only its C API. A name of another namespace, or of a look-alike (`_ZN7snappyx`), still is.
+//!
+//! With `--runtime c++`, the library is C++ and the final link brings the C++ runtime: the undefined names of libc++, libc++abi and the unwinder (`cxxRuntime`: `_ZNSt*`, `_Znw*`, `__cxa_*`,
+//! `_Unwind_*`, `__dso_handle`, ...) are not findings. Any other undefined name still is.
+//!
 //! Allocation: the lists are built with `Acc` and `Set`, which note a failed allocation in one flag instead of returning it from each of the
 //! many places that add to them; the function that owns the flag returns `OutOfMemory` once, at its end. What they return stays with the
 //! allocator, which is an arena in the program.
@@ -26,6 +39,7 @@
 const std = @import("std");
 const hermetic = @import("cxx_hermetic");
 const floor = @import("cxx_floor");
+const builtins = @import("cxx_builtins");
 
 pub const floor_symbols = @embedFile("floor_symbols.txt");
 pub const floor_symbols_macos = @embedFile("floor_symbols_macos.txt");
@@ -144,9 +158,9 @@ pub fn members(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.
             body = data[n..];
         }
         if (bsd_name) |bn| {
-            if (!std.mem.startsWith(u8, bn, "__.SYMDEF"))
+            if (!isSymdef(bn))
                 out.push(.{ .name = bn, .data = body, .time = trim(h[16..28]), .owner = trim(h[28..34]), .group = trim(h[34..40]) });
-        } else if (std.mem.startsWith(u8, raw, "__.SYMDEF")) {
+        } else if (isSymdef(raw)) {
             // A BSD symbol table whose name fits the field is written without `#1/N`.
         } else if (std.mem.eql(u8, raw, "//")) {
             long = data;
@@ -172,6 +186,8 @@ pub const Syms = struct {
     defined: []const []const u8,
     /// Undefined global symbols (a weak undefined one is not listed: it resolves to zero).
     undef: []const []const u8,
+    /// Weak undefined symbols: not a defect by themselves (they resolve to zero), but a reference to a name a renaming replaced.
+    weak_undef: []const []const u8 = &.{},
 };
 
 /// The global symbols of one relocatable ELF64 little-endian object, from its `.symtab`.
@@ -184,6 +200,7 @@ pub fn symbols(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.
     const shnum: usize = get(u16, b, 0x3C);
     var oom = false;
     var def = Acc([]const u8){ .a = a, .oom = &oom };
+    var weak = Acc([]const u8){ .a = a, .oom = &oom };
     var und = Acc([]const u8){ .a = a, .oom = &oom };
     var i: usize = 0;
     while (i < shnum) : (i += 1) {
@@ -214,13 +231,15 @@ pub fn symbols(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Allocator.
                         def.push(name);
                     } else if (name.len != 0 and bind != 2) {
                         und.push(name);
+                    } else if (name.len != 0) {
+                        weak.push(name);
                     }
                 }
             }
         }
     }
     if (oom) return error.OutOfMemory;
-    return .{ .defined = def.items.items, .undef = und.items.items };
+    return .{ .defined = def.items.items, .undef = und.items.items, .weak_undef = weak.items.items };
 }
 
 const macho_magic: u32 = 0xfeedfacf;
@@ -312,6 +331,7 @@ const SymScan = struct {
     b: []const u8,
     def: *Acc([]const u8),
     und: *Acc([]const u8),
+    weak: *Acc([]const u8),
 
     fn visit(self: SymScan, cmd: u32, at: usize, size: u32) Error!void {
         if (cmd != LC_SYMTAB) return;
@@ -335,8 +355,10 @@ const SymScan = struct {
             // N_UNDF with a value is a common symbol: a definition. N_ABS, N_SECT and N_INDR define the name.
             if (kind != 0 or value != 0) {
                 self.def.push(name);
-            } else if (desc & 0x40 == 0) { // N_WEAK_REF: resolves to zero, not a defect
+            } else if (desc & 0x40 == 0) {
                 self.und.push(name);
+            } else {
+                self.weak.push(name); // N_WEAK_REF: resolves to zero, not a defect by itself
             }
         }
     }
@@ -347,9 +369,10 @@ pub fn machoSymbols(a: std.mem.Allocator, b: []const u8) (Error || std.mem.Alloc
     var oom = false;
     var def = Acc([]const u8){ .a = a, .oom = &oom };
     var und = Acc([]const u8){ .a = a, .oom = &oom };
-    try machoCommands(b, SymScan{ .b = b, .def = &def, .und = &und }, SymScan.visit);
+    var weak = Acc([]const u8){ .a = a, .oom = &oom };
+    try machoCommands(b, SymScan{ .b = b, .def = &def, .und = &und, .weak = &weak }, SymScan.visit);
     if (oom) return error.OutOfMemory;
-    return .{ .defined = def.items.items, .undef = und.items.items };
+    return .{ .defined = def.items.items, .undef = und.items.items, .weak_undef = weak.items.items };
 }
 
 /// The symbols of one object of either format.
@@ -367,9 +390,31 @@ pub const Options = struct {
     /// Symbols the author names as provided by something the check cannot see.
     allow: []const []const u8 = &.{},
     max_glibc: []const u8 = "2.34",
+    /// The library is C++ (`--runtime c++`): the names of the C++ runtime (libc++, libc++abi, the unwinder) may stay undefined, the final link brings the runtime.
+    runtime_cxx: bool = false,
     /// The absolute path of the directory the archive was built in ("" skips the test: a unit test has none).
     dir: []const u8 = "",
+    /// A renamed library (`--prefix`): every defined global symbol starts with this ("" skips the rule and the two below).
+    prefix: []const u8 = "",
+    /// At least this many defined symbols start with `prefix`.
+    min_prefixed: usize = 0,
+    /// The names the renaming replaced: none of them may be left undefined.
+    original: []const []const u8 = &.{},
+    /// C++ namespaces whose mangled names (`_ZN6snappy...`) a renamed library may define without the prefix: a header of macros cannot rename them.
+    cxx_namespaces: []const []const u8 = &.{},
 };
+
+/// The prefixes of the names the C++ runtime defines (Itanium ABI: libc++'s `std`, `operator new` and `delete`, the vtables and type information of the ABI's own classes,
+/// `__cxa_*`, the unwinder) and the names the link's start-up object defines. A prefix match, so it allows more than the runtime has: the link is the real check.
+const cxx_runtime_prefixes = [_][]const u8{ "_ZNSt", "_ZNKSt", "_ZSt", "_ZTVSt", "_ZTISt", "_ZTSSt", "_ZTVN10__cxxabiv", "_ZTIN10__cxxabiv", "_ZTSN10__cxxabiv", "_Znw", "_Zna", "_Zdl", "_Zda", "__cxa_", "__gxx_", "__dynamic_cast", "_Unwind_", "__dso_handle" };
+
+/// Whether `name` (the C name: a Mach-O symbol's leading underscore removed) belongs to the C++ runtime.
+pub fn cxxRuntime(name: []const u8) bool {
+    for (cxx_runtime_prefixes) |p| {
+        if (std.mem.startsWith(u8, name, p)) return true;
+    }
+    return false;
+}
 
 pub const Report = struct {
     findings: []const []const u8,
@@ -397,6 +442,7 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     var defined = Set.init(a, &oom);
     var undef = Acc([]const u8){ .a = a, .oom = &oom };
     var undef_macho = Acc([]const u8){ .a = a, .oom = &oom };
+    var weak = Acc([]const u8){ .a = a, .oom = &oom };
     // The object format of the library is the one of its first object: a member of the other is a finding.
     var macho_lib: ?bool = null;
     var prev: []const u8 = "";
@@ -418,6 +464,7 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
             if (machoSymbols(a, m.data)) |s| {
                 for (s.defined) |d| defined.add(d);
                 for (s.undef) |u| undef_macho.push(u);
+                for (s.weak_undef) |u| weak.push(u);
             } else |e| {
                 blame(&f, e, "{s}: member {s} is not a relocatable Mach-O object: {s}", .{ name, m.name, @errorName(e) });
             }
@@ -433,6 +480,7 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
             if (symbols(a, m.data)) |s| {
                 for (s.defined) |d| defined.add(d);
                 for (s.undef) |u| undef.push(u);
+                for (s.weak_undef) |u| weak.push(u);
             } else |e| {
                 blame(&f, e, "{s}: member {s} is not a relocatable object: {s}", .{ name, m.name, @errorName(e) });
             }
@@ -475,13 +523,13 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     }
     var seen = Set.init(a, &oom);
     for (undef.items.items) |u| {
-        if (!(defined.m.contains(u) or known.m.contains(u) or seen.m.contains(u))) {
+        if (!(defined.m.contains(u) or known.m.contains(u) or seen.m.contains(u) or (o.runtime_cxx and cxxRuntime(u)))) {
             seen.add(u);
             say(&f, "{s}: undefined symbol: {s} (not defined by this library, a `needs` library, the C library at the floor or the compiler runtime)", .{ name, u });
         }
     }
     for (undef_macho.items.items) |u| {
-        if (!(defined.m.contains(u) or known_macho.m.contains(u) or seen.m.contains(u))) {
+        if (!(defined.m.contains(u) or known_macho.m.contains(u) or seen.m.contains(u) or (o.runtime_cxx and cxxRuntime(u)))) {
             seen.add(u);
             say(&f, "{s}: undefined symbol: {s} (not defined by this library, a `needs` library, libSystem or the compiler runtime)", .{ name, u });
         }
@@ -491,7 +539,110 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     var it = defined.m.keyIterator();
     while (it.next()) |k| all.push(k.*);
     std.mem.sort([]const u8, all.items.items, {}, lessThan);
+    if (o.prefix.len != 0) prefixFindings(a, &f, &oom, name, o, all.items.items, &.{ undef.items.items, undef_macho.items.items, weak.items.items });
     return report(oom, f.items.items, all.items.items);
+}
+
+/// Whether `name` is the name of a BSD symbol table member (not a member of the library): exactly one of the four the toolchains write.
+fn isSymdef(name: []const u8) bool {
+    for ([_][]const u8{ "__.SYMDEF", "__.SYMDEF SORTED", "__.SYMDEF_64", "__.SYMDEF_64 SORTED" }) |t| {
+        if (std.mem.eql(u8, name, t)) return true;
+    }
+    return false;
+}
+
+/// Skips `[n]<digits>` (a thunk's offset, at least one digit) and the `_` after it; null when it is not there.
+fn skipOffset(s: []const u8) ?[]const u8 {
+    var i: usize = 0;
+    if (i < s.len and s[i] == 'n') i += 1;
+    const from = i;
+    while (i < s.len and s[i] >= '0' and s[i] <= '9') i += 1;
+    if (i == from or i >= s.len or s[i] != '_') return null;
+    return s[i + 1 ..];
+}
+
+/// The text after the `N` that opens the nested name an Itanium-mangled C name is about, or null when the name has none of the forms below.
+fn afterNestedOpen(name: []const u8) ?[]const u8 {
+    // The nested name itself, the table, type information and type name of a class, its VTT and construction vtables, the guard of a static, and a local name (`_ZZ`:
+    // a function's encoding, then the entity in it) or the guard of a function-local static (`_ZGVZ`), whose function is a nested name.
+    for ([_][]const u8{ "_ZN", "_ZTVN", "_ZTIN", "_ZTSN", "_ZTTN", "_ZTCN", "_ZGVN", "_ZZN", "_ZGVZN" }) |p| {
+        if (std.mem.startsWith(u8, name, p)) return name[p.len..];
+    }
+    // A non-virtual thunk (`_ZTh <offset> _ <encoding>`) and a virtual thunk (`_ZTv <offset> _ <offset> _ <encoding>`) of a function that is a nested name.
+    var rest: []const u8 = undefined;
+    if (std.mem.startsWith(u8, name, "_ZTh")) {
+        rest = skipOffset(name[4..]) orelse return null;
+    } else if (std.mem.startsWith(u8, name, "_ZTv")) {
+        rest = skipOffset(name[4..]) orelse return null;
+        rest = skipOffset(rest) orelse return null;
+    } else return null;
+    if (rest.len == 0 or rest[0] != 'N') return null;
+    return rest[1..];
+}
+
+/// Whether `name` (an Itanium-mangled C name: a Mach-O symbol's leading underscore removed) is in one of the C++ namespaces `spaces`: its nested name (see
+/// `afterNestedOpen` for the forms: `_ZN`, `_ZTVN`, `_ZTIN`, `_ZTSN`, `_ZTTN`, `_ZTCN`, `_ZGVN`, `_ZZN`, `_ZGVZN`, `_ZTh`, `_ZTv`; the qualifiers `r V K` and `R O` may follow the `N`)
+/// has the namespace as its first component: a length, then that many bytes, compared whole. `_ZN7snappyx` is the namespace `snappyx`, not `snappy`. What follows the first
+/// component is not parsed: the Itanium grammar needs a further component or `E`, which no compiler leaves out, so `_ZN6snappyz` (not a name a compiler writes) is accepted as in
+/// `snappy`. Not handled, so reported as a name without the prefix: a class that is not a nested name (`_ZTV6snappy...`), covariant thunks (`_ZTc`), templates of a global
+/// function over a type of the namespace, and a namespace that is not the first component (`_ZN3foo6snappy...`).
+pub fn inCxxNamespace(name: []const u8, spaces: []const []const u8) bool {
+    if (spaces.len == 0) return false;
+    var rest = afterNestedOpen(name) orelse return false;
+    var k: usize = 0;
+    while (k < rest.len and std.mem.indexOfScalar(u8, "rVKRO", rest[k]) != null) k += 1;
+    rest = rest[k..];
+    var n: usize = 0;
+    var d: usize = 0;
+    while (d < rest.len and rest[d] >= '0' and rest[d] <= '9') : (d += 1) {
+        n = std.math.mul(usize, n, 10) catch return false;
+        n = std.math.add(usize, n, rest[d] - '0') catch return false;
+    }
+    if (d == 0 or d > rest.len or n > rest.len - d) return false;
+    const comp = rest[d .. d + n];
+    for (spaces) |sp| {
+        if (std.mem.eql(u8, comp, sp)) return true;
+    }
+    return false;
+}
+
+/// The most names one finding lists.
+const listed = 20;
+
+/// The findings of a renamed library (`Options.prefix`): defined symbols without the prefix, too few with it, and undefined references to a name the renaming replaced.
+/// `defined` is sorted; `undefs` are the undefined symbols of each object format.
+fn prefixFindings(a: std.mem.Allocator, f: *Acc([]const u8), oom: *bool, name: []const u8, o: Options, defined: []const []const u8, undefs: []const []const []const u8) void {
+    var bare = Acc(u8){ .a = a, .oom = oom };
+    var n_bare: usize = 0;
+    var n_prefixed: usize = 0;
+    for (defined) |d| {
+        if (builtins.isBuiltin(d)) continue;
+        if (inCxxNamespace(d, o.cxx_namespaces)) continue;
+        if (std.mem.startsWith(u8, d, o.prefix)) {
+            n_prefixed += 1;
+            continue;
+        }
+        if (n_bare < listed) {
+            bare.push(' ');
+            bare.pushAll(d);
+        }
+        n_bare += 1;
+    }
+    if (n_bare != 0)
+        say(f, "{s}: {d} defined symbol(s) without the prefix {s}:{s}{s}", .{ name, n_bare, o.prefix, bare.items.items, if (n_bare > listed) " ..." else "" });
+    if (n_prefixed < o.min_prefixed)
+        say(f, "{s}: only {d} defined symbol(s) start with the prefix {s} (at least {d} expected): the renaming did not reach the library", .{ name, n_prefixed, o.prefix, o.min_prefixed });
+    var original = Set.init(a, oom);
+    for (o.original) |n| original.add(n);
+    var seen = Set.init(a, oom);
+    for (undefs) |list| {
+        for (list) |u| {
+            if (original.m.contains(u) and !seen.m.contains(u)) {
+                seen.add(u);
+                say(f, "{s}: undefined reference to {s}, a name the prefix header renames: the renaming missed it, and the final link would resolve it to another copy of the library", .{ name, u });
+            }
+        }
+    }
 }
 
 /// The JSON a validation result is: only the first finding is the message.
@@ -519,16 +670,23 @@ pub const Cli = struct {
     allow: []const []const u8,
     symbols: ?[]const u8,
     max_glibc: []const u8,
+    prefix: []const u8,
+    min_prefixed: usize,
+    original: []const []const u8,
+    runtime_cxx: bool,
+    cxx_namespaces: []const []const u8,
 };
 
-pub const usage = "usage: archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>]";
+pub const usage = "usage: archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>] [--prefix <p> [--min-prefixed <n>] [--original <names.txt>]...] [--cxx-namespace <ns>]... [--runtime c++]";
 
 pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocator.Error!?Cli {
     if (args.len < 2) return null;
     var oom = false;
     var needs = Acc([]const u8){ .a = a, .oom = &oom };
     var allow = Acc([]const u8){ .a = a, .oom = &oom };
-    var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34" };
+    var spaces = Acc([]const u8){ .a = a, .oom = &oom };
+    var original = Acc([]const u8){ .a = a, .oom = &oom };
+    var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34", .prefix = "", .min_prefixed = 0, .original = &.{}, .runtime_cxx = false, .cxx_namespaces = &.{} };
     var i: usize = 2;
     while (i < args.len) : (i += 2) {
         if (i + 1 >= args.len) return null;
@@ -542,11 +700,27 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocat
             c.symbols = val;
         } else if (std.mem.eql(u8, flag, "--max-glibc")) {
             c.max_glibc = val;
+        } else if (std.mem.eql(u8, flag, "--runtime")) {
+            if (!std.mem.eql(u8, val, "c++")) return null;
+            c.runtime_cxx = true;
+        } else if (std.mem.eql(u8, flag, "--prefix")) {
+            if (val.len == 0) return null;
+            c.prefix = val;
+        } else if (std.mem.eql(u8, flag, "--min-prefixed")) {
+            c.min_prefixed = std.fmt.parseUnsigned(usize, val, 10) catch return null;
+        } else if (std.mem.eql(u8, flag, "--cxx-namespace")) {
+            spaces.push(val);
+        } else if (std.mem.eql(u8, flag, "--original")) {
+            original.push(val);
         } else return null;
     }
     if (oom) return error.OutOfMemory;
     c.needs = needs.items.items;
     c.allow = allow.items.items;
+    c.original = original.items.items;
+    c.cxx_namespaces = spaces.items.items;
+    // The two options of a renamed library mean nothing without the prefix.
+    if (c.prefix.len == 0 and (c.min_prefixed != 0 or c.original.len != 0 or c.cxx_namespaces.len != 0)) return null;
     return c;
 }
 
@@ -580,14 +754,35 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, dir: []const u8, args: []const
         tell(a, err, &oom, "{s}\n", .{usage});
         return exit(oom, 2);
     };
+    // A namespace is an identifier, and not `std`: the standard library's own names are not the library's to keep (and `_ZN3std` is what other languages' symbols look like too).
+    for (c.cxx_namespaces) |ns| {
+        var ok = ns.len != 0 and !std.mem.eql(u8, ns, "std");
+        for (ns) |ch| {
+            if (!(std.ascii.isAlphanumeric(ch) or ch == '_')) ok = false;
+        }
+        if (!ok) {
+            tell(a, err, &oom, "archive_check: --cxx-namespace {s}: a namespace is a name of letters, digits and _, and not empty or std\n", .{ns});
+            return exit(oom, 2);
+        }
+    }
     const bytes = cwd.readFileAlloc(a, c.archive, 1 << 30) catch |e| return unreadable(a, err, c.archive, e);
     var needs = Acc([]const u8){ .a = a, .oom = &oom };
     for (c.needs) |n| {
         const nb = cwd.readFileAlloc(a, n, 1 << 30) catch |e| return unreadable(a, err, n, e);
         needs.push(nb);
     }
+    // The names the renaming replaced: the lines of each file.
+    var original = Acc([]const u8){ .a = a, .oom = &oom };
+    for (c.original) |p| {
+        const text = cwd.readFileAlloc(a, p, 1 << 28) catch |e| return unreadable(a, err, p, e);
+        var ls = std.mem.splitScalar(u8, text, '\n');
+        while (ls.next()) |l| {
+            const n = std.mem.trim(u8, l, " \r");
+            if (n.len != 0) original.push(n);
+        }
+    }
     const name = std.fs.path.basename(c.archive);
-    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir });
+    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir, .prefix = c.prefix, .min_prefixed = c.min_prefixed, .original = original.items.items, .runtime_cxx = c.runtime_cxx, .cxx_namespaces = c.cxx_namespaces });
     var out = Acc(u8){ .a = a, .oom = &oom };
     for (rep.defined) |s| {
         out.pushAll(s);

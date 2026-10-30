@@ -17,7 +17,8 @@ For a macOS arm64 target platform the same two targets build a Mach-O archive: t
 """
 
 load("//rules:isa.bzl", "ISA_LEVELS", "isa_select")
-load("//rules/core:platform.bzl", "by_os_cpu", "os_cpu_keys")
+load("//rules/core:platform.bzl", "LINUX_X86_64", "by_os_cpu", "os_cpu_keys")
+load(":defs.bzl", "prefix_header")
 load(":providers.bzl", "NativeArchiveInfo")
 
 def _impl(ctx):
@@ -35,6 +36,14 @@ def _impl(ctx):
         rest.extend(["--needs", n[DefaultInfo].default_outputs[0]])
     for s in ctx.attrs.allow:
         rest.extend(["--allow", s])
+    if ctx.attrs.prefix:
+        rest.extend(["--prefix", ctx.attrs.prefix, "--min-prefixed", str(ctx.attrs.min_prefixed)])
+        for names in ctx.attrs.original_names:
+            rest.extend(["--original", names])
+        for ns in ctx.attrs.cxx_namespaces:
+            rest.extend(["--cxx-namespace", ns])
+    elif ctx.attrs.min_prefixed or ctx.attrs.original_names or ctx.attrs.cxx_namespaces:
+        fail("{}: min_prefixed, original_names and cxx_namespaces need a prefix".format(ctx.label))
     ctx.actions.run(cmd_args(ctx.attrs._tool[RunInfo], out, result.as_output(), rest), category = "archive_check", identifier = ctx.label.name)
 
     # The list of defined symbols is its own action: a validation result is the one output of the action that writes it.
@@ -58,7 +67,14 @@ native_archive = rule(
     attrs = {
         "allow": attrs.list(attrs.string(), default = []),
         "lib": attrs.dep(),
+        # A renamed library (rules/cxx/prefix): every symbol it defines starts with `prefix`, at least `min_prefixed` do, and none of `original_names` (files, one
+        # name per line: the names before the renaming) is referenced undefined.
+        # C++ namespaces whose mangled names the library may define without the prefix (a header of macros cannot rename them).
+        "cxx_namespaces": attrs.list(attrs.string(), default = []),
+        "min_prefixed": attrs.int(default = 0),
         "needs": attrs.list(attrs.dep(), default = []),
+        "original_names": attrs.list(attrs.source(), default = []),
+        "prefix": attrs.string(default = ""),
         "soname": attrs.string(),
         # False: the check is an output of the target and not a validation (the cases of ci/faulty build it so).
         "validate": attrs.bool(default = True),
@@ -93,12 +109,46 @@ def _baseline():
         "DEFAULT": isa_select(lambda l: ["-mcpu=x86_64"] if ISA_LEVELS[l]["family"] == "x86_64" else ["-mcpu=generic"], ["-mcpu=x86_64"]),
     })
 
-def native_static(name, srcs, soname, hdrs = [], includes = [], cflags = [], cflags_by_os = {}, needs = [], allow = [], validate = True, file_prefix = None, visibility = ["PUBLIC"]):
+def native_static(
+        name,
+        srcs,
+        soname,
+        hdrs = [],
+        includes = [],
+        cflags = [],
+        cflags_by_os = {},
+        needs = [],
+        allow = [],
+        validate = True,
+        file_prefix = None,
+        prefix = None,
+        prefix_strip = "",
+        prefix_min = 0,
+        prefix_cxx_namespaces = [],
+        visibility = ["PUBLIC"]):
     """A native static library: `<name>_cxx` (the `cxx_library`) and `<name>` (the `native_archive`). `includes` are directories (relative to the repository root)
     given to the compiler as `-I`; `cflags_by_os` maps `linux` and `macos` to flags added on that OS after `cflags`; `file_prefix` (default: the package
-    directory) is mapped to `.` in every path the compiler records, so a copy of the sources at another path gives the same bytes."""
+    directory) is mapped to `.` in every path the compiler records, so a copy of the sources at another path gives the same bytes.
+
+    `prefix` renames every global symbol the library defines (rules/cxx/README.md, "Symbol prefixing"): the library is first built as it is, as
+    `<name>_unprefixed_cxx` and `<name>_unprefixed`; the names `archive_check` reads out of that archive (ELF and Mach-O alike) are written by `prefix_tool header`
+    as `<name>_prefix` (a header of `#define old new`), which `<name>_cxx` includes in every compile, and `<name>`, behind the same checks, fails unless every
+    symbol it defines starts with the prefix (at least `prefix_min` do) and none of the replaced names is referenced undefined. `prefix_strip` selects the
+    `strip` style: a name that starts with it has it replaced by `prefix` (`sqlite3_open` to `pkg_sqlite3_open` for `prefix = "pkg_sqlite3_"`, `prefix_strip =
+    "sqlite3_"`), any other name gets `prefix + "_"` ahead of it; without it the style is aws-lc's, `prefix + "_" + name`.
+
+    `prefix_cxx_namespaces` names C++ namespaces (`["snappy"]`) whose mangled names (`_ZN6snappy...`) the archive may define without the prefix: a header of macros cannot rename them, so
+    a library that renames its C API only says so here (`archive_check --cxx-namespace`)."""
     if file_prefix == None:
         file_prefix = native.package_name()
+    if prefix and prefix_min <= 0:
+        fail("{}: prefix_min must be the least number of symbols the library defines (it stops a header made from the wrong archive)".format(name))
+    for ns in prefix_cxx_namespaces:
+        if not ns or ns == "std" or not all([c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for c in ns.elems()]):
+            fail("{}: prefix_cxx_namespaces holds {}; a namespace is a name of letters, digits and _, and not empty or std".format(name, repr(ns)))
+    if not prefix and (prefix_strip or prefix_min or prefix_cxx_namespaces):
+        fail("{}: prefix_strip, prefix_min and prefix_cxx_namespaces need a prefix".format(name))
+
     # What every native library is compiled with, before the manifest's flags (which may override it): optimised, and without the undefined-behaviour
     # instrumentation zig cc turns on when no optimisation is asked for, which records the source path and the toolchain's header paths in `.rodata`.
     defaults = ["-O2", "-fno-sanitize=undefined"]
@@ -110,15 +160,58 @@ def native_static(name, srcs, soname, hdrs = [], includes = [], cflags = [], cfl
     for key in os_cpu_keys("macos_aarch64"):
         by_os[key] = list(cflags_by_os.get("macos", []))
     by_os = select(by_os)
-    prefix = ["-ffile-prefix-map={}=.".format(file_prefix)] if file_prefix else []
-    native.cxx_library(
-        name = name + "_cxx",
-        srcs = sorted(srcs),
-        headers = sorted(hdrs),
-        compiler_flags = defaults + prefix + _baseline() + flags + by_os,
-        preferred_linkage = "static",
+    ffile = ["-ffile-prefix-map={}=.".format(file_prefix)] if file_prefix else []
+    all_srcs = list(srcs)
+    include_flags = []
+
+    def library(lib_name, header = None):
+        native.cxx_library(
+            name = lib_name,
+            srcs = sorted(all_srcs),
+            headers = sorted(hdrs),
+            compiler_flags = defaults + ffile + _baseline() + flags + by_os,
+            preprocessor_flags = include_flags + (["-include", "$(location {})".format(header)] if header else []),
+            preferred_linkage = "static",
+            visibility = visibility,
+        )
+
+    if not prefix:
+        library(name + "_cxx")
+        native_archive(
+            name = name,
+            lib = ":" + name + "_cxx[static-pic]",
+            soname = soname,
+            needs = needs,
+            allow = allow,
+            validate = validate,
+            visibility = visibility,
+        )
+        return
+
+    # The library with its own names. Nothing links it: the symbols its archive defines are the names the header renames. The check of the archive is the
+    # action that lists them (`archive_symbols` fails on any finding), so the archive is not also a validation.
+    library(name + "_unprefixed_cxx")
+    native_archive(
+        name = name + "_unprefixed",
+        lib = ":" + name + "_unprefixed_cxx[static-pic]",
+        soname = soname.removesuffix(".a") + ".unprefixed.a",
+        needs = needs,
+        allow = allow,
+        validate = False,
         visibility = visibility,
     )
+    prefix_header(
+        name = name + "_prefix",
+        defined = ":" + name + "_unprefixed[symbols]",
+        header = name + "_prefix_symbols.h",
+        min_symbols = prefix_min,
+        prefix = prefix,
+        strip = prefix_strip,
+        style = "strip" if prefix_strip else "boringssl",
+        exec_compatible_with = LINUX_X86_64,
+        visibility = visibility,
+    )
+    library(name + "_cxx", ":" + name + "_prefix")
     native_archive(
         name = name,
         lib = ":" + name + "_cxx[static-pic]",
@@ -126,5 +219,9 @@ def native_static(name, srcs, soname, hdrs = [], includes = [], cflags = [], cfl
         needs = needs,
         allow = allow,
         validate = validate,
+        prefix = prefix,
+        min_prefixed = prefix_min,
+        cxx_namespaces = prefix_cxx_namespaces,
+        original_names = [":" + name + "_prefix[symbols]"],
         visibility = visibility,
     )

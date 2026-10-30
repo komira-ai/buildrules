@@ -6,6 +6,7 @@
 //! Names are sorted as `LC_ALL=C sort -u` sorts them: by bytes, each once.
 
 const std = @import("std");
+const builtins = @import("cxx_builtins");
 
 /// A refusal: its text is `msg`.
 pub const Fail = error{Fail};
@@ -70,8 +71,8 @@ pub fn sortedUnique(names: []const []const u8) [][]const u8 {
 
 /// A name the header never renames: aws-lc's util/read_symbols.go skip list
 /// (C++ names, i386 PIC thunks, MSVC constants, the MSVC C runtime's inline
-/// stdio helpers and jemalloc's `sdallocx`), and `__umodti3`, a compiler
-/// builtin the compiler calls by that name.
+/// stdio helpers and jemalloc's `sdallocx`), and the compiler builtins of rules/cxx/builtins (`__umodti3` and the rest of the 128-bit set), which the compiler
+/// calls by those names.
 pub fn skipped(name: []const u8) bool {
     for ([_][]const u8{ "_Z", "__x86.get_pc_thunk.", "__real@" }) |p| {
         if (startsWith(name, p)) return true;
@@ -80,8 +81,8 @@ pub fn skipped(name: []const u8) bool {
         "__local_stdio_printf_options", "__local_stdio_scanf_options", "_vscprintf",
         "_vscprintf_l",                 "_vsscanf_l",                  "_xmm",
         "sscanf",                       "vsnprintf",                   "sdallocx",
-        "__umodti3",
     };
+    if (builtins.isBuiltin(name)) return true;
     for (exact) |x| {
         if (std.mem.eql(u8, name, x)) return true;
     }
