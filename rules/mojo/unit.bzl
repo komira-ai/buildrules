@@ -16,6 +16,7 @@ A unit's output directory is the action's single output. A library's `.mojoc` is
 
 load("//rules:isa.bzl", "isa_satisfies")
 load("//rules/coverage/branch:llvm_branch.bzl", "CovBranchInfo", "RAW_PROFILE_VERSION")
+load("//rules/cxx:providers.bzl", "NativeArchiveInfo")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
 load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoSystemLibsInfo", "MojoTestRunInfo", "MojoToolchainInfo")
 load("//rules/core:hang_limit.bzl", "HANG_LIMIT_S", "check_hang_limit", "hang_limit_args")
@@ -64,6 +65,14 @@ def check_closure_ids(who, want, have, refuse = fail):
         elif have[package] != want[package]:
             refuse(("{}: the graph imports {} as {} but the dependency target provides {}: that library was built from another version of the package, " +
                     "or for another Mojo. Run `buildrules mojo sync` where the library is and where it is imported").format(who, package, want[package], have[package]))
+
+def link_needs_cxx_runtime(natives):
+    """Whether the native libraries (dependencies that may provide `NativeArchiveInfo`; a prebuilt one does not) include one with C++ sources."""
+    for n in natives:
+        info = n.get(NativeArchiveInfo)
+        if info != None and info.cxx:
+            return True
+    return False
 
 def _unit_impl(ctx):
     tc = ctx.attrs.toolchain[MojoToolchainInfo]
@@ -117,6 +126,11 @@ def _unit_impl(ctx):
         cfg = "wrapper=wrapper\ncompiler=compiler\nzig=zig\ncc_target={}\n".format(tc.cc_target)
     for a in ctx.attrs.build_args:
         cfg += "build_arg={}\n".format(a)
+
+    # A program (not a library: nothing is linked) with a C++ native library in its link carries the C++ runtime: libc++ and libc++abi of the zig on Linux
+    # (`zig cc -lc++`), the host's libc++ on macOS. One `-lc++` ends the link line, after every archive, however many of the archives are C++.
+    if ctx.attrs.kind != "lib" and link_needs_cxx_runtime([ctx.attrs.natives[s] for s in ctx.attrs.native_sonames if s in ctx.attrs.natives]):
+        cfg += "link_tail=-lc++\n"
     zig = _file(ctx.attrs.zig_override) if ctx.attrs.zig_override else tc.zig
     tc_dir = ctx.actions.copied_dir("toolchain", {
         "CLOSURE_SHA256": ctx.actions.write("CLOSURE_SHA256", tc.closure_sha256 + "\n"),
@@ -547,6 +561,10 @@ def _pgo_impl(ctx):
     )
     for soname in sonames:
         cmd.add("--native", _file(ctx.attrs.natives[soname]))
+
+    # The C++ runtime ends the line as it ends the ordinary test link's (`link_needs_cxx_runtime`).
+    if link_needs_cxx_runtime([ctx.attrs.natives[s] for s in sonames]):
+        cmd.add("--link-tail", "-lc++")
     ctx.actions.run(
         cmd,
         category = "mojo_cov_pgo_link",

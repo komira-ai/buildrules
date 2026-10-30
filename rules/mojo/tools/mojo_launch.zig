@@ -19,6 +19,8 @@
 //!     watchdog_sample_secs=30
 //!     build_arg=--target-cpu          (repeatable: placed right after `build`, i.e. the ISA flags of a test)
 //!     build_arg=x86-64-v3
+//!     link_tail=-lc++                 (repeatable: given to the wrapper as --link-tail, the arguments that end the link line, after the archives; a program
+//!                                      whose native libraries include C++ gets the C++ runtime this way, once)
 //!
 //! A toolchain for macOS (the wrapper is mojo_compile_macos.zig) has no zig and no cc_target: it names the deployment target and the host
 //! identities a compile may run on instead, and the file is refused if it names both kinds of key.
@@ -40,6 +42,7 @@ pub const Cfg = struct {
     watchdog_idle_secs: []const u8 = "300",
     watchdog_sample_secs: []const u8 = "30",
     build_args: []const []const u8 = &.{},
+    link_tail: []const []const u8 = &.{},
 };
 
 pub const CfgError = error{ BadLine, UnknownKey, Missing, OutOfMemory };
@@ -47,6 +50,7 @@ pub const CfgError = error{ BadLine, UnknownKey, Missing, OutOfMemory };
 pub fn parseCfg(a: std.mem.Allocator, text: []const u8, why: *[]const u8) CfgError!Cfg {
     var cfg = Cfg{};
     var build_args = std.ArrayList([]const u8).empty;
+    var link_tail = std.ArrayList([]const u8).empty;
     var macos_hosts = std.ArrayList([]const u8).empty;
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |raw| {
@@ -76,6 +80,8 @@ pub fn parseCfg(a: std.mem.Allocator, text: []const u8, why: *[]const u8) CfgErr
             cfg.watchdog_sample_secs = val;
         } else if (std.mem.eql(u8, key, "build_arg")) {
             try build_args.append(a, val);
+        } else if (std.mem.eql(u8, key, "link_tail")) {
+            try link_tail.append(a, val);
         } else {
             why.* = try std.fmt.allocPrint(a, "unknown key {s}", .{key});
             return error.UnknownKey;
@@ -101,6 +107,7 @@ pub fn parseCfg(a: std.mem.Allocator, text: []const u8, why: *[]const u8) CfgErr
         return error.Missing;
     }
     cfg.build_args = try build_args.toOwnedSlice(a);
+    cfg.link_tail = try link_tail.toOwnedSlice(a);
     return cfg;
 }
 
@@ -120,6 +127,7 @@ pub fn buildArgv(a: std.mem.Allocator, dir: []const u8, cfg: Cfg, args: []const 
     }
     try out.append(a, try std.fmt.allocPrint(a, "--watchdog-idle-secs={s}", .{cfg.watchdog_idle_secs}));
     try out.append(a, try std.fmt.allocPrint(a, "--watchdog-sample-secs={s}", .{cfg.watchdog_sample_secs}));
+    for (cfg.link_tail) |t| try out.append(a, try std.fmt.allocPrint(a, "--link-tail={s}", .{t}));
     // mopm gives `precompile` the staged `src/` directory as the source root and the package inside it as the package. The
     // wrapper's precompile contract (compile_args.zig) is that the source root IS the package directory: only then does it run the
     // compiler from the package's parent and give the package by its basename, so the `.mojoc` records `<name>/<file>.mojo`. With

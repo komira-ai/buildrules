@@ -9,6 +9,7 @@ control's own error. ci/negative_check.zig holds the wiring of this file to the 
 
 load("//examples/mojo/sys_app:buildrules.mojo.lock.bzl", SYS_APP_GRAPH = "GRAPH")
 load("//examples/mojo/ws:buildrules.mojo.lock.bzl", WS_GRAPH = "GRAPH")
+load(":native_library.bzl", "native_library_problems")
 load(":native_macos.bzl", "native_macos_problems")
 load(":system_libs.bzl", "system_libs_problems")
 load(":subdirs.bzl", "subdir_problems", UNSUPPORTED_SUBDIR_PLATFORM = "UNSUPPORTED", UNSUPPORTED_SUBDIR_PLATFORMS = "UNSUPPORTED_PLATFORMS")
@@ -77,7 +78,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the known defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it carries (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + test_defines_problems(ctx) + hang_limit_problems(ctx) + system_libs_problems(ctx, GATE_PLATFORM)
+    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + native_library_problems(ctx) + test_defines_problems(ctx) + hang_limit_problems(ctx) + system_libs_problems(ctx, GATE_PLATFORM)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
@@ -430,6 +431,11 @@ FAULTY = [
     ("//ci/faulty:native_with_an_undefined_symbol", "//ci/faulty:native_good", "undefined symbol: faulty_missing_helper"),
     ("//ci/faulty:native_newer_than_the_floor", "//ci/faulty:native_good", "undefined symbol: arc4random"),
     ("//ci/faulty:native_with_debug_info", "//ci/faulty:native_good", "member debug_info.c.pic.o has 1 debug section(s), first .debug_faulty"),
+    # A dependent of a `native_library` sees what its dependency exports (rules/native/defs.bzl): its header only through `deps`, a header of the dependency's dependency only
+    # through `exported_deps`, and the include directory of an upstream tree only when the dependency exports it. The compile is what fails.
+    ("//ci/faulty:nl_user_without_the_dependency", "//ci/faulty:nl_user", "'nl/lib.h' file not found"),
+    ("//ci/faulty:nl_top_over_plain_deps", "//ci/faulty:nl_user", "'nl/lib.h' file not found"),
+    ("//ci/faulty:nl_zlib_user_without_the_export", "//ci/faulty:nl_zlib_user", "'zlib.h' file not found"),
     # The data and the variables of a Mojo test (ci/mojo_data/BUCK): the stand-in test reads what is staged and says which of its expectations failed.
     # The control of each is the run that stages everything the probe expects.
     ("//ci/mojo_data:run_red_content", "//ci/mojo_data:run_green", "data_probe: greeting.txt holds other data"),

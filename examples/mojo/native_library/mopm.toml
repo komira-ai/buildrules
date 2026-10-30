@@ -1,0 +1,22 @@
+[package]
+name = "natlib"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+# The three static libraries the package links are built by `native_library` targets (examples/native), named in the BUCK file's `natives = {...}`. The manifest names a
+# source for each only because mopm's manifest has no entry for a library the package does not compile yet (`provided = true`); the file is not compiled.
+[native.zlib]
+kind = "static"
+srcs = ["native/zlib.c"]
+
+[native.cxxlib]
+kind = "static"
+srcs = ["native/cxxlib.c"]
+
+[native.asm_add]
+kind = "static"
+srcs = ["native/asm_add.c"]
+
+[targets]
+lib = { path = "src/natlib" }
+tests = ["tests"]

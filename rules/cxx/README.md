@@ -14,6 +14,7 @@ which declares `toolchains//:cxx` for the prelude's `cxx_library` / `cxx_binary`
 | rule (defs.bzl, archive.bzl) | what |
 |---|---|
 | `archive_files` | named files out of a sha256-pinned source archive (one tree, `[include]` sub-targets) |
+| `native_library` (rules/native) | a static library from the package's files and a pinned tarball, C, C++ and assembly, `select()` per OS and CPU, headers through `deps` (see rules/native/README.md) |
 | `staged_files` | sources copied under buck-out, so action digests do not depend on where the cell is mounted |
 | `c_exe` | one C file to a static musl executable (builds `elfsyms`) |
 | `prefix_header`, `prefixed_archive_check`, `checked_cxx_library` | rename every global symbol of a vendored library under a prefix and prove it (see below) |

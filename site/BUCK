@@ -97,6 +97,7 @@ jest_test(
         "tools/stage/gamma.zig": "//tools/stage:gamma.zig",
         "beta/mojo/STEPS": "//beta:mojo_steps",
         "rules/cxx/archive.bzl": "//rules/cxx:archive.bzl",
+        "rules/native/defs.bzl": "//rules/native:defs.bzl",
         "rules/cxx/defs.bzl": "//rules/cxx:defs.bzl",
     },
     modules = ":modules",

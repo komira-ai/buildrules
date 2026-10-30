@@ -1,0 +1,17 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/native:defs.bzl", "native_library")
+
+# Assembly chosen by the target platform's CPU, as `select()` on the separate constraint values of platforms/BUCK (`:x86_64`, `:aarch64`): the same C and the same header
+# for both, the x86-64 `.S` on x86_64 and the AArch64 `.S` on arm64 (Linux and Apple, which differ in the symbol's underscore only: native/asm_names.h). The `.S` files are
+# preprocessed and assembled by the pinned zig, with the flags of `asm_flags`.
+native_library(
+    name = "asm_add",
+    srcs = ["native/asm_twice.c"] + select({
+        "buildrules//platforms:aarch64": ["native/asm_add_aarch64.S"],
+        "buildrules//platforms:x86_64": ["native/asm_add_x86_64.S"],
+    }),
+    hdrs = ["native/asm_names.h"],
+    asm_flags = ["-DASM_BIAS=7"],
+)
+
+scrub_files()

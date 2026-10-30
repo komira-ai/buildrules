@@ -1,12 +1,13 @@
 //! archive_check: the validation of a native static library (`native_archive`, rules/cxx/native.bzl).
 //!
-//!   archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>]
+//!   archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>] [--runtime c++] [--members any]
 //!
 //! A static library a Mojo package ships is linked into other people's programs, so it is held to what a library must be:
 //!
 //!  - an archive of 64-bit little-endian ELF relocatable objects, or of 64-bit little-endian Mach-O relocatable objects (a library built for macOS arm64:
 //!    BSD-style member names, `__.SYMDEF` as the symbol table), nothing else and not both;
-//!  - deterministic: every member header has time, owner and group 0, and the members are in the order of their names;
+//!  - deterministic: every member header has time, owner and group 0, and the members are in the order of their names (with `--members any` they may be in any order: a library whose
+//!    sources are a `select()` of lists has them in the order the target lists them, which is fixed for a target but not sorted by name);
 //!  - hermetic: no object has a `.debug_*` section (a Mach-O object: a `__DWARF` section or a debug-map symbol) and no byte of the archive holds the absolute path of the directory it was built in
 //!    (`hermetic.zig`, the check of the C++ rules, applied to each member);
 //!  - at the glibc floor: no object needs a glibc symbol version newer than `--max-glibc` (`floor.zig`, applied to each member). A relocatable
@@ -15,6 +16,9 @@
 //!    compiler runtime (`floor_symbols.txt`; for Mach-O objects `floor_symbols_macos.txt`, libSystem, by the C name: the symbol's leading underscore is
 //!    removed), or is named by an `--allow`. A weak undefined symbol resolves to zero and is not a defect.
 //!    Whatever else is undefined is named: it is a symbol the final link will not find.
+//!
+//! With `--runtime c++`, the library is C++ (`native_static` sets it when a source is C++): the symbols the C++ runtime (libc++, libc++abi, the unwinder) defines
+//! may stay undefined as well (`cxxRuntime`), because the final link of a program that links a C++ native adds the runtime once (rules/mojo/unit.bzl, `link_tail`).
 //!
 //! Writes a validation result (`{"version":1,"data":{"status",...}}`) and exits 0 when every rule holds; exits 1 after writing "failure" when
 //! one does not, and prints every finding. With `--symbols`, writes the sorted defined global symbols, one per line.
@@ -361,7 +365,25 @@ fn lessThan(_: void, x: []const u8, y: []const u8) bool {
     return std.mem.lessThan(u8, x, y);
 }
 
+/// Whether `name` (an ELF symbol, or a Mach-O one with its leading underscore removed) is one the C++ runtime defines: the Itanium names of the standard library
+/// (`std::` and libc++'s `std::__1`, with its virtual tables and type information), of `operator new` and `operator delete`, of the C++ ABI (`__cxa_*`,
+/// `__cxxabiv1`, `__dynamic_cast`, the personality routine, `__dso_handle`) and the unwinder (`_Unwind_*`).
+pub fn cxxRuntime(name: []const u8) bool {
+    const prefixes = [_][]const u8{
+        "_ZNSt", "_ZNKSt", "_ZSt", "_ZTVSt", "_ZTISt", "_ZTSSt", "_ZGVNSt", "_ZNSt3__1", "_ZTVN10__cxxabiv", "_ZTIN10__cxxabiv", "_ZTSN10__cxxabiv",
+        "_Znw",  "_Zna",   "_Zdl", "_Zda",  "__cxa_", "__gxx_", "__dynamic_cast", "_Unwind_",
+        // The handle a static object's destructor is registered with (`__cxa_atexit(d, o, &__dso_handle)`): the start-up object of the link defines it.
+        "__dso_handle",
+    };
+    for (prefixes) |p| if (std.mem.startsWith(u8, name, p)) return true;
+    return false;
+}
+
 pub const Options = struct {
+    /// The members may be in any order (`--members any`); by default they are in the order of their names.
+    any_order: bool = false,
+    /// The library is C++: what the C++ runtime defines may stay undefined (`cxxRuntime`).
+    cxx: bool = false,
     /// The archives of the libraries this one needs (`needs`): what they define may be left undefined here.
     needs: []const []const u8 = &.{},
     /// Symbols the author names as provided by something the check cannot see.
@@ -403,7 +425,7 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     for (ms) |m| {
         if (!std.mem.eql(u8, m.time, "0") or !std.mem.eql(u8, m.owner, "0") or !std.mem.eql(u8, m.group, "0"))
             say(&f, "{s}: member {s} records a time or an owner (time {s}, owner {s}, group {s}): the archive is not deterministic", .{ name, m.name, m.time, m.owner, m.group });
-        if (prev.len != 0 and std.mem.lessThan(u8, m.name, prev))
+        if (!o.any_order and prev.len != 0 and std.mem.lessThan(u8, m.name, prev))
             say(&f, "{s}: member {s} comes after {s}: the members are not in the order of their names", .{ name, m.name, prev });
         prev = m.name;
         if (isMacho(m.data)) {
@@ -475,13 +497,13 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     }
     var seen = Set.init(a, &oom);
     for (undef.items.items) |u| {
-        if (!(defined.m.contains(u) or known.m.contains(u) or seen.m.contains(u))) {
+        if (!(defined.m.contains(u) or known.m.contains(u) or seen.m.contains(u) or (o.cxx and cxxRuntime(u)))) {
             seen.add(u);
             say(&f, "{s}: undefined symbol: {s} (not defined by this library, a `needs` library, the C library at the floor or the compiler runtime)", .{ name, u });
         }
     }
     for (undef_macho.items.items) |u| {
-        if (!(defined.m.contains(u) or known_macho.m.contains(u) or seen.m.contains(u))) {
+        if (!(defined.m.contains(u) or known_macho.m.contains(u) or seen.m.contains(u) or (o.cxx and cxxRuntime(u)))) {
             seen.add(u);
             say(&f, "{s}: undefined symbol: {s} (not defined by this library, a `needs` library, libSystem or the compiler runtime)", .{ name, u });
         }
@@ -519,16 +541,18 @@ pub const Cli = struct {
     allow: []const []const u8,
     symbols: ?[]const u8,
     max_glibc: []const u8,
+    cxx: bool,
+    any_order: bool,
 };
 
-pub const usage = "usage: archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>]";
+pub const usage = "usage: archive_check <lib.a> <result.json> [--needs <lib.a>]... [--allow <symbol>]... [--symbols <out.txt>] [--max-glibc <x.y>] [--runtime c++] [--members any]";
 
 pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocator.Error!?Cli {
     if (args.len < 2) return null;
     var oom = false;
     var needs = Acc([]const u8){ .a = a, .oom = &oom };
     var allow = Acc([]const u8){ .a = a, .oom = &oom };
-    var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34" };
+    var c = Cli{ .archive = args[0], .result = args[1], .needs = &.{}, .allow = &.{}, .symbols = null, .max_glibc = "2.34", .cxx = false, .any_order = false };
     var i: usize = 2;
     while (i < args.len) : (i += 2) {
         if (i + 1 >= args.len) return null;
@@ -542,6 +566,12 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocat
             c.symbols = val;
         } else if (std.mem.eql(u8, flag, "--max-glibc")) {
             c.max_glibc = val;
+        } else if (std.mem.eql(u8, flag, "--members")) {
+            if (!std.mem.eql(u8, val, "any")) return null;
+            c.any_order = true;
+        } else if (std.mem.eql(u8, flag, "--runtime")) {
+            if (!std.mem.eql(u8, val, "c++")) return null;
+            c.cxx = true;
         } else return null;
     }
     if (oom) return error.OutOfMemory;
@@ -587,7 +617,7 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, dir: []const u8, args: []const
         needs.push(nb);
     }
     const name = std.fs.path.basename(c.archive);
-    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir });
+    const rep = try check(a, name, bytes, .{ .needs = needs.items.items, .allow = c.allow, .max_glibc = c.max_glibc, .dir = dir, .cxx = c.cxx, .any_order = c.any_order });
     var out = Acc(u8){ .a = a, .oom = &oom };
     for (rep.defined) |s| {
         out.pushAll(s);

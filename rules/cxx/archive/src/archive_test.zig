@@ -248,6 +248,69 @@ test "an undefined symbol that nothing defines is named, once, however many memb
     try t.expect(hasFinding(r, "undefined symbol: shim_open_helper"));
 }
 
+const runtime_names = [_][]const u8{
+    "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6appendEPKcm",
+    "_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE4sizeEv",
+    "_ZSt9terminatev",
+    "_ZTVN10__cxxabiv117__class_type_infoE",
+    "_ZTISt9exception",
+    "_Znwm",
+    "_ZdlPvm",
+    "__cxa_throw",
+    "__gxx_personality_v0",
+    "__dynamic_cast",
+    "_Unwind_Resume",
+    "__dso_handle",
+};
+
+test "a C++ library may leave the C++ runtime undefined, and only with --runtime c++" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    var syms = std.ArrayList(Sym).empty;
+    try syms.append(a, .{ .name = "shim_run", .kind = .def });
+    for (runtime_names) |n| try syms.append(a, .{ .name = n, .kind = .undef });
+    const b = try archive(a, &.{.{ .name = "a.o", .data = try object(a, syms.items, &.{".text"}) }});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{ .cxx = true })).findings.len);
+    // Without the option each is named: a C library that calls into the runtime is a defect.
+    const c = try A.check(a, "libx.a", b, .{});
+    try t.expectEqual(runtime_names.len, c.findings.len);
+    try t.expect(hasFinding(c, "undefined symbol: __cxa_throw"));
+}
+
+test "--runtime c++ does not excuse a symbol the runtime does not define, nor one that only looks like a runtime name" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{
+        .{ .name = "_ZN6snappy8CompressEPKcmPNSt3__112basic_stringIcNS2_11char_traitsIcEENS2_9allocatorIcEEEE", .kind = .undef },
+        .{ .name = "shim_open_helper", .kind = .undef },
+        .{ .name = "cxa_throw", .kind = .undef },
+    }, &.{});
+    const b = try archive(a, &.{.{ .name = "a.o", .data = o }});
+    const r = try A.check(a, "libx.a", b, .{ .cxx = true });
+    try t.expectEqual(@as(usize, 3), r.findings.len);
+    try t.expect(hasFinding(r, "undefined symbol: shim_open_helper"));
+    try t.expect(hasFinding(r, "undefined symbol: cxa_throw"));
+}
+
+test "parseArgs: --runtime takes c++ and nothing else" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--runtime", "c++" })).?.cxx);
+    try t.expect(!(try A.parseArgs(a, &.{ "l.a", "r.json" })).?.cxx);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--runtime", "stdc++" })) == null);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--runtime" })) == null);
+}
+
+test "cxxRuntime: the names of the runtime, and not a library's own C++ names" {
+    for (runtime_names) |n| try t.expect(A.cxxRuntime(n));
+    try t.expect(!A.cxxRuntime("_ZN6snappy8CompressE"));
+    try t.expect(!A.cxxRuntime("snappy_compress"));
+    try t.expect(!A.cxxRuntime("memcpy"));
+}
+
 test "a symbol newer than the glibc floor is undefined here, and a needs library or an allow makes it known" {
     var ar = arena();
     defer ar.deinit();
@@ -576,4 +639,27 @@ test "symbols: a symbol table or a string table that runs past the end of the fi
         std.mem.writeInt(u64, cut[c.at..][0..8], c.value, .little);
         try t.expectError(error.Truncated, A.symbols(a, cut));
     }
+}
+
+test "--members any: members out of the order of their names are not a finding, and the other rules still hold" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{.{ .name = "f", .kind = .def }}, &.{});
+    const out = try archive(a, &.{ .{ .name = "b.o", .data = o }, .{ .name = "a.o", .data = o } });
+    try t.expect(!hasFinding(try A.check(a, "libx.a", out, .{ .any_order = true }), "order"));
+    try t.expect(hasFinding(try A.check(a, "libx.a", out, .{ .any_order = false }), "not in the order of their names"));
+    // A member that records a time is still a finding, whatever the order.
+    const stamped = try archive(a, &.{ .{ .name = "b.o", .data = o, .time = "1700000000" }, .{ .name = "a.o", .data = o } });
+    try t.expect(hasFinding(try A.check(a, "libx.a", stamped, .{ .any_order = true }), "not deterministic"));
+}
+
+test "parseArgs: --members takes any and nothing else" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--members", "any" })).?.any_order);
+    try t.expect(!(try A.parseArgs(a, &.{ "l.a", "r.json" })).?.any_order);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--members", "name" })) == null);
+    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--members" })) == null);
 }

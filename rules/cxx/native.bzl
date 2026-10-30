@@ -18,7 +18,7 @@ For a macOS arm64 target platform the same two targets build a Mach-O archive: t
 
 load("//rules:isa.bzl", "ISA_LEVELS", "isa_select")
 load("//rules/core:platform.bzl", "by_os_cpu", "os_cpu_keys")
-load(":providers.bzl", "NativeArchiveInfo")
+load(":providers.bzl", "NativeArchiveInfo", "NativeLibraryInfo")
 
 def _impl(ctx):
     lib = ctx.attrs.lib
@@ -32,16 +32,24 @@ def _impl(ctx):
     result = ctx.actions.declare_output(ctx.label.name + ".archive_check.json")
     rest = []
     for n in ctx.attrs.needs:
-        rest.extend(["--needs", n[DefaultInfo].default_outputs[0]])
+        # A library of `native_library` brings the archives of its own link with it: what it calls into is undefined here too.
+        info = n.get(NativeLibraryInfo)
+        for a in (info.archives if info else [n[DefaultInfo].default_outputs[0]]):
+            rest.extend(["--needs", a])
     for s in ctx.attrs.allow:
         rest.extend(["--allow", s])
+    cxx = ctx.attrs.cxx or any([s.endswith(CXX_SUFFIXES) for s in ctx.attrs.sources])
+    if ctx.attrs.members_any:
+        rest.extend(["--members", "any"])
+    if cxx:
+        rest.extend(["--runtime", "c++"])
     ctx.actions.run(cmd_args(ctx.attrs._tool[RunInfo], out, result.as_output(), rest), category = "archive_check", identifier = ctx.label.name)
 
     # The list of defined symbols is its own action: a validation result is the one output of the action that writes it.
     scratch = ctx.actions.declare_output(ctx.label.name + ".listed.json")
     ctx.actions.run(cmd_args(ctx.attrs._tool[RunInfo], out, scratch.as_output(), "--symbols", symbols.as_output(), rest), category = "archive_symbols", identifier = ctx.label.name)
     info = [
-        NativeArchiveInfo(soname = ctx.attrs.soname, archive = out, symbols = symbols),
+        NativeArchiveInfo(soname = ctx.attrs.soname, archive = out, symbols = symbols, cxx = cxx),
     ]
     if ctx.attrs.validate:
         info.append(DefaultInfo(default_output = out, sub_targets = {"symbols": [DefaultInfo(default_output = symbols)]}))
@@ -57,6 +65,12 @@ native_archive = rule(
     doc = "The static library `soname` out of the package's own `cxx_library` `lib`, with `archive_check` as a validation. `needs` are the libraries this one calls into (their symbols may stay undefined); `allow` names symbols something the check cannot see provides.",
     attrs = {
         "allow": attrs.list(attrs.string(), default = []),
+        # The library has C++ sources: the C++ runtime may stay undefined (archive_check --runtime c++), and a program that links it links the runtime.
+        "cxx": attrs.bool(default = False),
+        # The names of the library's sources: the library is C++ when any of them is (`cxx` says so too, for a caller that knows).
+        "sources": attrs.list(attrs.string(), default = []),
+        # Members in the order the target lists its sources (archive_check --members any), not sorted by name.
+        "members_any": attrs.bool(default = False),
         "lib": attrs.dep(),
         "needs": attrs.list(attrs.dep(), default = []),
         "soname": attrs.string(),
@@ -93,10 +107,17 @@ def _baseline():
         "DEFAULT": isa_select(lambda l: ["-mcpu=x86_64"] if ISA_LEVELS[l]["family"] == "x86_64" else ["-mcpu=generic"], ["-mcpu=x86_64"]),
     })
 
+# A source is C++ by its extension (docs/contract.md, section 12): a manifest names no language. The C++ files of a library are compiled as this standard (a `-std=` in
+# `cflags` would apply to its C files too, so the standard has no manifest field); exceptions and RTTI are the compiler's defaults, so a library built with either links the runtime that implements them.
+CXX_SUFFIXES = (".cc", ".cpp", ".cxx", ".c++")
+CXX_STD = ["-std=c++17"]
+
 def native_static(name, srcs, soname, hdrs = [], includes = [], cflags = [], cflags_by_os = {}, needs = [], allow = [], validate = True, file_prefix = None, visibility = ["PUBLIC"]):
     """A native static library: `<name>_cxx` (the `cxx_library`) and `<name>` (the `native_archive`). `includes` are directories (relative to the repository root)
     given to the compiler as `-I`; `cflags_by_os` maps `linux` and `macos` to flags added on that OS after `cflags`; `file_prefix` (default: the package
-    directory) is mapped to `.` in every path the compiler records, so a copy of the sources at another path gives the same bytes."""
+    directory) is mapped to `.` in every path the compiler records, so a copy of the sources at another path gives the same bytes. A source ending in `.cc`, `.cpp`
+    or `.cxx` is C++, compiled as `-std=c++17` by the same zig; a library with one is `cxx`: `archive_check` lets the C++ runtime stay undefined and a program
+    that links it links the runtime once."""
     if file_prefix == None:
         file_prefix = native.package_name()
     # What every native library is compiled with, before the manifest's flags (which may override it): optimised, and without the undefined-behaviour
@@ -111,11 +132,13 @@ def native_static(name, srcs, soname, hdrs = [], includes = [], cflags = [], cfl
         by_os[key] = list(cflags_by_os.get("macos", []))
     by_os = select(by_os)
     prefix = ["-ffile-prefix-map={}=.".format(file_prefix)] if file_prefix else []
+    cxx = [s for s in srcs if s.endswith(CXX_SUFFIXES)]
     native.cxx_library(
         name = name + "_cxx",
         srcs = sorted(srcs),
         headers = sorted(hdrs),
         compiler_flags = defaults + prefix + _baseline() + flags + by_os,
+        lang_compiler_flags = {"cxx_cpp_output": CXX_STD} if cxx else {},
         preferred_linkage = "static",
         visibility = visibility,
     )
@@ -123,6 +146,7 @@ def native_static(name, srcs, soname, hdrs = [], includes = [], cflags = [], cfl
         name = name,
         lib = ":" + name + "_cxx[static-pic]",
         soname = soname,
+        cxx = bool(cxx),
         needs = needs,
         allow = allow,
         validate = validate,

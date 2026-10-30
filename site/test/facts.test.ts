@@ -108,7 +108,7 @@ describe('rule pages against the rule sources', () => {
     '/rules/rust/': read('rules/rust/cargo.bzl'),
     '/rules/node/': read('rules/node/modules.bzl', 'rules/node/defs.bzl', 'rules/node/npm.bzl'),
     '/rules/zig/': read('rules/zig/zig.bzl'),
-    '/rules/cxx/': read('rules/cxx/defs.bzl', 'rules/cxx/archive.bzl'),
+    '/rules/cxx/': read('rules/cxx/defs.bzl', 'rules/cxx/archive.bzl', 'rules/native/defs.bzl'),
   };
 
   test.each(Object.keys(sources))('%s: every rule it names in the first table column or heading exists', (path) => {

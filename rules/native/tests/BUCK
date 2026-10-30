@@ -1,0 +1,102 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# What `native_library` refuses while the graph is analysed (rules/native/checks.bzl), as analysis tests (rules/rust/refusal.bzl): each target exists, and is green, only
+# if the rule refused (or accepted) what a user would really write. Make a check accept the input and its target stops existing (analysis fails with "expected a
+# refusal"). Where the library is configured for a platform, and what its providers say, is held by ci/native_library.bzl.
+load("//rules:matrix.bzl", "group")
+load("//rules/native:checks.bzl", "check_cxx_runtime", "check_sources", "check_upstream")
+load(":helpers.bzl", "extension_is", "label_is", "link_order_is", "up")
+load("//rules/rust:refusal.bzl", "accepts", "refuses")
+
+_ALL = []
+
+_WHO = "examples/native/zlib:zlib"
+
+# ---- upstream: the pinned tarball and the explicit list of files ----
+
+_ALL.append(accepts("upstream_pinned_https_tarball_is_accepted", check_upstream, [_WHO, up()]))
+
+_ALL.append(refuses("upstream_over_http_is_refused", check_upstream, [_WHO, up(url = "http://example.invalid/lib-1.0.tar.gz")], ["is not an https:// URL"]))
+
+_ALL.append(refuses("upstream_that_names_no_archive_is_refused", check_upstream, [_WHO, up(url = "https://example.invalid/lib-1.0.exe")], ["does not name an archive"]))
+
+_ALL.append(refuses("upstream_without_a_digest_is_refused", check_upstream, [_WHO, up(sha256 = None)], ["upstream has no sha256"]))
+
+_ALL.append(refuses("upstream_with_a_short_digest_is_refused", check_upstream, [_WHO, up(sha256 = "abc")], ["sha256", "64 lower-case hex digits"]))
+
+_ALL.append(refuses("upstream_without_a_size_is_refused", check_upstream, [_WHO, up(size = None)], ["upstream has no size"]))
+
+_ALL.append(refuses("upstream_with_a_zero_size_is_refused", check_upstream, [_WHO, up(size = 0)], ["positive length"]))
+
+_ALL.append(refuses("upstream_without_files_is_refused", check_upstream, [_WHO, up(files = None)], ["upstream has no files"]))
+
+_ALL.append(refuses("upstream_with_an_empty_file_list_is_refused", check_upstream, [_WHO, up(files = [])], ["tree is not staged whole"]))
+
+_ALL.append(refuses("upstream_file_that_leaves_the_archive_is_refused", check_upstream, [_WHO, up(files = ["a.c", "../b.c"])], ["is not a path below the archive"]))
+
+_ALL.append(refuses("upstream_absolute_file_is_refused", check_upstream, [_WHO, up(files = ["/etc/passwd"])], ["is not a path below the archive"]))
+
+_ALL.append(refuses("upstream_file_listed_twice_is_refused", check_upstream, [_WHO, up(files = ["a.c", "a.c"])], ["is listed twice"]))
+
+_ALL.append(refuses("upstream_strip_above_the_root_is_refused", check_upstream, [_WHO, up(strip = "../x")], ["is not a directory below the archive's root"]))
+
+_ALL.append(refuses("upstream_with_an_unknown_key_is_refused", check_upstream, [_WHO, up(mirror = "https://example.invalid")], ['has the key "mirror"']))
+
+# ---- the file lists, per arm ----
+
+_FILES = ["a.c", "b.c", "inc/a.h", "inc/b.h"]
+
+_ALL.append(accepts("sources_of_the_tree_and_the_package_are_accepted", check_sources, [_WHO, _FILES, "srcs", ["a.c", "native/own.cc", "native/x.S", "native/y.s"]]))
+
+_ALL.append(refuses("source_that_is_not_c_c_plus_plus_or_assembly_is_refused", check_sources, [_WHO, _FILES, "srcs", ["a.rs"]], ["is not a C, C++ or assembly file"]))
+
+_ALL.append(refuses("source_outside_the_package_is_refused", check_sources, [_WHO, _FILES, "srcs", ["../x.c"]], ["is not a path below the package or the upstream tree"]))
+
+_ALL.append(refuses("header_of_the_tree_named_as_a_header_of_the_package_is_refused", check_sources, [_WHO, _FILES, "hdrs", ["inc/a.h"]], ["is a file of the upstream tree"]))
+
+_ALL.append(refuses("exported_header_of_the_tree_in_a_dict_is_refused", check_sources, [_WHO, _FILES, "exported_headers", {"a.h": "inc/a.h"}], ["is a file of the upstream tree"]))
+
+_ALL.append(accepts("exported_headers_of_the_package_by_name_are_accepted", check_sources, [_WHO, _FILES, "exported_headers", {"x/x.h": "include/x.h"}]))
+
+_ALL.append(accepts("include_directory_that_holds_a_staged_file_is_accepted", check_sources, [_WHO, _FILES, "exported_includes", [".", "inc"]]))
+
+_ALL.append(refuses("include_directory_with_no_staged_file_is_refused", check_sources, [_WHO, _FILES, "includes", ["include"]], ["is not a directory that holds a file of upstream files"]))
+
+_ALL.append(refuses("tree_include_without_an_upstream_is_refused", check_sources, [_WHO, [], "exported_includes", ["."]], ["the target has no upstream"]))
+
+_ALL.append(refuses("include_directory_that_leaves_the_tree_is_refused", check_sources, [_WHO, _FILES, "includes", ["../x"]], ["is `.` or a directory below the upstream tree"]))
+
+_ALL.append(refuses("unknown_file_list_is_refused", check_sources, [_WHO, _FILES, "flags", []], ["is not one of the file lists"]))
+
+# ---- cxx_runtime is what the sources are ----
+
+_ALL.append(accepts("cxx_runtime_stated_true_for_cxx_sources_is_accepted", check_cxx_runtime, [_WHO, True, True]))
+
+_ALL.append(accepts("cxx_runtime_not_stated_is_accepted", check_cxx_runtime, [_WHO, None, True]))
+
+_ALL.append(refuses("cxx_runtime_stated_false_for_cxx_sources_is_refused", check_cxx_runtime, [_WHO, False, True], ["cxx_runtime = False", "the sources include C++"]))
+
+_ALL.append(refuses("cxx_runtime_stated_true_for_c_sources_is_refused", check_cxx_runtime, [_WHO, True, False], ["cxx_runtime = True", "no source is C++"]))
+
+# ---- pure functions ----
+
+# The link line: the library first, then its dependencies in the order given, and a library several of them need after the last that needs it.
+_ALL.append(accepts("link_order_is_the_library_then_its_dependencies", link_order_is, ["order", "top", [["mid", "base"]], ["top", "mid", "base"]]))
+
+_ALL.append(accepts("link_order_keeps_a_shared_library_after_its_last_user", link_order_is, ["order", "top", [["left", "bottom"], ["right", "bottom"]], ["top", "left", "right", "bottom"]]))
+
+_ALL.append(accepts("link_order_of_a_library_with_no_dependency_is_itself", link_order_is, ["order", "a", [], ["a"]]))
+
+_ALL.append(refuses("link_order_that_puts_a_library_before_its_user_is_refused", link_order_is, ["order", "top", [["left", "bottom"], ["right", "bottom"]], ["top", "left", "bottom", "right"]], ["got"]))
+
+_ALL.append(accepts("archive_extension_ignores_the_query", extension_is, ["ext", "https://example.invalid/x-1.0.tar.gz?download=1", ".tar.gz"]))
+
+_ALL.append(accepts("archive_extension_of_a_bareextension_is_none", extension_is, ["ext", "https://example.invalid/.tar.gz", None]))
+
+_ALL.append(accepts("cxx_label_of_a_package_local_label", label_is, ["label", ":base", ":base_cxx"]))
+
+_ALL.append(accepts("cxx_label_of_a_label_of_another_package", label_is, ["label", "//examples/native/deps:base", "//examples/native/deps:base_cxx"]))
+
+# Every refusal of this package, for //ci:refusals.
+group(name = "all", deps = _ALL, visibility = ["PUBLIC"])
+
+scrub_files()

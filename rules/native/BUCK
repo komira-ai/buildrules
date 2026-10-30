@@ -1,0 +1,18 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+# `native_library` (README.md): the macro, its rule and its checks. The refusals are analysis tests in tests/BUCK.
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check its pages against these files.
+export_file(
+    name = "defs.bzl",
+    src = "defs.bzl",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "library.bzl",
+    src = "library.bzl",
+    visibility = ["//site:"],
+)
+
+scrub_files()

@@ -133,6 +133,25 @@ fn has(list: []const []const u8, name: []const u8) bool {
     return false;
 }
 
+test "a C++ library built for macOS may leave the C++ runtime undefined (the leading underscore is the compiler's), with --runtime c++ only" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try clean(a, &.{
+        .{ .name = "shim_run", .kind = .def },
+        .{ .name = "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6appendEPKcm", .kind = .undef },
+        .{ .name = "_Znwm", .kind = .undef },
+        .{ .name = "__gxx_personality_v0", .kind = .undef },
+        .{ .name = "__cxa_throw", .kind = .undef },
+        .{ .name = "__dso_handle", .kind = .undef },
+    });
+    const b = try archive(a, &.{.{ .name = "a.o", .data = o }});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", b, .{ .cxx = true })).findings.len);
+    const r = try A.check(a, "libx.a", b, .{});
+    try t.expectEqual(@as(usize, 5), r.findings.len);
+    try t.expect(hasFinding(r, "undefined symbol: _Znwm"));
+}
+
 test "members: BSD names are read, the symbol tables are not members, and the data starts after the name" {
     var ar = arena();
     defer ar.deinit();

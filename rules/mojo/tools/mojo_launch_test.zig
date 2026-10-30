@@ -144,3 +144,21 @@ test "cfg: a macOS toolchain with no host, or with the Linux keys beside its own
     try t.expectError(error.BadLine, L.parseCfg(arena.allocator(), "wrapper=w\ncompiler=c\nzig=z\ncc_target=t\ndeployment_target=11.0\nmacos_host=1-2\n", &why));
     try t.expectEqualStrings("a macOS toolchain (deployment_target, macos_host) names no zig and no cc_target", why);
 }
+
+test "cfg: link_tail lines reach the wrapper as --link-tail options, in order, and a cfg without them adds none" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    const c = try L.parseCfg(a, cfg_text ++ "link_tail=-lc++\nlink_tail=-lm\n", &why);
+    try t.expectEqual(@as(usize, 2), c.link_tail.len);
+    const argv = try L.buildArgv(a, "/tc", c, &.{ "--source-root=/s/src", "--", "build", "/s/src/t.mojo", "-o", "/o/t" });
+    // Right after the watchdog options and before mopm's: the wrapper reads its options in any order, and mopm's arguments keep their place.
+    try t.expectEqualStrings("--link-tail=-lc++", argv[6]);
+    try t.expectEqualStrings("--link-tail=-lm", argv[7]);
+    try t.expectEqualStrings("--source-root=/s/src", argv[8]);
+    const none = try L.parseCfg(a, cfg_text, &why);
+    try t.expectEqual(@as(usize, 0), none.link_tail.len);
+    const plain = try L.buildArgv(a, "/tc", none, &.{ "--", "build" });
+    for (plain) |x| try t.expect(!std.mem.startsWith(u8, x, "--link-tail"));
+}
