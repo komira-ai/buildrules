@@ -113,6 +113,11 @@ jobs:
           name: ${{ inputs.cli-bins-artifact }}
           path: cli-bins
 
+      # The runner of the native macOS leg is macos-15, but the command line it runs is cross-built here; its minimum macOS must stay at the pinned 13.0 (ci/macho_minos.zig
+      # reads the Mach-O's minos, on any host).
+      - name: The macOS command line is built for a macOS at most 13.0
+        run: ./buck2 run --console simple -c buildrules_re.mode=local //ci:macho_minos_exe -- --max 13.0 cli-bins/macos-arm64/buildrules
+
       - name: The command line and buck2 of the other hosts
         run: |
           cp cli-bins/linux-aarch64/buildrules native/linux-aarch64/buildrules
