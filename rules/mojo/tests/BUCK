@@ -1,7 +1,7 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # mopm-toolchain.toml is required (docs/contract.md, section 12): the refusals of rules/mojo/defs.bzl as analysis tests (rules/rust/refusal.bzl).
 # Each target is green only if the rule refused as stated; make the rule fall back to a default and it stops existing (analysis fails).
-load("//rules/mojo:defs.bzl", "check_natives_used", "check_toolchain_file_present", "check_toolchain_file_recorded", "graph_path_in_package", "member_label", "native_wiring")
+load("//rules/mojo:defs.bzl", "check_natives_used", "check_provided_native", "check_toolchain_file_present", "check_toolchain_file_recorded", "graph_path_in_package", "member_label", "native_wiring")
 load("//rules/mojo:unit.bzl", "check_closure_ids", "check_closure_known", "cov_link_natives")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
 load(":generated.bzl", "generated_member_below_the_package_is_named_by_its_manifest_directory", "generated_sibling_is_named_by_its_manifest_directory", "longest_manifest_directory_wins", "manifest_directories_are_those_of_the_recorded_manifests", "src_name_is_read_before_the_manifests")
@@ -619,4 +619,14 @@ refuses(
     check = check_closure_known,
     args = ["u", "toolchains//:mojo_1_0_0", ["a" * 64, "b" * 64], "c" * 64],
     contains = ["the graph pins the toolchain closure " + "c" * 64, "toolchains//:mojo_1_0_0 does not hold", "it holds " + "a" * 64 + ", " + "b" * 64, "buildrules mojo sync"],
+)
+
+# A provided native (graph format 4) has its archive supplied by `natives` (rules/mojo/defs.bzl, `check_provided_native`): the graph has no sources for it.
+accepts(name = "provided_native_supplied_by_natives_is_accepted", check = check_provided_native, args = ["examples/x", "shim", "libshim.a", {"libshim.a": "//x:shim"}])
+
+refuses(
+    name = "provided_native_that_no_natives_entry_supplies_is_refused",
+    check = check_provided_native,
+    args = ["examples/x", "shim", "libshim.a", {"libother.a": "//x:other"}],
+    contains = ["examples/x: [native.shim] is `provided = true`", "its archive is built by a rule", "natives = {\"libshim.a\":"],
 )

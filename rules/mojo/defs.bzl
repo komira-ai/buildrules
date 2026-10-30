@@ -342,6 +342,13 @@ def native_wiring(unit, prebuilt_packages, user_natives, here, refuse = fail, bu
             refuse("{}: {} links the native library {}; add it to mojo_package(natives = {{...}})".format(here, unit["id"], soname))
     return sonames, labels
 
+def check_provided_native(here, nid, soname, user_natives, refuse = fail):
+    """A `provided = true` native (graph format 4) has its archive supplied by `natives = {...}`: the graph has no sources for it, and an archive that nothing supplies
+    would be an empty one. `refuse` is `fail` in a build; a test passes a recorder (rules/rust/refusal.bzl)."""
+    if soname not in user_natives:
+        refuse(("{}: [native.{}] is `provided = true`, so its archive is built by a rule and not compiled from sources: add `natives = {{\"{}\": \"<native_library target>\"}}` to mojo_package " +
+                "(a target with NativeArchiveInfo, rules/native/defs.bzl)").format(here, nid, soname))
+
 def check_natives_used(here, user_natives, linked_sonames, refuse = fail):
     """Every entry of `mojo_package(natives = {...})` names a library the package's graph links or builds: `linked_sonames` are the sonames of every unit's natives and of the
     package's own `[native.<id>]`. An entry of another name would be a library nothing links, silently."""
@@ -605,9 +612,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             # `provided = true` (graph format 4): the archive is the product of a rule of the build, so a target of `natives = {...}` must supply it. The graph has no sources for it, and
             # an archive that nothing supplies is an empty one: refused, naming the library, rather than built from nothing.
             soname = u.get("soname") or "lib{}.a".format(nid)
-            if soname not in natives:
-                fail(("{}: [native.{}] is `provided = true`, so its archive is built by a rule and not compiled from sources: add `natives = {{\"{}\": \"<native_library target>\"}}` to mojo_package " +
-                      "(a target with NativeArchiveInfo, rules/native/defs.bzl)").format(here, nid, soname))
+            check_provided_native(here, nid, soname, natives)
             own_native_ids[nid] = soname
             provided_natives[soname] = True
             native.alias(name = name_once("native_" + nid), actual = natives[soname], visibility = visibility)
