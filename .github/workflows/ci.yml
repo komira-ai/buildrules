@@ -234,6 +234,13 @@ jobs:
       - name: Build unpack natively
         run: ./zig-next/zig build-exe -OReleaseSafe -fstrip tools/bootstrap/src/unpack.zig -femit-bin=unpack-native
 
+      # The minimum macOS of what is built or pinned here must not be above 14.0 (ci/macho_minos.zig reads the Mach-O's minos).
+      - name: Build unpack for -target aarch64-macos, no version
+        run: ./zig-next/zig build-exe -OReleaseSafe -fstrip -target aarch64-macos tools/bootstrap/src/unpack.zig -femit-bin=unpack-explicit
+
+      - name: The macOS minimum of the pinned cross build and of the native and explicit builds is at most 14.0
+        run: ./zig-next/zig run ci/macho_minos.zig -- --max 14.0 cross/unpack-macos-aarch64 unpack-native unpack-explicit
+
       - name: The unit tests, natively
         run: |
           for name in paths inflate tar extract zip xz main pins oom; do
