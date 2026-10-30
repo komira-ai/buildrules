@@ -3,8 +3,8 @@
 mopm's unit graph lists the native libraries a unit links, one soname each, in link order. A `native_library` that has `deps` needs the archives of those too, and the graph
 does not list them: they come from `NativeLibraryInfo.archives` of each listed library. They end the link line, after every archive of the graph and before the C++ runtime
 (`-lc++`), in an order a ONE-PASS linker accepts (lld and ld64 do not need it, a GNU ld does): a library before every library it needs, each archive once, a shared one after its last
-user. An archive the graph lists is linked where the graph puts it, and is written again in the tail only when an archive of the tail needs it (it follows that archive in a
-library's list), because the graph's copy came first and would be passed over.
+user. An archive the graph lists is linked where the graph puts it. It is written again in the tail when an extra archive comes before it in some library's list: the graph's copy was
+linked first and a one-pass linker would pass over it for what that extra archive needs. That is a test of order and not of need, so an archive may be repeated that the extra archive does not use; it is never left out when it is used.
 
 An archive is told from another by its identity (`key`: its path, or its label), never by its file name: two packages may each have a `libx.a`.
 """
@@ -14,7 +14,7 @@ def extra_link_archives(archive_lists, linked, key):
     graph links itself; `key` maps an archive to its identity.
 
     Each archive appears once, at its LAST place in the concatenation of the lists, so an archive two libraries share comes after both. One the graph links is left out, unless
-    an archive that is not the graph's comes before it in some list (that archive needs it, and the graph's copy is behind it): then it is written again after that archive."""
+    an archive that is not the graph's comes before it in some list (it may need it, and the graph's copy is behind it): then it is written again after that archive. This may repeat an archive the extra one does not use; it never leaves out one it does."""
     flat = []
     needed = {}
     for archives in archive_lists:

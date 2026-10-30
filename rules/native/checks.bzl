@@ -143,7 +143,7 @@ def cxx_label(label):
         fail("native_library: dep {} is not a target label".format(repr(label)))
     return label + "_cxx"
 
-_PREFIX_KEYS = ["name", "strip", "min", "extra_symbols"]
+_PREFIX_KEYS = ["name", "strip", "min", "extra_symbols", "cxx_namespaces"]
 
 def _identifier(s):
     return type(s) == "string" and len(s) > 0 and all([c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for c in s.elems()])
@@ -152,7 +152,7 @@ def check_prefix(who, pfx, refuse = fail):
     """The `prefix` table: every global symbol the library defines is renamed to start with `name` (`strip` selects the strip style); `min` is the least number of
     symbols the library defines, which stops a header made from the wrong archive."""
     if type(pfx) != "dict":
-        refuse("{}: prefix is {}, a table of name, strip, min and extra_symbols".format(who, repr(pfx)))
+        refuse("{}: prefix is {}, a table of name, strip, min, extra_symbols and cxx_namespaces".format(who, repr(pfx)))
         return
     for k in sorted(pfx.keys()):
         if k not in _PREFIX_KEYS:
@@ -168,6 +168,10 @@ def check_prefix(who, pfx, refuse = fail):
     extra = pfx.get("extra_symbols", [])
     if type(extra) != "list" or any([not _identifier(x) for x in extra]):
         refuse("{}: prefix extra_symbols {} is a list of identifiers (names the library refers to and does not define, such as a weak hook a program defines)".format(who, repr(extra)))
+        return
+    spaces = pfx.get("cxx_namespaces", [])
+    if type(spaces) != "list" or any([not _identifier(x) or x == "std" for x in spaces]):
+        refuse("{}: prefix cxx_namespaces {} is a list of C++ namespaces (identifiers, never `std`) whose mangled names the library may define without the prefix: a header of macros cannot rename them".format(who, repr(spaces)))
         return
     least = pfx.get("min")
     if type(least) != "int" or least <= 0:
@@ -198,3 +202,10 @@ def check_asm_split(who, patterns, srcs, refuse = fail):
 def is_split(patterns, src):
     """Whether `asm_split` names the source `src`."""
     return any([src.startswith(p) for p in patterns])
+
+def check_asm_split_matched(who, patterns, parts, refuse = fail):
+    """Every `asm_split` pattern names a source: `parts` are the lists `srcs` is made of (a list, and each arm of each `select()`). A pattern that begins no path of any of them
+    (a typo: `s2n-bignum/arn/`) would leave the macros unsplit, which on Mach-O arm64 is a routine that assembles and computes the wrong thing."""
+    for p in patterns:
+        if not any([s.startswith(p) for part in parts for s in part]):
+            refuse("{}: asm_split {} is the beginning of no source, in any arm of srcs: the sources it was meant to name are not split".format(who, repr(p)))

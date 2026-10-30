@@ -36,12 +36,12 @@ What each argument is, and what may differ per platform:
     soname             the archive's file name (default `lib<name>.a`).
     asm_split          paths (beginnings) of `.S` sources whose preprocessed text has its `;` turned into line breaks before it is assembled. Mach-O arm64 assembly reads `;` as a
                        comment, so a macro of `;`-joined instructions (s2n-bignum's) keeps only its first instruction: it assembles and computes the wrong result. The toolchain's compiler runs
-                       the library's flags with `-E` (rules/native/asm_split.bzl), the text is split (rules/cxx/asm_split.zig) and assembled as assembly; harmless on Linux. A named source must be a `.S` file.
+                       the library's flags with `-E` (rules/native/asm_split.bzl), the text is split (rules/cxx/asm_split.zig) and assembled as assembly; it runs on every platform for the named sources, so a `;` that is not a statement separator there (inside a `.ascii` string, or a `#` comment on x86) breaks the assemble, loudly. A `.S` that includes a header the library ships as its own `exported_headers` (or a dependency does) fails with "file not found": only `hdrs`, the upstream `includes` and the dependencies' `exported_includes` are on its include path. A pattern that begins no source is refused. A named source must be a `.S` file.
     prefix             `{"name": "p", "min": N}` (and `"strip"`): every global symbol the library defines is renamed to start with `p` (aws-lc's style `p_name`, or the strip style),
                        C and assembly, ELF and Mach-O alike, and the archive check holds that nothing defined lacks the prefix and nothing refers to a replaced name. The library is
                        built as it is (`:<name>_unprefixed`), the names its archive defines are written as a header (`:<name>_prefix`: `#define name p_name`, and for the underscored
                        names the assembly of a Mach-O library carries `#define _name _p_name`), and it is built again with the header included. `min` is the least number of
-                       symbols it defines. `extra_symbols` names the symbols the library refers to and does not define (a weak hook a program defines: aws-lc's `OPENSSL_memory_*`),
+                       symbols it defines. `cxx_namespaces` (never `std`) names C++ namespaces whose mangled names the library may define without the prefix, because a header of macros cannot rename them (archive_check --cxx-namespace). `extra_symbols` names the symbols the library refers to and does not define (a weak hook a program defines: aws-lc's `OPENSSL_memory_*`),
                        which the prefix renames too; derived names cover only what the archive defines. The compiler-rt builtins the library defines (`__umodti3` and its kin, an exact list in archive_check) are not renamed and are not held to the prefix; `allow` names symbols that may stay UNDEFINED, never one that may lack the prefix.
     validate           False makes the archive check an output of the target and not a validation: for tests that need the failure to be one failed action (ci/faulty). Leave it True.
     target_compatible_with   as for any target, on every target the macro makes.
@@ -61,9 +61,8 @@ load("//rules/cxx:archive.bzl", "archive_files")
 load("//rules/cxx:defs.bzl", "prefix_header")
 load("//rules/cxx:native.bzl", "native_archive")
 load(":asm_split.bzl", "asm_split_rule", "split_name")
-load(":checks.bzl", "archive_extension", "check_asm_split", "check_has_sources", "check_prefix", "check_sources", "check_upstream", "cxx_label", "is_split")
+load(":checks.bzl", "archive_extension", "check_asm_split", "check_asm_split_matched", "check_has_sources", "check_prefix", "check_sources", "check_upstream", "cxx_label", "is_split")
 load(":library.bzl", "native_library_rule")
-
 
 def _baseline():
     """The CPU flag of the platform's baseline (as rules/cxx/native.bzl): a library other people link must run on any machine of the family."""
@@ -142,6 +141,7 @@ def native_library(
 
     _each(srcs, record)
     check_has_sources(who, src_parts)
+    check_asm_split_matched(who, asm_split, src_parts)
     srcs = checked("srcs", srcs)
     hdrs = checked("hdrs", hdrs)
     exported_headers = checked("exported_headers", exported_headers)
@@ -264,6 +264,7 @@ def native_library(
             prefix = prefix["name"],
             min_prefixed = prefix["min"],
             original_names = [":" + name + "_prefix[symbols]"],
+            cxx_namespaces = prefix.get("cxx_namespaces", []),
         )
     native_library_rule(
         name = name,

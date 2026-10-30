@@ -3,7 +3,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # if the rule refused (or accepted) what a user would really write. Make a check accept the input and its target stops existing (analysis fails with "expected a
 # refusal"). Where the library is configured for a platform, and what its providers say, is held by ci/native_library.bzl.
 load("//rules:matrix.bzl", "group")
-load("//rules/native:checks.bzl", "check_asm_split", "check_cxx_runtime", "check_has_sources", "check_prefix", "check_sources", "check_upstream")
+load("//rules/native:checks.bzl", "check_asm_split", "check_asm_split_matched", "check_cxx_runtime", "check_has_sources", "check_prefix", "check_sources", "check_upstream")
 load(":helpers.bzl", "cfg_is", "extension_is", "extras_are", "extras_by_path_are", "label_is", "link_order_is", "name_is", "up")
 load("//rules/rust:refusal.bzl", "accepts", "refuses")
 
@@ -91,7 +91,7 @@ _ALL.append(accepts("prefix_with_a_name_and_a_minimum_is_accepted", check_prefix
 
 _ALL.append(accepts("prefix_of_the_strip_style_is_accepted", check_prefix, [_WHO, {"name": "k_s2n_", "strip": "s2n_", "min": 10}]))
 
-_ALL.append(refuses("prefix_that_is_not_a_table_is_refused", check_prefix, [_WHO, "widget"], ["a table of name, strip, min and extra_symbols"]))
+_ALL.append(refuses("prefix_that_is_not_a_table_is_refused", check_prefix, [_WHO, "widget"], ["a table of name, strip, min, extra_symbols and cxx_namespaces"]))
 
 _ALL.append(refuses("prefix_with_an_unknown_key_is_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "style": "x"}], ['has the key "style"']))
 
@@ -122,6 +122,24 @@ _ALL.append(refuses("asm_split_naming_a_c_file_is_refused", check_asm_split, [_W
 _ALL.append(refuses("asm_split_leaving_the_package_is_refused", check_asm_split, [_WHO, ["../x/"], []], ["is not the beginning of a path"]))
 
 _ALL.append(refuses("asm_split_that_is_not_a_list_is_refused", check_asm_split, [_WHO, "arm/", []], ["a list of path beginnings"]))
+
+# ---- asm_split names sources; a prefix names C++ namespaces ----
+
+_ALL.append(accepts("asm_split_patterns_that_begin_a_source_are_accepted", check_asm_split_matched, [_WHO, ["arm/", "x86/"], [["arm/a.S"], ["x86/b.S"]]]))
+
+_ALL.append(refuses("asm_split_pattern_that_begins_no_source_is_refused", check_asm_split_matched, [_WHO, ["arm/", "arn/"], [["arm/a.S"], []]], ['asm_split "arn/" is the beginning of no source']))
+
+_ALL.append(refuses("asm_split_against_no_source_at_all_is_refused", check_asm_split_matched, [_WHO, ["arm/"], [[]]], ["is the beginning of no source"]))
+
+_ALL.append(accepts("asm_split_of_nothing_names_nothing", check_asm_split_matched, [_WHO, [], [["a.c"]]]))
+
+_ALL.append(accepts("prefix_with_cxx_namespaces_is_accepted", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["snappy"]}]))
+
+_ALL.append(refuses("prefix_cxx_namespace_std_is_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["snappy", "std"]}], ["never `std`"]))
+
+_ALL.append(refuses("prefix_cxx_namespaces_that_are_not_identifiers_are_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["a::b"]}], ["cxx_namespaces"]))
+
+_ALL.append(refuses("prefix_cxx_namespaces_that_are_not_a_list_are_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": "snappy"}], ["cxx_namespaces"]))
 
 # ---- pure functions ----
 

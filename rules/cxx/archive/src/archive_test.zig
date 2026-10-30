@@ -983,7 +983,6 @@ test "cxx namespace: the command line takes it with a prefix only, and run honou
     try t.expectEqual(@as(usize, 0), err.items.len);
 }
 
-
 test "--members any: members out of the order of their names are not a finding, and the other rules still hold" {
     var ar = arena();
     defer ar.deinit();
