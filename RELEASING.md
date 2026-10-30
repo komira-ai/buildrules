@@ -390,9 +390,9 @@ used by the tag step alone, `tag` holds `contents: read` and no job but `publish
 
 The repository owner's internal repository holds this repository as the submodule `buildrules`. The last job of a release, `bump`, moves that submodule to
 the released commit: `tool/release bump-internal` (a copy of the tool the sibling tool's release uses, with no dependency on it) opens a pull request in the
-internal repository on the branch `bump/buildrules-v<semver>` that changes **one path, the gitlink `buildrules`**, and turns auto-merge on. The internal
+internal repository on the branch `bump/buildrules-v<semver>` that changes **two paths: the gitlink `buildrules` and the one `commit_hash` line of `[external_cell_buildrules]` in `.buckconfig`**, both set to the released commit, and turns auto-merge on. The internal repository builds against that `commit_hash` (the gitlink is not read by its build), so moving both in one pull request makes its check build every internal target against the new release, and a lint there fails when the two differ. The internal
 repository merges it when its required checks pass, among them its bump guard. The guard admits a pull request of the release bot only when exactly one
-path changed and it is a gitlink of a submodule listed in `.gitmodules`; the branch is `bump/<submodule>-v<semver>`; the new commit descends from the old
+path changed and it is a gitlink of a submodule listed in `.gitmodules` (for `buildrules`: that gitlink and `.buckconfig`, whose only change is the `commit_hash` line, set to the new commit); the branch is `bump/<submodule>-v<semver>`; the new commit descends from the old
 one; and this repository's tag `v<semver>` names the new commit. The tool refuses, before it writes anything, whatever the guard would refuse:
 
 1. the tag `v<semver>` of this repository names `--sha` (`gh api repos/<repo>/commits/<tag>`), which is why `bump` waits for `tag` and `publish`;

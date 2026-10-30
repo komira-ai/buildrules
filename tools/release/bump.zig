@@ -9,6 +9,14 @@
 //! descends from the old; the tag `v<semver>` of the released repository names the new commit. This step produces exactly that, and refuses
 //! (before it writes anything) whatever the guard would refuse, so a mistake is red here and not a stuck pull request.
 //!
+//! A submodule the internal repository also mounts as an external cell (a section `[external_cell_<submodule>]` in its `.buckconfig`, as buildrules is: the
+//! build reads that section's `commit_hash`, not the gitlink) has two pins, and a bump that moved only the gitlink would build nothing against the new
+//! release. For such a submodule the one pull request changes exactly two paths: the gitlink and the one `commit_hash` line of that section, set to the
+//! same commit (the guard admits exactly that pair; the `.buckconfig` change also makes the internal repository's check build every target). A
+//! submodule with no such section is bumped by its gitlink alone, as before. The section must have exactly one commit_hash line holding a commit id;
+//! a gitlink already at --sha with another commit_hash is refused (a person sets the two pins to one commit), and a branch an earlier run pushed is
+//! reused only when it holds both.
+//!
 //! Steps, every one a `gh` or `git` call with no shell:
 //!   1. the tag names --sha (the guard's last rule);
 //!   2. `gh pr list` of the internal repository: an open or merged bump pull request for this or a NEWER version means there is nothing to
@@ -293,6 +301,7 @@ fn bump(s: *Session) Err!void {
     } else if (try branchGitlink(s, branch)) |held| {
         // 3a. An earlier run pushed the branch and stopped: reuse it if it is the right commit.
         if (!std.mem.eql(u8, held, o.sha)) return s.fail("the branch {s} exists in {s} with {s} at {s}, not {s}; delete the branch by hand", .{ branch, o.dest_repo, o.submodule, held, o.sha });
+        try requireBranchPin(s, branch);
         opened = try openPr(s, branch, title, number);
     } else {
         // 3b. Build the commit and push the branch.
@@ -338,13 +347,22 @@ fn pushBump(s: *Session, branch: []const u8, title: []const u8, number: []const 
 
     // The old gitlink: mode 160000, type commit, exactly the submodule's path.
     const old = try gitlinkAt(s);
-    if (std.mem.eql(u8, old, o.sha)) return false;
+    const pin = try workdirPin(s);
+    if (std.mem.eql(u8, old, o.sha)) {
+        if (pin) |p| {
+            if (!std.mem.eql(u8, p.pin.value, o.sha)) return s.fail("{s} is already at {s} but .buckconfig commit_hash is {s}: the two pins disagree, a person sets them to one commit (a bump pull request would not change the gitlink)", .{ o.submodule, o.sha, p.pin.value });
+        }
+        return false;
+    }
     // Forward only (the guard's rule): --sha descends from the old commit.
     const status = try s.ghMust(&.{ "api", try s.pf("repos/{s}/compare/{s}...{s}", .{ o.repo, old, o.sha }), "--jq", ".status" });
     if (!std.mem.eql(u8, status, "ahead")) return s.fail("{s} is not ahead of {s} in {s} (compare says '{s}'): the bump would move {s} backwards or sideways", .{ o.sha, old, o.repo, status, o.submodule });
 
     _ = try s.gitMust(&.{ "-C", o.workdir, "update-index", "--cacheinfo", try s.pf("160000,{s},{s}", .{ o.sha, o.submodule }) });
-    try requireOneGitlink(s);
+    if (pin) |p| {
+        try movePin(s, p);
+        try requireStagedPair(s);
+    } else try requireOneGitlink(s);
 
     const body = try s.pf(
         \\Moves the `{s}` submodule to the commit of the release v{s} ({s}).
@@ -405,6 +423,97 @@ fn openPr(s: *Session, branch: []const u8, title: []const u8, number: []const u8
     try enableAutoMerge(s, url);
     try s.say("opened {s} with auto-merge: {s} to v{s}.\n", .{ url, o.submodule, number });
     return url;
+}
+
+// ---- the second pin: .buckconfig's commit_hash --------------------------------------------------------------------------------------------
+
+/// Where the `commit_hash` value of `[external_cell_<submodule>]` sits in the text of the internal repository's `.buckconfig`.
+const Pin = struct { start: usize, end: usize, value: []const u8 };
+
+/// The commit_hash line of the section `[external_cell_<submodule>]`, null when the text has no such section. A section without exactly one
+/// commit_hash line, or with a value that is not a 40-character commit id, is refused: it is not a pin this step can move. The same key in
+/// another section, and a comment, are not it.
+fn findPin(s: *Session, text: []const u8) Err!?Pin {
+    const header = try s.pf("[external_cell_{s}]", .{s.o.submodule});
+    var in_section = false;
+    var seen = false;
+    var found: ?Pin = null;
+    var off: usize = 0;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| : (off += line.len + 1) {
+        const t = std.mem.trim(u8, line, " \t\r");
+        if (t.len > 0 and t[0] == '[') {
+            in_section = std.mem.eql(u8, t, header);
+            seen = seen or in_section;
+            continue;
+        }
+        if (!in_section or t.len == 0 or t[0] == '#' or t[0] == ';') continue;
+        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        if (!std.mem.eql(u8, std.mem.trim(u8, line[0..eq], " \t"), "commit_hash")) continue;
+        if (found != null) return s.fail(".buckconfig {s} has two commit_hash lines: this step moves exactly one", .{header});
+        const after = line[eq + 1 ..];
+        const lead = after.len - std.mem.trimLeft(u8, after, " \t").len;
+        const value = std.mem.trim(u8, after, " \t\r");
+        found = .{ .start = off + eq + 1 + lead, .end = off + eq + 1 + lead + value.len, .value = value };
+    }
+    if (!seen) return null;
+    const p = found orelse return s.fail(".buckconfig {s} has no commit_hash line to move", .{header});
+    if (!isHex40(p.value)) return s.fail(".buckconfig {s} commit_hash '{s}' is not a 40-character lowercase commit id", .{ header, p.value });
+    return p;
+}
+
+const PinText = struct { text: []const u8, pin: Pin };
+
+/// The pin in the clone's `.buckconfig`, or null when the clone has no such file or its `.buckconfig` has no section for the submodule.
+fn workdirPin(s: *Session) Err!?PinText {
+    const file = try std.fs.path.join(s.a, &.{ s.o.workdir, ".buckconfig" });
+    const text = std.fs.cwd().readFileAlloc(s.a, file, 1 << 22) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return s.fail("cannot read {s}: {s}", .{ file, @errorName(err) }),
+    };
+    const p = (try findPin(s, text)) orelse return null;
+    return .{ .text = text, .pin = p };
+}
+
+/// Sets the pin to --sha in the clone and stages `.buckconfig` by path.
+fn movePin(s: *Session, p: PinText) Err!void {
+    const file = try std.fs.path.join(s.a, &.{ s.o.workdir, ".buckconfig" });
+    const moved = try std.mem.concat(s.a, u8, &.{ p.text[0..p.pin.start], s.o.sha, p.text[p.pin.end..] });
+    std.fs.cwd().writeFile(.{ .sub_path = file, .data = moved }) catch |err| return s.fail("cannot write {s}: {s}", .{ file, @errorName(err) });
+    _ = try s.gitMust(&.{ "-C", s.o.workdir, "add", "--", ".buckconfig" });
+}
+
+/// A branch an earlier run pushed holds the commit_hash too (when the internal repository has the section): both pins or it is not reused.
+fn requireBranchPin(s: *Session, branch: []const u8) Err!void {
+    const o = s.o;
+    const r = try s.gh(&.{ "api", try s.pf("repos/{s}/contents/.buckconfig?ref={s}", .{ o.dest_repo, branch }), "-H", "Accept: application/vnd.github.raw" });
+    if (!r.ok) {
+        if (std.mem.indexOf(u8, r.stderr, "404") != null or std.mem.indexOf(u8, r.stderr, "Not Found") != null) return;
+        return s.fail("cannot read .buckconfig on the branch {s}: {s}", .{ branch, trim(r.stderr) });
+    }
+    const p = (try findPin(s, r.stdout)) orelse return;
+    if (!std.mem.eql(u8, p.value, o.sha)) return s.fail("the branch {s} exists in {s} with the gitlink at {s} but .buckconfig commit_hash at {s}; delete the branch by hand", .{ branch, o.dest_repo, o.sha, p.value });
+}
+
+/// The staged change is exactly two modified paths: `.buckconfig` (a plain file) and the submodule's gitlink.
+fn requireStagedPair(s: *Session) Err!void {
+    const o = s.o;
+    const raw = try s.gitMust(&.{ "-C", o.workdir, "diff", "--cached", "--raw", "-z", "--no-renames", "--ignore-submodules=none", "HEAD" });
+    var it = std.mem.splitScalar(u8, raw, 0);
+    var file_ok = false;
+    var link_ok = false;
+    var n: usize = 0;
+    while (it.next()) |meta| {
+        if (meta.len == 0) break;
+        const path = it.next() orelse "";
+        n += 1;
+        const modified = std.mem.endsWith(u8, meta, " M");
+        if (std.mem.eql(u8, path, ".buckconfig") and modified and std.mem.startsWith(u8, meta, ":100644 100644 ")) file_ok = true;
+        if (std.mem.eql(u8, path, o.submodule) and modified and std.mem.startsWith(u8, meta, ":160000 160000 ")) link_ok = true;
+    }
+    if (n != 2 or !file_ok or !link_ok) {
+        return s.fail("the staged change is not exactly the gitlink of {s} and .buckconfig (git diff says '{s}'): refusing to commit, the guard would refuse it", .{ o.submodule, std.mem.trim(u8, raw, "\x00\n") });
+    }
 }
 
 // ---- the real commands --------------------------------------------------------------------------------------------------------------------

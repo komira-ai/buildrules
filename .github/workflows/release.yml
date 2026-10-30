@@ -510,8 +510,8 @@ jobs:
   # The last step of a release: a pull request in the internal repository that moves its `buildrules` submodule to the released commit, with
   # auto-merge (tool/release bump-internal). It holds `contents: read` here and writes to the internal repository only through the release bot's token,
   # minted for that repository alone and used by the bump step alone. Nothing waits for it: a failed bump is red, and un-releases nothing; a re-run
-  # opens nothing twice. The internal repository's bump guard admits the pull request: one gitlink, the branch bump/buildrules-v<semver>, a
-  # forward move, and the tag of this release naming the commit.
+  # opens nothing twice. The internal repository's bump guard admits the pull request: the gitlink and the commit_hash line of .buckconfig (the
+  # two pins of this repository), the branch bump/buildrules-v<semver>, a forward move, and the tag of this release naming the commit.
   bump:
     needs: [plan, tag, publish, tool]
     if: ${{ needs.plan.outputs.released == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork && needs.tag.outputs.superseded != 'true' }}
