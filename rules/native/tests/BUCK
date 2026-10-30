@@ -3,8 +3,8 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # if the rule refused (or accepted) what a user would really write. Make a check accept the input and its target stops existing (analysis fails with "expected a
 # refusal"). Where the library is configured for a platform, and what its providers say, is held by ci/native_library.bzl.
 load("//rules:matrix.bzl", "group")
-load("//rules/native:checks.bzl", "check_cxx_runtime", "check_prefix", "check_sources", "check_upstream")
-load(":helpers.bzl", "extension_is", "label_is", "link_order_is", "up")
+load("//rules/native:checks.bzl", "check_cxx_runtime", "check_has_sources", "check_prefix", "check_sources", "check_upstream")
+load(":helpers.bzl", "cfg_is", "extension_is", "extras_are", "label_is", "link_order_is", "up")
 load("//rules/rust:refusal.bzl", "accepts", "refuses")
 
 _ALL = []
@@ -77,6 +77,14 @@ _ALL.append(refuses("cxx_runtime_stated_false_for_cxx_sources_is_refused", check
 
 _ALL.append(refuses("cxx_runtime_stated_true_for_c_sources_is_refused", check_cxx_runtime, [_WHO, True, False], ["cxx_runtime = True", "no source is C++"]))
 
+# ---- a library has a source ----
+
+_ALL.append(refuses("srcs_of_no_file_in_any_arm_is_refused", check_has_sources, [_WHO, [[], [], []]], ["srcs names no file, in any arm of its select()"]))
+
+_ALL.append(refuses("no_srcs_at_all_is_refused", check_has_sources, [_WHO, [[]]], ["a native_library has at least one source"]))
+
+_ALL.append(accepts("srcs_with_a_file_in_one_arm_are_accepted", check_has_sources, [_WHO, [[], ["a.c"]]]))
+
 # ---- prefix ----
 
 _ALL.append(accepts("prefix_with_a_name_and_a_minimum_is_accepted", check_prefix, [_WHO, {"name": "widget_awslc", "min": 1000}]))
@@ -115,6 +123,32 @@ _ALL.append(accepts("archive_extension_of_a_bareextension_is_none", extension_is
 _ALL.append(accepts("cxx_label_of_a_package_local_label", label_is, ["label", ":base", ":base_cxx"]))
 
 _ALL.append(accepts("cxx_label_of_a_label_of_another_package", label_is, ["label", "//examples/native/deps:base", "//examples/native/deps:base_cxx"]))
+
+# ---- the archives a program links beyond the graph's (rules/native/link.bzl) ----
+
+# A library of the graph brings its deps: they follow it.
+_ALL.append(accepts("extra_archives_are_the_deps_of_the_listed_libraries", extras_are, ["extras", [["libtop.a", "libmid.a", "libbase.a"]], {"libtop.a": True}, ["libmid.a", "libbase.a"]]))
+
+# Two libraries over one base: the base once, after the last of its users.
+_ALL.append(accepts("extra_archives_put_a_shared_base_once_after_its_last_user", extras_are, ["extras", [["libleft.a", "libbase.a"], ["libright.a", "libbase.a"]], {"libleft.a": True, "libright.a": True}, ["libbase.a"]]))
+
+_ALL.append(accepts("extra_archives_keep_the_order_a_linker_needs", extras_are, ["extras", [["libtop.a", "libmid.a", "libbase.a"], ["libleft.a", "libbase.a"]], {"libtop.a": True, "libleft.a": True}, ["libmid.a", "libbase.a"]]))
+
+# An archive the graph lists is linked where the graph puts it, not appended again.
+_ALL.append(accepts("extra_archives_leave_out_what_the_graph_links", extras_are, ["extras", [["libtop.a", "libmid.a"], ["libmid.a"]], {"libtop.a": True, "libmid.a": True}, []]))
+
+_ALL.append(accepts("extra_archives_of_libraries_without_deps_are_none", extras_are, ["extras", [["liba.a"], ["libb.a"]], {"liba.a": True, "libb.a": True}, []]))
+
+_ALL.append(refuses("extra_archives_that_keep_the_first_place_of_a_shared_one_are_refused", extras_are, ["extras", [["libleft.a", "libbase.a"], ["libright.a", "libbase.a"]], {"libleft.a": True, "libright.a": True}, ["libbase.a", "libx.a"]], ["got"]))
+
+# toolchain.cfg: a link of C libraries gets no C++ runtime; one with C++ gets it once, after the archives.
+_ALL.append(accepts("link_cfg_of_c_libraries_has_no_cxx_runtime", cfg_is, ["cfg", ["libmid.a"], False, "link_archive=link_archives/libmid.a\n"]))
+
+_ALL.append(accepts("link_cfg_with_cxx_ends_with_the_runtime_once", cfg_is, ["cfg", ["libcxxlib.a", "libx.a"], True, "link_archive=link_archives/libcxxlib.a\nlink_archive=link_archives/libx.a\nlink_tail=-lc++\n"]))
+
+_ALL.append(accepts("link_cfg_of_nothing_is_empty", cfg_is, ["cfg", [], False, ""]))
+
+_ALL.append(refuses("link_cfg_that_adds_the_runtime_to_a_c_link_is_refused", cfg_is, ["cfg", [], False, "link_tail=-lc++\n"], ["got"]))
 
 # Every refusal of this package, for //ci:refusals.
 group(name = "all", deps = _ALL, visibility = ["PUBLIC"])

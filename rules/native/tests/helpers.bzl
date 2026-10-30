@@ -1,6 +1,7 @@
 """Values and checks the analysis tests of rules/native/tests/BUCK are made of (a BUCK file defines no function)."""
 
 load("//rules/native:checks.bzl", "archive_extension", "cxx_label", "link_order")
+load("//rules/native:link.bzl", "extra_link_archives", "link_cfg")
 
 SHA = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
 
@@ -26,3 +27,10 @@ def extension_is(who, url, want, refuse = fail):
 
 def label_is(who, label, want, refuse = fail):
     _equal(who, cxx_label(label), want, refuse)
+
+def extras_are(who, archive_lists, linked, want, refuse = fail):
+    got = extra_link_archives(archive_lists, linked, lambda a: a)
+    _equal(who, got, want, refuse)
+
+def cfg_is(who, names, cxx, want, refuse = fail):
+    _equal(who, link_cfg(names, cxx), want, refuse)

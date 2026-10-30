@@ -270,4 +270,45 @@ native_library(
     visibility = ["//ci:"],
 )
 
+# `hdrs` are private: a header a library compiles with does not reach its dependents (only `exported_headers` do). Control: `nl_priv_user`.
+native_library(
+    name = "nl_priv",
+    srcs = ["nl/priv.c"],
+    hdrs = {"p/priv.h": "nl/priv.h"},
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_library(
+    name = "nl_priv_user",
+    srcs = ["nl/priv_ok.c"],
+    deps = [":nl_priv"],
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_library(
+    name = "nl_priv_user_including_it",
+    srcs = ["nl/priv_bad.c"],
+    deps = [":nl_priv"],
+    validate = False,
+)
+
+# A renamed library at the level of native_library (`prefix`): the control renames everything; the other defines a symbol its renaming header cannot reach (a name given to
+# the assembler with an asm label), which the archive check finds defined without the prefix. Both are left to fail in the check (`validate = False`).
+native_library(
+    name = "nl_prefix_good",
+    srcs = ["native/prefix_good_a.c", "native/prefix_good_b.c"],
+    prefix = {"name": "faultyp", "min": 3},
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_library(
+    name = "nl_prefix_leaks_a_symbol",
+    srcs = ["native/prefix_leaks_a_symbol.c"],
+    prefix = {"name": "faultyp", "min": 1},
+    validate = False,
+)
+
 scrub_files()

@@ -168,3 +168,10 @@ def check_prefix(who, pfx, refuse = fail):
     least = pfx.get("min")
     if type(least) != "int" or least <= 0:
         refuse("{}: prefix min is the least number of symbols the library defines, a positive integer (it stops a header made from the wrong archive), got {}".format(who, repr(least)))
+
+def check_has_sources(who, parts, refuse = fail):
+    """A library has a source. `parts` are the lists `srcs` is made of (a list, and each arm of each `select()`): when none of them names a file, no platform has one, and
+    the library would be an empty archive (the prelude refuses it with a message about a sub-target, not about the library). An arm that is empty beside others that are
+    not is a library with no source on that platform, which the archive of that platform shows."""
+    if not any([len(p) > 0 for p in parts]):
+        refuse("{}: srcs names no file, in any arm of its select(): a native_library has at least one source (.c, .cc, .cpp, .cxx, .c++, .S, .s)".format(who))

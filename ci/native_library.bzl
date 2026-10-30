@@ -114,3 +114,43 @@ def native_library_problems(ctx):
         if len(info("//examples/native/deps:top").include_dirs) != 0:
             problems.append("examples/native/deps:top on {}: it exports include directories of a tree it has none of".format(platform))
     return problems
+
+# The link line of a Mojo test binary: what its toolchain.cfg says (rules/native/link.bzl, `link_cfg`). Per target: the `link_archive` lines it must have, in order, and whether it
+# ends with the C++ runtime.
+LINKS = [
+    # The graph lists left, right, top. `left` and `right` share `shared_base`: once, after both; `top` has `mid` in `deps` and `mid` has `base`: after `top`. C libraries: no runtime.
+    ("//examples/mojo/native_library_deps:test_natlib_deps__bin", ["libshared_base.a", "libmid.a", "libbase.a"], False),
+    # A C library over the C++ one: the archive of the C++ library and the runtime come through `deps`.
+    ("//examples/mojo/native_library_cuser:test_natlib_cuser__bin", ["libcxxlib.a"], True),
+    # The libraries are all named in `natives`, the C++ one among them: nothing to append, and the runtime.
+    ("//examples/mojo/native_library:test_natlib__bin", [], True),
+]
+
+def _cfg(ctx, node):
+    for a in ctx.aquery().all_actions(node.label):
+        if str(a.attrs.category) == "write" and str(a.attrs.identifier) == "toolchain.cfg":
+            return [l for l in str(a.attrs.contents).strip('"').split("\n") if l]
+    return None
+
+def native_link_cfg_problems(ctx):
+    problems = []
+    for platform in [LINUX, MACOS]:
+        for target, archives, cxx in LINKS:
+            who = "{} on {}".format(target, platform)
+            node = ctx.configured_targets(target, target_platform = platform)
+            if node == None:
+                problems.append("{}: incompatible with the platform".format(who))
+                continue
+            cfg = _cfg(ctx, node)
+            if cfg == None:
+                problems.append("{}: no toolchain.cfg among its actions".format(who))
+                continue
+            got = [l[len("link_archive=link_archives/"):] for l in cfg if l.startswith("link_archive=link_archives/")]
+            if got != archives:
+                problems.append("{}: the archives appended to the link line are {}, not {}".format(who, got, archives))
+            tails = [l for l in cfg if l.startswith("link_tail=")]
+            if tails != (["link_tail=-lc++"] if cxx else []):
+                problems.append("{}: the link tail is {}, but the link {} the C++ runtime".format(who, tails, "needs" if cxx else "does not need"))
+            if cxx and cfg.index("link_tail=-lc++") < max([cfg.index(l) for l in cfg if l.startswith("link_archive=")] + [-1]):
+                problems.append("{}: the C++ runtime comes before an appended archive: {}".format(who, cfg))
+    return problems

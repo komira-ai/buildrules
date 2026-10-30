@@ -1,0 +1,13 @@
+[package]
+name = "natlib_cuser"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+# `cuser` is C; the C++ library it calls is its dependency and is named nowhere here. The link needs the archive of the C++ library and the C++ runtime, both through `cuser`.
+[native.cuser]
+kind = "static"
+srcs = ["native/cuser.c"]
+
+[targets]
+lib = { path = "src/natlib_cuser" }
+tests = ["tests"]

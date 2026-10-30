@@ -12,4 +12,11 @@ native_library(
     cxx_runtime = True,
 )
 
+# A C library whose only dependency is the C++ library: the C++ runtime it needs comes through `deps`, and so do the archive and the exported header.
+native_library(
+    name = "cuser",
+    srcs = ["native/cuser.c"],
+    deps = [":cxxlib"],
+)
+
 scrub_files()

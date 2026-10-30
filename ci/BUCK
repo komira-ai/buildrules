@@ -1,6 +1,6 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
-load("@buildrules//rules:matrix.bzl", "group", "isa_at", "rust_at")
+load("@buildrules//rules:matrix.bzl", "group", "isa_at", "macos_at", "rust_at")
 load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_OLDEST")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
@@ -69,6 +69,8 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:static_native_of_a_member_without_a_source_is_refused",
     "//rules/mojo/tests:static_native_of_a_member_the_user_supplies_is_accepted",
     "//rules/mojo/tests:native_named_twice_is_refused",
+    "//rules/mojo/tests:natives_entry_that_matches_no_native_is_refused",
+    "//rules/mojo/tests:natives_entry_that_a_unit_links_is_accepted",
     "//rules/mojo/tests:prebuilt_unit_extracts_its_own_static_natives",
     "//rules/mojo/tests:built_native_is_the_target_of_its_unit",
     "//rules/mojo/tests:native_units_are_told_by_their_id",
@@ -161,6 +163,25 @@ group(name = "matrix", deps = [
     ":isa_v3",
 ])
 
+# The native_library examples built for macOS arm64: the pinned zig on the linux execution platform compiles and archives them (rules/native), so a runner with no Mac builds them
+# (the archive check reads Mach-O). The Mojo packages that link them and run on a macOS worker are in //ci:mojo (`macos_mojo`).
+macos_at(name = "macos_natives", deps = [
+    "//examples/native/asm:asm_add",
+    "//examples/native/asm:asm_prefixed",
+    "//examples/native/cxx:cxxlib",
+    "//examples/native/cxx:cuser",
+    "//examples/native/deps:top",
+    "//examples/native/shared:left",
+    "//examples/native/shared:right",
+    "//examples/native/zlib:zlib",
+])
+
+macos_at(name = "macos_mojo", deps = [
+    "//examples/mojo/native_library:ci",
+    "//examples/mojo/native_library_cuser:ci",
+    "//examples/mojo/native_library_deps:ci",
+])
+
 # The Mojo examples (docs/contract.md, section 12): every package's :ci and :coverage, and the same-bytes gate. `ws` imports the registry package
 # `cnative` as a download: a machine that has no copy of it points the URL at one with `buildrules.url_map` (examples/mojo/README.md), so
 # these are not in //ci:matrix.
@@ -188,6 +209,15 @@ group(name = "mojo", deps = [
     "//examples/mojo/member_native_macos/cshim:coverage",
     "//examples/mojo/member_native_macos/cshim:sync",
     "//examples/mojo/member_native_macos/cshim:sync_check",
+    ":macos_mojo",
+    "//examples/mojo/native_library_cuser:ci",
+    "//examples/mojo/native_library_cuser:coverage",
+    "//examples/mojo/native_library_cuser:sync",
+    "//examples/mojo/native_library_cuser:sync_check",
+    "//examples/mojo/native_library_deps:ci",
+    "//examples/mojo/native_library_deps:coverage",
+    "//examples/mojo/native_library_deps:sync",
+    "//examples/mojo/native_library_deps:sync_check",
     # A Mojo package over native_library targets (examples/native), on linux x86_64 and macOS arm64: its natives are the targets of rules/native.
     "//examples/mojo/native_library:ci",
     "//examples/mojo/native_library:conda",
@@ -573,6 +603,9 @@ _PACKAGES = [
     "//examples/mojo/member_native/cshim:scrub_files",
     "//examples/mojo/member_native:scrub_files",
     "//examples/mojo/native_library:scrub_files",
+    "//examples/mojo/native_library_cuser:scrub_files",
+    "//examples/mojo/native_library_deps:scrub_files",
+    "//examples/native/shared:scrub_files",
     "//examples/native/asm:scrub_files",
     "//examples/native/cxx:scrub_files",
     "//examples/native/deps:scrub_files",
@@ -787,6 +820,8 @@ group(name = "mojo_tables", deps = [
     "//examples/mojo/member_native_macos:table",
     "//examples/mojo/member_native_macos/cshim:table",
     "//examples/mojo/native_library:table",
+    "//examples/mojo/native_library_cuser:table",
+    "//examples/mojo/native_library_deps:table",
     "//examples/mojo/partial:table",
     "//examples/mojo/reexport:table",
     "//examples/mojo/reexport_unused:table",
@@ -901,6 +936,13 @@ group(name = "all", deps = [
     # native_library (rules/native): the pinned-tarball zlib, the C++ library, the assembly chosen by the CPU, and a chain of dependencies; the Mojo package that
     # links them is in //ci:mojo. The faulty ones (ci/faulty) are held by ci/negative.bzl, their controls are built here.
     "//examples/native/asm:asm_add",
+    ":macos_natives",
+    "//examples/native/cxx:cuser",
+    "//examples/native/shared:left",
+    "//examples/native/shared:right",
+    "//examples/native/deps:mid",
+    "//examples/native/deps:base",
+    "//examples/native/shared:shared_base",
     "//examples/native/asm:asm_prefixed",
     "//examples/native/cxx:cxxlib",
     "//examples/native/deps:top",

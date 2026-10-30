@@ -164,7 +164,7 @@ test "cfg: link_tail lines reach the wrapper as --link-tail options, in order, a
 }
 
 test "cfg and argv: every allocation failing in turn is an out-of-memory error, never a wrong result" {
-    const text = cfg_text ++ "link_tail=-lc++\nlink_tail=-lm\n";
+    const text = cfg_text ++ "link_archive=link_archives/libx.a\nlink_tail=-lc++\nlink_tail=-lm\n";
     var fail_at: usize = 0;
     var failed_once = false;
     while (fail_at < 400) : (fail_at += 1) {
@@ -188,8 +188,32 @@ test "cfg and argv: every allocation failing in turn is an out-of-memory error, 
         for (argv) |x| {
             if (std.mem.startsWith(u8, x, "--link-tail=")) tails += 1;
         }
-        try t.expectEqual(@as(usize, 2), tails);
+        try t.expectEqual(@as(usize, 3), tails);
         break;
     }
     try t.expect(failed_once);
+}
+
+test "cfg: link_archive lines become --link-tail options holding the path below the toolchain directory, before the link_tail ones, in order" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    const c = try L.parseCfg(a, cfg_text ++ "link_archive=link_archives/libmid.a\nlink_archive=link_archives/libbase.a\nlink_tail=-lc++\n", &why);
+    try t.expectEqual(@as(usize, 2), c.link_archive.len);
+    const argv = try L.buildArgv(a, "/tc", c, &.{ "--", "build" });
+    var seen: [3][]const u8 = undefined;
+    var n: usize = 0;
+    for (argv) |x| {
+        if (std.mem.startsWith(u8, x, "--link-tail=")) {
+            seen[n] = x;
+            n += 1;
+        }
+    }
+    try t.expectEqual(@as(usize, 3), n);
+    try t.expectEqualStrings("--link-tail=/tc/link_archives/libmid.a", seen[0]);
+    try t.expectEqualStrings("--link-tail=/tc/link_archives/libbase.a", seen[1]);
+    try t.expectEqualStrings("--link-tail=-lc++", seen[2]);
+    const none = try L.parseCfg(a, cfg_text, &why);
+    try t.expectEqual(@as(usize, 0), none.link_archive.len);
 }

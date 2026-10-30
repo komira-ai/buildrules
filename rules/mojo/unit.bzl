@@ -16,7 +16,8 @@ A unit's output directory is the action's single output. A library's `.mojoc` is
 
 load("//rules:isa.bzl", "isa_satisfies")
 load("//rules/coverage/branch:llvm_branch.bzl", "CovBranchInfo", "RAW_PROFILE_VERSION")
-load("//rules/cxx:providers.bzl", "NativeArchiveInfo")
+load("//rules/cxx:providers.bzl", "NativeArchiveInfo", "NativeLibraryInfo")
+load("//rules/native:link.bzl", "LINK_ARCHIVE_DIR", "extra_link_archives", "link_cfg")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
 load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoSystemLibsInfo", "MojoTestRunInfo", "MojoToolchainInfo")
 load("//rules/core:hang_limit.bzl", "HANG_LIMIT_S", "check_hang_limit", "hang_limit_args")
@@ -65,6 +66,11 @@ def check_closure_ids(who, want, have, refuse = fail):
         elif have[package] != want[package]:
             refuse(("{}: the graph imports {} as {} but the dependency target provides {}: that library was built from another version of the package, " +
                     "or for another Mojo. Run `buildrules mojo sync` where the library is and where it is imported").format(who, package, want[package], have[package]))
+
+def link_extra_archives(natives, sonames):
+    """The archives a program links after the ones its graph lists (`extra_link_archives`): those the listed `native_library` targets bring with them through their deps."""
+    lists = [n[NativeLibraryInfo].archives for n in natives if NativeLibraryInfo in n]
+    return extra_link_archives(lists, {s: True for s in sonames}, lambda a: a.basename)
 
 def link_needs_cxx_runtime(natives):
     """Whether the native libraries (dependencies that may provide `NativeArchiveInfo`; a prebuilt one does not) include one with C++ sources."""
@@ -127,19 +133,21 @@ def _unit_impl(ctx):
     for a in ctx.attrs.build_args:
         cfg += "build_arg={}\n".format(a)
 
-    # A program (not a library: nothing is linked) with a C++ native library in its link carries the C++ runtime: libc++ and libc++abi of the zig on Linux
-    # (`zig cc -lc++`), the host's libc++ on macOS. One `-lc++` ends the link line, after every archive, however many of the archives are C++.
-    if ctx.attrs.kind != "lib" and link_needs_cxx_runtime([ctx.attrs.natives[s] for s in ctx.attrs.native_sonames if s in ctx.attrs.natives]):
-        cfg += "link_tail=-lc++\n"
+    # A program (not a library: nothing is linked) ends its link line with the archives its listed `native_library` targets bring through their deps, and, with a C++
+    # native library in the link, the C++ runtime: libc++ and libc++abi of the zig on Linux (`zig cc -lc++`), the host's libc++ on macOS. One `-lc++` ends the line, after every
+    # archive, however many of the archives are C++.
+    linked = [ctx.attrs.natives[s] for s in ctx.attrs.native_sonames if s in ctx.attrs.natives] if ctx.attrs.kind != "lib" else []
+    extras = link_extra_archives(linked, ctx.attrs.native_sonames)
+    cfg += link_cfg([a.basename for a in extras], link_needs_cxx_runtime(linked))
     zig = _file(ctx.attrs.zig_override) if ctx.attrs.zig_override else tc.zig
-    tc_dir = ctx.actions.copied_dir("toolchain", {
+    tc_dir = ctx.actions.copied_dir("toolchain", dict({LINK_ARCHIVE_DIR + "/" + a.basename: a for a in extras}, **{
         "CLOSURE_SHA256": ctx.actions.write("CLOSURE_SHA256", tc.closure_sha256 + "\n"),
         "compiler": tc.compiler,
         "mojo_compile": _file(ctx.attrs.launcher),
         "toolchain.cfg": ctx.actions.write("toolchain.cfg", cfg),
         "wrapper": _file(ctx.attrs.wrapper),
         "zig": zig,
-    })
+    }))
 
     graph = ctx.actions.write("graph.json", ctx.attrs.graph)
     out = ctx.actions.declare_output("out", dir = True)
@@ -562,8 +570,12 @@ def _pgo_impl(ctx):
     for soname in sonames:
         cmd.add("--native", _file(ctx.attrs.natives[soname]))
 
-    # The C++ runtime ends the line as it ends the ordinary test link's (`link_needs_cxx_runtime`).
-    if link_needs_cxx_runtime([ctx.attrs.natives[s] for s in sonames]):
+    # The archives the listed libraries bring through their deps, then the C++ runtime, end the line as they end the ordinary test link's (`link_extra_archives`,
+    # `link_needs_cxx_runtime`).
+    linked = [ctx.attrs.natives[s] for s in sonames]
+    for a in link_extra_archives(linked, sonames):
+        cmd.add("--link-tail", a)
+    if link_needs_cxx_runtime(linked):
         cmd.add("--link-tail", "-lc++")
     ctx.actions.run(
         cmd,

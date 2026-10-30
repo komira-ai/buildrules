@@ -339,6 +339,17 @@ def native_wiring(unit, prebuilt_packages, user_natives, here, refuse = fail, bu
             refuse("{}: {} links the native library {}; add it to mojo_package(natives = {{...}})".format(here, unit["id"], soname))
     return sonames, labels
 
+def check_natives_used(here, user_natives, linked_sonames, refuse = fail):
+    """Every entry of `mojo_package(natives = {...})` names a library the package's graph links or builds: `linked_sonames` are the sonames of every unit's natives and of the
+    package's own `[native.<id>]`. An entry of another name would be a library nothing links, silently."""
+    for soname in sorted(user_natives.keys()):
+        if soname not in linked_sonames:
+            refuse("{}: natives names {}, which no unit of the package's graph links and no [native.<id>] of its manifest builds ({}): remove the entry, or fix the soname".format(
+                here,
+                soname,
+                ", ".join(sorted(linked_sonames.keys())) or "the graph links none",
+            ))
+
 COVERAGE_FLOOR_FILE = "coverage_floor.txt"
 
 # The sources of the package that kcov cannot record, one per line with the reason (rules/coverage/tools/cov_unmeasured.zig); an input of `:coverage`.
@@ -615,6 +626,12 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             file_prefix = here_repo,
             visibility = visibility,
         )
+
+    linked_sonames = {s: True for s in own_native_ids.values()}
+    for uid in units.keys():
+        for n in units[uid].get("natives", []):
+            linked_sonames[n["soname"]] = True
+    check_natives_used(here, natives, linked_sonames)
 
     libs = []
     builds = []

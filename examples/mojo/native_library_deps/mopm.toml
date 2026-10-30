@@ -1,0 +1,22 @@
+[package]
+name = "natlib_deps"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+# `top` needs `mid` and `base` and `left` and `right` share `shared_base`, all through `deps` of native_library targets (examples/native). Only `top`, `left` and `right`
+# are named: the other archives come with them (rules/native/link.bzl). The manifest names a source for each only because mopm requires one until it has `provided = true`.
+[native.top]
+kind = "static"
+srcs = ["native/top.c"]
+
+[native.left]
+kind = "static"
+srcs = ["native/left.c"]
+
+[native.right]
+kind = "static"
+srcs = ["native/right.c"]
+
+[targets]
+lib = { path = "src/natlib_deps" }
+tests = ["tests"]

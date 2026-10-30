@@ -21,7 +21,7 @@ and the default output of `:zlib` is the one static archive `libzlib.a`.
 
 What each argument is, and what may differ per platform:
 
-    upstream           a pinned tarball: `url` (https), `sha256`, `size` (bytes), `strip` (the directory every file is below), `files` (the explicit list staged; nothing else is).
+    upstream           a pinned tarball: `url` (https), `sha256`, `size` (bytes), `strip` (the directory every file is below), `files` (the explicit list staged; nothing else is). The download is keyed by its content digest (sha256 and size), not by the url: another url for the same bytes re-runs nothing, a wrong url is noticed only when the blob is not in the cache.
     srcs               sources: a file of `upstream.files` (a path in the tree) or a file of the package. `.c`, `.cc .cpp .cxx .c++` (C++) and `.S .s` (assembly, assembled
                        by the pinned zig).
     hdrs               headers of the package the sources include (private): a list, or a dict `{"<include name>": "<file>"}` (a header of an SDK is included as `<CommonCrypto/CommonRandom.h>`).
@@ -29,7 +29,7 @@ What each argument is, and what may differ per platform:
     includes           directories of the upstream tree given to this library's compiles as -I (`.` is the tree).
     exported_includes  directories of the upstream tree given to a dependent's compiles as -I, and to those of its dependents that re-export (`exported_deps`).
     cflags, cxxflags, asm_flags   flags of the C, the C++ and the assembly compiles, after the defaults (-O2), so a later -O3 wins.
-    deps               other `native_library` targets: this library's compiles see their exported headers and includes, and their archives follow this one's on the link line.
+    deps               other `native_library` targets: this library's compiles see their exported headers and includes, and a program that links this library links their archives too: they end its link line, after the archives of its unit graph and before the C++ runtime, a library before the libraries it calls into, each once, a shared one after its last user (rules/native/link.bzl, rules/mojo/unit.bzl).
     exported_deps      like `deps`, and a dependent of this library sees their exported headers too.
     cxx_runtime        optional statement of what the sources are: true when any source is C++ (a program that links the library then links the C++ runtime, once); a statement that
                        is not what the sources are is refused. The value is derived from the sources whether it is stated or not.
@@ -39,6 +39,7 @@ What each argument is, and what may differ per platform:
                        built as it is (`:<name>_unprefixed`), the names its archive defines are written as a header (`:<name>_prefix`: `#define name p_name`, and for the underscored
                        names the assembly of a Mach-O library carries `#define _name _p_name`), and it is built again with the header included. `min` is the least number of
                        symbols it defines. The compiler-rt builtins the library defines (`__umodti3` and its kin, an exact list in archive_check) are not renamed and are not held to the prefix; `allow` names symbols that may stay UNDEFINED, never one that may lack the prefix.
+    validate           False makes the archive check an output of the target and not a validation: for tests that need the failure to be one failed action (ci/faulty). Leave it True.
     allow              symbols the archive check may find undefined (something it cannot see provides them).
 
 `srcs`, `hdrs`, `exported_headers`, `includes`, `exported_includes`, `cflags`, `cxxflags` and `asm_flags` may each be a `select()` (or a list plus one) on the target platform's OS and CPU:
@@ -54,7 +55,7 @@ load("//rules/core:platform.bzl", "LINUX_X86_64", "by_os_cpu")
 load("//rules/cxx:archive.bzl", "archive_files")
 load("//rules/cxx:defs.bzl", "prefix_header")
 load("//rules/cxx:native.bzl", "native_archive")
-load(":checks.bzl", "archive_extension", "check_prefix", "check_sources", "check_upstream", "cxx_label")
+load(":checks.bzl", "archive_extension", "check_has_sources", "check_prefix", "check_sources", "check_upstream", "cxx_label")
 load(":library.bzl", "native_library_rule")
 
 def _baseline():
@@ -86,6 +87,7 @@ def native_library(
         exported_deps = [],
         cxx_runtime = None,
         soname = None,
+        target_compatible_with = None,
         allow = [],
         validate = True,
         file_prefix = None,
@@ -122,6 +124,14 @@ def native_library(
 
         return _each(value, f)
 
+    src_parts = []
+
+    def record(v):
+        src_parts.append(v)
+        return v
+
+    _each(srcs, record)
+    check_has_sources(who, src_parts)
     srcs = checked("srcs", srcs)
     hdrs = checked("hdrs", hdrs)
     exported_headers = checked("exported_headers", exported_headers)
@@ -149,6 +159,7 @@ def native_library(
     cxx_flags = ["-O2", "-fno-sanitize=undefined", "-std=c++17"] + base + cxxflags
     asm_all = base + asm_flags
 
+    compat = {"target_compatible_with": target_compatible_with} if target_compatible_with else {}
     soname = soname or "lib{}.a".format(name)
     if prefix != None:
         check_prefix(who, prefix)
@@ -172,6 +183,7 @@ def native_library(
             },
             preferred_linkage = "static",
             visibility = visibility,
+            **compat
         )
 
     def archive(archive_name, lib, archive_soname, **more):
@@ -185,7 +197,7 @@ def native_library(
             # The prelude archives the objects in the order of `srcs`, and a `select()` of lists cannot be sorted by the name of the object each makes.
             members_any = True,
             visibility = visibility,
-            **more
+            **dict(compat, **more)
         )
 
     if prefix == None:
@@ -208,6 +220,7 @@ def native_library(
             macho_asm = True,
             exec_compatible_with = LINUX_X86_64,
             visibility = visibility,
+            **compat
         )
         library(name + "_cxx", ":" + name + "_prefix")
         archive(
@@ -228,4 +241,5 @@ def native_library(
         include_tree = tree,
         cxx_runtime = cxx_runtime,
         visibility = visibility,
+        **compat
     )
