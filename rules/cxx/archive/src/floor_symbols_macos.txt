@@ -549,3 +549,5 @@ malloc_zone_free
 malloc_zone_malloc
 malloc_zone_realloc
 srandomdev
+# What aws-lc calls on macOS (found by building it for aarch64-macos): the random bytes of CommonCrypto.
+CCRandomGenerateBytes

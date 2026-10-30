@@ -524,6 +524,18 @@ pub fn check(a: std.mem.Allocator, name: []const u8, b: []const u8, o: Options) 
     return report(oom, f.items.items, all.items.items);
 }
 
+/// The integer builtins of the compiler runtime (compiler-rt, 128-bit arithmetic) a library may define itself so that the link does not need the runtime: the compiler calls
+/// them by these names, a header of macros cannot rename them, and `prefix_tool` leaves them out of the header too. They do not count against a prefix.
+const compiler_builtins = [_][]const u8{ "__divti3", "__modti3", "__udivti3", "__umodti3", "__multi3", "__udivmodti4", "__ashlti3", "__ashrti3", "__lshrti3" };
+
+/// Whether `name` is one of `compiler_builtins`.
+pub fn compilerBuiltin(name: []const u8) bool {
+    for (compiler_builtins) |b| {
+        if (std.mem.eql(u8, name, b)) return true;
+    }
+    return false;
+}
+
 /// The most names one finding lists.
 const listed = 20;
 
@@ -534,6 +546,7 @@ fn prefixFindings(a: std.mem.Allocator, f: *Acc([]const u8), oom: *bool, name: [
     var n_bare: usize = 0;
     var n_prefixed: usize = 0;
     for (defined) |d| {
+        if (compilerBuiltin(d)) continue;
         if (std.mem.startsWith(u8, d, o.prefix)) {
             n_prefixed += 1;
             continue;

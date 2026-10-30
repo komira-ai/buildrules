@@ -757,3 +757,26 @@ test "runtime c++: parseArgs takes only c++, and run honours it" {
     try t.expectEqual(@as(u8, 0), try A.run(a, tmp.dir, "", &.{ "libx.a", "r2.json", "--runtime", "c++" }, &err));
     try t.expectEqual(@as(usize, 0), err.items.len);
 }
+
+test "prefix: the compiler's 128-bit builtins a library defines itself do not count against the prefix, any other bare name does" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "__umodti3", .kind = .def }, .{ .name = "__udivti3", .kind = .def }, .{ .name = "__divti3", .kind = .def }, .{ .name = "__modti3", .kind = .def }, .{ .name = "__multi3", .kind = .def }, .{ .name = "__udivmodti4", .kind = .def }, .{ .name = "__ashlti3", .kind = .def }, .{ .name = "__ashrti3", .kind = .def }, .{ .name = "__lshrti3", .kind = .def } }, &.{});
+    const b = try archive(a, &.{.{ .name = "a.o", .data = o }});
+    const r = try A.check(a, "libx.a", b, .{ .prefix = "k_", .min_prefixed = 1 });
+    try t.expectEqual(@as(usize, 0), r.findings.len);
+    // They are not counted as prefixed either, and a near miss is a finding.
+    try t.expect(hasFinding(try A.check(a, "libx.a", b, .{ .prefix = "k_", .min_prefixed = 2 }), "only 1 defined symbol(s)"));
+    const near = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "__umodti4", .kind = .def } }, &.{});
+    try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = near }}), .{ .prefix = "k_" }), "without the prefix k_: __umodti4"));
+    try t.expect(A.compilerBuiltin("__umodti3") and !A.compilerBuiltin("__umodti4") and !A.compilerBuiltin("memcpy"));
+}
+
+test "the C library list at the floor holds the names aws-lc needs, and the macOS list the one it calls" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const elf = try object(a, &.{ .{ .name = "fopen64", .kind = .undef }, .{ .name = "__isoc99_sscanf", .kind = .undef }, .{ .name = "getauxval", .kind = .undef }, .{ .name = "sdallocx", .kind = .undef } }, &.{});
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = elf }}), .{})).findings.len);
+}

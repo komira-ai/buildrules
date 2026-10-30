@@ -445,3 +445,11 @@ test "runtime c++: a Mach-O library's mangled runtime names (one underscore more
     const own = try clean(a, &.{ .{ .name = "cxx_entry", .kind = .def }, .{ .name = "_ZN3app4helpEv", .kind = .undef } });
     try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = own }}), .{ .runtime_cxx = true }), "undefined symbol: _ZN3app4helpEv"));
 }
+
+test "the libSystem list holds CCRandomGenerateBytes, which aws-lc calls for random bytes" {
+    var ar = arena();
+    defer ar.deinit();
+    const a = ar.allocator();
+    const o = try clean(a, &.{ .{ .name = "k_rand", .kind = .def }, .{ .name = "CCRandomGenerateBytes", .kind = .undef } });
+    try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{})).findings.len);
+}
