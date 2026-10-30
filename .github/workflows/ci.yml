@@ -65,6 +65,23 @@ jobs:
       - name: Mojo actions on Arm are refused without workers (linux arm64 switch on)
         run: ./buck2 bxl -c buildrules_re.mode=local -c buildrules_re.linux_arm64_enabled=true //ci:exec_select.bxl:check -- --state absent_enabled
 
+      # The tool tier of the Mojo rules runs on the machine's own execution platform, and a macOS compile names the hosts it may run on (ci/tool_exec.bzl). A Mac that
+      # runs Buck2 itself is analysed here on this Linux runner (`[buildrules_re] local_host` names the machine of local mode); nothing runs.
+      - name: The tools of the Mojo rules are placed on the machine running Buck2
+        run: ./buck2 bxl -c buildrules_re.mode=local //ci:tool_exec.bxl:check -- --state local_linux
+
+      - name: The tools of the Mojo rules on a Mac that runs Buck2
+        run: ./buck2 bxl -c buildrules_re.mode=local --config-file ci/tool_exec/local_mac.buckconfig //ci:tool_exec.bxl:check -- --state local_mac
+
+      - name: A Mac that runs Buck2 and names host identities
+        run: ./buck2 bxl -c buildrules_re.mode=local --config-file ci/tool_exec/local_mac_named.buckconfig //ci:tool_exec.bxl:check -- --state local_mac_named
+
+      - name: The local host beside an identity is refused
+        run: ./buck2 bxl -c buildrules_re.mode=local --config-file ci/tool_exec/local_mac_mixed.buckconfig //ci:tool_exec.bxl:check -- --state local_mac_mixed
+
+      - name: The local host named as an identity is refused
+        run: ./buck2 bxl -c buildrules_re.mode=local --config-file ci/tool_exec/local_mac_sentinel.buckconfig //ci:tool_exec.bxl:check -- --state local_mac_sentinel
+
       # Every [buildrules_re] key is read from the root cell, whichever cell loads the rules: ci/rootcell is a cell with no such section, and the linux arm64 switch
       # is set for the root cell alone (ci/root_keys.bzl). The states with property sets (remote mode) need no farm either, and are in the header of ci/root_keys.bxl.
       - name: The root cell's keys are seen from another cell
@@ -245,3 +262,59 @@ jobs:
         run: |
           head -c 1000000 zig-darwin.tar.xz > zig-cut.tar.xz
           if ./cross/unpack-macos-aarch64 --check zig-cut.tar.xz; then echo "a cut-off tarball was accepted"; exit 1; fi
+
+  # A Mac that runs Buck2 itself (`mode = local` on macOS arm64, docs/contract.md section 14): the tool tier of the Mojo rules is built for the Mac by its own zig and a Mojo
+  # package is compiled and tested natively on it, with a macOS compile naming the one host `local`. The farm cannot run a macOS binary, so this job is the proof that this
+  # works. The runner's /bin, /usr/bin, C driver and SDK are what the actions meet; none is in an action key.
+  mojo_macos:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The machine is aarch64 macOS
+        run: test "$(uname -s)-$(uname -m)" = Darwin-arm64
+
+      # The release pinned in tools/buck2 for macos-aarch64 (the digest is the sha256 of the .zst); ci/workflow_check.zig compares both.
+      - name: Install buck2
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-aarch64-apple-darwin.zst
+          echo "aacdf7cabe34b9b5dc74866b8dcf7410cdbae3ad2dccef45b7ee9851cb781528  buck2.zst" | shasum -a 256 -c -
+          zstd --decompress --quiet buck2.zst -o buck2
+          chmod +x buck2
+          ./buck2 --version
+
+      - name: The execution platform of this machine is platforms:macos_aarch64
+        run: |
+          ./buck2 audit execution-platform-resolution -c buildrules_re.mode=local //rules/pins:zig \
+            | grep --fixed-strings --quiet "Execution platform: buildrules//platforms:macos_aarch64"
+
+      - name: The zigs, the applets and the Mojo tools build for the Mac
+        run: |
+          ./buck2 build --console simple -c buildrules_re.mode=local \
+            //rules/pins:zig //rules/pins:zig_next //rules/pins:macos_applets //rules/pins:macos_applets_unit \
+            //rules/mojo:mojo_launch //rules/mojo:mojo_compile_macos //rules/mojo:conda_unpack
+
+      # Every unit test of the tools the Mojo build reaches, run on the Mac, with --keep-going so that one run names every test that assumes Linux.
+      - name: The unit tests of the Mojo tools pass on the Mac
+        run: |
+          ./buck2 build --console simple --keep-going -c buildrules_re.mode=local \
+            //rules/check:check_unit //rules/check:cmds_unit //rules/check:files_unit //rules/check:hang_unit //rules/check:install_root_unit \
+            //rules/check:isa_unit //rules/check:oom_unit //rules/check:runspec_libdir_unit //rules/check:runspec_unit \
+            //rules/mojo:conda_libs_unit //rules/mojo:files_check_unit //rules/mojo:graph_norm_unit //rules/mojo:mojo_compile_macos_unit \
+            //rules/mojo:mojo_launch_unit //rules/mojo:table_check_unit //rules/pins:zig_next_version //rules/toolbox:toolbox_unit
+
+      - name: A Mojo package builds and passes its tests on the Mac
+        run: |
+          ./buck2 build --console simple -c buildrules_re.mode=local \
+            -c buildrules_re.macos_library_dirs=/opt/homebrew/lib \
+            --target-platforms buildrules//platforms:macos_aarch64 \
+            //examples/mojo/subdirs:lib
+
+      - name: Stop buck2
+        if: always()
+        run: ./buck2 kill

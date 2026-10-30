@@ -16,6 +16,15 @@
       supplies buck2 itself and its kernel. The ISA platforms (rules/isa.bzl) are registered too and run on the
       machine's CPU: a test that needs `x86-64-v3` fails on a CPU without it, as it would on a worker without it.
 
+      On a macOS arm64 machine the Mac is the one execution platform (`buildrules//platforms:macos_aarch64`), so the tool tier of the Mojo rules runs on it too: the Zig
+      tools are built for the Mac by the pinned macOS zig (unpacked by `unpack`, rules/pins/tool_zig.bzl), the applets are `macos_applets` (rules/pins/macos_applets.zig, a
+      Zig program over /bin and /usr/bin), and a macOS compile names the one host `local` (below). Linux machines and farms are unchanged. Nothing here is hermetic
+      beyond the pins: the machine's /bin, /usr/bin, C driver and SDK are what the actions meet, and none is in an action key.
+
+  `[buildrules_re] local_host`  (local mode only)
+      Names the machine local mode runs on (`macos-aarch64`, `linux-x86_64`, `linux-aarch64`) in place of the one that runs Buck2, so the placement of the actions of
+      one kind of machine is analysed on another (ci/tool_exec.bxl). It is refused in remote mode. It is not for building: the actions would run on this machine.
+
 Any other value of `mode` is refused.
 
 Every key of `[buildrules_re]` (`mode`, `linux_arm64_enabled`, the property sets, `darwin_macos_hosts`, `macos_library_dirs`) is read from the ROOT cell's configuration
@@ -30,6 +39,7 @@ compile cannot target another platform than the one it runs on. A farm that has 
       [buildrules_re] linux_aarch64_properties   workers that run linux aarch64 actions   (execution platform `//platforms:linux_aarch64`)
       [buildrules_re] macos_aarch64_properties   workers that run macOS arm64 actions     (execution platform `//platforms:macos_aarch64`)
       [buildrules_re] darwin_macos_hosts         the identities of those macOS workers, space separated (`mojo_compile host-identity`); a macOS Mojo compile needs them
+                                                 (none is named on a Mac that runs Buck2 itself in local mode: its one host is `local`)
       [buildrules_re] macos_library_dirs         optional: directories (separated by ':' or spaces) a macOS test run searches for a library it opens by its bare name, before dyld's defaults
 
 The linux aarch64 platform is registered only while `[buildrules_re] linux_arm64_enabled = true` (default false: linux arm64 farm hardware is not racked); while it is
@@ -46,7 +56,7 @@ and the `exec_isa` constraint of its level in its configuration; only an action 
 `exec_compatible_with` (test runs) is placed on it, and the farm then requires a worker that reports at least the level.
 """
 
-load("//rules/core:platform.bzl", "by_os_cpu")
+load("//rules/core:platform.bzl", "by_os_cpu", "machine_name")
 
 def _mode():
     mode = read_root_config("buildrules_re", "mode", "remote").strip()
@@ -204,11 +214,46 @@ _exec_platforms = rule(
 )
 
 def host_name():
-    """The machine running buck2, as `<os>-<cpu>` (`linux-x86_64`, `linux-aarch64`, `macos-aarch64`): the spelling of tools/buck2 and rules/pins/hosts.bzl."""
-    h = host_info()
-    os = "linux" if h.os.is_linux else ("macos" if h.os.is_macos else "other")
-    cpu = "x86_64" if h.arch.is_x86_64 else ("aarch64" if h.arch.is_aarch64 else "other")
-    return os + "-" + cpu
+    """The machine running buck2, as `<os>-<cpu>` (`linux-x86_64`, `linux-aarch64`, `macos-aarch64`): the spelling of tools/buck2 and rules/pins/hosts.bzl.
+    `[buildrules_re] local_host` names another one in local mode (rules/core/platform.bzl, `machine_of`)."""
+    return machine_name()
+
+# ---- the macOS hosts of a Mojo compile ------------------------------------------------------------------------------------------------------------
+# The macOS wrapper refuses a host whose identity is not among the ones the compile names (`mojo_compile host-identity`; `[buildrules_re] darwin_macos_hosts`).
+# A Mac that runs Buck2 itself names none: its one host is the sentinel `local`, and the wrapper then skips the comparison, since the compile runs on the machine
+# that runs Buck2.
+
+# The host of a compile that runs on the machine running Buck2. It holds no "-", so it is never an identity (`<sdk version>-<digest>`).
+DARWIN_LOCAL_HOST = "local"
+
+def darwin_macos_hosts():
+    """The identities `[buildrules_re] darwin_macos_hosts` names, sorted (the root cell's)."""
+    return sorted([h for h in read_root_config("buildrules_re", "darwin_macos_hosts", "").split(" ") if h])
+
+def darwin_hosts_for(hosts, mode, machine):
+    """`(hosts, local)`: the `--macos-host` values of a macOS compile. With `hosts` named they are those, unchanged, whatever the mode (a farm's action keys do not move).
+    With none, a local build on a macOS arm64 machine gets the sentinel; anything else gets `([], False)`, which the unit rule refuses at analysis."""
+    if hosts:
+        return hosts, False
+    if mode == "local" and machine == "macos-aarch64":
+        return [DARWIN_LOCAL_HOST], True
+    return [], False
+
+def darwin_local_hosts_refusal(hosts, local_execution):
+    """Why `hosts` and `local_execution` cannot go together, or None. The sentinel is alone or absent: beside anything else it is refused, as is the sentinel
+    without `local_execution` and `local_execution` without exactly the sentinel."""
+    has_local = DARWIN_LOCAL_HOST in hosts
+    if has_local and hosts != [DARWIN_LOCAL_HOST]:
+        return "the local host sentinel `{}` is mixed with other hosts {}".format(DARWIN_LOCAL_HOST, hosts)
+    if has_local and not local_execution:
+        return "the local host sentinel `{}` is not allowed here (it is for `[buildrules_re] mode = local` on macOS arm64 with no `darwin_macos_hosts`)".format(DARWIN_LOCAL_HOST)
+    if local_execution and not has_local:
+        return "local_execution is set but the host list {} is not the sentinel `{}`".format(hosts, DARWIN_LOCAL_HOST)
+    return None
+
+def darwin_hosts_here():
+    """`(hosts, local)` for this configuration, read from the root cell like the rest of `[buildrules_re]`."""
+    return darwin_hosts_for(darwin_macos_hosts(), _mode(), host_name())
 
 # What a consumer's platforms/BUCK gets when it does not name the platforms of the other hosts (the generated one, `buildrules init`).
 _DEFAULT_HOST_PLATFORMS = {

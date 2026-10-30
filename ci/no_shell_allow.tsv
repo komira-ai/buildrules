@@ -5,6 +5,7 @@ beta/BUCK	busybox	1
 ci/BUCK	busybox	1
 ci/negative/BUCK	busybox	2
 ci/pin_mirrors_check.zig	busybox	42
+ci/tool_exec.bzl	busybox	6
 ci/faulty/BUCK	busybox	1
 ci/workflow_check.zig	shell-word	7
 ci/workflow_lint.bzl	busybox	4
@@ -39,16 +40,18 @@ rules/gate/util_test.zig	busybox	8
 rules/kpin/BUCK	busybox	2
 rules/kpin/pins_test.zig	busybox	4
 rules/mojo/BUCK	busybox	14
-rules/mojo/toolchain.bzl	busybox	1
 rules/mopm/toolchain.bzl	busybox	4
 rules/node/BUCK	busybox	2
 rules/node/defs.bzl	busybox	14
 rules/node/defs.bzl	heredoc	7
 rules/node/runner_test.zig	busybox	1
 rules/node/tests/BUCK	busybox	1
-rules/pins/BUCK	busybox	3
+rules/pins/BUCK	busybox	4
 rules/pins/hosts.bzl	busybox	1
+rules/pins/macos_applets.zig	shell-word	1
+rules/pins/macos_applets_test.zig	shell-word	1
 rules/pins/pins.bzl	busybox	3
+rules/pins/tool_zig.bzl	busybox	1
 rules/platforms.bzl	busybox	1
 rules/rust/BUCK	busybox	7
 rules/rust/cargo_unit.bzl	busybox	2
@@ -66,7 +69,7 @@ rules/rust/toolchain.bzl	shell-word	10
 rules/rust/toolchain.bzl	shell-c	5
 rules/rust/toolchain.bzl	heredoc	5
 rules/zig/BUCK	busybox	1
-rules/zig/zig.bzl	busybox	16
+rules/zig/zig.bzl	busybox	23
 rules/zig/zig.bzl	shell-word	2
 rules/zig/zig.bzl	shell-c	1
 rules/zig/zig.bzl	heredoc	3
