@@ -27,8 +27,12 @@
 //! `--min-prefixed` of them must (a library the renaming missed is not empty by accident), and no undefined symbol may be one of the names in the `--original`
 //! files (the library's own names before the renaming, one per line): a reference the renaming missed would resolve to another copy of the library at the final link.
 //!
-//! With `--cxx-namespace <ns>` (repeatable, only with `--prefix`), a defined C++ name in that namespace (`_ZN6snappy...`, its vtable, type information and guards) is not a leak: a header of macros
-//! cannot rename a mangled name, and a library may rename only its C API. A name of another namespace, or of a look-alike (`_ZN7snappyx`), still is.
+//! With `--cxx-namespace <ns>` (repeatable, only with `--prefix`), a defined C++ name in that namespace is not a leak: a header of macros cannot rename a mangled name, and a library may
+//! rename only its C API. A namespace is an identifier (letters, digits and `_`, not starting with a digit) and not `std`; another is refused with exit 2. The names taken are those whose nested
+//! name has the namespace as its first component, whole (`_ZN7snappyx` is the namespace `snappyx`): the name itself (`_ZN6snappy...`), the vtable, type information, type name, VTT and construction
+//! vtable of a class (`_ZTV`, `_ZTI`, `_ZTS`, `_ZTT`, `_ZTC` followed by `N`), the guard of a static (`_ZGVN`), the local names of a function (`_ZZN`, `_ZGVZN`), and non-virtual and virtual thunks
+//! (`_ZTh`, `_ZTv`, followed by `N`). Not taken, so a finding: a class that is not a nested name (`_ZTV6snappy`), covariant thunks (`_ZTc`), a namespace that is not the first component, and any
+//! name cut short.
 //!
 //! With `--runtime c++`, the library is C++ and the final link brings the C++ runtime: the undefined names of libc++, libc++abi and the unwinder (`cxxRuntime`: `_ZNSt*`, `_Znw*`, `__cxa_*`,
 //! `_Unwind_*`, `__dso_handle`, ...) are not findings. Any other undefined name still is.
@@ -761,14 +765,14 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, dir: []const u8, args: []const
         tell(a, err, &oom, "{s}\n", .{usage});
         return exit(oom, 2);
     };
-    // A namespace is an identifier, and not `std`: the standard library's own names are not the library's to keep (and `_ZN3std` is what other languages' symbols look like too).
+    // A namespace is an identifier (not starting with a digit), and not `std`: the standard library's own names are not the library's to keep (and `_ZN3std` is what other languages' symbols look like too).
     for (c.cxx_namespaces) |ns| {
-        var ok = ns.len != 0 and !std.mem.eql(u8, ns, "std");
+        var ok = ns.len != 0 and !std.mem.eql(u8, ns, "std") and !std.ascii.isDigit(ns[0]);
         for (ns) |ch| {
             if (!(std.ascii.isAlphanumeric(ch) or ch == '_')) ok = false;
         }
         if (!ok) {
-            tell(a, err, &oom, "archive_check: --cxx-namespace {s}: a namespace is a name of letters, digits and _, and not empty or std\n", .{ns});
+            tell(a, err, &oom, "archive_check: --cxx-namespace {s}: a namespace is an identifier: letters, digits and _, not starting with a digit, and not empty or std\n", .{ns});
             return exit(oom, 2);
         }
     }

@@ -11,7 +11,7 @@ native_library(
         "buildrules//platforms:x86_64": ["native/split_x86_64.S"],
     }),
     hdrs = {"compat/asm_names.h": "native/asm_names.h"},
-    asm_split = ["native/split_"],
+    asm_split = ["native/split_aarch64.S", "native/split_x86_64.S"],
 )
 
 scrub_files()

@@ -50,8 +50,13 @@ SRC="$T/x/$PREFIX"
 # a path of the machine that unpacks it: it is refused, naming the link. Links nothing lists are never read.
 # A hard link is not a link to follow: it is a second name of a file. When a listed file has more names than there are inside the unpacked tree, one is outside it (tar does
 # not stop a member from being hard linked to a path of the machine, though the kernel or the file system often does), and the file is refused.
+# A file whose number of names cannot be read (`stat` prints nothing, or what is not a number) is refused too.
 refuse_outside_names() {
     names=$(stat -c %h "$SRC/$1")
+    # The count is a number or the file is refused: a count that is empty or not a number says nothing about the names, and is never taken for "one".
+    case "$names" in
+        "" | *[!0-9]*) echo "archive_files: $1 is not staged: the number of names of the file in $ARCHIVE could not be read (stat printed '$names'); staging does not take a file whose names it cannot count" >&2; exit 2 ;;
+    esac
     [ "$names" -gt 1 ] || return 0
     # One dot per name found, not one line: a name that holds a newline would be counted twice and hide a name outside.
     inside=$(find "$T" -samefile "$SRC/$1" -exec printf . \; | wc -c)

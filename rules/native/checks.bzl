@@ -5,6 +5,7 @@ reads what was refused (rules/native/tests/BUCK). Every message names the target
 """
 
 load("//rules/core:pinned_file.bzl", "check_pinned")
+load("//rules/cxx:checks.bzl", "is_cxx_namespace")
 
 _KEYS = ["url", "sha256", "size", "strip", "files"]
 
@@ -170,8 +171,8 @@ def check_prefix(who, pfx, refuse = fail):
         refuse("{}: prefix extra_symbols {} is a list of identifiers (names the library refers to and does not define, such as a weak hook a program defines)".format(who, repr(extra)))
         return
     spaces = pfx.get("cxx_namespaces", [])
-    if type(spaces) != "list" or any([not _identifier(x) or x == "std" for x in spaces]):
-        refuse("{}: prefix cxx_namespaces {} is a list of C++ namespaces (identifiers, never `std`) whose mangled names the library may define without the prefix: a header of macros cannot rename them".format(who, repr(spaces)))
+    if type(spaces) != "list" or any([not is_cxx_namespace(x) for x in spaces]):
+        refuse("{}: prefix cxx_namespaces {} is a list of C++ namespaces (identifiers that do not start with a digit, never `std`) whose mangled names the library may define without the prefix: a header of macros cannot rename them".format(who, repr(spaces)))
         return
     least = pfx.get("min")
     if type(least) != "int" or least <= 0:
@@ -186,13 +187,16 @@ def check_has_sources(who, parts, refuse = fail):
 
 def check_asm_split(who, patterns, srcs, refuse = fail):
     """`asm_split` names the sources whose preprocessed text has its `;` turned into line breaks before it is assembled (rules/cxx/asm_split.zig): by the beginning of the
-    path (`s2n-bignum/arm/`). A source it names must be a `.S` file, the only kind that is preprocessed. `srcs` are the files of one resolved arm."""
+    path (`s2n-bignum/arm/`): a pattern ends in `/` (a directory) or in `.S` or `.s` (one file), so that `arm` cannot also name `armv8/`. A source it names must be a `.S` file, the only kind that is preprocessed. `srcs` are the files of one resolved arm."""
     if type(patterns) != "list":
         refuse("{}: asm_split is {}, a list of path beginnings".format(who, repr(patterns)))
         return
     for p in patterns:
         if type(p) != "string" or not p or p.startswith("/") or ".." in p.split("/"):
             refuse("{}: asm_split {} is not the beginning of a path below the package or the upstream tree".format(who, repr(p)))
+            return
+        if not (p.endswith("/") or p.endswith(".S") or p.endswith(".s")):
+            refuse("{}: asm_split {} ends in neither / nor .S nor .s: a pattern is a directory (`arm/`) or one file (`arm/a.S`), and one that stops inside a name (`arm`) also begins `armv8/`".format(who, repr(p)))
             return
     for s in srcs:
         if is_split(patterns, s) and not s.endswith(".S"):
