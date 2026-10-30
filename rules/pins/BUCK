@@ -41,20 +41,18 @@ zig_dist(
     **tool_zig("zig_next", _LOCAL_MAC)
 )
 
-# The busybox of a Mac (macos_applets.zig). It is built by the pinned zig without a shell, so it can exist before any busybox does. Its tests run where a busybox
-# exists, which is not a Mac before this program is built: the farm and every Linux machine run them (`macos_applets_unit`, the dispatch is not system specific), and
-# the program they gate is cross-compiled for macOS there as well, so the tree holds it whether or not a Mac is building. `:busybox` is it in local mode on a Mac.
-[
-    zig_test(
-        name = "macos_applets_unit",
-        src = "macos_applets_test.zig",
-        imports = ["macos_applets.zig"],
-        busybox = ":busybox",
-        zig = ":zig",
-    )
-    for _ in [1]
-    if not _LOCAL_MAC
-]
+# The applets of a Mac (macos_applets.zig). The program is built by the pinned zig without a shell, so it can exist before any busybox does. Its tests need a busybox to run:
+# the farm and every Linux machine run them before the program they gate is built (cross-compiled for macOS there as well, so the tree holds it whether or not a Mac is
+# building). On a Mac the busybox IS this program, so it cannot wait for tests that need it: it is built unchecked, the tests are a target of their own, and the farm's run of
+# the same source is what gates it.
+zig_test(
+    name = "macos_applets_unit",
+    src = "macos_applets_test.zig",
+    imports = ["macos_applets.zig"],
+    busybox = ":busybox",
+    zig = ":zig",
+    visibility = ["PUBLIC"],
+)
 
 zig_bootstrap_exe(
     name = "macos_applets",
