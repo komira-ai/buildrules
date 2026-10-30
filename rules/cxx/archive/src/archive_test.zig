@@ -895,8 +895,9 @@ test "fuzz: a malformed ELF archive is read or refused, whatever bytes were chan
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    const o1 = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "memcpy", .kind = .undef }, .{ .name = "lib_hook", .kind = .weak_undef }, .{ .name = "leaked", .kind = .common } }, &.{ ".text", ".debug_info" });
-    const o2 = try object(a, &.{ .{ .name = "k_two", .kind = .def }, .{ .name = "k_one", .kind = .undef } }, &.{".text"});
+    // Mangled names of each form the namespace check reads; a changed byte or a cut string table gives it the same names malformed or truncated.
+    const o1 = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "memcpy", .kind = .undef }, .{ .name = "lib_hook", .kind = .weak_undef }, .{ .name = "leaked", .kind = .common }, .{ .name = "_ZN6snappy6SourceD2Ev", .kind = .def }, .{ .name = "_ZTVN6snappy6SourceE", .kind = .def }, .{ .name = "_ZZN6snappy3fooEvE1x", .kind = .def }, .{ .name = "_ZGVZN3lz43fooEvE1x", .kind = .def } }, &.{ ".text", ".debug_info" });
+    const o2 = try object(a, &.{ .{ .name = "k_two", .kind = .def }, .{ .name = "k_one", .kind = .undef }, .{ .name = "_ZThn8_N6snappy3Foo3barEv", .kind = .def }, .{ .name = "_ZTv0_n24_N6snappy3Foo3barEv", .kind = .def }, .{ .name = "_ZTCN3lz43FooE0_N6snappy4BaseE", .kind = .def }, .{ .name = "_ZTTN6snappy3FooE", .kind = .weak_def } }, &.{".text"});
     const good = try archive(a, &.{ .{ .name = "a.o", .data = o1 }, .{ .name = "b.o", .data = o2 } });
     try fuzz(good, 3000, 0x5eed);
 }
@@ -917,7 +918,7 @@ pub fn fuzz(good: []const u8, cases: usize, seed: u64) !void {
         } else {
             b = b[0..rnd.uintLessThan(usize, b.len)];
         }
-        _ = try A.check(x, "fuzz.a", b, .{ .prefix = "k_", .min_prefixed = 1, .original = &.{"lib_hook"}, .runtime_cxx = true, .needs = &.{good} });
+        _ = try A.check(x, "fuzz.a", b, .{ .prefix = "k_", .min_prefixed = 1, .original = &.{"lib_hook"}, .runtime_cxx = true, .needs = &.{good}, .cxx_namespaces = &.{ "snappy", "lz4" } });
         _ = A.members(x, b) catch {};
     }
 }
@@ -940,11 +941,29 @@ test "cxx namespace: a mangled name in the namespace is not a leak, in any of it
         // Without the namespace the same name is a leak.
         try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_" }), n));
     }
-    const outside = [_][]const u8{ "_Z3foov", "_ZN5other3fooEv", "_ZN7snappyx3fooEv", "_ZN5snapp3fooEv", "_ZN3foo6snappy3barEv", "_ZNSt6snappy", "_ZN99999999999999999999999snappy", "_ZN", "_ZN0", "_ZN6snap", "_ZTV6snappy", "snappy_x", "_ZZN5other3fooEvE1x", "_ZZ3foovE1x", "_ZZ6snappyvE1x", "_ZGVZN5other3fooEvE1x", "_ZThn8_N5other3Foo3barEv", "_ZThn8_3foov", "_ZTh_N6snappy3Foo3barEv", "_ZThn8N6snappy3Foo3barEv", "_ZTv0_n24_N5other3FooE", "_ZTv0_N6snappy3FooE", "_ZTv0_5_3foov", "_ZTTN5other3FooE", "_ZTCN5other3FooE0_N6snappy4BaseE", "_ZTT6snappy", "_ZTCN7snappyx3FooE0_N6snappy4BaseE" };
+    const outside = [_][]const u8{ "_Z3foov", "_ZN5other3fooEv", "_ZN7snappyx3fooEv", "_ZN5snapp3fooEv", "_ZN3foo6snappy3barEv", "_ZNSt6snappy", "_ZN99999999999999999999999snappy", "_ZN", "_ZN0", "_ZN6snap", "_ZTV6snappy", "snappy_x", "_ZZN5other3fooEvE1x", "_ZZ3foovE1x", "_ZZ6snappyvE1x", "_ZGVZN5other3fooEvE1x", "_ZThn8_N5other3Foo3barEv", "_ZThn8_3foov", "_ZTh_N6snappy3Foo3barEv", "_ZThn8N6snappy3Foo3barEv", "_ZTv0_n24_N5other3FooE", "_ZTv0_N6snappy3FooE", "_ZTv0_5_3foov", "_ZTTN5other3FooE", "_ZTCN5other3FooE0_N6snappy4BaseE", "_ZTT6snappy", "_ZTCN7snappyx3FooE0_N6snappy4BaseE", "_ZTh", "_ZTh0", "_ZTh0_", "_ZThn", "_ZTv", "_ZTv0", "_ZTv0_", "_ZTv0_n", "_ZTv0_n24_", "_ZTv0_n24_N", "_ZZ", "_ZZN", "_ZGVZ", "_ZGVZN", "_ZTCN", "_ZTTN", "_ZTh0_N6snap" };
     for (outside) |n| {
         const o = try object(a, &.{ .{ .name = "k_snappy_compress", .kind = .def }, .{ .name = n, .kind = .def } }, &.{});
         const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} });
         try t.expectEqual(@as(usize, 1), r.findings.len);
+    }
+}
+
+test "cxx namespace: a name cut at any length is read or refused, and one cut inside the namespace is never taken as in it" {
+    const whole = [_][]const u8{ "_ZN6snappy6SourceD2Ev", "_ZTVN6snappy6SourceE", "_ZTIN6snappy6SourceE", "_ZTSN6snappy6SourceE", "_ZTTN6snappy3FooE", "_ZGVN6snappy4onceE", "_ZZN6snappy3fooEvE1x", "_ZGVZN6snappy3fooEvE1x", "_ZThn8_N6snappy3Foo3barEv", "_ZTv0_n24_N6snappy3Foo3barEv", "_ZTv16_24_NK6snappy3Foo3barEv", "_ZTCN6snappy3FooE0_N6snappy4BaseE" };
+    for (whole) |w| {
+        try t.expect(A.inCxxNamespace(w, &.{"snappy"}));
+        var n: usize = 0;
+        while (n < w.len) : (n += 1) {
+            const cut = w[0..n];
+            // The namespace is named whole by its length and bytes, so a cut that takes any of "6snappy" away is outside.
+            if (std.mem.indexOf(u8, cut, "6snappy") == null) {
+                if (A.inCxxNamespace(cut, &.{"snappy"})) {
+                    std.debug.print("taken though cut: {s}\n", .{cut});
+                    return error.TestUnexpectedResult;
+                }
+            }
+        }
     }
 }
 
@@ -978,15 +997,15 @@ test "cxx namespace: the command line takes it with a prefix only, and run honou
     err.clearRetainingCapacity();
     try t.expectEqual(@as(u8, 0), try A.run(a, tmp.dir, "", &.{ "libx.a", "r2.json", "--prefix", "k_", "--cxx-namespace", "snappy" }, &err));
     try t.expectEqual(@as(usize, 0), err.items.len);
-    // An empty name, `std` and a name that is not an identifier are refused, saying so.
-    for ([_][]const u8{ "", "std", "a-b", "a::b" }) |bad| {
+    // An empty name, `std`, a name that starts with a digit and a name that is not an identifier are refused, saying so.
+    for ([_][]const u8{ "", "std", "a-b", "a::b", "1abc", "9" }) |bad| {
         err.clearRetainingCapacity();
         try t.expectEqual(@as(u8, 2), try A.run(a, tmp.dir, "", &.{ "libx.a", "r3.json", "--prefix", "k_", "--cxx-namespace", bad }, &err));
-        try t.expect(std.mem.indexOf(u8, err.items, "a namespace is a name of letters, digits and _, and not empty or std") != null);
+        try t.expect(std.mem.indexOf(u8, err.items, "a namespace is an identifier: letters, digits and _, not starting with a digit, and not empty or std") != null);
     }
     // A name that merely starts with std is a namespace.
     err.clearRetainingCapacity();
-    try t.expectEqual(@as(u8, 0), try A.run(a, tmp.dir, "", &.{ "libx.a", "r4.json", "--prefix", "k_", "--cxx-namespace", "snappy", "--cxx-namespace", "stdx" }, &err));
+    try t.expectEqual(@as(u8, 0), try A.run(a, tmp.dir, "", &.{ "libx.a", "r4.json", "--prefix", "k_", "--cxx-namespace", "snappy", "--cxx-namespace", "stdx", "--cxx-namespace", "_9" }, &err));
 }
 
 test "--members any: members out of the order of their names are not a finding, and the other rules still hold" {

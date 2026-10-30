@@ -1,4 +1,5 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//ci/faulty:applets.bzl", "archive_files_over_applets")
 load("@buildrules//ci/mojo_gate:fixture.bzl", "gate_fixture_lib")
 load("@buildrules//rules:isa.bzl", "test_exec_compatible_with")
 load("@buildrules//rules/core:run_check.bzl", "run_check")
@@ -121,6 +122,13 @@ mojo_test_run_rule(
     exec_compatible_with = test_exec_compatible_with(),
 )
 
+# The multi-call shim of applets_without_link_counts (ci/faulty/applets.bzl).
+zig_exe(
+    name = "applets",
+    src = "applets.zig",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
 # The run of a Mojo test that hangs: the program blocks forever (it reads a pipe nobody writes). Its hang limit is one second (`test_hang_limit_s`, rules/core/hang_limit.bzl):
 # the run must be stopped at it, red, with the hang-limit verdict and not a pass or a time-out of the executor. Only the verdict is held, never the time it took.
 zig_exe(
@@ -224,6 +232,15 @@ archive_files(
     strip_prefix = "pkg",
     visibility = ["//ci:"],
 )
+
+# `archive_files` counts the names of a listed file with `stat -c %h`, and refuses the file when the count is not a number. The applets below stand in for the pinned ones but print
+# nothing, or a word, for that one call; the control is the same file of the same archive (copy.c, a hard link to ok.c) staged by the pinned ones, in
+# archive_files_of_files_without_links.
+archive_files_over_applets("no_link_count", "")
+
+archive_files_over_applets("a_word_for_the_link_count", "unknown")
+
+archive_files_over_applets("a_link_count_too_long_to_compare", "99999999999999999999")
 
 archive_files(
     name = "archive_files_of_a_link_as_the_strip_prefix",

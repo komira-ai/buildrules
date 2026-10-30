@@ -18,6 +18,7 @@ For a macOS arm64 target platform the same two targets build a Mach-O archive: t
 
 load("//rules:isa.bzl", "ISA_LEVELS", "isa_select")
 load("//rules/core:platform.bzl", "LINUX_X86_64", "by_os_cpu", "os_cpu_keys")
+load(":checks.bzl", "check_cxx_namespaces")
 load(":defs.bzl", "prefix_header")
 load(":providers.bzl", "NativeArchiveInfo", "NativeLibraryInfo")
 
@@ -160,9 +161,7 @@ def native_static(
         file_prefix = native.package_name()
     if prefix and prefix_min <= 0:
         fail("{}: prefix_min must be the least number of symbols the library defines (it stops a header made from the wrong archive)".format(name))
-    for ns in prefix_cxx_namespaces:
-        if not ns or ns == "std" or not all([c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for c in ns.elems()]):
-            fail("{}: prefix_cxx_namespaces holds {}; a namespace is a name of letters, digits and _, and not empty or std".format(name, repr(ns)))
+    check_cxx_namespaces(name, prefix_cxx_namespaces)
     if not prefix and (prefix_strip or prefix_min or prefix_cxx_namespaces):
         fail("{}: prefix_strip, prefix_min and prefix_cxx_namespaces need a prefix".format(name))
 
