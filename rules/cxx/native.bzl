@@ -160,6 +160,9 @@ def native_static(
         file_prefix = native.package_name()
     if prefix and prefix_min <= 0:
         fail("{}: prefix_min must be the least number of symbols the library defines (it stops a header made from the wrong archive)".format(name))
+    for ns in prefix_cxx_namespaces:
+        if not ns or ns == "std" or not all([c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" for c in ns.elems()]):
+            fail("{}: prefix_cxx_namespaces holds {}; a namespace is a name of letters, digits and _, and not empty or std".format(name, repr(ns)))
     if not prefix and (prefix_strip or prefix_min or prefix_cxx_namespaces):
         fail("{}: prefix_strip, prefix_min and prefix_cxx_namespaces need a prefix".format(name))
 

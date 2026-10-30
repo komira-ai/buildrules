@@ -798,7 +798,7 @@ test "the C library list at the floor holds the names aws-lc needs, and the macO
     try t.expectEqual(@as(usize, 0), (try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = elf }}), .{})).findings.len);
 }
 
-// ---- what the verification of the prefix rules left open ------------------------------------------------------------------------------------------------------------
+// ---- the rules of the prefix check at their edges: symbol tables, weak references, kinds of definition, the runtime, the lists, malformed archives ----------
 
 test "members: only the exact names of the symbol tables are tables; a member whose name begins like one is a member and its symbols are read" {
     var ar = arena();
@@ -898,11 +898,11 @@ test "fuzz: a malformed ELF archive is read or refused, whatever bytes were chan
     const o1 = try object(a, &.{ .{ .name = "k_one", .kind = .def }, .{ .name = "memcpy", .kind = .undef }, .{ .name = "lib_hook", .kind = .weak_undef }, .{ .name = "leaked", .kind = .common } }, &.{ ".text", ".debug_info" });
     const o2 = try object(a, &.{ .{ .name = "k_two", .kind = .def }, .{ .name = "k_one", .kind = .undef } }, &.{".text"});
     const good = try archive(a, &.{ .{ .name = "a.o", .data = o1 }, .{ .name = "b.o", .data = o2 } });
-    try fuzz(a, good, 3000, 0x5eed);
+    try fuzz(good, 3000, 0x5eed);
 }
 
 /// `cases` copies of `good`, each with one to three bytes changed, or cut short, through `check` with every option on, then `members`. Nothing may panic or hang; the verdict is not judged.
-pub fn fuzz(a: std.mem.Allocator, good: []const u8, cases: usize, seed: u64) !void {
+pub fn fuzz(good: []const u8, cases: usize, seed: u64) !void {
     var prng = std.Random.DefaultPrng.init(seed);
     const rnd = prng.random();
     var i: usize = 0;
@@ -920,7 +920,6 @@ pub fn fuzz(a: std.mem.Allocator, good: []const u8, cases: usize, seed: u64) !vo
         _ = try A.check(x, "fuzz.a", b, .{ .prefix = "k_", .min_prefixed = 1, .original = &.{"lib_hook"}, .runtime_cxx = true, .needs = &.{good} });
         _ = A.members(x, b) catch {};
     }
-    _ = a;
 }
 
 // ---- C++ names of a namespace in a library that renames only its C API (`cxx_namespaces`, `--cxx-namespace`) -------------------------------------------------------
@@ -929,7 +928,8 @@ test "cxx namespace: a mangled name in the namespace is not a leak, in any of it
     var ar = arena();
     defer ar.deinit();
     const a = ar.allocator();
-    const inside = [_][]const u8{ "_ZN6snappy6SourceD2Ev", "_ZNK6snappy6Source9AvailableEv", "_ZNKR6snappy3FooEv", "_ZNVK6snappy3BarEv", "_ZNO6snappy3BazEv", "_ZTVN6snappy6SourceE", "_ZTIN6snappy6SourceE", "_ZTSN6snappy6SourceE", "_ZGVN6snappy4onceE", "_ZN6snappy" };
+    const inside = [_][]const u8{ "_ZN6snappy6SourceD2Ev", "_ZNK6snappy6Source9AvailableEv", "_ZNKR6snappy3FooEv", "_ZNVK6snappy3BarEv", "_ZNO6snappy3BazEv", "_ZTVN6snappy6SourceE", "_ZTIN6snappy6SourceE", "_ZTSN6snappy6SourceE", "_ZGVN6snappy4onceE", "_ZN6snappy", "_ZZN6snappy3fooEvE1x", "_ZGVZN6snappy3fooEvE1x", "_ZZNK6snappy3Foo3barEvE1y", "_ZThn8_N6snappy3Foo3barEv", "_ZTh0_N6snappy3Foo3barEv", "_ZTv0_n24_N6snappy3Foo3barEv", "_ZTv16_24_NK6snappy3Foo3barEv", "_ZTTN6snappy3FooE", "_ZTCN6snappy3FooE0_N6snappy4BaseE", "_ZN6snappyz" };
+    // `_ZN6snappyz` is not a name a compiler writes (a nested name needs a further component or `E` after `snappy`); it is accepted because its first component is `snappy`.
     for (inside) |n| {
         const o = try object(a, &.{ .{ .name = "k_snappy_compress", .kind = .def }, .{ .name = n, .kind = .def } }, &.{});
         const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} });
@@ -940,13 +940,11 @@ test "cxx namespace: a mangled name in the namespace is not a leak, in any of it
         // Without the namespace the same name is a leak.
         try t.expect(hasFinding(try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_" }), n));
     }
-    const outside = [_][]const u8{ "_Z3foov", "_ZN5other3fooEv", "_ZN7snappyx3fooEv", "_ZN5snapp3fooEv", "_ZN3foo6snappy3barEv", "_ZNSt6snappy", "_ZN99999999999999999999999snappy", "_ZN", "_ZN0", "_ZN6snap", "_ZTV6snappy", "snappy_x", "_ZN6snappyz" };
+    const outside = [_][]const u8{ "_Z3foov", "_ZN5other3fooEv", "_ZN7snappyx3fooEv", "_ZN5snapp3fooEv", "_ZN3foo6snappy3barEv", "_ZNSt6snappy", "_ZN99999999999999999999999snappy", "_ZN", "_ZN0", "_ZN6snap", "_ZTV6snappy", "snappy_x", "_ZZN5other3fooEvE1x", "_ZZ3foovE1x", "_ZZ6snappyvE1x", "_ZGVZN5other3fooEvE1x", "_ZThn8_N5other3Foo3barEv", "_ZThn8_3foov", "_ZTh_N6snappy3Foo3barEv", "_ZThn8N6snappy3Foo3barEv", "_ZTv0_n24_N5other3FooE", "_ZTv0_N6snappy3FooE", "_ZTv0_5_3foov", "_ZTTN5other3FooE", "_ZTCN5other3FooE0_N6snappy4BaseE", "_ZTT6snappy", "_ZTCN7snappyx3FooE0_N6snappy4BaseE" };
     for (outside) |n| {
         const o = try object(a, &.{ .{ .name = "k_snappy_compress", .kind = .def }, .{ .name = n, .kind = .def } }, &.{});
         const r = try A.check(a, "libx.a", try archive(a, &.{.{ .name = "a.o", .data = o }}), .{ .prefix = "k_", .cxx_namespaces = &.{"snappy"} });
-        // `_ZN6snappyz` has a component of six bytes, `snappy`, and a rest: the grammar allows it, so it is in the namespace.
-        const expected: usize = if (std.mem.eql(u8, n, "_ZN6snappyz")) 0 else 1;
-        try t.expectEqual(expected, r.findings.len);
+        try t.expectEqual(@as(usize, 1), r.findings.len);
     }
 }
 
@@ -970,7 +968,6 @@ test "cxx namespace: the command line takes it with a prefix only, and run honou
     try t.expectEqual(@as(usize, 2), c.cxx_namespaces.len);
     try t.expectEqualStrings("lz4", c.cxx_namespaces[1]);
     try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--cxx-namespace", "snappy" })) == null);
-    try t.expect((try A.parseArgs(a, &.{ "l.a", "r.json", "--prefix", "k_", "--cxx-namespace", "" })) == null);
     try t.expectEqual(@as(usize, 0), (try A.parseArgs(a, &.{ "l.a", "r.json" })).?.cxx_namespaces.len);
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
@@ -981,6 +978,15 @@ test "cxx namespace: the command line takes it with a prefix only, and run honou
     err.clearRetainingCapacity();
     try t.expectEqual(@as(u8, 0), try A.run(a, tmp.dir, "", &.{ "libx.a", "r2.json", "--prefix", "k_", "--cxx-namespace", "snappy" }, &err));
     try t.expectEqual(@as(usize, 0), err.items.len);
+    // An empty name, `std` and a name that is not an identifier are refused, saying so.
+    for ([_][]const u8{ "", "std", "a-b", "a::b" }) |bad| {
+        err.clearRetainingCapacity();
+        try t.expectEqual(@as(u8, 2), try A.run(a, tmp.dir, "", &.{ "libx.a", "r3.json", "--prefix", "k_", "--cxx-namespace", bad }, &err));
+        try t.expect(std.mem.indexOf(u8, err.items, "a namespace is a name of letters, digits and _, and not empty or std") != null);
+    }
+    // A name that merely starts with std is a namespace.
+    err.clearRetainingCapacity();
+    try t.expectEqual(@as(u8, 0), try A.run(a, tmp.dir, "", &.{ "libx.a", "r4.json", "--prefix", "k_", "--cxx-namespace", "snappy", "--cxx-namespace", "stdx" }, &err));
 }
 
 test "--members any: members out of the order of their names are not a finding, and the other rules still hold" {

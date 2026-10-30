@@ -554,17 +554,44 @@ fn isSymdef(name: []const u8) bool {
     return false;
 }
 
-/// Whether `name` (an Itanium-mangled C name: a Mach-O symbol's leading underscore removed) is in one of the C++ namespaces `spaces`: a nested name (`_ZN`, with the
-/// qualifiers `r V K` and the reference qualifiers `R O` that may follow), the table, type information and type name of a class in it (`_ZTVN`, `_ZTIN`, `_ZTSN`) or
-/// the guard of a static in it (`_ZGVN`), whose first component is the namespace: its length, then its text. `_ZN7snappyx` is the namespace `snappyx`, not `snappy`.
+/// Skips `[n]<digits>` (a thunk's offset, at least one digit) and the `_` after it; null when it is not there.
+fn skipOffset(s: []const u8) ?[]const u8 {
+    var i: usize = 0;
+    if (i < s.len and s[i] == 'n') i += 1;
+    const from = i;
+    while (i < s.len and s[i] >= '0' and s[i] <= '9') i += 1;
+    if (i == from or i >= s.len or s[i] != '_') return null;
+    return s[i + 1 ..];
+}
+
+/// The text after the `N` that opens the nested name an Itanium-mangled C name is about, or null when the name has none of the forms below.
+fn afterNestedOpen(name: []const u8) ?[]const u8 {
+    // The nested name itself, the table, type information and type name of a class, its VTT and construction vtables, the guard of a static, and a local name (`_ZZ`:
+    // a function's encoding, then the entity in it) or the guard of a function-local static (`_ZGVZ`), whose function is a nested name.
+    for ([_][]const u8{ "_ZN", "_ZTVN", "_ZTIN", "_ZTSN", "_ZTTN", "_ZTCN", "_ZGVN", "_ZZN", "_ZGVZN" }) |p| {
+        if (std.mem.startsWith(u8, name, p)) return name[p.len..];
+    }
+    // A non-virtual thunk (`_ZTh <offset> _ <encoding>`) and a virtual thunk (`_ZTv <offset> _ <offset> _ <encoding>`) of a function that is a nested name.
+    var rest: []const u8 = undefined;
+    if (std.mem.startsWith(u8, name, "_ZTh")) {
+        rest = skipOffset(name[4..]) orelse return null;
+    } else if (std.mem.startsWith(u8, name, "_ZTv")) {
+        rest = skipOffset(name[4..]) orelse return null;
+        rest = skipOffset(rest) orelse return null;
+    } else return null;
+    if (rest.len == 0 or rest[0] != 'N') return null;
+    return rest[1..];
+}
+
+/// Whether `name` (an Itanium-mangled C name: a Mach-O symbol's leading underscore removed) is in one of the C++ namespaces `spaces`: its nested name (see
+/// `afterNestedOpen` for the forms: `_ZN`, `_ZTVN`, `_ZTIN`, `_ZTSN`, `_ZTTN`, `_ZTCN`, `_ZGVN`, `_ZZN`, `_ZGVZN`, `_ZTh`, `_ZTv`; the qualifiers `r V K` and `R O` may follow the `N`)
+/// has the namespace as its first component: a length, then that many bytes, compared whole. `_ZN7snappyx` is the namespace `snappyx`, not `snappy`. What follows the first
+/// component is not parsed: the Itanium grammar needs a further component or `E`, which no compiler leaves out, so `_ZN6snappyz` (not a name a compiler writes) is accepted as in
+/// `snappy`. Not handled, so reported as a name without the prefix: a class that is not a nested name (`_ZTV6snappy...`), covariant thunks (`_ZTc`), templates of a global
+/// function over a type of the namespace, and a namespace that is not the first component (`_ZN3foo6snappy...`).
 pub fn inCxxNamespace(name: []const u8, spaces: []const []const u8) bool {
     if (spaces.len == 0) return false;
-    var rest: []const u8 = undefined;
-    if (std.mem.startsWith(u8, name, "_ZN")) {
-        rest = name[3..];
-    } else if (std.mem.startsWith(u8, name, "_ZTVN") or std.mem.startsWith(u8, name, "_ZTIN") or std.mem.startsWith(u8, name, "_ZTSN") or std.mem.startsWith(u8, name, "_ZGVN")) {
-        rest = name[5..];
-    } else return false;
+    var rest = afterNestedOpen(name) orelse return false;
     var k: usize = 0;
     while (k < rest.len and std.mem.indexOfScalar(u8, "rVKRO", rest[k]) != null) k += 1;
     rest = rest[k..];
@@ -689,7 +716,6 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8) std.mem.Allocat
         } else if (std.mem.eql(u8, flag, "--min-prefixed")) {
             c.min_prefixed = std.fmt.parseUnsigned(usize, val, 10) catch return null;
         } else if (std.mem.eql(u8, flag, "--cxx-namespace")) {
-            if (val.len == 0) return null;
             spaces.push(val);
         } else if (std.mem.eql(u8, flag, "--original")) {
             original.push(val);
@@ -735,6 +761,17 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, dir: []const u8, args: []const
         tell(a, err, &oom, "{s}\n", .{usage});
         return exit(oom, 2);
     };
+    // A namespace is an identifier, and not `std`: the standard library's own names are not the library's to keep (and `_ZN3std` is what other languages' symbols look like too).
+    for (c.cxx_namespaces) |ns| {
+        var ok = ns.len != 0 and !std.mem.eql(u8, ns, "std");
+        for (ns) |ch| {
+            if (!(std.ascii.isAlphanumeric(ch) or ch == '_')) ok = false;
+        }
+        if (!ok) {
+            tell(a, err, &oom, "archive_check: --cxx-namespace {s}: a namespace is a name of letters, digits and _, and not empty or std\n", .{ns});
+            return exit(oom, 2);
+        }
+    }
     const bytes = cwd.readFileAlloc(a, c.archive, 1 << 30) catch |e| return unreadable(a, err, c.archive, e);
     var needs = Acc([]const u8){ .a = a, .oom = &oom };
     for (c.needs) |n| {

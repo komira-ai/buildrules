@@ -135,6 +135,10 @@ _ALL.append(accepts("asm_split_of_nothing_names_nothing", check_asm_split_matche
 
 _ALL.append(accepts("prefix_with_cxx_namespaces_is_accepted", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["snappy"]}]))
 
+_ALL.append(accepts("prefix_cxx_namespace_stdx_is_accepted", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["stdx", "std_"]}]))
+
+_ALL.append(refuses("prefix_empty_cxx_namespace_is_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": [""]}], ["cxx_namespaces"]))
+
 _ALL.append(refuses("prefix_cxx_namespace_std_is_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["snappy", "std"]}], ["never `std`"]))
 
 _ALL.append(refuses("prefix_cxx_namespaces_that_are_not_identifiers_are_refused", check_prefix, [_WHO, {"name": "k", "min": 1, "cxx_namespaces": ["a::b"]}], ["cxx_namespaces"]))

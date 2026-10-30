@@ -442,6 +442,8 @@ FAULTY = [
     ("//ci/faulty:nl_zlib_user_without_the_export", "//ci/faulty:nl_zlib_user", "'zlib.h' file not found"),
     ("//ci/faulty:nl_priv_user_including_it", "//ci/faulty:nl_priv_user", "'p/priv.h' file not found"),
     ("//ci/faulty:nl_prefix_leaks_a_symbol", "//ci/faulty:nl_prefix_good", "1 defined symbol(s) without the prefix faultyp: faulty_prefixed_fixed"),
+    # The namespace a renamed library keeps is named by `prefix_cxx_namespaces`; without it the mangled name is a symbol without the prefix.
+    ("//ci/faulty:native_prefix_namespace_unnamed", "//ci/faulty:native_prefix_namespace_good", "1 defined symbol(s) without the prefix faultyp: _ZN6snappy3fooEv"),
     # The data and the variables of a Mojo test (ci/mojo_data/BUCK): the stand-in test reads what is staged and says which of its expectations failed.
     # The control of each is the run that stages everything the probe expects.
     ("//ci/mojo_data:run_red_content", "//ci/mojo_data:run_green", "data_probe: greeting.txt holds other data"),
