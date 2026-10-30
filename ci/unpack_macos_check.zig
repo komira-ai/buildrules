@@ -66,6 +66,9 @@ fn pinField(bootstrap: []const u8, host: []const u8, key: []const u8) ?[]const u
     return std.mem.trim(u8, v, " ,\"");
 }
 
+/// The lowest macOS the macOS programs of buildrules run on: what the pinned zig 0.15.2 targets for `aarch64-macos` with no version. The job builds for it and fails when a Mach-O is above it.
+pub const macos_min = "13.0";
+
 pub fn check(a: std.mem.Allocator, workflow: []const u8, hosts: []const u8, bootstrap: []const u8) !Findings {
     var f = Findings.empty;
     var buf: [64]u8 = undefined;
@@ -96,6 +99,9 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, hosts: []const u8, boot
     defer a.free(unpack_cmd);
     if (!mentions(job, unpack_cmd)) try add(a, &f, "the unpack_macos job does not unpack the darwin zig with its sha256 and size checked (`{s}`)", .{unpack_cmd});
     if (!mentions(job, "./zig-next/zig build-exe -OReleaseSafe -fstrip tools/bootstrap/src/unpack.zig -femit-bin=unpack-native")) try add(a, &f, "the unpack_macos job does not build tools/bootstrap/src/unpack.zig with the pinned zig", .{});
+    // The macOS minimum: the program is built for the pinned target, and it and the pinned cross build are held to the same limit by ci/macho_minos.zig.
+    if (!mentions(job, "-target aarch64-macos." ++ macos_min ++ " tools/bootstrap/src/unpack.zig -femit-bin=unpack-pinned")) try add(a, &f, "the unpack_macos job does not build unpack for `-target aarch64-macos." ++ macos_min ++ "`, the pinned macOS minimum", .{});
+    if (!mentions(job, "./zig-next/zig run ci/macho_minos.zig -- --max " ++ macos_min ++ " cross/unpack-macos-aarch64 unpack-pinned\n")) try add(a, &f, "the unpack_macos job does not check the minos of the pinned program and of the pinned build against " ++ macos_min ++ " (ci/macho_minos.zig)", .{});
     if (!mentions(job, "./zig-next/zig test \"tools/bootstrap/src/${name}_test.zig\"")) try add(a, &f, "the unpack_macos job does not run the unit tests natively", .{});
     if (!mentions(job, "diff -r zig-from-tar zig-from-unpack")) try add(a, &f, "the unpack_macos job does not compare the tree with the system tar's (`diff -r zig-from-tar zig-from-unpack`)", .{});
     if (!mentions(job, "test \"$(./zig-from-unpack/zig version)\" = 0.12.0")) try add(a, &f, "the unpack_macos job does not run the unpacked zig and check its version is 0.12.0", .{});
@@ -200,6 +206,11 @@ test "every part of the job is required" {
         .{ "--sha256 294e224c14fd0822cfb15a35cf39aa14bd9967867999bf8bdfe3db7ddec2a27f --size 43447724", "--size 43447724" },
         .{ "--size 43447724 zig-darwin", "--size 43447725 zig-darwin" },
         .{ "-femit-bin=unpack-native", "-femit-bin=other" },
+        .{ "-target aarch64-macos.13.0 tools", "-target aarch64-macos.15.0 tools" },
+        .{ "-target aarch64-macos.13.0 tools", "-target aarch64-macos tools" },
+        .{ "macho_minos.zig -- --max 13.0 cross", "macho_minos.zig -- --max 15.0 cross" },
+        .{ "cross/unpack-macos-aarch64 unpack-pinned\n", "unpack-pinned\n" },
+        .{ "ci/macho_minos.zig -- --max 13.0 cross/unpack-macos-aarch64 unpack-pinned", "true" },
         .{ "tools/bootstrap/src/${name}_test.zig", "tools/bootstrap/src/paths_test.zig" },
         .{ "diff -r zig-from-tar zig-from-unpack", "true" },
         .{ "= 0.12.0", "= 0.12.1" },

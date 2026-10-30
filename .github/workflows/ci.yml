@@ -234,12 +234,14 @@ jobs:
       - name: Build unpack natively
         run: ./zig-next/zig build-exe -OReleaseSafe -fstrip tools/bootstrap/src/unpack.zig -femit-bin=unpack-native
 
-      # The minimum macOS of what is built or pinned here must not be above 14.0 (ci/macho_minos.zig reads the Mach-O's minos).
-      - name: Build unpack for -target aarch64-macos, no version
-        run: ./zig-next/zig build-exe -OReleaseSafe -fstrip -target aarch64-macos tools/bootstrap/src/unpack.zig -femit-bin=unpack-explicit
+      # The runner is macos-15 but the macOS minimum of buildrules is 13.0: what the pinned zig 0.15.2 makes for `-target aarch64-macos` with no version, and what the
+      # pinned cross-built program is. A build made natively takes the runner's own version (15.x), so the build here names the target. ci/macho_minos.zig reads the
+      # Mach-O's minos and fails when it is above the limit.
+      - name: Build unpack for the pinned macOS target
+        run: ./zig-next/zig build-exe -OReleaseSafe -fstrip -target aarch64-macos.13.0 tools/bootstrap/src/unpack.zig -femit-bin=unpack-pinned
 
-      - name: The macOS minimum of the pinned cross build and of the native and explicit builds is at most 14.0
-        run: ./zig-next/zig run ci/macho_minos.zig -- --max 14.0 cross/unpack-macos-aarch64 unpack-native unpack-explicit
+      - name: The macOS minimum of the pinned program and of the build for the pinned target is at most 13.0
+        run: ./zig-next/zig run ci/macho_minos.zig -- --max 13.0 cross/unpack-macos-aarch64 unpack-pinned
 
       - name: The unit tests, natively
         run: |

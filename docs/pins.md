@@ -118,6 +118,8 @@ unless `--apply --work DIR`. The tag ruleset lets only the release bot create a 
 macOS cannot be built or run on the farm. The `unpack_macos` job of `ci.yml` (GitHub's `macos-15` runner) builds the program with the pinned zig for macOS, runs its unit tests natively,
 unpacks the real darwin zig 0.12.0 tarball of `hosts.bzl` into a tree equal to the system tar's, and runs the zig it made; `ci/unpack_macos_check.zig` holds that job to the table.
 
+The minimum macOS of the macOS programs is 13.0, what the pinned zig 0.15.2 targets for `aarch64-macos` with no version; the pinned cross-built program has it, and it does not depend on the runner, because zig on linux makes it. A build made natively on the runner would take the runner's own version (15.x on `macos-15`), so the job builds unpack again for `-target aarch64-macos.13.0` and reads the Mach-O's `minos` (`ci/macho_minos.zig`, the field `otool -l` prints) of that build and of the pinned program: above 13.0 fails the job.
+
 ## Other hosts (linux-aarch64, macos-aarch64)
 
 `rules/pins/hosts.bzl` holds the downloads the two other hosts need from the same upstream releases: zig 0.12.0 and 0.15.2, node 24.21.0 and rustc 1.95.0 and 1.85.0 with
