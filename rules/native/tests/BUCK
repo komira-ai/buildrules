@@ -4,6 +4,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # refusal"). Where the library is configured for a platform, and what its providers say, is held by ci/native_library.bzl.
 load("//rules:matrix.bzl", "group")
 load("//rules/native:checks.bzl", "check_asm_split", "check_asm_split_matched", "check_cxx_runtime", "check_has_sources", "check_prefix", "check_sources", "check_upstream")
+load("//rules/native:link.bzl", "check_cxx_link", "check_link_names")
 load(":helpers.bzl", "cfg_is", "extension_is", "extras_are", "extras_by_path_are", "label_is", "link_order_is", "name_is", "up")
 load("//rules/rust:refusal.bzl", "accepts", "refuses")
 
@@ -203,14 +204,46 @@ _ALL.append(accepts("extra_archive_files_of_one_name_differ_by_position", name_i
 
 _ALL.append(refuses("extra_archive_files_of_one_name_at_two_positions_are_not_one_file_is_refused", name_is, ["name", 2, "libx.a", "001_libx.a"], ["got"]))
 
-# toolchain.cfg: a link of C libraries gets no C++ runtime; one with C++ gets it once, after the archives.
-_ALL.append(accepts("link_cfg_of_c_libraries_has_no_cxx_runtime", cfg_is, ["cfg", ["libmid.a"], False, "link_archive=link_archives/libmid.a\n"]))
+# toolchain.cfg: the system libraries of a link are the unit's `link`, once each, after the archives, in the order mopm gives; a unit with none gets none.
+_ALL.append(accepts("link_cfg_of_c_libraries_has_no_link_tail", cfg_is, ["cfg", ["libmid.a"], [], "link_archive=link_archives/libmid.a\n"]))
 
-_ALL.append(accepts("link_cfg_with_cxx_ends_with_the_runtime_once", cfg_is, ["cfg", ["libcxxlib.a", "libx.a"], True, "link_archive=link_archives/libcxxlib.a\nlink_archive=link_archives/libx.a\nlink_tail=-lc++\n"]))
+_ALL.append(accepts("link_cfg_with_cxx_ends_with_the_library_once", cfg_is, ["cfg", ["libcxxlib.a", "libx.a"], ["c++"], "link_archive=link_archives/libcxxlib.a\nlink_archive=link_archives/libx.a\nlink_tail=-lc++\n"]))
 
-_ALL.append(accepts("link_cfg_of_nothing_is_empty", cfg_is, ["cfg", [], False, ""]))
+_ALL.append(accepts("link_cfg_names_every_library_in_the_order_given", cfg_is, ["cfg", ["liba.a"], ["c++", "dl", "m", "pthread"], "link_archive=link_archives/liba.a\nlink_tail=-lc++\nlink_tail=-ldl\nlink_tail=-lm\nlink_tail=-lpthread\n"]))
 
-_ALL.append(refuses("link_cfg_that_adds_the_runtime_to_a_c_link_is_refused", cfg_is, ["cfg", [], False, "link_tail=-lc++\n"], ["got"]))
+_ALL.append(accepts("link_cfg_of_a_link_without_archives_is_the_tail_alone", cfg_is, ["cfg", [], ["m"], "link_tail=-lm\n"]))
+
+_ALL.append(accepts("link_cfg_of_nothing_is_empty", cfg_is, ["cfg", [], [], ""]))
+
+_ALL.append(refuses("link_cfg_that_adds_a_library_to_a_link_without_one_is_refused", cfg_is, ["cfg", [], [], "link_tail=-lc++\n"], ["got"]))
+
+# mopm's `link`: names of its closed list, none twice.
+_ALL.append(accepts("link_names_of_mopms_whole_list_are_accepted", check_link_names, [_WHO, ["c++", "dl", "m", "pthread"]]))
+
+_ALL.append(accepts("link_names_of_nothing_are_accepted", check_link_names, [_WHO, []]))
+
+_ALL.append(refuses("link_name_outside_the_list_is_refused", check_link_names, [_WHO, ["c++", "X11"]], ["link names \"X11\"", "c++, dl, m, pthread"]))
+
+_ALL.append(refuses("link_name_that_is_a_linker_flag_is_refused", check_link_names, [_WHO, ["-Wl,--wrap=main"]], ["link names \"-Wl,--wrap=main\""]))
+
+_ALL.append(refuses("link_name_twice_is_refused", check_link_names, [_WHO, ["m", "m"]], ["link names m twice"]))
+
+_ALL.append(refuses("link_that_is_not_a_list_is_refused", check_link_names, [_WHO, "c++"], ["link is \"c++\", a list of the names"]))
+
+_ALL.append(refuses("link_name_that_is_not_text_is_refused", check_link_names, [_WHO, [5]], ["link names 5"]))
+
+# A link that holds an archive with C++ sources names c++: mopm's field is the one source of the libraries of a final link.
+_ALL.append(accepts("link_with_cxx_for_cxx_archives_is_accepted", check_cxx_link, [_WHO, True, ["c++"]]))
+
+_ALL.append(accepts("link_with_cxx_among_others_for_cxx_archives_is_accepted", check_cxx_link, [_WHO, True, ["c++", "m"]]))
+
+_ALL.append(accepts("link_without_cxx_for_c_archives_is_accepted", check_cxx_link, [_WHO, False, []]))
+
+_ALL.append(accepts("link_with_cxx_for_c_archives_only_is_accepted", check_cxx_link, [_WHO, False, ["c++"]]))
+
+_ALL.append(refuses("link_without_cxx_for_cxx_archives_is_refused", check_cxx_link, [_WHO, True, []], ["links a native library with C++ sources", "`c++` must be in it", "link = [\"c++\"]"]))
+
+_ALL.append(refuses("link_of_other_libraries_for_cxx_archives_is_refused", check_cxx_link, [_WHO, True, ["m", "pthread"]], ["`c++` must be in it", "[\"m\", \"pthread\"]"]))
 
 # Every refusal of this package, for //ci:refusals.
 group(name = "all", deps = _ALL, visibility = ["PUBLIC"])

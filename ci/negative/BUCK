@@ -8,7 +8,8 @@ load("@buildrules//rules/cxx:defs.bzl", "checked_cxx_library")
 load("@buildrules//rules/native:defs.bzl", "native_library")
 load("@buildrules//rules/node:defs.bzl", "npm_tarball")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage_rule")
-load("@buildrules//rules/mojo:unit.bzl", "mojo_cov_pgo_rule", "mojo_test_run_rule")
+load("@buildrules//rules/mojo:pack.bzl", "mojo_conda")
+load("@buildrules//rules/mojo:unit.bzl", "mojo_cov_pgo_rule", "mojo_test_run_rule", "mojo_unit_rule")
 
 # The control of the bxl check (ci/negative.bzl) on the fixture below: the same run of the same test, with the one line the fixture leaves out. It must analyse, on the platform the
 # fixture does not, or the fixture could be red for another reason.
@@ -141,6 +142,48 @@ mojo_cov_pgo_rule(
     },
     toolchain = "toolchains//:mojo_1_0_0",
     exec_compatible_with = LINUX_X86_64,
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+# A link that holds an archive with C++ sources must name `c++` in the `link` of its unit, mopm's field and the one source of the system libraries of a link: a program that
+# links `examples/native/cxx:cxxlib` with a `link` that lacks it would link without libc++ (or, before the field was the source, with a runtime nothing declared). Each is refused in
+# analysis, naming the fix (rules/native/link.bzl, `check_cxx_link`): the unit of a test, the instrumented link of its branch coverage, and the `:conda` of a package that ships the archive.
+mojo_unit_rule(
+    name = "mojo_unit_linking_a_cxx_archive_without_cxx_in_its_link",
+    graph = "{\"toolchain\": {\"closure_sha256\": \"" + "0" * 64 + "\"}}",
+    kind = "test",
+    mojo = "1.0.0",
+    mopm = "toolchains//:mopm_0_0_101",
+    native_sonames = ["libcxxlib.a"],
+    natives = {"libcxxlib.a": "//examples/native/cxx:cxxlib"},
+    package = "p",
+    product = "t",
+    toolchain = "toolchains//:mojo_1_0_0",
+    unit_id = "p@0.1.0#mojo1.0.0/test:t",
+    exec_compatible_with = LINUX_X86_64,
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+mojo_cov_pgo_rule(
+    name = "mojo_instrumented_link_of_a_cxx_archive_without_cxx_in_its_link",
+    bc = "//examples/mojo/sys_app:test_sys_app__bc",
+    branch = "toolchains//:mojo_1_0_0_cov_branch",
+    native_sonames = ["libcxxlib.a"],
+    natives = {"libcxxlib.a": "//examples/native/cxx:cxxlib"},
+    toolchain = "toolchains//:mojo_1_0_0",
+    exec_compatible_with = LINUX_X86_64,
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+mojo_conda(
+    name = "mojo_conda_of_a_cxx_archive_without_cxx_in_its_link",
+    lib = "//examples/mojo/native_library:lib_ungated",
+    manifest = "//examples/mojo/native_library:mopm.toml",
+    mojo = "1.0.0",
+    mopm = "toolchains//:mopm_0_0_101",
+    natives = {"cxxlib": "//examples/native/cxx:cxxlib"},
+    package = "natlib",
+    version = "0.1.0",
     target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
 )
 

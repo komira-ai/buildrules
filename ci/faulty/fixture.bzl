@@ -23,7 +23,7 @@ def _toolchain_impl(ctx):
     file = ctx.attrs._program[DefaultInfo].default_outputs[0]
     return [
         DefaultInfo(default_output = file),
-        MojoToolchainInfo(version = "0", closure_sha256 = "", cc_target = "", facts = {}, compiler = file, zig = file),
+        MojoToolchainInfo(version = "0", closure_sha256 = "", closures = [], cc_target = "", facts = {}, compiler = file, zig = file),
     ]
 
 _faulty_mojo_toolchain = rule(impl = _toolchain_impl, attrs = {

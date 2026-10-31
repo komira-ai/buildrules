@@ -13,6 +13,10 @@ The facts are read off the configured targets, not off the macro: the actions be
 """
 
 load("@buildrules//rules/cxx:providers.bzl", "NativeLibraryInfo")
+load("//examples/mojo/native_library:buildrules.mojo.lock.bzl", NATLIB_GRAPH = "GRAPH")
+load("//examples/mojo/native_library_cuser:buildrules.mojo.lock.bzl", NATLIB_CUSER_GRAPH = "GRAPH")
+load("//examples/mojo/native_library_deps:buildrules.mojo.lock.bzl", NATLIB_DEPS_GRAPH = "GRAPH")
+load("//examples/mojo/sys_app:buildrules.mojo.lock.bzl", SYS_APP_GRAPH = "GRAPH")
 
 LINUX = "buildrules//platforms:linux_x86_64"
 MACOS = "buildrules//platforms:macos_aarch64"
@@ -115,15 +119,18 @@ def native_library_problems(ctx):
             problems.append("examples/native/deps:top on {}: it exports include directories of a tree it has none of".format(platform))
     return problems
 
-# The link line of a Mojo test binary: what its toolchain.cfg says (rules/native/link.bzl, `link_cfg`). Per target: the `link_archive` lines it must have, in order, and whether it
-# ends with the C++ runtime.
+# The link line of a Mojo test binary: what its toolchain.cfg says (rules/native/link.bzl, `link_cfg`). Per target: the `link_archive` lines it must have, in order, and the system
+# libraries that end the line (`link_tail=-l<name>`, once each, after every archive): the `link` of the test's unit in the committed graph, which is mopm's field and the only
+# source of them. A package whose graph has no `link` has no tail, whatever its archives are.
 LINKS = [
-    # The graph lists left, right, top. `left` and `right` share `shared_base`: once, after both; `top` has `mid` in `deps` and `mid` has `base`: after `top`. C libraries: no runtime.
-    ("//examples/mojo/native_library_deps:test_natlib_deps__bin", ["libshared_base.a", "libmid.a", "libbase.a"], False),
-    # A C library over the C++ one: the archive of the C++ library and the runtime come through `deps`.
-    ("//examples/mojo/native_library_cuser:test_natlib_cuser__bin", ["libcxxlib.a"], True),
-    # The libraries are all named in `natives`, the C++ one among them: nothing to append, and the runtime.
-    ("//examples/mojo/native_library:test_natlib__bin", [], True),
+    # The graph lists left, right, top. `left` and `right` share `shared_base`: once, after both; `top` has `mid` in `deps` and `mid` has `base`: after `top`. C libraries: no `link`, no tail.
+    ("//examples/mojo/native_library_deps:test_natlib_deps__bin", ["libshared_base.a", "libmid.a", "libbase.a"], [], NATLIB_DEPS_GRAPH),
+    # A C library over the C++ one: the archive of the C++ library comes through `deps`, and mopm's list names the C++ runtime and the three others, in its order.
+    ("//examples/mojo/native_library_cuser:test_natlib_cuser__bin", ["libcxxlib.a"], ["c++", "dl", "m", "pthread"], NATLIB_CUSER_GRAPH),
+    # The libraries are all named in `natives`, the C++ one among them: nothing to append, and `link = ["c++"]` of its `[native.cxxlib]`.
+    ("//examples/mojo/native_library:test_natlib__bin", [], ["c++"], NATLIB_GRAPH),
+    # A package of registry archives and no `link`: no tail either (its configuration is what it was before `link` existed).
+    ("//examples/mojo/sys_app:test_sys_app__bin", [], [], SYS_APP_GRAPH),
 ]
 
 def _cfg(ctx, node):
@@ -132,13 +139,26 @@ def _cfg(ctx, node):
             return [l for l in str(a.attrs.contents).strip('"').split("\n") if l]
     return None
 
+def _test_unit(graph, target):
+    stem = target.split(":")[-1][:-len("__bin")]
+    for u in graph["units"]:
+        if u["kind"] == "test" and u["outputs"][0] == stem + ".pass":
+            return u
+    return None
+
 def native_link_cfg_problems(ctx):
     problems = []
     # Linux only: the configuration of a Mojo unit for macOS needs a macOS execution platform (a runner in local mode has none, and analysis refuses it); the lines are the same
     # for both, and the macOS run of the packages is //ci:mojo.
     for platform in [LINUX]:
-        for target, archives, cxx in LINKS:
+        for target, archives, link, graph in LINKS:
             who = "{} on {}".format(target, platform)
+            unit = _test_unit(graph, target)
+            if unit == None:
+                problems.append("{}: no test unit of that name in the committed graph".format(who))
+                continue
+            if unit.get("link", []) != link:
+                problems.append("{}: the committed graph gives the test the link {}, not {}".format(who, unit.get("link", []), link))
             node = ctx.configured_targets(target, target_platform = platform)
             if node == None:
                 problems.append("{}: incompatible with the platform".format(who))
@@ -151,8 +171,18 @@ def native_link_cfg_problems(ctx):
             if got != archives:
                 problems.append("{}: the archives appended to the link line are {}, not {}".format(who, got, archives))
             tails = [l for l in cfg if l.startswith("link_tail=")]
-            if tails != (["link_tail=-lc++"] if cxx else []):
-                problems.append("{}: the link tail is {}, but the link {} the C++ runtime".format(who, tails, "needs" if cxx else "does not need"))
-            if cxx and "link_tail=-lc++" in cfg and cfg.index("link_tail=-lc++") < max([i for i, l in enumerate(cfg) if l.startswith("link_archive=")] + [-1]):
-                problems.append("{}: the C++ runtime comes before an appended archive: {}".format(who, cfg))
+            if tails != ["link_tail=-l" + n for n in link]:
+                problems.append("{}: the link tail is {}, but the unit's link is {}".format(who, tails, link))
+            last_archive = max([i for i, l in enumerate(cfg) if l.startswith("link_archive=")] + [-1])
+            if tails and cfg.index(tails[0]) < last_archive:
+                problems.append("{}: a system library comes before an appended archive: {}".format(who, cfg))
+            # What `mopm unit build` is given: no `link` (the unit rule writes the tail, so mopm adds none, once after the archives and not twice), no `loads`, and a format that has
+            # `provided` only when the slice holds a provided native unit.
+            slice = json.decode(node.attrs_eager().graph.value())
+            if [u["id"] for u in slice["units"] if "link" in u]:
+                problems.append("{}: the unit's graph slice holds `link` on {}: mopm would add the libraries before the appended archives, and the tail would repeat them".format(who, [u["id"] for u in slice["units"] if "link" in u]))
+            provided = any([u.get("provided", False) for u in slice["units"]])
+            want = 4 if provided else 2
+            if slice["unit_graph"] != want:
+                problems.append("{}: the unit's graph slice is format {}, not {} (a slice with a provided native unit is format 4, any other format 2)".format(who, slice["unit_graph"], want))
     return problems

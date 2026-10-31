@@ -56,8 +56,12 @@ def system_libs_problems(ctx, platform):
             got = _lib_dirs(ctx, node)
             if got:
                 problems.append("{}: the compile is given the library directories {}: a library the test loads is no input of its compiled bytes".format(label, got))
+            # The slice is `json.encode`d, so compact (`"unit_graph":3`): it is read as JSON, not searched for a spelling (a search for `"unit_graph": 3` with a space could never find it).
             graph = node.attrs_eager().graph.value()
-            for bad in ["\"loads\"", "\"unit_graph\": 3", "system_libs"]:
+            slice = json.decode(graph)
+            if slice["unit_graph"] != 2:
+                problems.append("{}: the unit's graph slice is format {}: `mopm unit build` is given format 2 (the compile must not move with a pin, a `link` or a `provided` it does not use)".format(label, slice["unit_graph"]))
+            for bad in ["\"loads\"", "\"link\"", "system_libs"]:
                 if bad in graph:
-                    problems.append("{}: the unit's graph slice holds {}: `mopm unit build` is given format 2 and no `loads` (the compile must not move with a pin)".format(label, bad))
+                    problems.append("{}: the unit's graph slice holds {}: `mopm unit build` is given format 2 and no `loads` or `link` (the compile must not move with a pin)".format(label, bad))
     return problems

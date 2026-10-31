@@ -12,7 +12,8 @@ toolchains/mojo_pins.bzl. A change to any of them without a sync leaves a table 
                   sources), so a table that was edited, or left behind by a change, is red. A path dependency is held by identity only (id, version,
                   root, dependencies, outputs): its sources and keys are proved by its own `:table`, so editing one does not turn this one red
     the pins      at analysis: the toolchain the package builds with (`toolchains//:mojo_<v>`, declared from mojo_pins.bzl) must hold exactly
-                  the toolchain section of the table's graph (version, cc_target, closure hash, the zig, every component)
+                  the toolchain section of the table's graph (version, cc_target, the zig, every component) and the graph's closure hash among its
+                  `closures` (packages of two releases of mopm that pin the same compiler may hash their solve differently, and share the row)
 
 The fix is always `buildrules mojo sync`.
 """
@@ -36,7 +37,13 @@ def _impl(ctx):
     who = str(ctx.label.raw_target())
     if tc.version != ctx.attrs.mojo:
         fail("{}: the table is for Mojo {} but {} is Mojo {}: run `buildrules mojo sync`".format(who, ctx.attrs.mojo, ctx.attrs.toolchain.label, tc.version))
-    bad = _differs(tc.facts, ctx.attrs.expect_toolchain)
+    # The pins row holds every closure the graphs of the packages that share it pinned (`closures`, with the first as `closure_sha256`); this package's own graph pins one of them,
+    # and everything else must be the same.
+    held = {k: v for k, v in tc.facts.items() if k not in ("closure_sha256", "closures")}
+    want = {k: v for k, v in ctx.attrs.expect_toolchain.items() if k != "closure_sha256"}
+    bad = _differs(held, want)
+    if ctx.attrs.expect_toolchain.get("closure_sha256") not in tc.closures:
+        bad = bad + ["closure_sha256"]
     if bad:
         fail(("{}: toolchains/mojo_pins.bzl and the table's unit graph disagree about the Mojo {} toolchain ({}): the pins file or the table was " +
               "edited without a sync. Run `buildrules mojo sync`").format(who, ctx.attrs.mojo, ", ".join(bad)))

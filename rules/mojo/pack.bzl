@@ -13,6 +13,7 @@ load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules:platforms.bzl", "linux_arm64_gate")
 load(":exec.bzl", "unit_exec")
 load("//rules/cxx:providers.bzl", "NativeArchiveInfo")
+load("//rules/native:link.bzl", "check_cxx_link")
 load(":providers.bzl", "MojoLibInfo")
 
 def _within(path):
@@ -74,6 +75,9 @@ def _impl(ctx):
         "-o",
         out.as_output(),
     )
+    # A published member whose archive has C++ sources must say `link = ["c++"]` (mopm writes it into the package's metadata, and a consumer's link adds `-lc++` from it): the
+    # `link` of the member's library unit is the graph's statement of it. Refused here, where the archive that ships is known, and not in a consumer's link.
+    check_cxx_link(str(ctx.label), any([(a.get(NativeArchiveInfo) != None and a[NativeArchiveInfo].cxx) for a in ctx.attrs.natives.values()]), ctx.attrs.link)
     for native_id, archive in ctx.attrs.natives.items():
         # The package's `[native.<id>] kind = "static"`: the archive is `lib<id>.a` in the `.conda` (mopm names the library by the file's name, which must
         # be the soname of the unit: a `native_archive` says its own).
@@ -96,6 +100,8 @@ _mojo_conda = rule(
         "members": attrs.dict(attrs.string(), attrs.source(), default = {}),
         # `[native.<id>]` of the manifest -> the static archive (a `cxx_library[static-pic]`) packed as `lib<id>.a` (mopm pack --native).
         "natives": attrs.dict(attrs.string(), attrs.dep(), default = {}),
+        # The `link` of the member's library unit in mopm's graph: the system libraries a consumer's final link adds (`[native.<id>] link = [...]` of the manifest).
+        "link": attrs.list(attrs.string(), default = []),
         "mojo": attrs.string(),
         "mopm": attrs.exec_dep(),
         "package": attrs.string(),
@@ -107,7 +113,9 @@ _mojo_conda = rule(
 )
 
 def mojo_conda(**kwargs):
-    _mojo_conda(exec_compatible_with = unit_exec(), target_compatible_with = linux_arm64_gate(), **kwargs)
+    # A `target_compatible_with` of the caller is added to the arm64 gate's.
+    own = kwargs.pop("target_compatible_with", [])
+    _mojo_conda(exec_compatible_with = unit_exec(), target_compatible_with = linux_arm64_gate() + own, **kwargs)
 
 def _holds_impl(ctx):
     out = ctx.actions.declare_output(ctx.attrs.package + ".mojoc")

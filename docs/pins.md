@@ -71,6 +71,14 @@ or `liblzma` is the conda package `liblzma` (the runtime library, `liblzma.so.5`
 `liblzma-devel`, none of which holds the library a program loads. A lock written by 0.0.86 for a package that declares `lzma` pins `liblzma` alone in `system_libs`; the nine packages of each subdir's
 catalog all unpack with `conda_unpack --all-libs` (`rules/mojo/system_libs.bzl`), checked on the farm with the files of the catalog.
 
+## mopm 0.0.101
+
+mopm 0.0.101 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.101, pinned for all three hosts beside 0.0.86 in the same two tables, with the sizes and digests of its assets
+as in the release's `SHA256SUMS` (downloaded and `sha256sum -c` checked, 2026-10-30; nothing was run). Since 0.0.86 two things changed that this tree reads: a `[native.<id>]` can say `provided = true`
+(the archive is the product of a rule of the build system, not compiled from `srcs`: unit graph format 4), and `link = ["c++"]` (the system libraries the final link of every consumer adds, from the
+closed list `c++`, `dl`, `m`, `pthread`: unit graph format 5, a `link` on each unit that links archives). `rules/mojo` reads formats 1 to 5 (docs/contract.md, section 12.4); the packages
+`examples/mojo/native_library`, `native_library_cuser` and `native_library_deps` name 0.0.101 in their `mopm-toolchain.toml` and are the committed graphs of formats 5, 5 and 4.
+
 ## Mirrors
 
 `buildrules.url_map` (rules/core/url_map.bzl) replaces the leading part of a download's URL and nothing else: the sha256 and size are still checked, so a mirror

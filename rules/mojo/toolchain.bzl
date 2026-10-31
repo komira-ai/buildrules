@@ -39,6 +39,7 @@ def _impl(ctx):
         MojoToolchainInfo(
             version = ctx.attrs.version,
             closure_sha256 = ctx.attrs.closure_sha256,
+            closures = ctx.attrs.closures or [ctx.attrs.closure_sha256],
             cc_target = ctx.attrs.cc_target,
             facts = ctx.attrs.facts,
             compiler = ctx.attrs.compiler[DefaultInfo].default_outputs[0],
@@ -51,6 +52,7 @@ mojo_toolchain = rule(
     attrs = {
         "cc_target": attrs.string(),
         "closure_sha256": attrs.string(),
+        "closures": attrs.list(attrs.string(), default = []),
         "compiler": attrs.dep(),
         "facts": attrs.dict(attrs.string(), attrs.any()),
         "version": attrs.string(),
@@ -171,6 +173,7 @@ def mojo_toolchains(table = {}):
             name = "mojo_" + v,
             cc_target = row["cc_target"],
             closure_sha256 = row["closure_sha256"],
+            closures = row.get("closures", []),
             compiler = ":mojo_{}_compiler".format(v),
             facts = row,
             version = version,
@@ -217,6 +220,7 @@ def mojo_subdir_toolchains(by_subdir = {}):
                 name = "mojo_" + v,
                 cc_target = row["cc_target"],
                 closure_sha256 = row["closure_sha256"],
+                closures = row.get("closures", []),
                 compiler = ":mojo_{}_compiler".format(v),
                 facts = row,
                 version = version,

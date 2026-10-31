@@ -3,35 +3,36 @@ name = "natlib"
 version = "0.1.0"
 mojo = ["1.0.0"]
 
-# The three static libraries the package links are built by `native_library` targets (examples/native), named in the BUCK file's `natives = {...}`. The manifest names a
-# source for each only because mopm's manifest has no entry for a library the package does not compile yet (`provided = true`); the file is not compiled.
+# The static libraries the package links are built by `native_library` targets (examples/native), named in the BUCK file's `natives = {...}`: each is `provided = true`, an archive
+# of the build and not compiled from sources by mopm. `cxxlib` has C++ sources, so its `link` names `c++`: a program that links it ends its link line with `-lc++` from mopm's graph.
 [native.zlib]
 kind = "static"
-srcs = ["native/zlib.c"]
+provided = true
 
 [native.cxxlib]
 kind = "static"
-srcs = ["native/cxxlib.c"]
+provided = true
+link = ["c++"]
 
 [native.asm_prefixed]
 kind = "static"
-srcs = ["native/asm_prefixed.c"]
+provided = true
 
 [native.asm_split]
 kind = "static"
-srcs = ["native/asm_split.c"]
+provided = true
 
 [native.hooks]
 kind = "static"
-srcs = ["native/hooks.c"]
+provided = true
 
 [native.hooks_provider]
 kind = "static"
-srcs = ["native/hooks_provider.c"]
+provided = true
 
 [native.asm_add]
 kind = "static"
-srcs = ["native/asm_add.c"]
+provided = true
 
 [targets]
 lib = { path = "src/natlib" }
