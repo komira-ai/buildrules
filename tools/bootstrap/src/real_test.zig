@@ -10,6 +10,33 @@ test "the pinned zig tarball (tar.xz) extracts to the zig distribution the build
     try real.sameAsDirectory("zig", "zig.tar.xz", 1, dist);
 }
 
+test "the zig 0.12.0 distribution the build makes is the tree the reference tar makes of the same tarball" {
+    const dist = try real.envPath("ZIG_DIST");
+    defer real.a.free(dist);
+    try real.distIsReferenceTar("zig", "zig.tar.xz", "-xJf", 1, dist);
+}
+
+test "the zig 0.15.2 distribution the build makes is the tree the reference tar makes of the same tarball" {
+    const dist = try real.envPath("ZIG_NEXT_DIST");
+    defer real.a.free(dist);
+    try real.distIsReferenceTar("zig_next", "zig_next.tar.xz", "-xJf", 1, dist);
+}
+
+test "the mopm executable the build makes is the file the reference tar extracts from the same tarball" {
+    const theirs = try real.referenceExtract("mopm", "mopm.tar.gz", "-xzf", 1);
+    defer real.a.free(theirs);
+    const inner = try real.join(&.{ theirs, "mopm" });
+    defer real.a.free(inner);
+    const exe = try real.envPath("MOPM");
+    defer real.a.free(exe);
+    const want = try real.sha256(inner);
+    const got = try real.sha256(exe);
+    try std.testing.expectEqualStrings(&want, &got);
+    // The executable bit is part of the output's key.
+    const st = try std.fs.cwd().statFile(exe);
+    try std.testing.expect(st.mode & 0o111 != 0);
+}
+
 test "the pinned actionlint tarball (tar.gz) extracts to what busybox extracts" {
     try real.sameAsBusyboxTar("actionlint", "actionlint.tar.gz", "-xzf");
 }

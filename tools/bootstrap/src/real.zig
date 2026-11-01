@@ -133,3 +133,33 @@ pub fn sameAsBusyboxTar(name: []const u8, archive: []const u8, flag: []const u8)
     try std.testing.expectEqual(@as(u8, 0), try run(&.{ bb, "tar", flag, arch, "-C", theirs }));
     try sameAsDirectory(name, archive, 0, theirs);
 }
+
+/// The tree of `dist`, a directory a rule of the build made from `archive` (in the work directory), against the tree the reference `tar <flag> archive -C dir
+/// --strip-components=<strip>` makes of the same bytes: the entries, executable bits, sizes, content digests and link targets Buck2 keys the output by.
+pub fn distIsReferenceTar(name: []const u8, archive: []const u8, flag: []const u8, strip: u8, dist: []const u8) !void {
+    const theirs = try referenceExtract(name, archive, flag, strip);
+    defer a.free(theirs);
+    const m = try tree(dist);
+    defer a.free(m);
+    const b = try tree(theirs);
+    defer a.free(b);
+    try std.testing.expect(b.len > 0);
+    try std.testing.expectEqualStrings(b, m);
+}
+
+/// Extracts `archive` (in the work directory) with busybox's tar into `<work>/<name>_reference_dist` and returns that path.
+pub fn referenceExtract(name: []const u8, archive: []const u8, flag: []const u8, strip: u8) ![]u8 {
+    const w = try work();
+    defer a.free(w);
+    const bb = try envPath("BUSYBOX");
+    defer a.free(bb);
+    const arch = try join(&.{ w, archive });
+    defer a.free(arch);
+    const theirs = try std.fmt.allocPrint(a, "{s}/{s}_reference_dist", .{ w, name });
+    errdefer a.free(theirs);
+    try std.fs.cwd().makePath(theirs);
+    const strip_flag = try std.fmt.allocPrint(a, "--strip-components={d}", .{strip});
+    defer a.free(strip_flag);
+    try std.testing.expectEqual(@as(u8, 0), try run(&.{ bb, "tar", flag, arch, "-C", theirs, strip_flag }));
+    return theirs;
+}

@@ -54,6 +54,7 @@ def mopm_toolchains(extra = {}):
             url = mapped_url(row["url"]),
             sha256 = row["sha256"],
             size_bytes = row["size"],
+            visibility = ["PUBLIC"],
         )
         base = ":mopm-{}.tar.gz".format(v)
         host_rows = MOPM_HOST_ASSETS.get(v, {})
