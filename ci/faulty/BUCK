@@ -524,6 +524,16 @@ zig_dist(
     strip_prefix = strip_prefix("zig"),
 )
 
+# A `strip_prefix` one directory deeper than the archive has: every entry is stripped away and the tree holds no `zig`, which the rule refuses when it is built, not at the first use.
+zig_dist(
+    name = "zig_dist_with_a_wrong_strip_depth",
+    archive = "buildrules//rules/pins:" + _ZIG["name"],
+    max_output = 400 * 1024 * 1024,
+    sha256 = _ZIG["sha256"],
+    size_bytes = _ZIG["size"],
+    strip_prefix = strip_prefix("zig") + "/lib",
+)
+
 zig_dist(
     name = "zig_dist_of_a_short_sha256",
     archive = "buildrules//rules/pins:" + _ZIG["name"],

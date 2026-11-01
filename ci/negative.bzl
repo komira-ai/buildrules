@@ -495,6 +495,7 @@ FAULTY = [
     ("//ci/faulty:zig_dist_of_other_bytes", "//rules/pins:zig", "the archive's sha256 is not the one given with --sha256"),
     ("//ci/faulty:zig_dist_over_its_max_output", "//rules/pins:zig", "the archive holds more decompressed bytes than --max-output allows"),
     ("//ci/faulty:zig_dist_of_a_corrupt_archive", "//rules/pins:zig", "the compressed data is corrupt"),
+    ("//ci/faulty:zig_dist_with_a_wrong_strip_depth", "//rules/pins:zig", "zig_dist: the unpacked tree holds no `zig`"),
 ]
 
 # Every action that unpacks an archive is the pinned `unpack` given the archive's sha256 and size, its format and a limit on its decompressed bytes
