@@ -1,5 +1,5 @@
 //! The built `unpack` on the real pinned archives, against what the rest of the build makes of the same bytes: the zig tarball (xz) against the zig distribution the build
-//! unpacks today (`//rules/pins:zig`, made by busybox), the actionlint tarball (gzip, dynamic Huffman blocks as a real compressor writes them) against busybox's own
+//! unpacks (`//rules/pins:zig`, made by the pinned `unpack`; the tests after it hold the distributions and the mopm executable to the reference tar's trees), the actionlint tarball (gzip, dynamic Huffman blocks as a real compressor writes them) against busybox's own
 //! `tar -xzf`, and a conda package (a zip) against what its members must be. Trees are compared entry by entry: kind, executable bit, size, content digest, link target.
 const std = @import("std");
 const real = @import("real.zig");

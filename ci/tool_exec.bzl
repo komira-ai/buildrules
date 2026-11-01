@@ -68,7 +68,7 @@ def _unit(ctx, platform):
     return ctx.configured_targets(PACKAGE + ":lib_ungated", target_platform = platform)
 
 def _tier_problems(ctx, platform, exec, local_mac):
-    """The pinned zig and applets, and the Zig tools, on `platform`: placed on `exec`; a Mac's zig is unpacked by `unpack`, a farm's by the pinned applets."""
+    """The pinned zig and applets, and the Zig tools, on `platform`: placed on `exec`; every platform's zig is unpacked by the pinned `unpack`."""
     problems = []
     for name in ["zig", "zig_next"]:
         node = ctx.configured_targets("//rules/pins:" + name, target_platform = platform)
@@ -76,10 +76,9 @@ def _tier_problems(ctx, platform, exec, local_mac):
         if _exec(node) != exec:
             problems.append("{} is placed on {}, not on {}".format(who, _exec(node), exec))
         attrs = node.resolved_attrs_eager(ctx)
-        if local_mac and (attrs.unpack == None or attrs.busybox != None):
-            problems.append("{} is not unpacked by `unpack` alone: unpack {}, applets {}".format(who, attrs.unpack, attrs.busybox))
-        if not local_mac and (attrs.unpack != None or attrs.busybox == None):
-            problems.append("{} is not unpacked by the pinned applets alone: unpack {}, applets {}".format(who, attrs.unpack, attrs.busybox))
+        # Every platform unpacks its zig with the pinned `unpack` (an exec_dep on //rules/pins:unpack, which picks the pin of the execution platform).
+        if attrs.unpack == None or "//rules/pins:unpack" not in str(attrs.unpack):
+            problems.append("{} is not unpacked by the pinned `unpack` of its execution platform: unpack {}".format(who, attrs.unpack))
         archive = str(attrs.archive)
         if local_mac != ("macos-aarch64" in archive):
             problems.append("{} unpacks {}, not the archive of {}".format(who, archive, "macOS" if local_mac else "linux x86_64"))

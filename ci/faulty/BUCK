@@ -498,14 +498,18 @@ _ZIG = PINS["zig"]
 zig_dist(
     name = "zig_dist_of_other_bytes",
     archive = "buildrules//rules/pins:" + _ZIG["name"],
-    unpack = "buildrules//rules/pins:bootstrap_unpack_linux_x86_64",
+    max_output = 400 * 1024 * 1024,
+    sha256 = "0" * 64,
+    size_bytes = _ZIG["size"],
     strip_prefix = strip_prefix("zig"),
 )
 
 zig_dist(
     name = "zig_dist_over_its_max_output",
     archive = "buildrules//rules/pins:" + _ZIG["name"],
-    unpack = "buildrules//rules/pins:bootstrap_unpack_linux_x86_64",
+    max_output = 1024 * 1024,
+    sha256 = _ZIG["sha256"],
+    size_bytes = _ZIG["size"],
     strip_prefix = strip_prefix("zig"),
 )
 
@@ -514,21 +518,27 @@ export_file(name = "corrupt.tar.xz", src = "corrupt.tar.xz", visibility = ["PUBL
 zig_dist(
     name = "zig_dist_of_a_corrupt_archive",
     archive = ":corrupt.tar.xz",
-    unpack = "buildrules//rules/pins:bootstrap_unpack_linux_x86_64",
+    max_output = 400 * 1024 * 1024,
+    sha256 = "e883a74de45b83b441ffaa7928670bdadf8981dd43f2d8c48b209097be144815",
+    size_bytes = 95,
     strip_prefix = strip_prefix("zig"),
 )
 
 zig_dist(
     name = "zig_dist_of_a_short_sha256",
     archive = "buildrules//rules/pins:" + _ZIG["name"],
-    unpack = "buildrules//rules/pins:bootstrap_unpack_linux_x86_64",
+    max_output = 400 * 1024 * 1024,
+    sha256 = _ZIG["sha256"][:63],
+    size_bytes = _ZIG["size"],
     strip_prefix = strip_prefix("zig"),
 )
 
 zig_dist(
     name = "zig_dist_of_a_zero_max_output",
     archive = "buildrules//rules/pins:" + _ZIG["name"],
-    unpack = "buildrules//rules/pins:bootstrap_unpack_linux_x86_64",
+    max_output = 0,
+    sha256 = _ZIG["sha256"],
+    size_bytes = _ZIG["size"],
     strip_prefix = strip_prefix("zig"),
 )
 

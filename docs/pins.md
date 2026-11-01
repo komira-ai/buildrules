@@ -120,8 +120,21 @@ The rows are the bytes the source makes. The build is reproducible, so `//tools/
 the sha256 and size of the row to be its: a source change without new rows is red, and the red text names the values to write. A release asset is never replaced; the new programs go under
 the next tag (`unpack-2`, ...) and `UNPACK_TAG` and the rows change together. `tools/held/publish_unpack.zig` builds the three, checks them against the rows, and uploads them: a dry run
 unless `--apply --work DIR`. The tag ruleset lets only the release bot create a tag, so it runs as the dispatch workflow `.github/workflows/publish-unpack.yml`
-(`tools/bootstrap/README.md`, "Publishing"), by hand and from `main` only, and the bot's token is minted in its apply step alone. Until the assets exist the rows cannot be fetched on a machine whose cache lacks them, so no default target uses them
-(`//rules/pins:bootstrap_unpack_<host>`), and no rule runs `unpack` yet: moving the zig, Rust and Node unpacking onto it is the next work.
+(`tools/bootstrap/README.md`, "Publishing"), by hand and from `main` only, and the bot's token is minted in its apply step alone.
+
+**Which rules run it.** `zig_dist` (the zig 0.12.0 and 0.15.2 distributions and the zig of each Mojo toolchain) and the mopm toolchain unpack with it; the Rust, Node and C archives still run
+under busybox until their own changes. A rule takes it as an `exec_dep` on `//rules/pins:unpack`, which is the pinned download of the execution platform (`//rules/pins:bootstrap_unpack_<host>`):
+no rule builds the program (the zig that builds everything is unpacked by it), and an execution platform with no pin is refused at analysis with the platform named, never given another way to
+unpack. `rules/core/unpack.bzl` writes the command, and refuses a rule that does not state all four checks of an archive: its `sha256` and `size_bytes` (the pin's), its format, and `max_output`,
+the most decompressed bytes it may hold (`unpack --max-output`: a bomb stops at the limit). The limits are 400 MiB for zig 0.12.0, 448 MiB for zig 0.15.2, 512 MiB for a Mojo toolchain's zig (the graph names any
+release) and 64 MiB for a mopm tarball. `//ci:negative.bxl:check` reads every unpacking action of the build and requires the pinned program and the four values.
+The output trees are what busybox's `tar` made of the same archives: `//tools/bootstrap:real_unit` compares them entry by entry (kind, executable bit, size, content digest, link target).
+
+`conda_unpack` (`rules/zig` and `rules/mojo/tools`) is not unpack's: the members of a `.conda` package are zstd tars, which `unpack` does not decode, and the programs hold the closure policy of the Mojo
+compiler. They do not run busybox, and are unchanged.
+
+Memory (`tools/bootstrap/README.md`, "Limits"): a tar.gz costs about its own size, and a tar.xz about three times its decompressed size, because the standard library's decoder holds a whole xz block.
+The zig 0.12.0 tarball peaks at 754 MiB, so an action that unpacks a distribution holds that much while it runs.
 
 macOS cannot be built or run on the farm. The `unpack_macos` job of `ci.yml` (GitHub's `macos-15` runner) builds the program with the pinned zig for macOS, runs its unit tests natively,
 unpacks the real darwin zig 0.12.0 tarball of `hosts.bzl` into a tree equal to the system tar's, and runs the zig it made; `ci/unpack_macos_check.zig` holds that job to the table.
@@ -136,6 +149,6 @@ rust-std, cargo, clippy (and llvm-tools for 1.95.0), for `aarch64-unknown-linux-
 downloads every row and fails on a sha256 or size that is not the file's; the `host_arm` job of `ci.yml` runs it on GitHub's `ubuntu-24.04-arm` runner, with the buck2 release that
 `tools/buck2` pins for `linux-aarch64`.
 
-What the pins do not do yet: nothing unpacks them. Every unpack action runs under the pinned busybox, and busybox.net publishes no static 1.35.0 for aarch64 (its multi-arch
+What the pins do not do yet: nothing unpacks them, except the zig and mopm of a Mac that runs Buck2 itself. Every other unpack action runs under the pinned busybox, and busybox.net publishes no static 1.35.0 for aarch64 (its multi-arch
 1.31.0 build has only a 32-bit `armv8l`, which 64-bit-only Arm cores do not execute; not tried on a runner) and none for macOS. A first-party static build of the same source is the way out, and it is the
 next step of the host work, not a pin that exists today.

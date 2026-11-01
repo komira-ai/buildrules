@@ -3,7 +3,8 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # the file utilities of every action), zig (the C link driver, and the compiler of the Zig tools),
 # zig 0.15.2 and the conda runtime libraries. Values in pins.bzl.
 load("//rules/core:pinned_file.bzl", "pinned_file")
-load("//rules/core:platform.bzl", "MACOS_AARCH64", "TOOL_EXEC")
+load("//rules/core:platform.bzl", "MACOS_AARCH64", "TOOL_EXEC", "by_os_cpu")
+load("//rules/core:unpack.bzl", "unpack_refused")
 load("//rules/zig:zig.bzl", "zig_bootstrap_exe", "zig_dist", "zig_test")
 load("//rules:matrix.bzl", "group")
 load(":bootstrap.bzl", "UNPACK_PINS")
@@ -128,8 +129,8 @@ group(
 )
 
 # ---- unpack, the program that unpacks the rest (bootstrap.bzl) --------------------------------------------------------------------------------------------------
-# One pinned release asset per host. They are defined here and used by no default target: the asset is uploaded by the repository owner (tools/held/publish_unpack.zig),
-# and a machine without it cached cannot fetch it before then. //ci:unpack_pin_check holds the rows to the programs the tree builds.
+# One pinned release asset per host, the program every unpacking action runs (`:unpack`, below, picks the one of the execution platform). The assets are published by
+# .github/workflows/publish-unpack.yml, and //ci:unpack_pin_check holds the rows to the programs the tree builds.
 [
     pinned_file(
         name = "bootstrap_unpack_" + host.replace("-", "_"),
@@ -141,6 +142,24 @@ group(
     )
     for host, row in UNPACK_PINS.items()
 ]
+
+# The `unpack` an action runs is the one pinned for its execution platform: every rule that unpacks an archive takes `//rules/pins:unpack` as an `exec_dep`
+# (rules/core/unpack.bzl). A platform with no pin takes `unpack_refused`, which fails analysis naming the platform, so no rule falls back to another way to unpack.
+unpack_refused(
+    name = "unpack_refused",
+    hosts = sorted(UNPACK_PINS.keys()),
+)
+
+alias(
+    name = "unpack",
+    actual = by_os_cpu({
+        "linux_x86_64": ":bootstrap_unpack_linux_x86_64",
+        "linux_aarch64": ":bootstrap_unpack_linux_aarch64",
+        "macos_aarch64": ":bootstrap_unpack_macos_aarch64",
+        "DEFAULT": ":unpack_refused",
+    }),
+    visibility = ["PUBLIC"],
+)
 
 # Read by tools/bootstrap:pin_check_unit, and by the buildrules.dev site tests.
 export_file(
