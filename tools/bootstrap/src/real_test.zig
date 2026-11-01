@@ -1,5 +1,5 @@
 //! The built `unpack` on the real pinned archives, against what the rest of the build makes of the same bytes: the zig tarball (xz) against the zig distribution the build
-//! unpacks today (`//rules/pins:zig`, made by busybox), the actionlint tarball (gzip, dynamic Huffman blocks as a real compressor writes them) against busybox's own
+//! unpacks (`//rules/pins:zig`, made by the pinned `unpack`; the tests after it hold the distributions and the mopm executable to the reference tar's trees), the actionlint tarball (gzip, dynamic Huffman blocks as a real compressor writes them) against busybox's own
 //! `tar -xzf`, and a conda package (a zip) against what its members must be. Trees are compared entry by entry: kind, executable bit, size, content digest, link target.
 const std = @import("std");
 const real = @import("real.zig");
@@ -8,6 +8,33 @@ test "the pinned zig tarball (tar.xz) extracts to the zig distribution the build
     const dist = try real.envPath("ZIG_DIST");
     defer real.a.free(dist);
     try real.sameAsDirectory("zig", "zig.tar.xz", 1, dist);
+}
+
+test "the zig 0.12.0 distribution the build makes is the tree the reference tar makes of the same tarball" {
+    const dist = try real.envPath("ZIG_DIST");
+    defer real.a.free(dist);
+    try real.distIsReferenceTar("zig", "zig.tar.xz", "-xJf", 1, dist);
+}
+
+test "the zig 0.15.2 distribution the build makes is the tree the reference tar makes of the same tarball" {
+    const dist = try real.envPath("ZIG_NEXT_DIST");
+    defer real.a.free(dist);
+    try real.distIsReferenceTar("zig_next", "zig_next.tar.xz", "-xJf", 1, dist);
+}
+
+test "the mopm executable the build makes is the file the reference tar extracts from the same tarball" {
+    const theirs = try real.referenceExtract("mopm", "mopm.tar.gz", "-xzf", 1);
+    defer real.a.free(theirs);
+    const inner = try real.join(&.{ theirs, "mopm" });
+    defer real.a.free(inner);
+    const exe = try real.envPath("MOPM");
+    defer real.a.free(exe);
+    const want = try real.sha256(inner);
+    const got = try real.sha256(exe);
+    try std.testing.expectEqualStrings(&want, &got);
+    // The executable bit is part of the output's key.
+    const st = try std.fs.cwd().statFile(exe);
+    try std.testing.expect(st.mode & 0o111 != 0);
 }
 
 test "the pinned actionlint tarball (tar.gz) extracts to what busybox extracts" {

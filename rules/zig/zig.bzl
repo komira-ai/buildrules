@@ -29,7 +29,8 @@ ZigExeInfo = provider(fields = {
 })
 load("@buildrules//rules/core:test_runtime.bzl", "RUNNER_ENV", "data_map")
 load(":checks.bzl", "check_exe_target", "check_exec_tool_name", "check_module_name", "check_optimize", "check_same_tests", "check_target_triple", "check_unique_dep_names", "check_unique_imports", "zig_closure")
-load("@buildrules//rules/core:platform.bzl", "MACOS_AARCH64", "TOOL_EXEC", "TOOL_TARGET")
+load("@buildrules//rules/core:platform.bzl", "TOOL_EXEC", "TOOL_TARGET")
+load("@buildrules//rules/core:unpack.bzl", "UNPACK", "unpack_cmd")
 load("@buildrules//rules/core:rerun.bzl", "RERUN_ATTRS", "rerun_env", "rerun_info")
 
 # What a `zig_test` runs, for the rule that runs the same test under coverage (rules/coverage/zig_cover.bzl): the same root, zig, target, data and tools.
@@ -76,40 +77,35 @@ PATH="$T/bin"; export PATH
 
 def _zig_dist_impl(ctx):
     out = ctx.actions.declare_output("zig", dir = True)
-    if ctx.attrs.unpack:
-        # `unpack` (tools/bootstrap), a pinned program that needs no shell and no busybox: what a Mac, which has no static busybox, unpacks its zig with.
-        # The archive's one top directory (`strip_prefix`) is stripped.
-        if ctx.attrs.busybox:
-            fail("{}: unpack and busybox are two ways to unpack; name one".format(ctx.label))
-        ctx.actions.run(
-            cmd_args(ctx.attrs.unpack[DefaultInfo].default_outputs[0], "--strip-components", "1", ctx.attrs.archive[DefaultInfo].default_outputs[0], out.as_output()),
-            category = "zig_unpack",
-        )
-        return [DefaultInfo(default_output = out)]
-    if not ctx.attrs.busybox:
-        fail("{}: name the busybox that unpacks the archive, or the unpack program".format(ctx.label))
-    bb = ctx.attrs.busybox[DefaultInfo].default_outputs[0]
-    script = _PRELUDE + """
-mkdir -p "$2.x"
-tar -xJf "$1" -C "$2.x"
-mv "$2.x/$3" "$2"
-rm -rf "$2.x" "$T"
-test -x "$2/zig"
-"""
+
+    # The archive holds one directory, `strip_prefix`, with the distribution in it: that directory is what is kept (`--strip-components` is its number of components).
     ctx.actions.run(
-        busybox_sh(bb, script, ctx.attrs.archive[DefaultInfo].default_outputs[0], out.as_output(), ctx.attrs.strip_prefix),
+        unpack_cmd(
+            ctx.label,
+            ctx.attrs.unpack,
+            ctx.attrs.archive[DefaultInfo].default_outputs[0],
+            out,
+            ctx.attrs.sha256,
+            ctx.attrs.size_bytes,
+            ctx.attrs.max_output,
+            len(ctx.attrs.strip_prefix.split("/")),
+            "tar.xz",
+        ),
         category = "zig_unpack",
     )
     return [DefaultInfo(default_output = out)]
 
+# A Zig distribution (`.tar.xz`) unpacked by the pinned `unpack` (rules/core/unpack.bzl), with the archive's `sha256` and `size_bytes` (the pin's) and the `max_output` it
+# may decompress to. `strip_prefix` is the one directory the archive holds, as `a` or `a/b`; the distribution is that directory's content.
 zig_dist_rule = rule(
     impl = _zig_dist_impl,
     attrs = {
         "archive": attrs.dep(),
-        # The busybox whose `tar` unpacks the archive (the default), or `unpack` (never both): a Mac has no busybox before this zig exists.
-        "busybox": attrs.option(attrs.dep(), default = None),
+        "max_output": attrs.int(),
+        "sha256": attrs.string(),
+        "size_bytes": attrs.int(),
         "strip_prefix": attrs.string(),
-        "unpack": attrs.option(attrs.dep(), default = None),
+        "unpack": attrs.exec_dep(default = UNPACK, providers = [RunInfo]),
     },
 )
 
@@ -470,17 +466,8 @@ conda_libs_rule = rule(
 
 conda_libs = _on_tool_exec(conda_libs_rule)
 
-_zig_dist_on_tool_exec = _on_tool_exec(zig_dist_rule)
-
-def zig_dist(**kwargs):
-    """The zig distribution unpacked from `archive`: by the pinned applets' `tar`, or, on a Mac that runs Buck2 itself (`TOOL_EXEC`), by the pinned `unpack` program, which
-    needs no applets (a Mac has none before macos_applets is built, and that is built by a zig). The call's own `busybox` or `unpack` chooses."""
-    if "busybox" not in kwargs and "unpack" not in kwargs:
-        if TOOL_EXEC == MACOS_AARCH64:
-            kwargs["unpack"] = "buildrules//rules/pins:bootstrap_unpack_macos_aarch64"
-        else:
-            kwargs["busybox"] = "buildrules//rules/pins:busybox"
-    return _zig_dist_on_tool_exec(**kwargs)
+# The distribution is unpacked on the tool execution platform: the pinned `unpack` of that platform runs it (rules/pins/BUCK, `:unpack`).
+zig_dist = _on_tool_exec(zig_dist_rule)
 
 zig_bootstrap_exe = _on_tool_exec(zig_bootstrap_exe_rule, targeted = True)
 zig_exe = _on_tool_exec(zig_exe_rule, targeted = True)

@@ -60,11 +60,16 @@ mojo_toolchain = rule(
     },
 )
 
-def _mojo_zig(v, archive, zig_url):
-    """`mojo_<v>_zig`: the zig distribution of a toolchain, unpacked from its pinned archive."""
+def _mojo_zig(v, archive, zig_url, zig_row):
+    """`mojo_<v>_zig`: the zig distribution of a toolchain, unpacked from its pinned archive (`zig_row`: the graph's `zig` row, whose sha256 and size are the archive's)."""
     zig_dist(
         name = "mojo_{}_zig".format(v),
         archive = archive,
+        # The zig of a graph is any release the graph names, so its limit is not set per archive: 512 MiB, above the limit of the largest zig buildrules pins itself
+        # (448 MiB, rules/pins/tool_zig.bzl).
+        max_output = 512 * 1024 * 1024,
+        sha256 = zig_row["sha256"],
+        size_bytes = zig_row["size"],
         strip_prefix = zig_url.split("/")[-1][:-len(".tar.xz")],
         exec_compatible_with = TOOL_EXEC,
     )
@@ -111,7 +116,7 @@ def mojo_toolchains(table = {}):
             unpacker = "buildrules//rules/mojo:conda_unpack",
             exec_compatible_with = LINUX_X86_64,
         )
-        _mojo_zig(v, ":mojo-{}-zig.tar.xz".format(version), zig_url)
+        _mojo_zig(v, ":mojo-{}-zig.tar.xz".format(version), zig_url, row["zig"])
         # The link directory of this version's coverage builds: cov_zig and debug_relocate in front of this zig.
         cov_link(
             name = "mojo_{}_cov_link".format(v),
@@ -215,7 +220,7 @@ def mojo_subdir_toolchains(by_subdir = {}):
                 unpacker = "buildrules//rules/mojo:conda_unpack",
                 exec_compatible_with = exec_for_target(),
             )
-            _mojo_zig(v, ":mojo-{}-{}-zig.tar.xz".format(version, subdir), zig_url)
+            _mojo_zig(v, ":mojo-{}-{}-zig.tar.xz".format(version, subdir), zig_url, row["zig"])
             mojo_toolchain(
                 name = "mojo_" + v,
                 cc_target = row["cc_target"],

@@ -9,6 +9,7 @@ control's own error. ci/negative_check.zig holds the wiring of this file to the 
 
 load("//examples/mojo/sys_app:buildrules.mojo.lock.bzl", SYS_APP_GRAPH = "GRAPH")
 load("//examples/mojo/ws:buildrules.mojo.lock.bzl", WS_GRAPH = "GRAPH")
+load("//rules/mopm:pins.bzl", "MOPM_DEFAULT", "vname")
 load(":native_library.bzl", "native_library_problems", "native_link_cfg_problems")
 load(":native_macos.bzl", "native_macos_problems")
 load(":system_libs.bzl", "system_libs_problems")
@@ -57,6 +58,10 @@ CASES = [
     # (ci/subdirs.bzl holds the platforms that are built from the graph of their subdir).
     ("//examples/mojo/subdirs:lib", UNSUPPORTED_SUBDIR_PLATFORM, "has no unit graph for this target platform. It holds graphs for linux-64, linux-aarch64, osx-arm64"),
     ("//examples/mojo/subdirs:conda", UNSUPPORTED_SUBDIR_PLATFORM, "has no unit graph for this target platform"),
+    # An archive is unpacked only with its checks (rules/core/unpack.bzl): a `sha256` that is not 64 lower-case hex digits and a `max_output` that is not positive are refused
+    # at analysis, naming the target.
+    ("//ci/faulty:zig_dist_of_a_short_sha256", "buildrules//platforms:linux_x86_64", "`sha256` must be the archive's 64 lower-case hex digits"),
+    ("//ci/faulty:zig_dist_of_a_zero_max_output", "buildrules//platforms:linux_x86_64", "`max_output` must be a positive number of decompressed bytes"),
 ] + [
     ("//examples/mojo/subdirs:lib", platform, "has no unit graph for this target platform. It holds graphs for linux-64, linux-aarch64, osx-arm64")
     for platform in UNSUPPORTED_SUBDIR_PLATFORMS
@@ -89,7 +94,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the known defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it carries (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + native_library_problems(ctx) + native_link_cfg_problems(ctx) + test_defines_problems(ctx) + hang_limit_problems(ctx) + system_libs_problems(ctx, GATE_PLATFORM)
+    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + native_library_problems(ctx) + native_link_cfg_problems(ctx) + test_defines_problems(ctx) + hang_limit_problems(ctx) + system_libs_problems(ctx, GATE_PLATFORM) + unpack_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.
@@ -485,7 +490,82 @@ FAULTY = [
     ("//ci/faulty:archive_files_of_a_link_as_the_strip_prefix", "//ci/faulty:archive_files_of_the_files_behind_no_link_of_the_prefix", "archive_files: hostname is not staged: top in "),
     ("//ci/faulty:archive_files_of_a_file_behind_a_link_in_the_middle_of_its_path", "//ci/faulty:archive_files_of_the_files_beside_a_link_in_the_middle", "archive_files: a/mid/hostname is not staged: pkg/a/mid in "),
     ("//ci/faulty:archive_files_of_a_template_that_is_a_link", "//ci/faulty:archive_files_of_a_template_of_the_same_archive", "archive_files: tmpl.in is not staged: pkg/tmpl.in in "),
+    # The checks of unpacking (rules/core/unpack.bzl): `zig_dist` given an archive its `unpack` must refuse, each the pinned zig 0.12.0 distribution with one thing wrong.
+    # The control is //rules/pins:zig, the same rule with the pin's own values.
+    ("//ci/faulty:zig_dist_of_other_bytes", "//rules/pins:zig", "the archive's sha256 is not the one given with --sha256"),
+    ("//ci/faulty:zig_dist_over_its_max_output", "//rules/pins:zig", "the archive holds more decompressed bytes than --max-output allows"),
+    ("//ci/faulty:zig_dist_of_a_corrupt_archive", "//rules/pins:zig", "the compressed data is corrupt"),
 ]
+
+# Every action that unpacks an archive is the pinned `unpack` given the archive's sha256 and size, its format and a limit on its decompressed bytes
+# (rules/core/unpack.bzl). The rules are found by kind in the closure of what CI builds, their actions are read, and each must run the program pinned for the
+# execution platform (rules/pins:unpack, a download: no rule builds it) with all four checks and a well formed value for each. The targets that must be among them
+# are named, so a rule that stops unpacking this way (or stops being built) does not leave an empty list that passes.
+UNPACK_KINDS = "zig_dist_rule|_mopm"
+UNPACK_CATEGORIES = ["zig_unpack", "mopm_unpack"]
+UNPACK_TARGETS = ["buildrules//rules/pins:zig", "buildrules//rules/pins:zig_next", "toolchains//:mopm_" + vname(MOPM_DEFAULT), "toolchains//:mojo_1_0_0_zig"]
+
+# The pin `//rules/pins:unpack` resolves to on each platform that has one, and a platform that has none (macOS on Intel), which is refused with the platform named.
+UNPACK_PLATFORMS = [
+    ("buildrules//platforms:linux_x86_64", "bootstrap_unpack_linux_x86_64"),
+    ("buildrules//platforms:linux_aarch64", "bootstrap_unpack_linux_aarch64"),
+    ("buildrules//platforms:macos_aarch64", "bootstrap_unpack_macos_aarch64"),
+]
+UNPACK_REFUSED_PLATFORM = "buildrules//platforms:macos_x86_64"
+
+def _flag_value(cmd, flag):
+    for i in range(len(cmd) - 1):
+        if cmd[i] == flag:
+            return cmd[i + 1]
+    return None
+
+def unpack_problems(ctx):
+    """Every way an unpacking action runs without the program pinned for its platform or without a check: a list of strings, empty when all hold."""
+    problems = []
+    nodes = ctx.cquery().eval("kind('{}', deps(//ci:all) + deps(//ci:mojo))".format(UNPACK_KINDS))
+    found = {}
+    for node in nodes:
+        label = str(node.label).split(" ")[0]
+        for act in ctx.aquery().all_actions([node]):
+            if str(act.attrs.category) not in UNPACK_CATEGORIES:
+                continue
+            found[label] = True
+            # The command is an opaque attribute that prints as `[arg, arg, ...]`.
+            cmd = str(act.attrs.cmd).lstrip("[").rstrip("]").split(", ")
+            if "bootstrap_unpack_" not in cmd[0]:
+                problems.append("{}: the unpacking action runs {}, not the pinned download of `unpack` (rules/pins/bootstrap.bzl)".format(label, cmd[0]))
+            sha = _flag_value(cmd, "--sha256")
+            if sha == None or len(sha) != 64 or any([c not in "0123456789abcdef" for c in sha.elems()]):
+                problems.append("{}: the unpacking action has no well formed --sha256: {}".format(label, sha))
+            for flag in ["--size", "--max-output"]:
+                value = _flag_value(cmd, flag)
+                if value == None or not value.isdigit() or int(value) <= 0:
+                    problems.append("{}: the unpacking action has no positive {}: {}".format(label, flag, value))
+            if _flag_value(cmd, "--format") not in ["tar", "tar.gz", "tar.xz", "zip"]:
+                problems.append("{}: the unpacking action states no --format: {}".format(label, _flag_value(cmd, "--format")))
+    for want in UNPACK_TARGETS:
+        if want not in found:
+            problems.append("{}: no unpacking action was found for it ({} node(s) of kind {}, found: {})".format(want, len(nodes), UNPACK_KINDS, sorted(found.keys())))
+    return problems + unpack_platform_problems(ctx)
+
+def unpack_platform_problems(ctx):
+    """`//rules/pins:unpack` is the pin of the execution platform's host, and a platform with no pin is refused naming it, never given another program."""
+    if "unpack" not in [t.label.name for t in ctx.uquery().eval("//rules/pins:")]:
+        return ["//rules/pins:unpack does not exist: no rule can take the pinned `unpack` for its execution platform"]
+    problems = []
+    for platform, pin in UNPACK_PLATFORMS:
+        node = ctx.configured_targets("//rules/pins:unpack", target_platform = platform)
+        got = [d.label.name for d in node.deps()]
+        if got != [pin]:
+            problems.append("//rules/pins:unpack on {} resolves to {}, not to [{}]".format(platform, got, pin))
+    refused = ctx.lazy.analysis(ctx.configured_targets("//rules/pins:unpack", target_platform = UNPACK_REFUSED_PLATFORM)).catch().resolve()
+    if refused.is_ok():
+        problems.append("//rules/pins:unpack analyses on {}, which has no pinned `unpack`: it must be refused".format(UNPACK_REFUSED_PLATFORM))
+    else:
+        why = str(refused.unwrap_err())
+        if "no `unpack` is pinned for the execution platform" not in why or "macos_x86_64" not in why:
+            problems.append("//rules/pins:unpack on {} is refused, but not naming the platform (expected \"no `unpack` is pinned for the execution platform\" and macos_x86_64): {}".format(UNPACK_REFUSED_PLATFORM, why))
+    return problems
 
 def _failures(ctx, label):
     """The text of what failed when building `label` on GATE_PLATFORM."""
