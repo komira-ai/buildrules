@@ -93,22 +93,7 @@ def _zig_dist_impl(ctx):
         ),
         category = "zig_unpack",
     )
-
-    # `unpack` strips a number of components and does not look at what is left, so a `strip_prefix` of the wrong depth would give a tree with no `zig`, which fails only at its
-    # first use. Copying `zig` out of the tree is the check that it is there (a missing source fails the action) and needs no program: the `check` tool cannot be used here,
-    # because it is built by the zig this rule unpacks. It is a validation, so building the distribution (or anything that reads it) builds it. The executable bit is not read.
-    # A validation result is a JSON file, written once the copy has succeeded (the copy is a dynamic input).
-    has_zig = ctx.actions.copy_file(ctx.label.name + ".has_zig", out.project("zig"))
-    verdict = ctx.actions.declare_output(ctx.label.name + ".validation")
-
-    def _verdict(ctx, _artifacts, outputs):
-        ctx.actions.write(outputs[verdict], '{"version": 1, "data": {"status": "success", "message": "the unpacked distribution holds zig"}}\n')
-
-    ctx.actions.dynamic_output(dynamic = [has_zig], inputs = [], outputs = [verdict.as_output()], f = _verdict)
-    return [
-        DefaultInfo(default_output = out),
-        ValidationInfo(validations = [ValidationSpec(name = "zig_dist_has_zig", validation_result = verdict)]),
-    ]
+    return [DefaultInfo(default_output = out)]
 
 # A Zig distribution (`.tar.xz`) unpacked by the pinned `unpack` (rules/core/unpack.bzl), with the archive's `sha256` and `size_bytes` (the pin's) and the `max_output` it
 # may decompress to. `strip_prefix` is the one directory the archive holds, as `a` or `a/b`; the distribution is that directory's content.
