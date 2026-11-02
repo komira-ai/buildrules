@@ -5,11 +5,11 @@
 //! `--native-from` is `--native` with the digest taken from a file the caller has: the package this build just packed must hold exactly
 //! the library the build made (rules/mojo/pack.bzl, `mojo_conda_holds`).
 //!
-//! `--holds <member>=<file>` (repeated) holds the package to carrying the member `<member>` of its payload (`lib/mojo/<name>.bins/run.mojo`, the source of a
-//! program `mopm pack` ships) with exactly the bytes of `<file>`. A member path that is empty, absolute, has an empty, `.` or `..` component, or is named
+//! `--holds <member>=<file>` (repeated) holds the package to carrying the member `<member>` of its payload (`lib/mojo/<name>.bins/<program name>.mojo`, where
+//! `mopm pack` ships the source of a program, named by the program and not by its path) with exactly the bytes of `<file>`. A member path that is empty, absolute, has an empty, `.` or `..` component, or is named
 //! twice (by `--holds`, or as the `.mojoc` or a native) is refused. Nothing is written for it: it is checked, as the natives are, before anything is written.
 //!
-//! `--sole` holds the package to being itself: no member under `lib/mojo/` but its own `.mojoc` and `.mopm.json` (a package that was packed from
+//! `--sole` holds the package to being itself: no member under `lib/mojo/` but its own `.mojoc`, `.mopm.json` and programs (`lib/mojo/<name>.bins/`) (a package that was packed from
 //! a workspace holds none of its siblings). `--depends <spec>` (repeated) or `--no-depends` holds `info/index.json` to `mojo-compiler <pin>` and then
 //! exactly those `depends` entries in that order (`mojo-<name> <range>`: each sibling is an ordinary versioned dependency). Both are checked before
 //! anything is written.
@@ -402,8 +402,10 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, args: []const []const u8, why:
             why.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ o.conda, @errorName(e) });
             return e;
         };
+        // The package's programs (`[targets] bins`) are its own too: mopm ships each as `lib/mojo/<name>.bins/<program name>.mojo`.
+        const own_bins = try std.fmt.allocPrint(a, "lib/mojo/{s}.bins/", .{o.name});
         for (listed) |n| {
-            if (std.mem.startsWith(u8, n, "lib/mojo/") and indexOf(&own, n) == null) {
+            if (std.mem.startsWith(u8, n, "lib/mojo/") and indexOf(&own, n) == null and !std.mem.startsWith(u8, n, own_bins)) {
                 why.* = try std.fmt.allocPrint(a, "{s} holds {s}, which is not the package {s} itself", .{ o.conda, n, o.name });
                 return error.ForeignMember;
             }

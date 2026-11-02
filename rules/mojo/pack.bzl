@@ -44,7 +44,8 @@ def workspace_tree(dir, manifest, members, bins = {}, refuse = fail):
     `<dir of --manifest>/<path>` and ships it, so it is staged at `<dir>/<path>`. Nothing else of the package is staged: a program imports the package's library,
     which is the `.mojoc` given to `mopm pack`.
     `refuse(message)` is called for a package or member path that leaves the repository, for a program path that leaves the package's directory (absolute, or
-    climbing out with `..`, or naming the directory itself), and for two entries that land on one file (the entry is then left out); by default it fails."""
+    climbing out with `..`, or naming the directory itself), goes through a directory with `..` or ends in `/`, and for two entries that land on one file (the
+    entry is then left out); by default it fails."""
     tree = {}
     here = _within(dir)
     if here == None:
@@ -68,6 +69,14 @@ def workspace_tree(dir, manifest, members, bins = {}, refuse = fail):
         if not rel:
             refuse("mojo_conda: the program {} of the package at {} leaves the package directory".format(path, here or "."))
             continue
+        # mopm opens the path as written: `bins/../run.mojo` goes through `bins/`, which only exists when something is staged in it, and `bins/run.mojo/`
+        # names a directory. Both are refused rather than staged where a filesystem would not find them.
+        if ".." in path.split("/"):
+            refuse("mojo_conda: the program {} of the package at {} goes through a directory with `..`: write the path without `..`".format(path, here or "."))
+            continue
+        if path.endswith("/"):
+            refuse("mojo_conda: the program {} of the package at {} ends in `/`, which names a directory".format(path, here or "."))
+            continue
         file = (here + "/" if here else "") + rel
         if file in tree:
             refuse("mojo_conda: the program {} of the package at {} is {}, which is already staged".format(path, here or ".", file))
@@ -75,13 +84,21 @@ def workspace_tree(dir, manifest, members, bins = {}, refuse = fail):
         tree[file] = source
     return tree, own
 
+def pack_workspace(dir, manifest, members = {}, bins = {}, refuse = fail):
+    """What `mopm pack --manifest` is given: None for a package with neither members nor programs, whose manifest is passed alone with no workspace (as before
+    `bins` existed); otherwise `workspace_tree`'s `(tree, repository path of the package's mopm.toml)`."""
+    if not members and not bins:
+        return None
+    return workspace_tree(dir, manifest, members, bins, refuse)
+
 def _impl(ctx):
     lib = ctx.attrs.lib[MojoLibInfo]
     subdir = ctx.attrs.subdir
     out = ctx.actions.declare_output("channel", dir = True)
     manifest = ctx.attrs.manifest
-    if ctx.attrs.members or ctx.attrs.bins:
-        tree, own = workspace_tree(ctx.attrs.dir, manifest, ctx.attrs.members, ctx.attrs.bins)
+    staged = pack_workspace(ctx.attrs.dir, manifest, ctx.attrs.members, ctx.attrs.bins)
+    if staged != None:
+        tree, own = staged
         workspace = ctx.actions.copied_dir("workspace", tree)
         manifest = cmd_args(workspace.project(own), hidden = workspace)
     cmd = cmd_args(
@@ -168,10 +185,10 @@ _mojo_conda_holds = rule(
         # `{"lib<id>.a": <the archive target>}`: the `.conda` must hold `lib/<soname>` with exactly the bytes of that target's file.
         "natives": attrs.dict(attrs.string(), attrs.dep(), default = {}),
         # `{"<member of the package's payload>": <file>}`: the `.conda` must hold that member with exactly the file's bytes (the source of a program of `[targets] bins`,
-        # which `mopm pack` ships at `lib/mojo/<package>.bins/<path>`).
+        # which `mopm pack` ships at `lib/mojo/<package>.bins/<program name>.mojo`, named by the program, not by its path).
         "holds": attrs.dict(attrs.string(), attrs.source(), default = {}),
         "package": attrs.string(),
-        # `sole`: the `.conda` holds nothing under `lib/mojo/` but the package's own `.mojoc` and `.mopm.json` (a package packed from a workspace holds none of
+        # `sole`: the `.conda` holds nothing under `lib/mojo/` but the package's own `.mojoc`, `.mopm.json` and programs (`lib/mojo/<package>.bins/`) (a package packed from a workspace holds none of
         # its siblings).
         "sole": attrs.bool(default = False),
         # `depends`: the dependencies the `.conda` records after the compiler, exactly and in order, each as conda spells it (`"mojo-<name> <range>"`); `[]` is

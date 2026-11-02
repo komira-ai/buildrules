@@ -7,7 +7,7 @@ CLOSURE_SHA256 = "3ed75e01401544e0d660ee48dc387dacce437e3833ac296d4a0601f28abd4a
 MANIFEST_SHA256 = {
     "mopm-toolchain.toml": "1a2b5d5d5c0562417548458434ce90b55a88e33f811aa496c278c0afb23142de",
     "mopm.lock": "6c2939966447de3564bbd2fa8a1f25500b95e8c8f4070ed3dfc031cb77654d30",
-    "mopm.toml": "75a0488ae08a9fd85545b91aae3d24b90e336e559ae406a978f1aca520e8a885",
+    "mopm.toml": "3202a6eea08935bac4d1985deca9a63a2a37c92c45f211f37a617e04ae7960fd",
 }
 GRAPH_JSON = r'''{
   "unit_graph": 2,
@@ -26,6 +26,20 @@ GRAPH_JSON = r'''{
     ]
   },
   "units": [
+    {
+      "id": "conda_bins@0.1.0#mojo1.0.0/bin:greet",
+      "package": "conda_bins",
+      "version": "0.1.0",
+      "kind": "bin",
+      "srcs": [
+        {"path": "examples/mojo/registry/conda_bins/bins/tools/say.mojo", "sha256": "16233a05df37c43cc7ced94d67a905fd1973d512feaae6985767447584b94071"}
+      ],
+      "deps": ["conda_bins@0.1.0#mojo1.0.0/lib"],
+      "natives": [],
+      "profile": {"opt": 3, "assert": "none", "debug": false},
+      "outputs": ["greet"],
+      "key": "50eb092e052b8f92997895546617b98cb01188845fb02fc718134c72f25d8c76"
+    },
     {
       "id": "conda_bins@0.1.0#mojo1.0.0/bin:hello",
       "package": "conda_bins",
@@ -91,6 +105,20 @@ GRAPH_JSON_LINUX_AARCH64 = r'''{
   },
   "units": [
     {
+      "id": "conda_bins@0.1.0#mojo1.0.0/bin:greet",
+      "package": "conda_bins",
+      "version": "0.1.0",
+      "kind": "bin",
+      "srcs": [
+        {"path": "examples/mojo/registry/conda_bins/bins/tools/say.mojo", "sha256": "16233a05df37c43cc7ced94d67a905fd1973d512feaae6985767447584b94071"}
+      ],
+      "deps": ["conda_bins@0.1.0#mojo1.0.0/lib"],
+      "natives": [],
+      "profile": {"opt": 3, "assert": "none", "debug": false},
+      "outputs": ["greet"],
+      "key": "824846f1e6ebdd95f2d006ffad667ebb7b072ed94caf5af19d143301effa7361"
+    },
+    {
       "id": "conda_bins@0.1.0#mojo1.0.0/bin:hello",
       "package": "conda_bins",
       "version": "0.1.0",
@@ -151,6 +179,20 @@ GRAPH_JSON_OSX_ARM64 = r'''{
     ]
   },
   "units": [
+    {
+      "id": "conda_bins@0.1.0#mojo1.0.0/bin:greet",
+      "package": "conda_bins",
+      "version": "0.1.0",
+      "kind": "bin",
+      "srcs": [
+        {"path": "examples/mojo/registry/conda_bins/bins/tools/say.mojo", "sha256": "16233a05df37c43cc7ced94d67a905fd1973d512feaae6985767447584b94071"}
+      ],
+      "deps": ["conda_bins@0.1.0#mojo1.0.0/lib"],
+      "natives": [],
+      "profile": {"opt": 3, "assert": "none", "debug": false},
+      "outputs": ["greet"],
+      "key": "45302688f8a2a70030f93e4ee18f7265cd2cbb1f091b8d65cc50eac83f95d1b7"
+    },
     {
       "id": "conda_bins@0.1.0#mojo1.0.0/bin:hello",
       "package": "conda_bins",

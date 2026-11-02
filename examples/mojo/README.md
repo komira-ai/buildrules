@@ -3,7 +3,7 @@
     ws/                    app -> util -> base: three workspace members, each a package of its own (mopm.toml, mopm.lock, BUCK)
       util/base/           the leaf; util/ imports it; ws/ (app) imports util and the registry package cnative
     registry/cnative/      the publisher's side of cnative: a Mojo package over a C library
-    registry/conda_bins/   a package with `[targets] bins` (mopm 0.0.101): its `:conda` is `mopm pack`, which reads the program's source, so `mojo_conda` stages it (`bins`, rules/mojo/pack.bzl) from the unit graph
+    registry/conda_bins/   a package with two `[targets] bins` programs (mopm 0.0.101): its `:conda` is `mopm pack`, which reads each program's source, so `mojo_conda` stages them (`bins`, rules/mojo/pack.bzl) from the unit graph; `:conda_holds` requires each in the `.conda` under the program's name (below)
     registry/probe_sys/    the publisher's side of probe_sys: a `-sys` package (an empty Mojo module over a static C library) that needs base_sys's
       base_sys/            the other `-sys` package, a workspace member of probe_sys
     sys_app/               imports probe_sys from the registry stand-in: both static archives come out of the `.conda` files, with no `natives` in its BUCK file; its test takes both arms of a decision in the library, so the package has branch records of its own through the native link and a `coverage_floor.txt` of `lines 100.00` and `branches 100.00`
@@ -60,3 +60,13 @@ a lock that disagrees with a `.conda` fails the download's check, and one that d
 The URL in the lock is a placeholder channel; a machine that has the file points the download at it in the `.buckconfig.local` of the cell that declares it, for example
 `[buildrules] url_map = https://conda.mopm.dev/=http://mirror.invalid/channel/` in the root `.buckconfig.local` (the sha256 is still checked). The mopm tarball
 (`rules/mopm/pins.bzl`, the published mopm 0.0.48) is a download of the `toolchains` cell from its release URL and needs no mirror.
+
+`registry/conda_bins` is a library with two programs that use it. The library (`src/conda_bins/__init__.mojo`) is one function, and its test holds `add_one(41) == 42`:
+
+    from conda_bins import add_one
+
+    def main():
+        print("hello", add_one(41))   # bins/hello.mojo, the program `hello`: prints "hello 42"
+
+`mopm.toml` lists `bins = [{ name = "hello", path = "bins/hello.mojo" }, { name = "greet", path = "bins/tools/say.mojo" }]`. `buck2 build //examples/mojo/registry/conda_bins:conda_holds`
+packs the package and requires `lib/mojo/conda_bins.bins/hello.mojo` and `lib/mojo/conda_bins.bins/greet.mojo` in the `.conda`, each the bytes of its source.

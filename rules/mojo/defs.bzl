@@ -245,6 +245,10 @@ def program_sources(units, root, pkg_dir, project, rooted, refuse = fail):
     for u in units:
         if u["kind"] == "bin" and u["package"] == root:
             for src in u.get("srcs", []):
+                if rooted and pkg_dir and not src["path"].startswith(pkg_dir + "/"):
+                    # Refused (a program of this package outside its directory) and left out, so a recorder sees no entry for it.
+                    graph_path_in_package(src["path"], pkg_dir, rooted, refuse)
+                    continue
                 rel = graph_path_in_package(src["path"], pkg_dir, rooted, refuse)
                 out[rel] = _join(project, rel)
     return out

@@ -2,7 +2,7 @@
 A check that expects refusals asserts the tree it gets with `fail`, not `refuse`: its recorder holds only `workspace_tree`'s own refusals, so a wrong tree fails loading."""
 
 load("//rules/mojo:defs.bzl", "program_sources")
-load("//rules/mojo:pack.bzl", "workspace_tree")
+load("//rules/mojo:pack.bzl", "pack_workspace", "workspace_tree")
 
 def program_is_staged_at_its_path(refuse = fail):
     """A program of `[targets] bins` is staged below the package's directory at the path the manifest writes, beside the manifest and the members."""
@@ -35,7 +35,7 @@ def program_leaving_the_package_is_refused(refuse = fail):
     got, _ = workspace_tree("src/p", "m", {}, {"../../../x.mojo": "x", "/etc/x.mojo": "e", "../b/x.mojo": "b", "bins/../../y.mojo": "y", ".": "d", "bins/run.mojo": "run"}, refuse)
     if got != {"src/p/mopm.toml": "m", "src/p/bins/run.mojo": "run"}:
         fail("a refused program is staged, or the others are lost: {}".format(got))
-    root, _ = workspace_tree("", "m", {}, {"../x.mojo": "x", "bins/../run.mojo": "run"}, refuse)
+    root, _ = workspace_tree("", "m", {}, {"../x.mojo": "x", "./run.mojo": "run"}, refuse)
     if root != {"mopm.toml": "m", "run.mojo": "run"}:
         fail("a program leaving a package at the repository root is staged, or one that stays below it is lost: {}".format(root))
 
@@ -73,3 +73,52 @@ def programs_are_the_packages_own_below_it(refuse = fail):
         refuse("the programs of an unrooted graph are not the package's own: {}".format(unrooted))
     if program_sources([u for u in _UNITS if u["kind"] != "bin"], "app", "src/app", "", True, refuse) != {}:
         refuse("a package with no program has programs")
+
+def neither_programs_nor_members_is_the_manifest_alone(refuse = fail):
+    """A package with neither programs nor members gives `mopm pack` its manifest alone, no workspace, whether the two are left out or given empty; either one
+    alone makes the workspace."""
+    for got in [pack_workspace("src/p", "m"), pack_workspace("src/p", "m", {}, {}, refuse), pack_workspace("", "m", {}, {}, refuse)]:
+        if got != None:
+            refuse("a package with neither programs nor members is staged in a workspace: {}".format(got))
+    if pack_workspace("src/p", "m", {}, {"bins/run.mojo": "run"}, refuse) != ({"src/p/mopm.toml": "m", "src/p/bins/run.mojo": "run"}, "src/p/mopm.toml"):
+        refuse("a package with a program and no members is not staged in a workspace")
+    if pack_workspace("src/p", "m", {"util": "um"}, {}, refuse) != ({"src/p/mopm.toml": "m", "src/p/util/mopm.toml": "um"}, "src/p/mopm.toml"):
+        refuse("a package with a member and no programs is not staged in a workspace")
+
+def program_through_a_dot_dot_or_naming_a_directory_is_refused(refuse = fail):
+    """mopm opens a program's path as written. `bins/../run.mojo` stays in the package once normalized but goes through `bins/`, which nothing else stages, and
+    `bins/run.mojo/` names a directory: each is refused and not staged; `./bins//x.mojo`, which a filesystem resolves to the staged file, is staged."""
+    got, _ = workspace_tree("src/p", "m", {}, {"bins/../run.mojo": "r", "bins/run.mojo/": "d", "./bins//x.mojo": "x"}, refuse)
+    if got != {"src/p/mopm.toml": "m", "src/p/bins/x.mojo": "x"}:
+        fail("a program through `..` or naming a directory is staged, or the plain one is lost: {}".format(got))
+
+def package_leaving_the_repository_is_refused(refuse = fail):
+    """A package directory that climbs out of the repository has no tree: refused, with nothing staged and no manifest path."""
+    got, own = workspace_tree("../x", "m", {"util": "um"}, {"bins/run.mojo": "run"}, refuse)
+    if got != {} or own != "":
+        fail("a package outside the repository is staged: {} (manifest {})".format(got, own))
+
+def member_leaving_the_repository_is_refused(refuse = fail):
+    """A member whose path climbs out of the repository is refused and not staged; the package's manifest and the other members stay."""
+    got, own = workspace_tree("src/p", "m", {"../../../q": "qm", "util": "um"}, {}, refuse)
+    if got != {"src/p/mopm.toml": "m", "src/p/util/mopm.toml": "um"} or own != "src/p/mopm.toml":
+        fail("a member outside the repository is staged, or the others are lost: {} (manifest {})".format(got, own))
+
+def member_on_a_staged_manifest_is_refused(refuse = fail):
+    """Two member paths that normalize to one directory (`util`, `./util/`), and a member at the package's own directory (`.`), land on a staged manifest:
+    refused, and the first keeps its file."""
+    got, own = workspace_tree("src/p", "m", {"util": "um", "./util/": "second", ".": "self"}, {}, refuse)
+    if got != {"src/p/mopm.toml": "m", "src/p/util/mopm.toml": "um"} or own != "src/p/mopm.toml":
+        fail("a member replaced a staged manifest: {} (manifest {})".format(got, own))
+
+def program_source_outside_the_package_is_refused(refuse = fail):
+    """In a rooted graph a program of the package whose source is not below the package's directory is refused and left out: one elsewhere in the repository,
+    and one in a directory that only starts with the package's name (`src/application` for the package at `src/app`). The program below it stays."""
+    units = [
+        {"kind": "bin", "package": "app", "srcs": [{"path": "other/x.mojo"}]},
+        {"kind": "bin", "package": "app", "srcs": [{"path": "src/application/y.mojo"}]},
+        {"kind": "bin", "package": "app", "srcs": [{"path": "src/app/bins/run.mojo"}]},
+    ]
+    got = program_sources(units, "app", "src/app", "", True, refuse)
+    if got != {"bins/run.mojo": "bins/run.mojo"}:
+        fail("a program source outside the package is kept, or the one below it is lost: {}".format(got))

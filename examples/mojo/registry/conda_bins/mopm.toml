@@ -5,5 +5,5 @@ mojo = ["1.0.0"]
 
 [targets]
 lib = { path = "src/conda_bins" }
-bins = [{ name = "hello", path = "bins/hello.mojo" }]
+bins = [{ name = "hello", path = "bins/hello.mojo" }, { name = "greet", path = "bins/tools/say.mojo" }]
 tests = ["tests"]
