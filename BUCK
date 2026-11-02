@@ -88,6 +88,19 @@ export_file(
     visibility = ["//site:", "//cli:"],
 )
 
+# Read by the AGENTS.md check (ci/BUCK, `agents_check`): the shared core against its copy, and CLAUDE.md's import of AGENTS.md.
+export_file(
+    name = "AGENTS.md",
+    src = "AGENTS.md",
+    visibility = ["//ci:"],
+)
+
+export_file(
+    name = "CLAUDE.md",
+    src = "CLAUDE.md",
+    visibility = ["//ci:"],
+)
+
 export_file(
     name = "buck2.pin",
     src = "tools/buck2",
