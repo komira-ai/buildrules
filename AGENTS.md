@@ -1,7 +1,7 @@
 # AGENTS.md
 
 The rules every change to this repository is written and reviewed against, by people and coding agents alike. `CLAUDE.md` imports this file
-(its one line is `@AGENTS.md`), so every agent reads the same text.
+(its first line is `@AGENTS.md`; `//ci:agents_check` holds it there), so every agent reads the same text.
 
 The file has three parts: the shared core, the same text word for word in every repository of the project; the language rules that apply to
 this repository's code; and this repository's own rules. Rules are cited by id.

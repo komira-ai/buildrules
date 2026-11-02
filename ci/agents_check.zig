@@ -7,8 +7,9 @@
 //!  - a copy edited along with it: ci/shared_core.sha256 is `<sha256 of ci/shared_core.md, lowercase hex>  shared_core.md` and one newline, the
 //!    form `sha256sum` writes, and the digest is the copy's;
 //!  - markers that cannot delimit the core: each of the two is a line of its own, exactly once, the begin before the end;
-//!  - a CLAUDE.md that no longer imports AGENTS.md: a line that is exactly `@AGENTS.md`, outside a fenced code block of backticks or tildes
-//!    (an import inside a fence, inside a sentence or with anything after it, a carriage return included, is not read as one).
+//!  - a CLAUDE.md that no longer imports AGENTS.md: its first line is exactly `@AGENTS.md` (anything before or after it on that line, a carriage
+//!    return included, or the import on a later line, is not one). Nothing precedes the first line, so no code block, code span or comment can
+//!    hold it, and the rest of the file is the repository's own notes.
 const std = @import("std");
 const t = std.testing;
 
@@ -112,33 +113,11 @@ pub fn sameHash(a: std.mem.Allocator, f: *Findings, sums: []const u8, copy: []co
     if (!std.mem.eql(u8, sums[0..64], &have)) try add(a, f, "ci/shared_core.sha256 names {s}, but ci/{s} hashes to {s}: the canonical core changed", .{ sums[0..64], copy_name, &have });
 }
 
-/// The fence a line opens or closes: its character (backtick or tilde) and length, when the line, after up to three spaces, starts with three
-/// or more of one of them.
-fn fenceOf(line: []const u8) ?struct { char: u8, len: usize } {
-    const s = std.mem.trimLeft(u8, line, " ");
-    if (line.len - s.len > 3 or s.len < 3 or (s[0] != '`' and s[0] != '~')) return null;
-    var n: usize = 0;
-    while (n < s.len and s[n] == s[0]) n += 1;
-    if (n < 3) return null;
-    return .{ .char = s[0], .len = n };
-}
-
-/// CLAUDE.md has a line that is exactly `@AGENTS.md`, outside a fenced code block (a fence closes with its own character, at least as long).
+/// CLAUDE.md imports AGENTS.md on its first line, which is exactly `@AGENTS.md`. The first line, because nothing comes before it that could
+/// open a code block, a code span or a comment around it: what follows it, the repository's own notes, needs no reading.
 pub fn imports(a: std.mem.Allocator, f: *Findings, claude: []const u8) !void {
-    var open: ?struct { char: u8, len: usize } = null;
-    var it = std.mem.splitScalar(u8, claude, '\n');
-    while (it.next()) |line| {
-        if (fenceOf(line)) |fence| {
-            if (open == null) {
-                open = .{ .char = fence.char, .len = fence.len };
-            } else if (open.?.char == fence.char and fence.len >= open.?.len) {
-                open = null;
-            }
-        } else if (open == null and std.mem.eql(u8, line, import_line)) {
-            return;
-        }
-    }
-    try add(a, f, "CLAUDE.md does not import AGENTS.md: no line is exactly `{s}` outside a code block", .{import_line});
+    const first = claude[0 .. std.mem.indexOfScalar(u8, claude, '\n') orelse claude.len];
+    if (!std.mem.eql(u8, first, import_line)) try add(a, f, "CLAUDE.md does not import AGENTS.md: its first line is not exactly `{s}`", .{import_line});
 }
 
 /// Everything wrong with AGENTS.md, ci/shared_core.md, ci/shared_core.sha256 and CLAUDE.md.
@@ -261,6 +240,33 @@ test "a core longer or shorter than its copy is found where one of them ends" {
     });
 }
 
+test "empty and blank cores are compared like any other" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const around = struct {
+        fn of(comptime core_text: []const u8) []const u8 {
+            return "# AGENTS.md\n" ++ begin_marker ++ "\n" ++ core_text ++ end_marker ++ "\n";
+        }
+    }.of;
+    // adjacent markers and an empty copy: the same, no finding
+    try expectFindings(around(""), "", try sumsOf(a, ""), "@AGENTS.md\n", &.{});
+    // a core against an empty copy
+    try expectFindings(small_agents, "", try sumsOf(a, ""), "@AGENTS.md\n", &.{
+        "AGENTS.md:6: the shared core differs from ci/shared_core.md:1: `## Core` against `(the end of the copy)` (change the core in AGENTS.md, ci/shared_core.md and ci/shared_core.sha256 together)",
+    });
+    // blank-only cores: the same two empty lines, no finding
+    try expectFindings(around("\n\n"), "\n\n", try sumsOf(a, "\n\n"), "@AGENTS.md\n", &.{});
+    // two empty lines against one
+    try expectFindings(around("\n\n"), "\n", try sumsOf(a, "\n"), "@AGENTS.md\n", &.{
+        "AGENTS.md:4: the shared core differs from ci/shared_core.md:2: `` against `(the end of the copy)` (change the core in AGENTS.md, ci/shared_core.md and ci/shared_core.sha256 together)",
+    });
+    // one empty line against none
+    try expectFindings(around("\n"), "", try sumsOf(a, ""), "@AGENTS.md\n", &.{
+        "AGENTS.md:3: the shared core differs from ci/shared_core.md:1: `` against `(the end of the copy)` (change the core in AGENTS.md, ci/shared_core.md and ci/shared_core.sha256 together)",
+    });
+}
+
 test "a core that differs only in its final newline is found" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -303,6 +309,15 @@ test "markers that are missing, doubled, not a line of their own or out of order
     try expectFindings(try edit(a, small_agents, "## Repo\n", "## Repo\n" ++ begin_marker ++ "\n"), small_core, s, "@AGENTS.md\n", &.{
         "AGENTS.md: the line `<!-- shared-core:begin -->` is there 2 times, not once",
     });
+    // a second end line
+    try expectFindings(try edit(a, small_agents, "## Repo\n", "## Repo\n" ++ end_marker ++ "\n"), small_core, s, "@AGENTS.md\n", &.{
+        "AGENTS.md: the line `<!-- shared-core:end -->` is there 2 times, not once",
+    });
+    // both doubled: both named
+    try expectFindings(try edit(a, small_agents, "## Repo\n", "## Repo\n" ++ begin_marker ++ "\n" ++ end_marker ++ "\n"), small_core, s, "@AGENTS.md\n", &.{
+        "AGENTS.md: the line `<!-- shared-core:begin -->` is there 2 times, not once",
+        "AGENTS.md: the line `<!-- shared-core:end -->` is there 2 times, not once",
+    });
     // a marker inside a sentence is not a marker line, so it is neither counted nor taken for the core's edge
     try expectFindings(try edit(a, small_agents, "Intro.\n", begin_twice), small_core, s, "@AGENTS.md\n", &.{});
     // a marker with a trailing space is not the marker
@@ -330,7 +345,7 @@ test "a hash file that is not the sha256sum line of the copy is found" {
     const malformed = [_][]const u8{
         s[0 .. s.len - 1], // no newline
         try std.mem.concat(a, u8, &.{ s, "\n" }), // a second line
-        try std.ascii.allocUpperString(a, s), // uppercase hex (and name)
+        try std.mem.concat(a, u8, &.{ try std.ascii.allocUpperString(a, s[0..64]), s[64..] }), // uppercase hex, the name as it is
         try edit(a, s, "  shared_core.md", " shared_core.md"), // one space
         try edit(a, s, "  shared_core.md", "  AGENTS.md"), // another file
         try std.mem.concat(a, u8, &.{ "g", s[1..] }), // a character that is not hex
@@ -348,34 +363,35 @@ test "a hash file that is not the sha256sum line of the copy is found" {
     });
 }
 
-test "CLAUDE.md imports AGENTS.md only on a line of its own outside a code block" {
+test "CLAUDE.md imports AGENTS.md only on its first line, exactly" {
     const s = try sumsOf(t.allocator, small_core);
     defer t.allocator.free(s);
     const missing = [_][]const u8{
         "",
+        "\n" ++ import_line ++ "\n", // an empty first line
+        "# CLAUDE.md\n\n" ++ import_line ++ "\n", // on a later line
         "# CLAUDE.md\n\nRead AGENTS.md.\n",
         "Read @AGENTS.md first.\n", // inside a sentence
         "@AGENTS.md.bak\n", // another file
         "@AGENTS.md \n", // anything after it
+        "@AGENTS.md\t\n",
         " @AGENTS.md\n", // anything before it
+        "`@AGENTS.md`\n", // a code span
+        "<!-- @AGENTS.md -->\n", // a comment
         "@agents.md\n", // another case
-        "```\n" ++ import_line ++ "\n```\n", // inside a fence
-        "  ```md\n" ++ import_line ++ "\n```\n", // inside an indented fence with a language
-        "~~~\n" ++ import_line ++ "\n~~~\n", // inside a tilde fence
-        "````\n```\n" ++ import_line ++ "\n````\n", // a shorter fence inside a longer one does not close it
-        "~~~\n```\n" ++ import_line ++ "\n~~~\n", // nor does a fence of the other character
-        "```\n" ++ import_line ++ "\n", // inside a fence never closed
         "@AGENTS.md\r\n", // a CRLF line: strict, as the core is
+        "```\n" ++ import_line ++ "\n```\n", // inside a fence
+        "~~~\n~~~text\n" ++ import_line ++ "\n~~~\n", // inside a fence whose closing-looking line does not close it
+        "`\n" ++ import_line ++ "\n`\n", // inside a code span over lines
+        "``\n" ++ import_line ++ "\n``\n",
     };
-    for (missing) |c| try expectFindings(small_agents, small_core, s, c, &.{"CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` outside a code block"});
+    for (missing) |c| try expectFindings(small_agents, small_core, s, c, &.{"CLAUDE.md does not import AGENTS.md: its first line is not exactly `@AGENTS.md`"});
     const present = [_][]const u8{
         "@AGENTS.md\n",
         "@AGENTS.md", // no newline
-        "# CLAUDE.md\n\n" ++ import_line ++ "\n\nThe repository's own notes.\n", // among other lines
-        "```\nan example\n```\n" ++ import_line ++ "\n", // after a closed fence
-        "~~~\nan example\n~~~~\n" ++ import_line ++ "\n", // after a tilde fence closed by a longer one
-        "``\n" ++ import_line ++ "\n", // two backticks are no fence
-        "    ```\n" ++ import_line ++ "\n", // four spaces of indent are no fence
+        "@AGENTS.md\n\n# The repository's own notes\n\nMore text.\n", // followed by notes
+        "@AGENTS.md\n```\nan unclosed fence after it\n", // what follows is never read
+        "@AGENTS.md\n`\n", // nor a backtick after it
     };
     for (present) |c| try expectFindings(small_agents, small_core, s, c, &.{});
 }
@@ -387,6 +403,19 @@ test "every problem of the four files is reported together" {
     try expectFindings(try edit(a, small_agents, "One rule.", "One changed rule."), small_core, "", "", &.{
         "AGENTS.md:8: the shared core differs from ci/shared_core.md:3: `- X1 BLOCK. One changed rule.` against `- X1 BLOCK. One rule.` (change the core in AGENTS.md, ci/shared_core.md and ci/shared_core.sha256 together)",
         "ci/shared_core.sha256 is not one line `<64 lowercase hex>  shared_core.md` (what `sha256sum shared_core.md` writes): ``",
-        "CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` outside a code block",
+        "CLAUDE.md does not import AGENTS.md: its first line is not exactly `@AGENTS.md`",
+    });
+    // markers that cannot delimit the core, with a bad hash and no import: every problem, and no comparison of a core there is none of
+    const bad = "# CLAUDE.md\n";
+    try expectFindings("# AGENTS.md\n" ++ end_marker ++ "\n" ++ end_marker ++ "\n", small_core, "x", bad, &.{
+        "AGENTS.md: the line `<!-- shared-core:begin -->` is there 0 times, not once",
+        "AGENTS.md: the line `<!-- shared-core:end -->` is there 2 times, not once",
+        "ci/shared_core.sha256 is not one line `<64 lowercase hex>  shared_core.md` (what `sha256sum shared_core.md` writes): `x`",
+        "CLAUDE.md does not import AGENTS.md: its first line is not exactly `@AGENTS.md`",
+    });
+    try expectFindings(end_marker ++ "\n" ++ begin_marker ++ "\n", small_core, "", bad, &.{
+        "AGENTS.md:1: the end of the shared core comes before its begin (line 2)",
+        "ci/shared_core.sha256 is not one line `<64 lowercase hex>  shared_core.md` (what `sha256sum shared_core.md` writes): ``",
+        "CLAUDE.md does not import AGENTS.md: its first line is not exactly `@AGENTS.md`",
     });
 }
