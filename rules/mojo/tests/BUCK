@@ -571,7 +571,7 @@ program_through_a_dot_dot_or_naming_a_directory_is_refused(_f37)
 refusal_test(
     name = "conda_program_through_a_dot_dot_or_naming_a_directory_is_refused",
     refusals = _r37,
-    contains = ["the program bins/../run.mojo of the package at src/p goes through a directory with `..`", "the program bins/run.mojo/ of the package at src/p ends in `/`"],
+    contains = ["the program bins/../run.mojo of the package at src/p goes through a directory with `..`", "the program bins/run.mojo/ of the package at src/p ends in `/`, which names a directory", "the program bins/run.mojo/. of the package at src/p ends in `/.`, which names a directory", "the program run.mojo/. of the package at . ends in `/.`, which names a directory"],
     visibility = ["PUBLIC"],
 )
 

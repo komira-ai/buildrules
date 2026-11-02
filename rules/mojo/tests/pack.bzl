@@ -87,10 +87,14 @@ def neither_programs_nor_members_is_the_manifest_alone(refuse = fail):
 
 def program_through_a_dot_dot_or_naming_a_directory_is_refused(refuse = fail):
     """mopm opens a program's path as written. `bins/../run.mojo` stays in the package once normalized but goes through `bins/`, which nothing else stages, and
-    `bins/run.mojo/` names a directory: each is refused and not staged; `./bins//x.mojo`, which a filesystem resolves to the staged file, is staged."""
-    got, _ = workspace_tree("src/p", "m", {}, {"bins/../run.mojo": "r", "bins/run.mojo/": "d", "./bins//x.mojo": "x"}, refuse)
-    if got != {"src/p/mopm.toml": "m", "src/p/bins/x.mojo": "x"}:
-        fail("a program through `..` or naming a directory is staged, or the plain one is lost: {}".format(got))
+    `bins/run.mojo/` and `bins/run.mojo/.` name a directory: each is refused and not staged; `./bins//x.mojo` and `bins/./y.mojo`, which a filesystem resolves to
+    the staged file, are staged."""
+    got, _ = workspace_tree("src/p", "m", {}, {"bins/../run.mojo": "r", "bins/run.mojo/": "d", "bins/run.mojo/.": "dd", "./bins//x.mojo": "x", "bins/./y.mojo": "y"}, refuse)
+    if got != {"src/p/mopm.toml": "m", "src/p/bins/x.mojo": "x", "src/p/bins/y.mojo": "y"}:
+        fail("a program through `..` or naming a directory is staged, or a plain one is lost: {}".format(got))
+    root, _ = workspace_tree("", "m", {}, {"run.mojo/.": "d", "./run.mojo": "run"}, refuse)
+    if root != {"mopm.toml": "m", "run.mojo": "run"}:
+        fail("a program naming a directory of a package at the repository root is staged, or the plain one is lost: {}".format(root))
 
 def package_leaving_the_repository_is_refused(refuse = fail):
     """A package directory that climbs out of the repository has no tree: refused, with nothing staged and no manifest path."""

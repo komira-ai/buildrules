@@ -44,7 +44,7 @@ def workspace_tree(dir, manifest, members, bins = {}, refuse = fail):
     `<dir of --manifest>/<path>` and ships it, so it is staged at `<dir>/<path>`. Nothing else of the package is staged: a program imports the package's library,
     which is the `.mojoc` given to `mopm pack`.
     `refuse(message)` is called for a package or member path that leaves the repository, for a program path that leaves the package's directory (absolute, or
-    climbing out with `..`, or naming the directory itself), goes through a directory with `..` or ends in `/`, and for two entries that land on one file (the
+    climbing out with `..`, or naming the directory itself), goes through a directory with `..` or ends in `/` or `/.`, and for two entries that land on one file (the
     entry is then left out); by default it fails."""
     tree = {}
     here = _within(dir)
@@ -69,13 +69,14 @@ def workspace_tree(dir, manifest, members, bins = {}, refuse = fail):
         if not rel:
             refuse("mojo_conda: the program {} of the package at {} leaves the package directory".format(path, here or "."))
             continue
-        # mopm opens the path as written: `bins/../run.mojo` goes through `bins/`, which only exists when something is staged in it, and `bins/run.mojo/`
-        # names a directory. Both are refused rather than staged where a filesystem would not find them.
+        # mopm opens the path as written: `bins/../run.mojo` goes through `bins/`, which only exists when something is staged in it, and `bins/run.mojo/` or
+        # `bins/run.mojo/.` names a directory. Each is refused rather than staged where a filesystem would not find it.
         if ".." in path.split("/"):
             refuse("mojo_conda: the program {} of the package at {} goes through a directory with `..`: write the path without `..`".format(path, here or "."))
             continue
-        if path.endswith("/"):
-            refuse("mojo_conda: the program {} of the package at {} ends in `/`, which names a directory".format(path, here or "."))
+        last = path.split("/")[-1]
+        if last in ("", "."):
+            refuse("mojo_conda: the program {} of the package at {} ends in `{}`, which names a directory".format(path, here or ".", "/" + last))
             continue
         file = (here + "/" if here else "") + rel
         if file in tree:
