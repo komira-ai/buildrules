@@ -27,11 +27,16 @@ def package_without_programs_stages_what_it_did(refuse = fail):
     if default != got:
         refuse("leaving `bins` out is not the same as an empty `bins`: {}".format(default))
 
-def program_leaving_the_repository_is_refused(refuse = fail):
-    """A program whose path climbs out of the repository from the package's directory has no place in the tree: refused, and not staged."""
-    got, _ = workspace_tree("src/p", "m", {}, {"../../../x.mojo": "x", "bins/run.mojo": "run"}, refuse)
-    if "src/p/bins/run.mojo" not in got or len(got) != 2:
+def program_leaving_the_package_is_refused(refuse = fail):
+    """A program whose path climbs out of the package's directory is not the package's own: refused, and not staged, whether it stays in the repository
+    (`../b/x.mojo`, `bins/../../y.mojo`) or leaves it (`../../../x.mojo`); a path that names the directory itself (`.`) is no file and is refused too. The
+    other programs stay."""
+    got, _ = workspace_tree("src/p", "m", {}, {"../../../x.mojo": "x", "../b/x.mojo": "b", "bins/../../y.mojo": "y", ".": "d", "bins/run.mojo": "run"}, refuse)
+    if got != {"src/p/mopm.toml": "m", "src/p/bins/run.mojo": "run"}:
         refuse("a refused program is staged, or the others are lost: {}".format(got))
+    root, _ = workspace_tree("", "m", {}, {"../x.mojo": "x", "bins/../run.mojo": "run"}, refuse)
+    if root != {"mopm.toml": "m", "run.mojo": "run"}:
+        refuse("a program leaving a package at the repository root is staged, or one that stays below it is lost: {}".format(root))
 
 def program_on_a_staged_manifest_is_refused(refuse = fail):
     """A program that lands on a file already staged (the package's manifest, a member's) is refused, and the manifest keeps its file."""

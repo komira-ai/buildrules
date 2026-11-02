@@ -7,6 +7,8 @@
 //!     when anything is refused nothing at all is written (not the `.mojoc` either);
 //!   - a soname that could leave the output directory, or is not `lib<stem>.a`, is refused before it is a path, and a member
 //!     whose name only looks like the wanted one (`lib/../libx.a`, a name with a suffix) is not it;
+//!   - `--holds`: a member (the source of a program) is the bytes of the caller's file; one that is missing or differs, a file not there, a member named twice
+//!     or whose path is not relative plain names is refused;
 //!   - the command line's refusals; and every allocation failing in turn is an error, never a leak.
 const std = @import("std");
 const U = @import("prebuilt_unpack.zig");
@@ -896,4 +898,82 @@ test "run: every allocation failing in turn is an error with --native-from too" 
         } else |e| try t.expectEqual(error.OutOfMemory, e);
     }
     return error.SweepDidNotEnd;
+}
+
+const prog = "def main():\n    print(\"hello\")\n";
+const prog_member = "lib/mojo/p.bins/hello.mojo";
+
+test "run --holds: the package carries each member with exactly the file's bytes; a member it lacks, other bytes, or a file not there are refused, writing nothing" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const c = try conda(a, &.{ .{ .name = "lib/mojo/p.mojoc", .body = m1 }, .{ .name = prog_member, .body = prog }, .{ .name = "lib/mojo/p.bins/b.mojo", .body = "b" } });
+    try tmp.dir.writeFile(.{ .sub_path = "hello.mojo", .data = prog });
+    try tmp.dir.writeFile(.{ .sub_path = "b.mojo", .data = "b" });
+    try tmp.dir.writeFile(.{ .sub_path = "edited.mojo", .data = prog ++ "#" });
+    try t.expect((try runWith(a, tmp.dir, c, &.{ "--holds", prog_member ++ "=hello.mojo", "--holds", "lib/mojo/p.bins/b.mojo=b.mojo" })).err == null);
+    try t.expectEqualStrings(m1, try read(a, tmp.dir, "out.mojoc"));
+    try tmp.dir.deleteFile("out.mojoc");
+    const lacks = try runWith(a, tmp.dir, try conda(a, &.{.{ .name = "lib/mojo/p.mojoc", .body = m1 }}), &.{ "--holds", prog_member ++ "=hello.mojo" });
+    try t.expect(lacks.err.? == error.NoMember);
+    try t.expectEqualStrings("p.conda: " ++ prog_member ++ ": NoMember", lacks.why);
+    const other = try runWith(a, tmp.dir, c, &.{ "--holds", prog_member ++ "=edited.mojo" });
+    try t.expect(other.err.? == error.HeldMismatch);
+    try t.expectEqualStrings(try std.fmt.allocPrint(a, "p.conda: {s} hashes to {s}, edited.mojo to {s}", .{ prog_member, sha(prog), sha(prog ++ "#") }), other.why);
+    const gone = try runWith(a, tmp.dir, c, &.{ "--holds", prog_member ++ "=missing.mojo" });
+    try t.expect(gone.err.? == error.FileNotFound);
+    try t.expectEqualStrings("cannot read missing.mojo: FileNotFound", gone.why);
+    // A member named twice, by --holds or as the `.mojoc` the package is unpacked for, is refused: the second would never be found.
+    const twice = try runWith(a, tmp.dir, c, &.{ "--holds", prog_member ++ "=hello.mojo", "--holds", prog_member ++ "=hello.mojo" });
+    try t.expect(twice.err.? == error.BadHolds);
+    try t.expectEqualStrings("--holds names " ++ prog_member ++ ", which is already checked", twice.why);
+    try t.expect((try runWith(a, tmp.dir, c, &.{ "--holds", "lib/mojo/p.mojoc=hello.mojo" })).err.? == error.BadHolds);
+    try t.expect(absent(tmp.dir, "out.mojoc"));
+}
+
+test "the command line: --holds needs a member that is a relative path of plain names, and a file" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var why: []const u8 = "";
+    for ([_][]const u8{ "lib/x", "=f", "lib/x=", "/lib/x=f", "lib//x=f", "lib/./x=f", "lib/../x=f", "../x=f", "lib/x/=f" }) |arg| {
+        try t.expectError(error.BadHolds, U.parseArgs(a, &.{ "p.conda", "p", "o", "--holds", arg }, &why));
+        try t.expect(std.mem.startsWith(u8, why, "--holds "));
+    }
+    try t.expectError(error.BadUsage, U.parseArgs(a, &.{ "p.conda", "p", "o", "--holds" }, &why));
+    const ok = try U.parseArgs(a, &.{ "p.conda", "p", "o", "--holds", "lib/mojo/p.bins/run.mojo=dir/run=1.mojo" }, &why);
+    try t.expectEqual(@as(usize, 1), ok.holds.len);
+    try t.expectEqualStrings("lib/mojo/p.bins/run.mojo", ok.holds[0].member);
+    try t.expectEqualStrings("dir/run=1.mojo", ok.holds[0].path);
+}
+
+test "run --holds: every allocation failing in turn is an error, and every refusal stays one when its wording cannot be allocated" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "p.conda", .data = try conda(a, &.{ .{ .name = "lib/mojo/p.mojoc", .body = m1 }, .{ .name = prog_member, .body = prog } }) });
+    try tmp.dir.writeFile(.{ .sub_path = "hello.mojo", .data = prog });
+    try tmp.dir.writeFile(.{ .sub_path = "edited.mojo", .data = "x" });
+    const args = [_][]const u8{ "p.conda", "p", "out.mojoc", "--holds", prog_member ++ "=hello.mojo" };
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        var inner = std.heap.ArenaAllocator.init(t.allocator);
+        defer inner.deinit();
+        var fa = t.FailingAllocator.init(inner.allocator(), .{ .fail_index = i });
+        var why: []const u8 = "";
+        if (U.run(fa.allocator(), tmp.dir, &args, &why)) |_| {
+            try t.expect(!fa.has_induced_failure);
+            break;
+        } else |e| try t.expectEqual(error.OutOfMemory, e);
+    } else return error.SweepDidNotEnd;
+    try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--holds", "lib/x" }, error.BadHolds);
+    try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--holds", "../x=f" }, error.BadHolds);
+    try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--holds", "lib/x=" }, error.BadHolds);
+    try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--holds", "lib/mojo/p.mojoc=hello.mojo" }, error.BadHolds);
+    try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--holds", prog_member ++ "=missing.mojo" }, error.FileNotFound);
+    try sweepError(tmp.dir, &.{ "p.conda", "p", "o.mojoc", "--holds", prog_member ++ "=edited.mojo" }, error.HeldMismatch);
 }

@@ -42,6 +42,8 @@ CASES = [
     ("//ci/negative:mojo_unit_linking_a_cxx_archive_without_cxx_in_its_link", PLATFORM, "links a native library with C++ sources, and the link of the unit is []: `c++` must be in it"),
     ("//ci/negative:mojo_instrumented_link_of_a_cxx_archive_without_cxx_in_its_link", PLATFORM, "links a native library with C++ sources, and the link of the unit is []: `c++` must be in it"),
     ("//ci/negative:mojo_conda_of_a_cxx_archive_without_cxx_in_its_link", PLATFORM, "links a native library with C++ sources, and the link of the unit is []: `c++` must be in it"),
+    # A program of `[targets] bins` whose path leaves the package's directory is refused by the `:conda` that would stage it (rules/mojo/pack.bzl, `workspace_tree`).
+    ("//ci/negative:mojo_conda_of_a_program_leaving_the_package", PLATFORM, "mojo_conda: the program ../elsewhere/hello.mojo of the package at examples/mojo/registry/conda_bins leaves the package directory"),
     ("//ci/negative:mojo_test_run_with_a_zero_hang_limit", PLATFORM, "test_hang_limit_s 0 is not a positive whole number of seconds"),
     # A path written in a BUCK file that leaves the archive (absolute, or with a .. component) is refused at analysis, whatever it is (rules/cxx/checks.bzl).
     ("//ci/faulty:archive_files_of_a_dot_dot_file", "buildrules//platforms:linux_x86_64", "file sub/../ok.c is not a path inside the archive: a path may not be absolute or hold a .. component"),

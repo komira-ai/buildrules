@@ -43,7 +43,8 @@ def workspace_tree(dir, manifest, members, bins = {}, refuse = fail):
     `bins` maps each program of `[targets] bins`, by the path the package's mopm.toml writes (`bins/run.mojo`), to its source: mopm reads that file at
     `<dir of --manifest>/<path>` and ships it, so it is staged at `<dir>/<path>`. Nothing else of the package is staged: a program imports the package's library,
     which is the `.mojoc` given to `mopm pack`.
-    `refuse(message)` is called for a path that leaves the repository, and for two entries that land on one file (the entry is then left out); by default it fails."""
+    `refuse(message)` is called for a package or member path that leaves the repository, for a program path that leaves the package's directory (or names the
+    directory itself), and for two entries that land on one file (the entry is then left out); by default it fails."""
     tree = {}
     here = _within(dir)
     if here == None:
@@ -62,10 +63,12 @@ def workspace_tree(dir, manifest, members, bins = {}, refuse = fail):
             continue
         tree[file] = member
     for path, source in bins.items():
-        file = _within((here + "/" if here else "") + path)
-        if file == None:
-            refuse("mojo_conda: the program {} of the package at {} leaves the repository".format(path, here or "."))
+        # A program is the package's own file: its path is normalized from the package's directory and may not leave it (a sibling's file is not this package's).
+        rel = _within(path)
+        if not rel:
+            refuse("mojo_conda: the program {} of the package at {} leaves the package directory".format(path, here or "."))
             continue
+        file = (here + "/" if here else "") + rel
         if file in tree:
             refuse("mojo_conda: the program {} of the package at {} is {}, which is already staged".format(path, here or ".", file))
             continue
@@ -145,6 +148,8 @@ def _holds_impl(ctx):
     cmd = cmd_args(ctx.attrs.unpacker[DefaultInfo].default_outputs[0], ctx.attrs.conda[DefaultInfo].default_outputs[0], ctx.attrs.package, out.as_output(), "--natives", natives.as_output())
     for soname, archive in sorted(ctx.attrs.natives.items()):
         cmd.add("--native-from", cmd_args("{}=".format(soname), archive[DefaultInfo].default_outputs[0], delimiter = ""))
+    for member, source in sorted(ctx.attrs.holds.items()):
+        cmd.add("--holds", cmd_args("{}=".format(member), source, delimiter = ""))
     if ctx.attrs.sole:
         cmd.add("--sole")
     if ctx.attrs.depends != None:
@@ -162,6 +167,9 @@ _mojo_conda_holds = rule(
         "conda": attrs.dep(),
         # `{"lib<id>.a": <the archive target>}`: the `.conda` must hold `lib/<soname>` with exactly the bytes of that target's file.
         "natives": attrs.dict(attrs.string(), attrs.dep(), default = {}),
+        # `{"<member of the package's payload>": <file>}`: the `.conda` must hold that member with exactly the file's bytes (the source of a program of `[targets] bins`,
+        # which `mopm pack` ships at `lib/mojo/<package>.bins/<path>`).
+        "holds": attrs.dict(attrs.string(), attrs.source(), default = {}),
         "package": attrs.string(),
         # `sole`: the `.conda` holds nothing under `lib/mojo/` but the package's own `.mojoc` and `.mopm.json` (a package packed from a workspace holds none of
         # its siblings).
@@ -175,6 +183,7 @@ _mojo_conda_holds = rule(
 
 def mojo_conda_holds(**kwargs):
     """The `.conda` of `mojo_conda` holds each native library at `lib/<soname>` with the bytes the build made: unpacked by `prebuilt_unpack`, which refuses a
-    member that is missing, empty, a link, or whose sha256 is not that of the file. Building it is the check. With `sole = True` it also refuses a `.conda`
+    member that is missing, empty, a link, or whose sha256 is not that of the file. `holds` does the same for any other member of the payload, such as the
+    source of a program. Building it is the check. With `sole = True` it also refuses a `.conda`
     that holds a file of another package under `lib/mojo/`, and with `depends = [...]` one whose recorded dependencies are not those, exactly."""
     _mojo_conda_holds(exec_compatible_with = LINUX_X86_64, **kwargs)
