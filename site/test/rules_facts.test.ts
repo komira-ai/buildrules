@@ -54,6 +54,7 @@ const SOURCES = [
   'rules/zig/zig.bzl',
   'rules/cxx/defs.bzl',
   'rules/cxx/archive.bzl',
+  'rules/native/defs.bzl',
   'rules/mojo/defs.bzl',
   'rules/mopm/toolchain.bzl',
   'rules/isa.bzl',
@@ -86,7 +87,7 @@ const argName = (a: string): string => /^[*]*([A-Za-z_][A-Za-z0-9_]*)/.exec(a)![
 
 /** The attributes of the `rule(...)` assigned to `var`: the keys of its `attrs` dict. */
 function ruleAttrs(var_: string): string[] | undefined {
-  const start = new RegExp(`^${var_} = (?:_on_linux\\()?rule\\(`, 'm').exec(src);
+  const start = new RegExp(`^${var_} = (?:_on_(?:linux|tool_exec)\\()?rule\\(`, 'm').exec(src);
   if (!start) return undefined;
   const rest = src.slice(start.index);
   const end = rest.search(/\n\)/);
@@ -105,7 +106,7 @@ function paramsOf(name: string, seen: string[] = []): string[] | undefined {
     const names = args.filter((a) => !a.startsWith('*')).map(argName);
     return args.some((a) => a.startsWith('**')) ? [...names, ...GENERIC, ...ALL_ATTRS] : names;
   }
-  const alias = new RegExp(`^${name} = (?:_on_linux\\()?([A-Za-z_][A-Za-z0-9_]*)\\)?\\s*$`, 'm').exec(src);
+  const alias = new RegExp(`^${name} = (?:_on_(?:linux|tool_exec)\\()?([A-Za-z_][A-Za-z0-9_]*)(?:, targeted = True)?\\)?\\s*$`, 'm').exec(src);
   if (alias) return paramsOf(alias[1], [...seen, name]);
   for (const v of [name, `_${name}`, `${name}_rule`, `_${name}_rule`]) {
     const a = ruleAttrs(v);
@@ -143,6 +144,7 @@ describe('rule arguments on the pages are the arguments the rules take', () => {
       ['cargo_workspace', '/rules/rust/'],
       ['npm_package', '/rules/node/'],
       ['mojo_package', '/rules/mojo/'],
+      ['native_library', '/rules/cxx/'],
     ];
     for (const [rule, path] of doc) {
       const t = pageText(page(path));
@@ -658,7 +660,7 @@ describe('the stages of the release: the page, RELEASING.md, beta.yml and releas
   test('arm and macos run natively up to the build, and say they do not build; the Mojo leg runs', () => {
     expect(beta).toMatch(/\n {2}beta_mojo:\n/);
     expect(beta).toContain('runs-on: ubuntu-24.04-arm');
-    expect(beta).toContain('runs-on: macos-14');
+    expect(beta).toContain('runs-on: macos-15');
     // no job of beta.yml is skipped any more, and the two native ones say in their names that they do not build
     expect(beta).not.toContain("github.event_name == 'planned'");
     expect(beta.match(/native, no build yet/g)!.length).toBe(2);

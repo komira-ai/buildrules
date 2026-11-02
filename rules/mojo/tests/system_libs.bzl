@@ -25,13 +25,13 @@ def graph(fmt = 3, libs = ["libsqlite", "libzlib"], loads = ["libsqlite", "libzl
     return g
 
 def the_formats_of_the_rules_are_accepted(refuse = fail):
-    """Formats 1, 2 and 3 are read: a graph of a format that predates `loads` is as it always was, and 3 is the one that has them."""
-    for n in [1, 2, 3]:
+    """Formats 1 to 5 are read: a graph of a format that predates `loads` is as it always was, 3 is the one that has them, 4 adds `provided` and 5 adds `link`."""
+    for n in [1, 2, 3, 4, 5]:
         check_graph_format("g", n, refuse)
 
-def a_format_above_three_is_refused(refuse = fail):
-    """A rules version that does not know a format must not run its tests: 4 is refused naming the formats read and the fix."""
-    check_graph_format("the committed unit graph", 4, refuse)
+def a_format_above_five_is_refused(refuse = fail):
+    """A rules version that does not know a format must not run its tests: 6 is refused naming the formats read and the fix."""
+    check_graph_format("the committed unit graph", 6, refuse)
 
 def a_format_that_is_no_number_is_refused(refuse = fail):
     """0, a negative number and text are no format number."""
@@ -97,7 +97,13 @@ def a_subdir_whose_unit_loads_another_library_is_refused(refuse = fail):
     check_same_system_libs({"linux-64": graph(), "osx-arm64": graph(loads = ["libsqlite"])}, "linux-64", refuse)
 
 def a_slice_for_the_compile_is_never_above_format_two(refuse = fail):
-    """`mopm unit build` of the pinned mopm reads formats 1 and 2: 1 and 2 stay as they are, and 3 is said as 2."""
-    for n, want in [(1, 1), (2, 2), (3, 2)]:
+    """A slice with no provided native unit says 1 or 2 as the graph does, and 2 for a graph of format 3, 4 or 5: what a compile reads (no `loads`, no `link`) is a format 2 slice."""
+    for n, want in [(1, 1), (2, 2), (3, 2), (4, 2), (5, 2)]:
         if compile_format(n) != want:
             refuse("compile_format({}) is {}, not {}".format(n, compile_format(n), want))
+
+def a_slice_with_a_provided_native_unit_says_format_four(refuse = fail):
+    """A reader that does not know `provided` would make an empty archive of the unit, so a slice that holds one says the format that has the key, from a graph of 4 or 5 alike."""
+    for n in [4, 5]:
+        if compile_format(n, True) != 4:
+            refuse("compile_format({}, True) is {}, not 4".format(n, compile_format(n, True)))

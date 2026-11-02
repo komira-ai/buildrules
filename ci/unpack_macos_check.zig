@@ -1,4 +1,4 @@
-//! The `unpack_macos` job of .github/workflows/ci.yml does what it is for: GitHub's macos-14 runner builds `unpack` with the pinned zig 0.15.2 for macOS, runs its unit
+//! The `unpack_macos` job of .github/workflows/ci.yml does what it is for: GitHub's macos-15 runner builds `unpack` with the pinned zig 0.15.2 for macOS, runs its unit
 //! tests, and unpacks the REAL darwin zig 0.12.0 tarball, comparing the tree with the system tar's and running the zig it made. The job's urls and digests are the ones in
 //! rules/pins/hosts.bzl (a job that fetched another file would prove nothing about the pinned one). A pure function of the two texts, tested against faulty text.
 const std = @import("std");
@@ -66,14 +66,17 @@ fn pinField(bootstrap: []const u8, host: []const u8, key: []const u8) ?[]const u
     return std.mem.trim(u8, v, " ,\"");
 }
 
+/// The lowest macOS the macOS programs of buildrules run on: what the pinned zig 0.15.2 targets for `aarch64-macos` with no version. The job builds for it and fails when a Mach-O is above it.
+pub const macos_min = "13.0";
+
 pub fn check(a: std.mem.Allocator, workflow: []const u8, hosts: []const u8, bootstrap: []const u8) !Findings {
     var f = Findings.empty;
     var buf: [64]u8 = undefined;
     const job = jobBlock(workflow, "unpack_macos", &buf) orelse {
-        try add(a, &f, "the `unpack_macos` job is missing (macos-14: build unpack, run its tests, unpack the real darwin zig tarball)", .{});
+        try add(a, &f, "the `unpack_macos` job is missing (macos-15: build unpack, run its tests, unpack the real darwin zig tarball)", .{});
         return f;
     };
-    if (!mentions(job, "\n    runs-on: macos-14\n")) try add(a, &f, "the unpack_macos job does not run on `runs-on: macos-14` (an aarch64 macOS machine)", .{});
+    if (!mentions(job, "\n    runs-on: macos-15\n")) try add(a, &f, "the unpack_macos job does not run on `runs-on: macos-15` (an aarch64 macOS machine)", .{});
     if (!mentions(job, "test \"$(uname -s)-$(uname -m)\" = Darwin-arm64")) try add(a, &f, "the unpack_macos job does not assert the machine is Darwin-arm64", .{});
     for ([_][]const u8{ "zig_next", "zig" }) |role| {
         const url = field(hosts, "macos-aarch64", role, "url") orelse "";
@@ -96,6 +99,9 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, hosts: []const u8, boot
     defer a.free(unpack_cmd);
     if (!mentions(job, unpack_cmd)) try add(a, &f, "the unpack_macos job does not unpack the darwin zig with its sha256 and size checked (`{s}`)", .{unpack_cmd});
     if (!mentions(job, "./zig-next/zig build-exe -OReleaseSafe -fstrip tools/bootstrap/src/unpack.zig -femit-bin=unpack-native")) try add(a, &f, "the unpack_macos job does not build tools/bootstrap/src/unpack.zig with the pinned zig", .{});
+    // The macOS minimum: the program is built for the pinned target, and it and the pinned cross build are held to the same limit by ci/macho_minos.zig.
+    if (!mentions(job, "-target aarch64-macos." ++ macos_min ++ " tools/bootstrap/src/unpack.zig -femit-bin=unpack-pinned")) try add(a, &f, "the unpack_macos job does not build unpack for `-target aarch64-macos." ++ macos_min ++ "`, the pinned macOS minimum", .{});
+    if (!mentions(job, "./zig-next/zig run ci/macho_minos.zig -- --max " ++ macos_min ++ " cross/unpack-macos-aarch64 unpack-pinned\n")) try add(a, &f, "the unpack_macos job does not check the minos of the pinned program and of the pinned build against " ++ macos_min ++ " (ci/macho_minos.zig)", .{});
     if (!mentions(job, "./zig-next/zig test \"tools/bootstrap/src/${name}_test.zig\"")) try add(a, &f, "the unpack_macos job does not run the unit tests natively", .{});
     if (!mentions(job, "diff -r zig-from-tar zig-from-unpack")) try add(a, &f, "the unpack_macos job does not compare the tree with the system tar's (`diff -r zig-from-tar zig-from-unpack`)", .{});
     if (!mentions(job, "test \"$(./zig-from-unpack/zig version)\" = 0.12.0")) try add(a, &f, "the unpack_macos job does not run the unpacked zig and check its version is 0.12.0", .{});
@@ -182,7 +188,7 @@ test "every part of the job is required" {
     defer ta.free(r.hosts);
     defer ta.free(r.bootstrap);
     const cases = [_][2][]const u8{
-        .{ "    runs-on: macos-14\n    needs: unpack_cross", "    runs-on: ubuntu-latest\n    needs: unpack_cross" },
+        .{ "    runs-on: macos-15\n    needs: unpack_cross", "    runs-on: ubuntu-latest\n    needs: unpack_cross" },
         .{ "    needs: unpack_cross\n", "    needs: other\n" },
         .{ "name: unpack-macos-aarch64\n          path: cross", "name: unpack-macos\n          path: cross" },
         .{ "chmod +x cross/unpack-macos-aarch64", "true" },
@@ -191,7 +197,7 @@ test "every part of the job is required" {
         .{ "%N %Lp %Y') > listing-unpack.txt", "%N %Y') > listing-unpack.txt" },
         .{ "--out unpack-macos-aarch64 //tools/bootstrap:unpack_macos_aarch64", "--out unpack-macos-aarch64 //tools/bootstrap:unpack_linux_aarch64" },
         .{ "          path: unpack-macos-aarch64\n", "          path: other\n" },
-        .{ "  unpack_cross:\n    runs-on: ubuntu-latest", "  unpack_cross:\n    runs-on: macos-14" },
+        .{ "  unpack_cross:\n    runs-on: ubuntu-latest", "  unpack_cross:\n    runs-on: macos-15" },
         .{ "= Darwin-arm64", "= Linux-x86_64" },
         .{ "zig-aarch64-macos-0.15.2.tar.xz", "zig-aarch64-macos-0.15.1.tar.xz" },
         .{ "3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b  zig-next", "4cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b  zig-next" },
@@ -200,6 +206,11 @@ test "every part of the job is required" {
         .{ "--sha256 294e224c14fd0822cfb15a35cf39aa14bd9967867999bf8bdfe3db7ddec2a27f --size 43447724", "--size 43447724" },
         .{ "--size 43447724 zig-darwin", "--size 43447725 zig-darwin" },
         .{ "-femit-bin=unpack-native", "-femit-bin=other" },
+        .{ "-target aarch64-macos.13.0 tools", "-target aarch64-macos.15.0 tools" },
+        .{ "-target aarch64-macos.13.0 tools", "-target aarch64-macos tools" },
+        .{ "macho_minos.zig -- --max 13.0 cross", "macho_minos.zig -- --max 15.0 cross" },
+        .{ "cross/unpack-macos-aarch64 unpack-pinned\n", "unpack-pinned\n" },
+        .{ "ci/macho_minos.zig -- --max 13.0 cross/unpack-macos-aarch64 unpack-pinned", "true" },
         .{ "tools/bootstrap/src/${name}_test.zig", "tools/bootstrap/src/paths_test.zig" },
         .{ "diff -r zig-from-tar zig-from-unpack", "true" },
         .{ "= 0.12.0", "= 0.12.1" },
@@ -225,7 +236,7 @@ test "a missing job, a continue-on-error and a table without the rows are found"
     const gone = try mutate(r.wf, "\n  unpack_macos:\n", "\n  unpack_other:\n");
     defer ta.free(gone);
     try expectFinding(gone, r.hosts, r.bootstrap, "`unpack_macos` job is missing");
-    const coe = try mutate(r.wf, "    runs-on: macos-14\n", "    runs-on: macos-14\n    continue-on-error: true\n");
+    const coe = try mutate(r.wf, "    runs-on: macos-15\n", "    runs-on: macos-15\n    continue-on-error: true\n");
     defer ta.free(coe);
     try expectFinding(coe, r.hosts, r.bootstrap, "continue-on-error");
     const nohost = try mutate(r.hosts, "\"macos-aarch64\": {", "\"macos-arm\": {");
@@ -238,10 +249,10 @@ test "a missing job, a continue-on-error and a table without the rows are found"
 }
 
 test "the job block ends at the next job" {
-    const wf = "jobs:\n  a:\n    x: 1\n  # a comment\n    y: 2\n  unpack_macos:\n    runs-on: macos-14\n  b:\n    z: 3\n";
+    const wf = "jobs:\n  a:\n    x: 1\n  # a comment\n    y: 2\n  unpack_macos:\n    runs-on: macos-15\n  b:\n    z: 3\n";
     var buf: [64]u8 = undefined;
     const job = jobBlock(wf, "unpack_macos", &buf).?;
-    try t.expect(std.mem.indexOf(u8, job, "macos-14") != null);
+    try t.expect(std.mem.indexOf(u8, job, "macos-15") != null);
     try t.expect(std.mem.indexOf(u8, job, "z: 3") == null);
     // the last job runs to the end of the file
     const last = jobBlock("jobs:\n  unpack_macos:\n    k: v\n", "unpack_macos", &buf).?;

@@ -1,6 +1,6 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
-load("@buildrules//rules:matrix.bzl", "group", "isa_at", "rust_at")
+load("@buildrules//rules:matrix.bzl", "group", "isa_at", "macos_at", "rust_at")
 load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_OLDEST")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
@@ -69,6 +69,8 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:static_native_of_a_member_without_a_source_is_refused",
     "//rules/mojo/tests:static_native_of_a_member_the_user_supplies_is_accepted",
     "//rules/mojo/tests:native_named_twice_is_refused",
+    "//rules/mojo/tests:natives_entry_that_matches_no_native_is_refused",
+    "//rules/mojo/tests:natives_entry_that_a_unit_links_is_accepted",
     "//rules/mojo/tests:prebuilt_unit_extracts_its_own_static_natives",
     "//rules/mojo/tests:built_native_is_the_target_of_its_unit",
     "//rules/mojo/tests:native_units_are_told_by_their_id",
@@ -132,8 +134,8 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:graphs_without_the_linux_64_one_are_refused",
     "//rules/mojo/tests:graph_with_a_unit_more_is_refused",
     "//rules/mojo/tests:graph_with_other_dependencies_is_refused",
-    "//rules/mojo/tests:graph_formats_1_to_3_are_accepted",
-    "//rules/mojo/tests:graph_format_4_is_refused",
+    "//rules/mojo/tests:graph_formats_1_to_5_are_accepted",
+    "//rules/mojo/tests:graph_format_6_is_refused",
     "//rules/mojo/tests:graph_format_that_is_no_number_is_refused",
     "//rules/mojo/tests:system_libs_are_read_by_name",
     "//rules/mojo/tests:system_lib_entry_without_a_size_is_refused",
@@ -148,10 +150,32 @@ group(name = "refusals", deps = [
     "//rules/mojo/tests:subdir_pinning_another_library_is_refused",
     "//rules/mojo/tests:subdir_whose_unit_loads_another_library_is_refused",
     "//rules/mojo/tests:compile_slice_is_never_above_format_two",
+    "//rules/mojo/tests:compile_slice_with_a_provided_native_says_format_four",
+    "//rules/mojo/tests:graph_of_format_5_with_link_and_provided_is_accepted",
+    "//rules/mojo/tests:graph_of_format_4_with_provided_and_no_link_is_accepted",
+    "//rules/mojo/tests:graph_of_format_3_without_link_or_provided_is_accepted",
+    "//rules/mojo/tests:empty_link_and_provided_false_are_what_no_key_says",
+    "//rules/mojo/tests:link_name_outside_mopms_list_in_a_graph_is_refused",
+    "//rules/mojo/tests:link_name_twice_in_a_graph_is_refused",
+    "//rules/mojo/tests:link_in_a_graph_older_than_format_5_is_refused",
+    "//rules/mojo/tests:link_on_a_native_unit_is_refused",
+    "//rules/mojo/tests:provided_in_a_graph_older_than_format_4_is_refused",
+    "//rules/mojo/tests:provided_that_is_not_a_bool_is_refused",
+    "//rules/mojo/tests:provided_on_a_unit_that_is_not_native_is_refused",
+    "//rules/mojo/tests:subdirs_with_one_link_are_accepted",
+    "//rules/mojo/tests:subdir_whose_unit_links_other_libraries_is_refused",
+    "//rules/mojo/tests:subdir_that_provides_another_unit_is_refused",
+    "//rules/mojo/tests:unit_link_is_what_the_graph_says",
+    "//rules/mojo/tests:provided_native_supplied_by_natives_is_accepted",
+    "//rules/mojo/tests:provided_native_that_no_natives_entry_supplies_is_refused",
+    "//rules/mojo/tests:toolchain_closure_the_graph_pins_is_held",
+    "//rules/mojo/tests:toolchain_closure_of_a_single_pin_is_held",
+    "//rules/mojo/tests:toolchain_closure_the_graph_pins_and_the_toolchain_lacks_is_refused",
     "//rules/core/tests:all",
     "//rules/zig/tests:all",
     "//cli:version_stamps",
     "//rules/cxx/tests:all",
+    "//rules/native/tests:all",
     "//rules/node/tests:all",
     "//rules/coverage/tests:all",
 ])
@@ -164,6 +188,28 @@ group(name = "matrix", deps = [
     ":zig_next",
     ":isa_v1",
     ":isa_v3",
+])
+
+# The native_library examples built for macOS arm64: the pinned zig on the linux execution platform compiles and archives them (rules/native), so a runner with no Mac builds them
+# (the archive check reads Mach-O). The Mojo packages that link them and run on a macOS worker are in //ci:mojo (`macos_mojo`).
+macos_at(name = "macos_natives", deps = [
+    "//examples/native/asm:asm_add",
+    "//examples/native/asm:asm_prefixed",
+    "//examples/native/asm_split:asm_split",
+    "//examples/native/hooks:hooks",
+    "//examples/native/hooks:hooks_provider",
+    "//examples/native/cxx:cxxlib",
+    "//examples/native/cxx:cuser",
+    "//examples/native/deps:top",
+    "//examples/native/shared:left",
+    "//examples/native/shared:right",
+    "//examples/native/zlib:zlib",
+])
+
+macos_at(name = "macos_mojo", deps = [
+    "//examples/mojo/native_library:ci",
+    "//examples/mojo/native_library_cuser:ci",
+    "//examples/mojo/native_library_deps:ci",
 ])
 
 # The Mojo examples (docs/contract.md, section 12): every package's :ci and :coverage, and the same-bytes gate. `ws` imports the registry package
@@ -193,6 +239,24 @@ group(name = "mojo", deps = [
     "//examples/mojo/member_native_macos/cshim:coverage",
     "//examples/mojo/member_native_macos/cshim:sync",
     "//examples/mojo/member_native_macos/cshim:sync_check",
+    ":macos_mojo",
+    "//examples/mojo/native_library_cuser:ci",
+    "//examples/mojo/native_library_cuser:conda",
+    "//examples/mojo/native_library_cuser:coverage",
+    "//examples/mojo/native_library_cuser:sync",
+    "//examples/mojo/native_library_cuser:sync_check",
+    "//examples/mojo/native_library_deps:ci",
+    "//examples/mojo/native_library_deps:conda",
+    "//examples/mojo/native_library_deps:coverage",
+    "//examples/mojo/native_library_deps:sync",
+    "//examples/mojo/native_library_deps:sync_check",
+    # A Mojo package over native_library targets (examples/native), on linux x86_64 and macOS arm64: its natives are the targets of rules/native.
+    "//examples/mojo/native_library:ci",
+    "//examples/mojo/native_library:conda",
+    "//examples/mojo/native_library:conda_holds",
+    "//examples/mojo/native_library:coverage",
+    "//examples/mojo/native_library:sync",
+    "//examples/mojo/native_library:sync_check",
     "//examples/mojo/rooted/data:ci",
     "//examples/mojo/rooted/data:coverage",
     "//examples/mojo/rooted/native:ci",
@@ -575,6 +639,18 @@ _PACKAGES = [
     "//examples/mojo/copy_of_cshim:scrub_files",
     "//examples/mojo/member_native/cshim:scrub_files",
     "//examples/mojo/member_native:scrub_files",
+    "//examples/mojo/native_library:scrub_files",
+    "//examples/mojo/native_library_cuser:scrub_files",
+    "//examples/mojo/native_library_deps:scrub_files",
+    "//examples/native/shared:scrub_files",
+    "//examples/native/asm:scrub_files",
+    "//examples/native/asm_split:scrub_files",
+    "//examples/native/hooks:scrub_files",
+    "//examples/native/cxx:scrub_files",
+    "//examples/native/deps:scrub_files",
+    "//examples/native/zlib:scrub_files",
+    "//rules/native/tests:scrub_files",
+    "//rules/native:scrub_files",
     "//examples/mojo/member_native_macos/cshim:scrub_files",
     "//examples/mojo/member_native_macos:scrub_files",
     "//examples/mojo/rooted/data:scrub_files",
@@ -739,7 +815,7 @@ zig_test(
     },
 )
 
-group(name = "workflow", deps = [":mopm_pin_workflow_check", ":mopm_pin_unit", ":mopm_pin", ":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":apt_rotation_check", ":lintian_check", ":publish_unpack_check", ":pin_mirrors_check", ":unpack_macos_check", ":unpack_pin_check", "//ci/negative:negative_check"])
+group(name = "workflow", deps = [":mopm_pin_workflow_check", ":mopm_pin_unit", ":mopm_pin", ":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":apt_rotation_check", ":lintian_check", ":publish_unpack_check", ":pin_mirrors_check", ":unpack_macos_check", ":macho_minos", ":macho_minos_exe", ":unpack_pin_check", ":agents_check", "//ci/negative:negative_check"])
 
 # The coverage of every package with Zig unit tests (rules/coverage/README.md, "Zig coverage"), each held to its floor (`coverage_floor.txt` beside its
 # BUCK file) both ways: a fall fails, and so does a rise the floor has not been raised to. Building this builds the tests again under kcov and with block
@@ -783,6 +859,9 @@ group(name = "mojo_tables", deps = [
     "//examples/mojo/member_native/cshim:table",
     "//examples/mojo/member_native_macos:table",
     "//examples/mojo/member_native_macos/cshim:table",
+    "//examples/mojo/native_library:table",
+    "//examples/mojo/native_library_cuser:table",
+    "//examples/mojo/native_library_deps:table",
     "//examples/mojo/partial:table",
     "//examples/mojo/reexport:table",
     "//examples/mojo/reexport_unused:table",
@@ -827,7 +906,21 @@ group(name = "all", deps = [
     "//ci/mojo_syslibs:run_green_via_lib",
     "//ci/faulty:c_check_of_its_stdout",
     "//ci/faulty:native_good",
+    "//ci/faulty:native_prefix_good",
+    "//ci/faulty:native_prefix_namespace_good",
     "//ci/faulty:table_in_sync",
+    "//ci/faulty:archive_files_of_files_without_links",
+    "//ci/faulty:archive_files_of_separate_files_without_links",
+    "//ci/faulty:archive_abs_link.tar.gz",
+    "//ci/faulty:archive_rel_link.tar.gz",
+    "//ci/faulty:archive_dir_link.tar.gz",
+    "//ci/faulty:archive_prefix_link.tar.gz",
+    "//ci/faulty:archive_mid_link.tar.gz",
+    "//ci/faulty:archive_template_link.tar.gz",
+    "//ci/faulty:archive_hard_link_outside.tar.gz",
+    "//ci/faulty:archive_files_of_a_template_of_the_same_archive",
+    "//ci/faulty:archive_files_of_the_files_behind_no_link_of_the_prefix",
+    "//ci/faulty:archive_files_of_the_files_beside_a_link_in_the_middle",
     "//examples/mojo/copy_of_cshim:same_bytes",
     ":workflow",
     ":mojo_tables",
@@ -856,6 +949,11 @@ group(name = "all", deps = [
     "//tools/bootstrap:linux_x86_64_is_x86_64_linux_musl",
     "//tools/bootstrap:linux_aarch64_is_aarch64_linux_musl",
     "//tools/bootstrap:macos_aarch64_is_aarch64_macos",
+    # The pinned release assets of `unpack` for each host, fetched and checked against their sha256 and size, and the alias that picks the one of the execution platform: it is what every unpacking action runs.
+    "//rules/pins:bootstrap_unpack_linux_x86_64",
+    "//rules/pins:bootstrap_unpack_linux_aarch64",
+    "//rules/pins:bootstrap_unpack_macos_aarch64",
+    "//rules/pins:unpack",
     "//tools/bootstrap:real_unit",
     "//tools/bootstrap:xz_decode_unit",
     "//tools/bootstrap:mem_zig_xz_unit",
@@ -887,6 +985,8 @@ group(name = "all", deps = [
     "//rules/toolbox:toolbox_exe_test",
     "//rules/toolbox:linux_aarch64_is_aarch64_linux_musl",
     "//rules/toolbox:macos_arm64_is_aarch64_macos",
+    "//rules/pins:macos_applets",
+    "//rules/pins:macos_applets_unit",
     "//rules/kpin:kpin",
     "//rules/node:esbuild_linux-x64",
     "//third_party/aws-lc:crypto",
@@ -894,6 +994,31 @@ group(name = "all", deps = [
     "//examples/cxx:hermetic_cxx",
     "//examples/cxx:runs_c",
     "//examples/cxx:runs_cxx",
+    # native_library (rules/native): the pinned-tarball zlib, the C++ library, the assembly chosen by the CPU, and a chain of dependencies; the Mojo package that
+    # links them is in //ci:mojo. The faulty ones (ci/faulty) are held by ci/negative.bzl, their controls are built here.
+    "//examples/native/asm:asm_add",
+    ":macos_natives",
+    "//examples/native/cxx:cuser",
+    "//examples/native/shared:left",
+    "//examples/native/shared:right",
+    "//examples/native/deps:mid",
+    "//examples/native/deps:base",
+    "//examples/native/shared:shared_base",
+    "//examples/native/asm:asm_prefixed",
+    "//examples/native/asm_split:asm_split",
+    "//examples/native/hooks:hooks",
+    "//examples/native/hooks:hooks_provider",
+    "//examples/native/cxx:cxxlib",
+    "//examples/native/deps:top",
+    "//examples/native/zlib:zlib",
+    "//ci/faulty:nl_lib",
+    "//ci/faulty:nl_mid_plain",
+    "//ci/faulty:nl_user",
+    "//ci/faulty:nl_zlib_user",
+    "//ci/faulty:nl_priv",
+    "//ci/faulty:nl_priv_user",
+    "//ci/faulty:nl_prefix_good",
+    "//ci/faulty:nl_zlib_without_the_export",
     "//examples/node:modules",
     "//examples/p4ws/crates/links_b:links_b-0.1.0_9f2ed89200",
     "//examples/p4ws/crates/probe_ok:probe_ok-0.1.0_35cff8487e",
@@ -926,15 +1051,29 @@ export_file(
     visibility = ["//site:"],
 )
 
-# The coverage of the three workflow checks and the no-shell lint (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. They are built by zig 0.12, which
-# has no block counters, so the report is lines only; each file holds its tests, whose lines are counted with the rest.
+# The coverage of the workflow checks, the no-shell lint and the AGENTS.md check (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. They are built by
+# zig 0.12, which has no block counters, so the report is lines only; each file holds its tests, whose lines are counted with the rest.
 zig_coverage(
     blocks = False,
-    test_targets = [":workflow_check", ":release_check", ":stages_check", ":lintian_check", ":no_shell_unit"],
-    expect = ["ci/workflow_check.zig", "ci/release_check.zig", "ci/stages_check.zig", "ci/lintian_check.zig", "ci/no_shell_check.zig"],
+    test_targets = [":workflow_check", ":release_check", ":stages_check", ":lintian_check", ":no_shell_unit", ":agents_check"],
+    expect = ["ci/workflow_check.zig", "ci/release_check.zig", "ci/stages_check.zig", "ci/lintian_check.zig", "ci/no_shell_check.zig", "ci/agents_check.zig"],
 )
 
-# The `unpack_macos` job of ci.yml (tools/bootstrap): GitHub's macos-14 runner builds the program, runs its tests and unpacks the real darwin zig tarball; ci/unpack_macos_check.zig
+# AGENTS.md, the rules every change is written and reviewed against: its shared core (between the marker lines) is ci/shared_core.md byte for byte, that copy
+# hashes to ci/shared_core.sha256, and CLAUDE.md imports AGENTS.md (ci/agents_check.zig). Each rule of the check is also tested against edited text.
+zig_test(
+    name = "agents_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "agents_check.zig",
+    data = {
+        "AGENTS.md": "//:AGENTS.md",
+        "CLAUDE.md": "//:CLAUDE.md",
+        "ci/shared_core.md": "shared_core.md",
+        "ci/shared_core.sha256": "shared_core.sha256",
+    },
+)
+
+# The `unpack_macos` job of ci.yml (tools/bootstrap): GitHub's macos-15 runner builds the program, runs its tests and unpacks the real darwin zig tarball; ci/unpack_macos_check.zig
 # holds the job's urls and digests to rules/pins/hosts.bzl and every step of it to its text, and injects a defect for each.
 zig_test(
     name = "unpack_macos_check",
@@ -946,6 +1085,22 @@ zig_test(
         "rules/pins/bootstrap.bzl": "//rules/pins:bootstrap.bzl",
     },
     zig = "buildrules//rules/pins:zig_next",
+)
+
+# ci/macho_minos.zig, the reader of a Mach-O's minos that the `unpack_macos` job of ci.yml runs: its tests make Mach-O files byte by byte.
+zig_test(
+    name = "macho_minos",
+    exec_compatible_with = LINUX_X86_64,
+    src = "macho_minos.zig",
+)
+
+# The same reader as an executable, for the jobs that read a Mach-O made on another host: beta.yml's `tools` job checks the macos-arm64 command line with it.
+zig_exe(
+    name = "macho_minos_exe",
+    exec_compatible_with = LINUX_X86_64,
+    src = "macho_minos.zig",
+    unit_tests = [":macho_minos"],
+    visibility = ["PUBLIC"],
 )
 
 # The pins of the unpack program are the programs this tree builds (tools/bootstrap:pin_check_unit): a source change without new rows, and a new release tag, is red.

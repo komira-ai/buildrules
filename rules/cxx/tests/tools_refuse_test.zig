@@ -34,7 +34,7 @@ test "prefix_tool: a bad command line is a usage error that says which flag, and
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const usage = "usage: prefix_tool header --elfsyms <exe> --archive <lib.a>";
+    const usage = "usage: prefix_tool header (--elfsyms <exe> --archive <lib.a> | --defined <names.txt>)";
     try runCases(a, "PREFIX_TOOL", &.{
         .{ .name = "no mode", .args = &.{}, .code = 2, .msgs = &.{ "prefix_tool: no mode", usage } },
         .{ .name = "an unknown mode", .args = &.{"frob"}, .code = 2, .msgs = &.{ "prefix_tool: unknown mode frob", usage } },
@@ -44,6 +44,8 @@ test "prefix_tool: a bad command line is a usage error that says which flag, and
         .{ .name = "a flag given twice", .args = &.{ "check", "--prefix", "a_", "--prefix", "b_" }, .code = 2, .msgs = &.{"prefix_tool: --prefix given twice"} },
         .{ .name = "a required flag left out of header", .args = &.{ "header", "--elfsyms", "e", "--archive", "a.a", "--header", "h", "--symbols", "s", "--style", "strip", "--prefix", "p_" }, .code = 2, .msgs = &.{"prefix_tool header: --min is required"} },
         .{ .name = "a required flag left out of check", .args = &.{ "check", "--elfsyms", "e", "--archive", "a.a", "--prefix", "p_", "--min", "1" }, .code = 2, .msgs = &.{"prefix_tool check: --result is required"} },
+        .{ .name = "a defined file given with an archive", .args = &.{ "header", "--defined", "names.txt", "--archive", "a.a", "--header", "h", "--symbols", "s", "--style", "strip", "--prefix", "p_", "--min", "1" }, .code = 2, .msgs = &.{"prefix_tool header: --defined is given with --elfsyms or --archive"} },
+        .{ .name = "a defined file in check", .args = &.{ "check", "--defined", "names.txt" }, .code = 2, .msgs = &.{"prefix_tool check: unknown flag --defined"} },
     });
 }
 
@@ -56,6 +58,7 @@ test "prefix_tool: input that is not what it claims to be is refused, naming the
     const cases = [_]Run{
         .{ .name = "a style that is not one", .args = &.{ "header", "--elfsyms", elfsyms, "--archive", "notes.txt", "--header", "h.h", "--symbols", "s.txt", "--style", "gnu", "--prefix", "p_", "--min", "1" }, .msgs = &.{"prefix_tool: unknown style gnu"} },
         .{ .name = "a minimum that is not a number", .args = &.{ "header", "--elfsyms", elfsyms, "--archive", "notes.txt", "--header", "h.h", "--symbols", "s.txt", "--style", "strip", "--prefix", "p_", "--min", "many" }, .msgs = &.{"prefix_tool: --min many is not a number"} },
+        .{ .name = "a defined file that is not there", .args = &.{ "header", "--defined", "missing.txt", "--header", "h.h", "--symbols", "s.txt", "--style", "strip", "--prefix", "p_", "--min", "1" }, .msgs = &.{"prefix_tool: cannot read missing.txt: FileNotFound"} },
         .{ .name = "an elfsyms that is not there", .args = &.{ "header", "--elfsyms", "/nonexistent/elfsyms", "--archive", "notes.txt", "--header", "h.h", "--symbols", "s.txt", "--style", "strip", "--prefix", "p_", "--min", "1" }, .msgs = &.{"prefix_tool: cannot run /nonexistent/elfsyms: FileNotFound"} },
         .{ .name = "an archive that is not an archive (header)", .args = &.{ "header", "--elfsyms", elfsyms, "--archive", "notes.txt", "--header", "h.h", "--symbols", "s.txt", "--style", "strip", "--prefix", "p_", "--min", "1" }, .msgs = &.{ "elfsyms: notes.txt is not an ar archive", "prefix_tool: elfsyms armap notes.txt failed" } },
         .{ .name = "an archive that is not an archive (check)", .args = &.{ "check", "--elfsyms", elfsyms, "--archive", "notes.txt", "--result", "r.json", "--prefix", "p_", "--min", "1" }, .msgs = &.{ "elfsyms: notes.txt is not an ar archive", "prefix_tool: elfsyms symtab notes.txt failed" } },

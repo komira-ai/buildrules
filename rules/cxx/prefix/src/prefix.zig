@@ -6,6 +6,7 @@
 //! Names are sorted as `LC_ALL=C sort -u` sorts them: by bytes, each once.
 
 const std = @import("std");
+const builtins = @import("cxx_builtins");
 
 /// A refusal: its text is `msg`.
 pub const Fail = error{Fail};
@@ -70,8 +71,8 @@ pub fn sortedUnique(names: []const []const u8) [][]const u8 {
 
 /// A name the header never renames: aws-lc's util/read_symbols.go skip list
 /// (C++ names, i386 PIC thunks, MSVC constants, the MSVC C runtime's inline
-/// stdio helpers and jemalloc's `sdallocx`), and `__umodti3`, a compiler
-/// builtin the compiler calls by that name.
+/// stdio helpers and jemalloc's `sdallocx`), and the compiler builtins of rules/cxx/builtins (`__umodti3` and the rest of the 128-bit set), which the compiler
+/// calls by those names.
 pub fn skipped(name: []const u8) bool {
     for ([_][]const u8{ "_Z", "__x86.get_pc_thunk.", "__real@" }) |p| {
         if (startsWith(name, p)) return true;
@@ -80,8 +81,8 @@ pub fn skipped(name: []const u8) bool {
         "__local_stdio_printf_options", "__local_stdio_scanf_options", "_vscprintf",
         "_vscprintf_l",                 "_vsscanf_l",                  "_xmm",
         "sscanf",                       "vsnprintf",                   "sdallocx",
-        "__umodti3",
     };
+    if (builtins.isBuiltin(name)) return true;
     for (exact) |x| {
         if (std.mem.eql(u8, name, x)) return true;
     }
@@ -159,6 +160,13 @@ pub fn stripRenamed(prefix: []const u8, strip: []const u8, name: []const u8) []u
 /// replaced: the text is kept so the header's bytes, and with them the key
 /// of every compile that includes it, are what they were.
 pub fn header(style: Style, prefix: []const u8, strip: []const u8, names: []const []const u8) Fail![]u8 {
+    return headerWith(style, prefix, strip, names, false);
+}
+
+/// `header`, and with `macho_asm` the renaming of the assembly symbols of a Mach-O library too. The assembly of a Mach-O library names a symbol with a leading
+/// underscore (`.globl _aes_hw_encrypt`), so `#define aes_hw_encrypt ...` renames the C and not the assembly; the lines `#define _aes_hw_encrypt _...` under
+/// `__ASSEMBLER__` and `__APPLE__` (the preprocessed assembly of that platform alone) do. An ELF symbol has no underscore: nothing is added for it.
+pub fn headerWith(style: Style, prefix: []const u8, strip: []const u8, names: []const []const u8, macho_asm: bool) Fail![]u8 {
     try identifier("prefix", prefix);
     var out = std.ArrayList(u8).empty;
     const w = out.writer(a());
@@ -171,6 +179,12 @@ pub fn header(style: Style, prefix: []const u8, strip: []const u8, names: []cons
             add(&out, "#define BORINGSSL_ADD_PREFIX(a, b) BORINGSSL_ADD_PREFIX_INNER(a, b)\n");
             add(&out, "#define BORINGSSL_ADD_PREFIX_INNER(a, b) a ## _ ## b\n");
             for (names) |n| w.print("#define {s} BORINGSSL_ADD_PREFIX(BORINGSSL_PREFIX, {s})\n", .{ n, n }) catch oom();
+            if (macho_asm) {
+                // The new names are written out: a macro that built them from the old name would expand that name again (it is a macro of the C renaming above).
+                add(&out, "#if defined(__ASSEMBLER__) && defined(__APPLE__)\n");
+                for (names) |n| w.print("#define _{s} _{s}_{s}\n", .{ n, prefix, n }) catch oom();
+                add(&out, "#endif\n");
+            }
             add(&out, "#endif\n");
         },
         .strip => {
@@ -181,6 +195,11 @@ pub fn header(style: Style, prefix: []const u8, strip: []const u8, names: []cons
             w.print("   each renamed to start with {s}. */\n", .{prefix}) catch oom();
             w.print("#ifndef {s}\n#define {s}\n", .{ g, g }) catch oom();
             for (names) |n| w.print("#define {s} {s}\n", .{ n, stripRenamed(prefix, strip, n) }) catch oom();
+            if (macho_asm) {
+                add(&out, "#if defined(__ASSEMBLER__) && defined(__APPLE__)\n");
+                for (names) |n| w.print("#define _{s} _{s}\n", .{ n, stripRenamed(prefix, strip, n) }) catch oom();
+                add(&out, "#endif\n");
+            }
             add(&out, "#endif\n");
         },
     }

@@ -9,6 +9,9 @@ MojoToolchainInfo = provider(fields = {
     # `toolchain.closure_sha256`. The unit action writes it into the toolchain directory's CLOSURE_SHA256 and
     # `mopm unit build` refuses unless the graph names the same.
     "closure_sha256": provider_field(str),
+    # Every closure hash the packages that share this toolchain pin, sorted (`closure_sha256` is the first): two releases of mopm that pin the same compiler, runtime packages and zig
+    # may hash their solve of the environment differently, and the toolchain is the same files for both. A unit's action is given the closure of its own graph, which must be one of these.
+    "closures": provider_field(list),
     "cc_target": provider_field(str),
     # The toolchain row of toolchains/mojo_pins.bzl this toolchain was declared from, whole (mopm's `toolchain` section of the graph, verbatim): the
     # `:check` of a package compares it with the table's own graph, so a pins file edited without a sync is red.

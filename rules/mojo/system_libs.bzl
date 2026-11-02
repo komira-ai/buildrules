@@ -13,20 +13,33 @@ directories as `--lib-dir` (`lib_dir_args`): on Linux they follow the compiler's
 The compile is not given them: a library a unit loads is no input of its compiled bytes.
 
 A graph of format 1 or 2 has neither key and runs as it always did (the library is whatever the worker has; on macOS, the directories of `macos_library_dirs`). A graph
-of a format above 3 is refused: a rules version that did not know a key would run the test without its libraries, which is the defect the key exists to remove.
+of a format above 5 is refused: a rules version that did not know a key would run the test without its libraries, which is the defect the key exists to remove.
+
+Formats 4 and 5 are about linking, not loading, and are read here with the others: 4 adds `provided` on a `native` unit (its archive is a target of the build, not compiled from
+sources: rules/mojo/defs.bzl), 5 adds `link` on the units that link archives (the system libraries their final link adds: rules/native/link.bzl). A graph that has neither keeps the
+format it had, and a graph of format 4 or 5 has `system_libs` and `loads` exactly when a format 3 graph would.
 """
 
 load("//rules/core:pinned_file.bzl", "check_pinned")
 
-# The formats of mopm's unit graph these rules read. 2 adds the native unit of a member's own library, 3 the system libraries a test loads.
-GRAPH_FORMATS = [1, 2, 3]
+# The formats of mopm's unit graph these rules read. 2 adds the native unit of a member's own library, 3 the system libraries a test loads, 4 the native unit whose archive a
+# rule of the build supplies (`provided`), 5 the system libraries of a unit's final link (`link`).
+GRAPH_FORMATS = [1, 2, 3, 4, 5]
 
-# The newest of them: the format a graph with `system_libs` or `loads` has.
+# The newest of them.
+NEWEST_FORMAT = 5
+
+# The first format with `system_libs` and `loads`, and the first with `provided` and with `link`.
 SYSTEM_LIBS_FORMAT = 3
+PROVIDED_FORMAT = 4
+LINK_FORMAT = 5
 
 # What `mopm unit build` of the pinned mopm reads: the slice of a unit it is given says this format when the graph's is newer, because the keys format 3 adds (`system_libs`,
-# `loads`) are no part of a compile (nothing of them reaches it), and a compile must not move when a pin does.
+# `loads`) are no part of a compile (nothing of them reaches it), and a compile must not move when a pin does. `link` (format 5) is not in the slice either: the system libraries
+# end the link line with the archives the listed libraries bring (rules/native/link.bzl), which mopm does not know, so the unit rule writes them and mopm is not given them.
+# A slice that holds a provided native unit says `PROVIDED_COMPILE_FORMAT`: a reader that does not know `provided` would make an empty archive of a unit with no sources.
 COMPILE_FORMAT = 2
+PROVIDED_COMPILE_FORMAT = 4
 
 _ENTRY_FIELDS = ["name", "version", "build", "url", "sha256", "size"]
 
@@ -40,11 +53,14 @@ def check_graph_format(who, n, refuse = fail):
     """The format number of a unit graph is one these rules read. `refuse` is `fail` in a build; a test passes a recorder (rules/rust/refusal.bzl)."""
     if type(n) != "int" or n < 1:
         refuse("{} has the format {}, which is not a format number: run `buildrules mojo sync`".format(who, repr(n)))
-    elif n > SYSTEM_LIBS_FORMAT:
-        refuse("{} is format {}; these rules read formats 1 to {}: update buildrules (a rules version that does not know a format would run the tests without what it adds)".format(who, n, SYSTEM_LIBS_FORMAT))
+    elif n > NEWEST_FORMAT:
+        refuse("{} is format {}; these rules read formats 1 to {}: update buildrules (a rules version that does not know a format would run the tests without what it adds)".format(who, n, NEWEST_FORMAT))
 
-def compile_format(n):
-    """The format a unit's slice for `mopm unit build` says: the graph's, but never above `COMPILE_FORMAT`."""
+def compile_format(n, provided = False):
+    """The format a unit's slice for `mopm unit build` says: the graph's, but never above `COMPILE_FORMAT`; a slice that holds a provided native unit (`provided`) says
+    `PROVIDED_COMPILE_FORMAT`, the first format that has the key."""
+    if provided:
+        return PROVIDED_COMPILE_FORMAT
     return n if n <= COMPILE_FORMAT else COMPILE_FORMAT
 
 def system_libs_of(who, graph, refuse = fail):

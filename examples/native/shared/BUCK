@@ -1,0 +1,24 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/native:defs.bzl", "native_library")
+
+# Two libraries over one base: `left` and `right` both have `shared_base` in `deps`. A program that links both has one copy of the base (its constructor runs once), put on the
+# link line after the last of its users (rules/native/link.bzl); examples/mojo/native_library_deps holds that in one Mojo test binary.
+native_library(
+    name = "shared_base",
+    srcs = ["native/shared_base.c"],
+    exported_headers = {"shared/shared_base.h": "include/shared_base.h"},
+)
+
+native_library(
+    name = "left",
+    srcs = ["native/left.c"],
+    deps = [":shared_base"],
+)
+
+native_library(
+    name = "right",
+    srcs = ["native/right.c"],
+    deps = [":shared_base"],
+)
+
+scrub_files()

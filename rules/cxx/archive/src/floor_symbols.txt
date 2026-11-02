@@ -612,3 +612,8 @@ __atomic_fetch_xor_2
 __atomic_fetch_xor_4
 __atomic_fetch_xor_8
 __atomic_fetch_xor_16
+# What a renamed aws-lc leaves to the C library at the floor (found by building it): the 64-bit file functions glibc names separately, the C99 scanf, the auxiliary vector and jemalloc's sized free, a weak hook.
+fopen64
+__isoc99_sscanf
+getauxval
+sdallocx

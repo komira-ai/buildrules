@@ -1,0 +1,39 @@
+[package]
+name = "natlib"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+# The static libraries the package links are built by `native_library` targets (examples/native), named in the BUCK file's `natives = {...}`: each is `provided = true`, an archive
+# of the build and not compiled from sources by mopm. `cxxlib` has C++ sources, so its `link` names `c++`: a program that links it ends its link line with `-lc++` from mopm's graph.
+[native.zlib]
+kind = "static"
+provided = true
+
+[native.cxxlib]
+kind = "static"
+provided = true
+link = ["c++"]
+
+[native.asm_prefixed]
+kind = "static"
+provided = true
+
+[native.asm_split]
+kind = "static"
+provided = true
+
+[native.hooks]
+kind = "static"
+provided = true
+
+[native.hooks_provider]
+kind = "static"
+provided = true
+
+[native.asm_add]
+kind = "static"
+provided = true
+
+[targets]
+lib = { path = "src/natlib" }
+tests = ["tests"]

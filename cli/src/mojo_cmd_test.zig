@@ -723,7 +723,7 @@ test "sync: a graph mopm printed that is not a graph, or that cannot be embedded
     const cases = [_]struct { text: []const u8, needle: []const u8 }{
         .{ .text = "not json", .needle = "pkgs/base: the GRAPH_JSON block is not JSON" },
         .{ .text = "[]", .needle = "the unit graph is not a JSON object" },
-        .{ .text = "{\"unit_graph\": 4}", .needle = "unit_graph format is not 1, 2 or 3" },
+        .{ .text = "{\"unit_graph\": 6}", .needle = "unit_graph format is not 1, 2, 3, 4 or 5" },
         .{ .text = "{\"unit_graph\": 1, \"toolchain\": {}}", .needle = "no `units` array" },
     };
     for (cases) |c| {
@@ -917,7 +917,7 @@ test "check: a table that is damaged is refused with the line, whichever line it
     const lock = h.read("pkgs/base/buildrules.mojo.lock.bzl");
     const cases = [_]struct { from: []const u8, to: []const u8, needle: []const u8 }{
         .{ .from = "GRAPH_JSON = r'''", .to = "GRAPH = r'''", .needle = "no GRAPH_JSON" },
-        .{ .from = "\"unit_graph\": 1", .to = "\"unit_graph\": 4", .needle = "unit_graph format is not 1" },
+        .{ .from = "\"unit_graph\": 1", .to = "\"unit_graph\": 6", .needle = "unit_graph format is not 1" },
         .{ .from = "{\n  \"unit_graph\"", .to = "[\n  \"unit_graph\"", .needle = "is not JSON" },
         .{ .from = "MOJO = \"1.0.0\"", .to = "MOJO = \"1.0.1\"", .needle = "MOJO is 1.0.1 but its unit graph is for Mojo 1.0.0" },
         .{ .from = "CLOSURE_SHA256 = \"", .to = "CLOSURE_SHA256 = \"x", .needle = "CLOSURE_SHA256 is not a sha256" },

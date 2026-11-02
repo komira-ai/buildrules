@@ -1,0 +1,25 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/native:defs.bzl", "native_library")
+load(":files.bzl", "ZLIB_FILES", "ZLIB_SRCS")
+
+# zlib 1.3.1 from its pinned release tarball (rules/native/defs.bzl): `libzlib.a`, with `zlib.h` and `zconf.h` exported to dependents as the tree's `.`. Large-file
+# support is a Linux flag, so the flags are a `select()` on the OS; the archive is the same C compiled for linux x86_64 and, with the pinned zig, for macOS arm64.
+native_library(
+    name = "zlib",
+    upstream = {
+        "url": "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz",
+        "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+        "size": 1512791,
+        "strip": "zlib-1.3.1",
+        "files": ZLIB_FILES,
+    },
+    srcs = ZLIB_SRCS,
+    includes = ["."],
+    exported_includes = ["."],
+    cflags = ["-O3", "-DHAVE_UNISTD_H", "-DHAVE_STDARG_H"] + select({
+        "buildrules//platforms:linux": ["-D_LARGEFILE64_SOURCE=1"],
+        "buildrules//platforms:macos": [],
+    }),
+)
+
+scrub_files()

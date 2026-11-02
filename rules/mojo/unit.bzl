@@ -15,7 +15,10 @@ A unit's output directory is the action's single output. A library's `.mojoc` is
 """
 
 load("//rules:isa.bzl", "isa_satisfies")
+load("//rules:platforms.bzl", "darwin_hosts_here", "darwin_local_hosts_refusal")
 load("//rules/coverage/branch:llvm_branch.bzl", "CovBranchInfo", "RAW_PROFILE_VERSION")
+load("//rules/cxx:providers.bzl", "NativeArchiveInfo", "NativeLibraryInfo")
+load("//rules/native:link.bzl", "LINK_ARCHIVE_DIR", "check_cxx_link", "check_link_names", "extra_link_archives", "link_archive_name", "link_cfg")
 load("//rules/rust:providers.bzl", "ExecIsaInfo")
 load(":providers.bzl", "MojoExeInfo", "MojoLibInfo", "MojoNativeArchiveInfo", "MojoSystemLibsInfo", "MojoTestRunInfo", "MojoToolchainInfo")
 load("//rules/core:hang_limit.bzl", "HANG_LIMIT_S", "check_hang_limit", "hang_limit_args")
@@ -27,10 +30,11 @@ load(":test_data.bzl", "DATA_ENV", "LAYOUT_DEFAULT", "LAYOUT_INSTALLED", "check_
 # really re-executes, so two builds can be compared byte for byte.
 _NONCE = read_config("buildrules", "unit_nonce", "")
 
-# The macOS workers' host identities (`[buildrules_re] darwin_macos_hosts`, space separated: what `mojo_compile host-identity` prints on each worker). A macOS
-# compile is given them (toolchain.cfg, so they are part of its action key) and refuses a worker that is not one of them. Read from the root cell, where the execution
-# platforms are configured.
-_MACOS_HOSTS = sorted([h for h in read_root_config("buildrules_re", "darwin_macos_hosts", "").split(" ") if h])
+# The macOS hosts a compile may run on (rules/platforms.bzl): the identities `[buildrules_re] darwin_macos_hosts` names (space separated: what `mojo_compile host-identity`
+# prints on each worker), or, on a Mac that runs Buck2 itself (`mode = local`, none named), the sentinel `local`. A macOS compile is given them (toolchain.cfg, so they
+# are part of its action key) and its wrapper refuses a worker that is not one of them, except the sentinel, which skips the comparison. Read from the root cell, where
+# the execution platforms are configured.
+_MACOS_HOSTS, _LOCAL_EXECUTION = darwin_hosts_here()
 
 # The directories a macOS test run adds to dyld's search for a library it opens by its bare name (`[buildrules_re] macos_library_dirs`, separated by ':' or spaces;
 # docs/contract.md). Empty when the key is absent. Only a macOS test run is given them (`--macos-library-dirs`, so they are part of that action's key); a Linux
@@ -64,6 +68,28 @@ def check_closure_ids(who, want, have, refuse = fail):
         elif have[package] != want[package]:
             refuse(("{}: the graph imports {} as {} but the dependency target provides {}: that library was built from another version of the package, " +
                     "or for another Mojo. Run `buildrules mojo sync` where the library is and where it is imported").format(who, package, want[package], have[package]))
+
+def check_closure_known(who, toolchain, held, closure, refuse = fail):
+    """The toolchain closure the unit's graph pins is one the toolchain holds: `held` are the closure hashes of the toolchain (`MojoToolchainInfo.closures`), `closure` the graph's
+    own. The action writes that closure into the toolchain directory's CLOSURE_SHA256, and `mopm unit build` compares it with the graph's, so a unit made by another release of mopm
+    than the one that pinned the toolchain is built with the same compiler files and told its own closure; a closure no package pinned the toolchain for is refused. `refuse` is `fail`
+    in a build; a test passes a recorder (rules/rust/refusal.bzl)."""
+    if closure not in held:
+        refuse("{}: the graph pins the toolchain closure {}, which {} does not hold (it holds {}): the pins file and the table disagree; run `buildrules mojo sync`".format(who, closure, toolchain, ", ".join(held)))
+
+def link_extra_archives(natives):
+    """The archives a program links after the ones its graph lists (`extra_link_archives`): those the listed `native_library` targets bring with them through their deps. An
+    archive is told from another by its identity, never by its file name."""
+    infos = [n[NativeLibraryInfo] for n in natives if NativeLibraryInfo in n]
+    return extra_link_archives([i.archives for i in infos], {str(i.archive): True for i in infos}, str)
+
+def link_needs_cxx_runtime(natives):
+    """Whether the native libraries (dependencies that may provide `NativeArchiveInfo`; a prebuilt one does not) include one with C++ sources."""
+    for n in natives:
+        info = n.get(NativeArchiveInfo)
+        if info != None and info.cxx:
+            return True
+    return False
 
 def _unit_impl(ctx):
     tc = ctx.attrs.toolchain[MojoToolchainInfo]
@@ -107,9 +133,12 @@ def _unit_impl(ctx):
     macos = "-macos" in tc.cc_target
     if macos:
         # The macOS wrapper links with the host's C driver: no zig, and the deployment target is the version after `-macos.` of the triple.
+        refusal = darwin_local_hosts_refusal(list(ctx.attrs.macos_hosts), ctx.attrs.local_execution)
+        if refusal:
+            fail("{}: {}; a farm's hosts are real identities and never mix with it.".format(ctx.label, refusal))
         if not ctx.attrs.macos_hosts:
             fail(("{}: no macOS host identity. Set `[buildrules_re] darwin_macos_hosts` of the root cell to what `mojo_compile host-identity` prints on each macOS " +
-                  "worker (separated by spaces).").format(ctx.label))
+                  "worker (separated by spaces), or build on a Mac with `-c buildrules_re.mode=local` and no worker property set.").format(ctx.label))
         cfg = "wrapper=wrapper\ncompiler=compiler\ndeployment_target={}\n".format(tc.cc_target.rsplit("-macos.", 1)[-1])
         for h in ctx.attrs.macos_hosts:
             cfg += "macos_host={}\n".format(h)
@@ -117,15 +146,29 @@ def _unit_impl(ctx):
         cfg = "wrapper=wrapper\ncompiler=compiler\nzig=zig\ncc_target={}\n".format(tc.cc_target)
     for a in ctx.attrs.build_args:
         cfg += "build_arg={}\n".format(a)
+
+    # A program (not a library: nothing is linked) ends its link line with the archives its listed `native_library` targets bring through their deps, then the system
+    # libraries of the unit's `link` (mopm's field, in its order, each once, after every archive): `-lc++` is libc++ and libc++abi of the zig on Linux, the host's libc++ on macOS.
+    # What the archives need is stated by `link` and held against them: an archive with C++ sources in a link that lacks `c++` is refused.
+    linked = [ctx.attrs.natives[s] for s in ctx.attrs.native_sonames if s in ctx.attrs.natives] if ctx.attrs.kind != "lib" else []
+    link = list(ctx.attrs.link) if ctx.attrs.kind != "lib" else []
+    check_link_names(str(ctx.label), link)
+    check_cxx_link(str(ctx.label), link_needs_cxx_runtime(linked), link)
+    extras = link_extra_archives(linked)
+    extra_names = [link_archive_name(i, a.basename) for i, a in enumerate(extras)]
+    cfg += link_cfg(extra_names, link)
     zig = _file(ctx.attrs.zig_override) if ctx.attrs.zig_override else tc.zig
-    tc_dir = ctx.actions.copied_dir("toolchain", {
-        "CLOSURE_SHA256": ctx.actions.write("CLOSURE_SHA256", tc.closure_sha256 + "\n"),
+    # The closure the unit's own graph pins (a toolchain shared by packages of two mopm releases holds both, and each unit is told its own).
+    graph_closure = json.decode(ctx.attrs.graph)["toolchain"]["closure_sha256"]
+    check_closure_known(str(ctx.label), str(ctx.attrs.toolchain.label), tc.closures, graph_closure)
+    tc_dir = ctx.actions.copied_dir("toolchain", dict({LINK_ARCHIVE_DIR + "/" + extra_names[i]: a for i, a in enumerate(extras)}, **{
+        "CLOSURE_SHA256": ctx.actions.write("CLOSURE_SHA256", graph_closure + "\n"),
         "compiler": tc.compiler,
         "mojo_compile": _file(ctx.attrs.launcher),
         "toolchain.cfg": ctx.actions.write("toolchain.cfg", cfg),
         "wrapper": _file(ctx.attrs.wrapper),
         "zig": zig,
-    })
+    }))
 
     graph = ctx.actions.write("graph.json", ctx.attrs.graph)
     out = ctx.actions.declare_output("out", dir = True)
@@ -183,6 +226,8 @@ mojo_unit_rule = rule(
         "mopm": attrs.exec_dep(),
         "native_sonames": attrs.list(attrs.string(), default = []),
         "natives": attrs.dict(attrs.string(), attrs.dep(), default = {}),
+        # The `link` of the unit in mopm's graph: the system libraries its final link adds after every archive (rules/native/link.bzl). Not read for a library.
+        "link": attrs.list(attrs.string(), default = []),
         # Arguments mojo_launch puts right after `build` (the ISA flags of a test or binary).
         "build_args": attrs.list(attrs.string(), default = []),
         # package name -> unit id, for every unit this one imports (directly or not): the graph's closure, which the dependency targets must give.
@@ -201,6 +246,8 @@ mojo_unit_rule = rule(
         "wrapper": attrs.exec_dep(default = "buildrules//rules/mojo:mojo_compile_host"),
         # The host identities a macOS compile may run on (see _MACOS_HOSTS).
         "macos_hosts": attrs.list(attrs.string(), default = _MACOS_HOSTS),
+        # True when macos_hosts is the local sentinel (a build on this Mac; rules/platforms.bzl, `darwin_hosts_for`).
+        "local_execution": attrs.bool(default = _LOCAL_EXECUTION),
         # Another zig directory for the link (a coverage build's cov_link keeps debug info and relocates paths).
         "zig_override": attrs.option(attrs.exec_dep(), default = None),
     },
@@ -547,6 +594,16 @@ def _pgo_impl(ctx):
     )
     for soname in sonames:
         cmd.add("--native", _file(ctx.attrs.natives[soname]))
+
+    # The archives the listed libraries bring through their deps, then the C++ runtime, end the line as they end the ordinary test link's (`link_extra_archives`,
+    # `link_needs_cxx_runtime`).
+    linked = [ctx.attrs.natives[s] for s in sonames]
+    check_link_names(str(ctx.label), list(ctx.attrs.link))
+    check_cxx_link(str(ctx.label), link_needs_cxx_runtime(linked), list(ctx.attrs.link))
+    for a in link_extra_archives(linked):
+        cmd.add("--link-tail", a)
+    for name in ctx.attrs.link:
+        cmd.add("--link-tail", "-l" + name)
     ctx.actions.run(
         cmd,
         category = "mojo_cov_pgo_link",
@@ -571,6 +628,8 @@ mojo_cov_pgo_rule = rule(
         "native_needs": attrs.dict(attrs.string(), attrs.list(attrs.string()), default = {}),
         "native_sonames": attrs.list(attrs.string(), default = []),
         "natives": attrs.dict(attrs.string(), attrs.dep(), default = {}),
+        # The `link` of the test's unit in mopm's graph, which ends the instrumented link as it ends the ordinary one.
+        "link": attrs.list(attrs.string(), default = []),
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         "tool": attrs.exec_dep(default = "buildrules//rules/coverage/branch:cov_branch", providers = [RunInfo]),
     },

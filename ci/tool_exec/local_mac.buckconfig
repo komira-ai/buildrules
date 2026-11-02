@@ -1,0 +1,5 @@
+# Placeholders for ci/tool_exec.bxl:check --state local_mac: local mode on a macOS arm64 machine, written out on any machine (`local_host`, rules/core/platform.bzl).
+# Analysis only: nothing runs, and no file holds an endpoint or a worker property set.
+[buildrules_re]
+  mode = local
+  local_host = macos-aarch64

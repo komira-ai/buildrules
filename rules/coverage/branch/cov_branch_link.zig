@@ -2,7 +2,7 @@
 //! (`mojo_cov_pgo_link`, rules/mojo/unit.bzl; README.md, "cov_branch link").
 //!
 //! usage: cov_branch link --compiler <compiler_dir> --zig <zig_dir> --target <cc_target> --lld <lld>
-//!            --runtime <profile_runtime> --bitcode <bitcode> --out <out> --nm <llvm-nm> [--native <library>]...
+//!            --runtime <profile_runtime> --bitcode <bitcode> --out <out> --nm <llvm-nm> [--native <library>]... [--link-tail <arg>]...
 //!
 //!   --compiler  the Mojo compiler closure: lib/libKGENCompilerRTShared.so
 //!   --zig       the Mojo toolchain's own zig directory, the one a release test links through
@@ -52,7 +52,7 @@ const std = @import("std");
 const proc = @import("proc.zig");
 const common = @import("cov_branch_common.zig");
 
-pub const USAGE = "usage: cov_branch link --compiler DIR --zig DIR --target T --lld F --runtime F --bitcode F --out F --nm F [--native F]...";
+pub const USAGE = "usage: cov_branch link --compiler DIR --zig DIR --target T --lld F --runtime F --bitcode F --out F --nm F [--native F]... [--link-tail ARG]...";
 
 pub const Args = struct {
     compiler: []const u8,
@@ -65,6 +65,8 @@ pub const Args = struct {
     nm: []const u8,
     /// The native libraries, in the order of the flags.
     natives: []const []const u8 = &.{},
+    /// The arguments that end the link line, in the order of the flags (`-lc++` for a test whose native libraries include C++: the same tail the ordinary test link has).
+    link_tail: []const []const u8 = &.{},
 };
 
 const NAMES = [_][]const u8{ "--compiler", "--zig", "--target", "--lld", "--runtime", "--bitcode", "--out", "--nm" };
@@ -73,10 +75,17 @@ const NAMES = [_][]const u8{ "--compiler", "--zig", "--target", "--lld", "--runt
 pub fn parseArgs(alloc: std.mem.Allocator, argv: []const []const u8, why: *[]const u8) !?Args {
     // The --native pairs first: the flag repeats, and its order is the link order; the others do not repeat.
     var natives = std.ArrayList([]const u8).empty;
+    var tail = std.ArrayList([]const u8).empty;
     var rest = std.ArrayList([]const u8).empty;
     var i: usize = 0;
     while (i < argv.len) : (i += 2) {
-        if (!std.mem.eql(u8, argv[i], "--native")) {
+        if (std.mem.eql(u8, argv[i], "--link-tail")) {
+            if (i + 1 >= argv.len) {
+                why.* = "--link-tail needs a value";
+                return null;
+            }
+            try tail.append(alloc, argv[i + 1]);
+        } else if (!std.mem.eql(u8, argv[i], "--native")) {
             try rest.append(alloc, argv[i]);
             if (i + 1 < argv.len) try rest.append(alloc, argv[i + 1]);
         } else if (i + 1 >= argv.len) {
@@ -100,6 +109,7 @@ pub fn parseArgs(alloc: std.mem.Allocator, argv: []const []const u8, why: *[]con
         .out = vals[6],
         .nm = vals[7],
         .natives = try natives.toOwnedSlice(alloc),
+        .link_tail = try tail.toOwnedSlice(alloc),
     };
 }
 
@@ -120,13 +130,14 @@ pub fn lldArgv(alloc: std.mem.Allocator, lld: []const u8, bc: []const u8, k: []c
     return v.toOwnedSlice(alloc);
 }
 
-/// zig's command line (step 2): `zig`, `kgen`, `rt`, `out` and `natives` absolute. The native libraries follow the object, by path, in the order given.
-pub fn zigArgv(alloc: std.mem.Allocator, zig: []const u8, target: []const u8, k: []const u8, kgen: []const u8, out: []const u8, rt: []const u8, natives: []const []const u8) ![]const []const u8 {
+/// zig's command line (step 2): `zig`, `kgen`, `rt`, `out` and `natives` absolute. The native libraries follow the object, by path, in the order given; `tail` ends the line.
+pub fn zigArgv(alloc: std.mem.Allocator, zig: []const u8, target: []const u8, k: []const u8, kgen: []const u8, out: []const u8, rt: []const u8, natives: []const []const u8, tail: []const []const u8) ![]const []const u8 {
     var v = std.ArrayList([]const u8).empty;
     try v.appendSlice(alloc, &.{ zig, "cc", "-target", target, "-Wl,--strip-debug", "-Wl,--enable-new-dtags", "-Wl,-rpath,$ORIGIN/lib" });
     try v.append(alloc, try std.fmt.allocPrint(alloc, "{s}/pg.o", .{k}));
     try v.appendSlice(alloc, natives);
     try v.appendSlice(alloc, &.{ kgen, "-o", out, "-Wl,--gc-sections", "-lm", "-Wl,--whole-archive", rt, "-Wl,--no-whole-archive" });
+    try v.appendSlice(alloc, tail);
     return v.toOwnedSlice(alloc);
 }
 
@@ -319,7 +330,7 @@ pub fn linkAll(alloc: std.mem.Allocator, a: Args, where: common.Where, runner: c
     }
 
     // 2. Link, as mojo_compile's cc shim links a release test.
-    const z = runner.runFn(runner.ptr, alloc, .{ .argv = try zigArgv(alloc, zig, a.target, k, kgen, out, rt, natives), .env = env, .stdout_path = log, .stderr_to_stdout = true }) catch |e| {
+    const z = runner.runFn(runner.ptr, alloc, .{ .argv = try zigArgv(alloc, zig, a.target, k, kgen, out, rt, natives, a.link_tail), .env = env, .stdout_path = log, .stderr_to_stdout = true }) catch |e| {
         try err.writer(alloc).print("cov_branch link: cannot run {s}: {s}\n", .{ zig, @errorName(e) });
         return 2;
     };

@@ -1,16 +1,21 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//ci/faulty:applets.bzl", "archive_files_over_applets")
 load("@buildrules//ci/mojo_gate:fixture.bzl", "gate_fixture_lib")
 load("@buildrules//rules:isa.bzl", "test_exec_compatible_with")
 load("@buildrules//rules/core:run_check.bzl", "run_check")
+load("@buildrules//rules/cxx:archive.bzl", "archive_files")
 load("@buildrules//rules/cxx:defs.bzl", "c_check")
+load("@buildrules//examples/native/zlib:files.bzl", "ZLIB_FILES")
 load("@buildrules//rules/cxx:native.bzl", "native_static")
+load("@buildrules//rules/native:defs.bzl", "native_library")
 load("@buildrules//rules/mojo:same.bzl", "mojo_same")
 load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
 load("@buildrules//rules/rust:cargo.bzl", "cargo_table_check")
 load("@buildrules//rules/rust:defs.bzl", "rust_library", "rust_test")
 load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "ZIG_CC_TARGET")
 load("@buildrules//rules/rust:toolchain.bzl", "rust_toolchain")
-load("@buildrules//rules/zig:zig.bzl", "zig_exe")
+load("@buildrules//rules/pins:pins.bzl", "PINS", "strip_prefix")
+load("@buildrules//rules/zig:zig.bzl", "zig_dist", "zig_exe")
 load(":fixture.bzl", "faulty_mojo_exe", "faulty_mojo_toolchain")
 
 # Bad inputs for the checks and markers of the rules. Each target below is a rule given an input its action must refuse, so its build must be red: an action
@@ -118,6 +123,13 @@ mojo_test_run_rule(
     exec_compatible_with = test_exec_compatible_with(),
 )
 
+# The multi-call shim of applets_without_link_counts (ci/faulty/applets.bzl).
+zig_exe(
+    name = "applets",
+    src = "applets.zig",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
 # The run of a Mojo test that hangs: the program blocks forever (it reads a pipe nobody writes). Its hang limit is one second (`test_hang_limit_s`, rules/core/hang_limit.bzl):
 # the run must be stopped at it, red, with the hang-limit verdict and not a pass or a time-out of the executor. Only the verdict is held, never the time it took.
 zig_exe(
@@ -166,6 +178,368 @@ native_static(
     srcs = ["native/debug_info.c"],
     soname = "libfaulty_debug.a",
     validate = False,
+)
+
+# archive_files stages the listed files of an archive, and never follows a symbolic link of the archive: a listed file that is a link, or lies behind a link, is refused. Each
+# archive below is a `pkg/` tree (ci/faulty/links, made with `tar --sort=name --format=ustar`, then `gzip -n`) with `ok.c` and:
+#   abs_link: link.c, a link to an absolute path of the machine that unpacks it;  rel_link: link.c, a link to a path that climbs out of the unpacked tree;
+#   dir_link: etc, a link to the directory /etc (so `etc/hostname` lies behind a link);
+#   prefix_link: top, a link to /etc, which is where `strip_prefix = "top"` points;  mid_link: a/mid, a link to /etc in the middle of the path a/mid/hostname;
+#   hard_link_outside: hl.c, a hard link to an absolute path of the machine that unpacks it;
+#   template_link: tmpl.in, a link to an absolute path, listed as the source of a template;
+#   control: no link that is listed: copy.c and ok.c are the same file (a hard link), sub/inner.c, and `unlisted`, a link nothing lists, which stays unread.
+# (Control of each: the same rule on the control archive, which must build.)
+[
+    export_file(name = name + ".tar.gz", src = "links/" + src + ".tar.gz", visibility = ["//ci:"])
+    for name, src in [("archive_abs_link", "abs_link"), ("archive_rel_link", "rel_link"), ("archive_dir_link", "dir_link"), ("archive_control", "control"), ("archive_prefix_link", "prefix_link"), ("archive_mid_link", "mid_link"), ("archive_template_link", "template_link"), ("archive_hard_link_outside", "hard_link_outside")]
+]
+
+archive_files(
+    name = "archive_files_of_a_link_to_an_absolute_path",
+    archive = ":archive_abs_link.tar.gz",
+    files = ["link.c", "ok.c"],
+    one_tree = True,
+    strip_prefix = "pkg",
+)
+
+archive_files(
+    name = "archive_files_of_a_link_out_of_the_tree",
+    archive = ":archive_rel_link.tar.gz",
+    files = ["link.c", "ok.c"],
+    strip_prefix = "pkg",
+)
+
+archive_files(
+    name = "archive_files_of_a_file_behind_a_link_to_a_directory",
+    archive = ":archive_dir_link.tar.gz",
+    files = ["etc/hostname", "ok.c"],
+    one_tree = True,
+    strip_prefix = "pkg",
+)
+
+archive_files(
+    name = "archive_files_of_files_without_links",
+    archive = ":archive_control.tar.gz",
+    files = ["copy.c", "ok.c", "sub/inner.c"],
+    one_tree = True,
+    strip_prefix = "pkg",
+    visibility = ["//ci:"],
+)
+
+archive_files(
+    name = "archive_files_of_separate_files_without_links",
+    archive = ":archive_control.tar.gz",
+    files = ["copy.c", "ok.c", "sub/inner.c"],
+    strip_prefix = "pkg",
+    visibility = ["//ci:"],
+)
+
+# `archive_files` counts the names of a listed file with `stat -c %h`, and refuses the file when the count is not a number. The applets below stand in for the pinned ones but print
+# nothing, or a word, for that one call; the control is the same file of the same archive (copy.c, a hard link to ok.c) staged by the pinned ones, in
+# archive_files_of_files_without_links.
+archive_files_over_applets("no_link_count", "")
+
+archive_files_over_applets("a_word_for_the_link_count", "unknown")
+
+archive_files_over_applets("a_link_count_too_long_to_compare", "99999999999999999999")
+
+archive_files(
+    name = "archive_files_of_a_link_as_the_strip_prefix",
+    archive = ":archive_prefix_link.tar.gz",
+    files = ["hostname"],
+    strip_prefix = "top",
+)
+
+archive_files(
+    name = "archive_files_of_a_file_behind_a_link_in_the_middle_of_its_path",
+    archive = ":archive_mid_link.tar.gz",
+    files = ["a/mid/hostname", "ok.c"],
+    strip_prefix = "pkg",
+    one_tree = True,
+)
+
+archive_files(
+    name = "archive_files_of_a_template_that_is_a_link",
+    archive = ":archive_template_link.tar.gz",
+    strip_prefix = "pkg",
+    templates = {"out.h": "tmpl.in"},
+)
+
+archive_files(
+    name = "archive_files_of_a_template_of_the_same_archive",
+    archive = ":archive_template_link.tar.gz",
+    strip_prefix = "pkg",
+    templates = {"out.h": "ok.c"},
+    visibility = ["//ci:"],
+)
+
+archive_files(
+    name = "archive_files_of_the_files_behind_no_link_of_the_prefix",
+    archive = ":archive_prefix_link.tar.gz",
+    files = ["ok.c"],
+    strip_prefix = "pkg",
+    visibility = ["//ci:"],
+)
+
+archive_files(
+    name = "archive_files_of_the_files_beside_a_link_in_the_middle",
+    archive = ":archive_mid_link.tar.gz",
+    files = ["ok.c"],
+    strip_prefix = "pkg",
+    visibility = ["//ci:"],
+)
+
+archive_files(
+    name = "archive_files_of_a_dot_dot_file",
+    archive = ":archive_control.tar.gz",
+    files = ["sub/../ok.c"],
+    strip_prefix = "pkg",
+)
+
+archive_files(
+    name = "archive_files_of_an_absolute_file",
+    archive = ":archive_control.tar.gz",
+    files = ["/etc/hostname"],
+    strip_prefix = "pkg",
+)
+
+archive_files(
+    name = "archive_files_of_a_dot_dot_template_source",
+    archive = ":archive_control.tar.gz",
+    strip_prefix = "pkg",
+    templates = {"out.h": "sub/../ok.c"},
+)
+
+archive_files(
+    name = "archive_files_of_a_dot_dot_strip_prefix",
+    archive = ":archive_control.tar.gz",
+    files = ["ok.c"],
+    strip_prefix = "sub/../pkg",
+)
+
+archive_files(
+    name = "archive_files_of_a_hard_link_to_a_file_outside",
+    archive = ":archive_hard_link_outside.tar.gz",
+    files = ["hl.c", "ok.c"],
+    strip_prefix = "pkg",
+)
+
+# A renamed native library (`prefix`, rules/cxx/README.md): it is built as it is, the names its archive defines are written as a header, and it is built again with
+# that header included. `native_prefix_good` is the control; the other two carry what the prefix rules of the archive check refuse.
+native_static(
+    name = "native_prefix_good",
+    srcs = ["native/prefix_good_a.c", "native/prefix_good_b.c"],
+    soname = "libfaulty_prefix_good.a",
+    prefix = "faultyp",
+    prefix_min = 3,
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_static(
+    name = "native_prefix_leaks_a_symbol",
+    srcs = ["native/prefix_leaks_a_symbol.c"],
+    soname = "libfaulty_prefix_leak.a",
+    prefix = "faultyp",
+    prefix_min = 1,
+    validate = False,
+)
+
+native_static(
+    name = "native_prefix_misses_a_reference",
+    srcs = ["native/prefix_missed_reference_a.c", "native/prefix_missed_reference_b.c"],
+    soname = "libfaulty_prefix_miss.a",
+    prefix = "faultyp",
+    prefix_min = 3,
+    validate = False,
+)
+
+# A library that renames its C API and keeps a mangled C++ name (`_ZN6snappy3fooEv`): it passes when it names the namespace (`prefix_cxx_namespaces`), and the same library
+# without the attribute is red, naming the symbol.
+native_static(
+    name = "native_prefix_namespace_good",
+    srcs = ["native/prefix_cxx_namespace.c"],
+    soname = "libfaulty_prefix_ns.a",
+    prefix = "faultyp",
+    prefix_min = 1,
+    prefix_cxx_namespaces = ["snappy"],
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_static(
+    name = "native_prefix_namespace_unnamed",
+    srcs = ["native/prefix_cxx_namespace.c"],
+    soname = "libfaulty_prefix_nsu.a",
+    prefix = "faultyp",
+    prefix_min = 1,
+    validate = False,
+)
+
+# A dependent of a `native_library` (rules/native/defs.bzl) sees the headers its dependency exports, and only those. The archive check is left an output of each
+# target (`validate = False`), as for the natives above, so the compile that fails is a failed action of the target. Controls: `nl_user` and `nl_zlib_user`.
+native_library(
+    name = "nl_lib",
+    srcs = ["nl/lib.c"],
+    exported_headers = {"nl/lib.h": "nl/lib.h"},
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_library(
+    name = "nl_user",
+    srcs = ["nl/user.c"],
+    deps = [":nl_lib"],
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+# No dependency: the header of nl_lib is not on this library's include path.
+native_library(
+    name = "nl_user_without_the_dependency",
+    srcs = ["nl/user.c"],
+    validate = False,
+)
+
+# nl_mid_plain has nl_lib in `deps`, not `exported_deps`: nl_top sees nl_mid_plain's headers (it has none) and not nl_lib's.
+native_library(
+    name = "nl_mid_plain",
+    srcs = ["nl/mid.c"],
+    deps = [":nl_lib"],
+    validate = False,
+)
+
+native_library(
+    name = "nl_top_over_plain_deps",
+    srcs = ["nl/top.c"],
+    deps = [":nl_mid_plain"],
+    validate = False,
+)
+
+# A library of the zlib tree that exports no include directory: a dependent cannot find <zlib.h>.
+native_library(
+    name = "nl_zlib_without_the_export",
+    upstream = {
+        "url": "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz",
+        "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+        "size": 1512791,
+        "strip": "zlib-1.3.1",
+        "files": ZLIB_FILES,
+    },
+    srcs = ["adler32.c"],
+    includes = ["."],
+    validate = False,
+)
+
+native_library(
+    name = "nl_zlib_user_without_the_export",
+    srcs = ["nl/zuser.c"],
+    deps = [":nl_zlib_without_the_export"],
+    validate = False,
+)
+
+native_library(
+    name = "nl_zlib_user",
+    srcs = ["nl/zuser.c"],
+    deps = ["//examples/native/zlib:zlib"],
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+# `hdrs` are private: a header a library compiles with does not reach its dependents (only `exported_headers` do). Control: `nl_priv_user`.
+native_library(
+    name = "nl_priv",
+    srcs = ["nl/priv.c"],
+    hdrs = {"p/priv.h": "nl/priv.h"},
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_library(
+    name = "nl_priv_user",
+    srcs = ["nl/priv_ok.c"],
+    deps = [":nl_priv"],
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_library(
+    name = "nl_priv_user_including_it",
+    srcs = ["nl/priv_bad.c"],
+    deps = [":nl_priv"],
+    validate = False,
+)
+
+# A renamed library at the level of native_library (`prefix`): the control renames everything; the other defines a symbol its renaming header cannot reach (a name given to
+# the assembler with an asm label), which the archive check finds defined without the prefix. Both are left to fail in the check (`validate = False`).
+native_library(
+    name = "nl_prefix_good",
+    srcs = ["native/prefix_good_a.c", "native/prefix_good_b.c"],
+    prefix = {"name": "faultyp", "min": 3},
+    validate = False,
+    visibility = ["//ci:"],
+)
+
+native_library(
+    name = "nl_prefix_leaks_a_symbol",
+    srcs = ["native/prefix_leaks_a_symbol.c"],
+    prefix = {"name": "faultyp", "min": 1},
+    validate = False,
+)
+
+# The checks of unpacking (rules/core/unpack.bzl): `zig_dist` given an archive its `unpack` must refuse. Each is the pinned zig 0.12.0 distribution with one thing wrong.
+# (Control: //rules/pins:zig, the same rule with the pin's own values.)
+#   - a sha256 that is not the archive's (well formed, so the rule accepts it and the program refuses the archive before it reads a byte);
+#   - a limit of 1 MiB on a distribution that decompresses to 319,150,293 bytes;
+#   - a file named like the archive that is not one (text), with its own sha256 and size, so the program reads it and refuses what it finds;
+#   - a sha256 that is not 64 lower-case hex digits, and a limit that is not positive: refused at analysis, naming the target.
+_ZIG = PINS["zig"]
+
+zig_dist(
+    name = "zig_dist_of_other_bytes",
+    archive = "buildrules//rules/pins:" + _ZIG["name"],
+    max_output = 400 * 1024 * 1024,
+    sha256 = "0" * 64,
+    size_bytes = _ZIG["size"],
+    strip_prefix = strip_prefix("zig"),
+)
+
+zig_dist(
+    name = "zig_dist_over_its_max_output",
+    archive = "buildrules//rules/pins:" + _ZIG["name"],
+    max_output = 1024 * 1024,
+    sha256 = _ZIG["sha256"],
+    size_bytes = _ZIG["size"],
+    strip_prefix = strip_prefix("zig"),
+)
+
+export_file(name = "corrupt.tar.xz", src = "corrupt.tar.xz", visibility = ["PUBLIC"])
+
+zig_dist(
+    name = "zig_dist_of_a_corrupt_archive",
+    archive = ":corrupt.tar.xz",
+    max_output = 400 * 1024 * 1024,
+    sha256 = "e883a74de45b83b441ffaa7928670bdadf8981dd43f2d8c48b209097be144815",
+    size_bytes = 95,
+    strip_prefix = strip_prefix("zig"),
+)
+
+zig_dist(
+    name = "zig_dist_of_a_short_sha256",
+    archive = "buildrules//rules/pins:" + _ZIG["name"],
+    max_output = 400 * 1024 * 1024,
+    sha256 = _ZIG["sha256"][:63],
+    size_bytes = _ZIG["size"],
+    strip_prefix = strip_prefix("zig"),
+)
+
+zig_dist(
+    name = "zig_dist_of_a_zero_max_output",
+    archive = "buildrules//rules/pins:" + _ZIG["name"],
+    max_output = 0,
+    sha256 = _ZIG["sha256"],
+    size_bytes = _ZIG["size"],
+    strip_prefix = strip_prefix("zig"),
 )
 
 scrub_files()

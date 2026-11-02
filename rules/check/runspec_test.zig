@@ -196,6 +196,8 @@ test "--abs and --abs-prefix make a relative value absolute, whatever the order 
 }
 
 test "--ld-library-path replaces LD_LIBRARY_PATH with the directory, made absolute" {
+    // The program started is the one of the machine the test runs on; on a Mac it reads DYLD_LIBRARY_PATH instead, which the setLibraryEnv cases below hold.
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
     var c = try kit.Case.init();
     defer c.deinit();
     c.environ = &.{"LD_LIBRARY_PATH=/old/lib"};

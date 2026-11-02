@@ -1,0 +1,25 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/native:defs.bzl", "native_library")
+
+# base <- mid <- top. A library's `deps` give its own compiles the headers they export, and put their archives after it on the link line; `exported_deps` also hand
+# those headers on to its dependents. `top` includes `base/base.h` and `mid.h`: it sees the first through `mid`'s `exported_deps` and the second as a direct dependency.
+native_library(
+    name = "base",
+    srcs = ["native/base.c"],
+    exported_headers = {"base/base.h": "include/base.h"},
+)
+
+native_library(
+    name = "mid",
+    srcs = ["native/mid.c"],
+    exported_headers = {"mid.h": "include/mid.h"},
+    exported_deps = [":base"],
+)
+
+native_library(
+    name = "top",
+    srcs = ["native/top.c"],
+    deps = [":mid"],
+)
+
+scrub_files()

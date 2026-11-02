@@ -86,6 +86,12 @@ _REAL_DATA = {
     "libgcc.conda": "buildrules//rules/pins:libgcc_15.3.0_linux-64.conda",
 }
 
+# What `real_unit` holds the rules' unpacking to: the zig 0.12.0 and 0.15.2 distributions and the mopm toolchain as the build makes them, against the reference tar on the same tarballs.
+_REAL_TREES = {
+    "zig_next.tar.xz": "buildrules//rules/pins:zig_next_linux_x86_64.tar.xz",
+    "mopm.tar.gz": "toolchains//:mopm-0.0.48.tar.gz",
+}
+
 [
     zig_test(
         name = name + "_unit",
@@ -94,12 +100,15 @@ _REAL_DATA = {
         zig = _ZIG,
         # ReleaseSafe: the tests hash a quarter of a gigabyte of extracted files, which a Debug build of sha256 takes minutes over.
         optimize = "ReleaseSafe",
-        data = _REAL_DATA,
-        exec_tools = {
+        data = dict(_REAL_DATA, **_REAL_TREES) if name == "real" else _REAL_DATA,
+        exec_tools = dict({
             "UNPACK": ":unpack",
             "BUSYBOX": "buildrules//rules/pins:busybox",
             "ZIG_DIST": "buildrules//rules/pins:zig",
-        },
+        }, **({
+            "ZIG_NEXT_DIST": "buildrules//rules/pins:zig_next",
+            "MOPM": "toolchains//:mopm_0_0_48",
+        } if name == "real" else {})),
         visibility = ["//ci:"],
     )
     for name in ["real", "xz_decode"]

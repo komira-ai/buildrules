@@ -51,3 +51,58 @@ def exec_for_target():
     anything else `LINUX_X86_64`. A tool (`exec_dep`) is configured as the execution platform of the rule that runs it, so the same `select` in a toolchain
     or a tool chooses its host by the host that runs it."""
     return by_host(LINUX_X86_64, LINUX_AARCH64, MACOS_AARCH64)
+
+# ---- the tool tier ----------------------------------------------------------------------------------------------------------------------------
+# The tools a Mojo action runs (the Zig tools, the pinned zig and busybox, the unpackers, `:check`) are built and run by the execution platform of the machine
+# that runs them: on a farm it is linux x86_64 (every tool is cross-compiled there for the host it will run on, and the action keys are what they always were),
+# and on a Mac that runs Buck2 itself with `[buildrules_re] mode = local` it is the Mac, the only execution platform that exists.
+
+HOST_NAMES = ["linux-x86_64", "linux-aarch64", "macos-aarch64"]
+
+# `[buildrules_re]` key that names the machine for an analysis on another machine (see `machine_name`).
+LOCAL_HOST_KEY = "local_host"
+
+def host_name_of(info):
+    """`<os>-<cpu>` of a `host_info()` value (`linux-x86_64`, `linux-aarch64`, `macos-aarch64`, `other-other`)."""
+    os = "linux" if info.os.is_linux else ("macos" if info.os.is_macos else "other")
+    cpu = "x86_64" if info.arch.is_x86_64 else ("aarch64" if info.arch.is_aarch64 else "other")
+    return os + "-" + cpu
+
+def _tool_mode():
+    return read_root_config("buildrules_re", "mode", "remote").strip()
+
+def machine_of(real, override, mode):
+    """`(machine, refusal)`: the machine local mode runs on, `override` (`[buildrules_re] local_host`) when set, else `real`. Pure, for ci/tool_exec.bzl.
+
+    The override exists so an analysis on one kind of machine can show where the actions of another kind would be placed (ci/tool_exec.bxl). It names a machine
+    only in local mode, where the actions run on this machine; anywhere else it is refused, so a farm's configuration never carries it.
+    """
+    if not override:
+        return real, None
+    if mode != "local":
+        return None, "`[buildrules_re] {}` is `{}` but `[buildrules_re] mode` is `{}`: the key names the machine of local mode, for an analysis on another machine, and means nothing on a farm.".format(LOCAL_HOST_KEY, override, mode)
+    if override not in HOST_NAMES:
+        return None, "`[buildrules_re] {}` is `{}`: it is one of {}.".format(LOCAL_HOST_KEY, override, ", ".join(HOST_NAMES))
+    return override, None
+
+def machine_name():
+    """The machine running buck2 as `<os>-<cpu>`: the spelling of tools/buck2 and rules/pins/hosts.bzl. `[buildrules_re] local_host` replaces it for an analysis on another machine (local mode only)."""
+    machine, refusal = machine_of(host_name_of(host_info()), read_root_config("buildrules_re", LOCAL_HOST_KEY, "").strip(), _tool_mode())
+    if refusal:
+        fail(refusal)
+    return machine
+
+def tool_exec_for(mode, machine):
+    """`exec_compatible_with` of a tool of the Mojo tier: the Mac itself in local mode on macOS arm64, else linux x86_64 (the farm's, and a local Linux machine's)."""
+    if mode == "local" and machine == "macos-aarch64":
+        return MACOS_AARCH64
+    return LINUX_X86_64
+
+def tool_target_for(mode, machine):
+    """zig's `-target` of a program that runs on `tool_exec_for(mode, machine)` and has no other target: what a `zig_exe` or `zig_test` is built for by default."""
+    if mode == "local" and machine == "macos-aarch64":
+        return "aarch64-macos"
+    return "x86_64-linux-musl"
+
+TOOL_EXEC = tool_exec_for(_tool_mode(), machine_name())
+TOOL_TARGET = tool_target_for(_tool_mode(), machine_name())
