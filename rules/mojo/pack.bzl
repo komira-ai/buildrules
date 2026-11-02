@@ -43,8 +43,8 @@ def workspace_tree(dir, manifest, members, bins = {}, refuse = fail):
     `bins` maps each program of `[targets] bins`, by the path the package's mopm.toml writes (`bins/run.mojo`), to its source: mopm reads that file at
     `<dir of --manifest>/<path>` and ships it, so it is staged at `<dir>/<path>`. Nothing else of the package is staged: a program imports the package's library,
     which is the `.mojoc` given to `mopm pack`.
-    `refuse(message)` is called for a package or member path that leaves the repository, for a program path that leaves the package's directory (or names the
-    directory itself), and for two entries that land on one file (the entry is then left out); by default it fails."""
+    `refuse(message)` is called for a package or member path that leaves the repository, for a program path that leaves the package's directory (absolute, or
+    climbing out with `..`, or naming the directory itself), and for two entries that land on one file (the entry is then left out); by default it fails."""
     tree = {}
     here = _within(dir)
     if here == None:
@@ -64,7 +64,7 @@ def workspace_tree(dir, manifest, members, bins = {}, refuse = fail):
         tree[file] = member
     for path, source in bins.items():
         # A program is the package's own file: its path is normalized from the package's directory and may not leave it (a sibling's file is not this package's).
-        rel = _within(path)
+        rel = None if path.startswith("/") else _within(path)
         if not rel:
             refuse("mojo_conda: the program {} of the package at {} leaves the package directory".format(path, here or "."))
             continue

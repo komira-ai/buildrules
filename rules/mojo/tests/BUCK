@@ -546,7 +546,7 @@ program_leaving_the_package_is_refused(_f32)
 refusal_test(
     name = "conda_program_leaving_the_package_is_refused",
     refusals = _r32,
-    contains = ["the program ../../../x.mojo", "the program ../b/x.mojo", "the program bins/../../y.mojo", "the program . ", "the program ../x.mojo of the package at .", "leaves the package directory"],
+    contains = ["the program ../../../x.mojo", "the program /etc/x.mojo", "the program ../b/x.mojo", "the program bins/../../y.mojo", "the program . ", "the program ../x.mojo of the package at .", "leaves the package directory"],
     visibility = ["PUBLIC"],
 )
 
