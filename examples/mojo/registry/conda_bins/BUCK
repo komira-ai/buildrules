@@ -1,0 +1,35 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:pack.bzl", "mojo_conda_holds")
+load("@buildrules//rules/mojo:sync.bzl", "mojo_sync")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# A package that ships two programs: `[targets] bins` of mopm.toml names `hello` at `bins/hello.mojo` and `greet` at `bins/tools/say.mojo`, files mopm reads when it packs the package. `:conda` is
+# `mopm pack` of the gated `:lib`; it is given the program's source from the unit graph (rules/mojo/defs.bzl, rules/mojo/pack.bzl: `bins`), so it builds. Without the
+# source in the workspace `mopm pack` fails with "[targets] bin 'hello': cannot read .../bins/hello.mojo".
+mojo_package(path = ".", conda = True)
+
+# The `.conda` ships both programs, each named by the program and not by its path: unpacked, `lib/mojo/conda_bins.bins/hello.mojo` is exactly the bytes of
+# `bins/hello.mojo`, and `lib/mojo/conda_bins.bins/greet.mojo` those of `bins/tools/say.mojo` (the program `greet`).
+mojo_conda_holds(
+    name = "conda_holds",
+    conda = ":conda",
+    holds = {
+        "lib/mojo/conda_bins.bins/greet.mojo": "bins/tools/say.mojo",
+        "lib/mojo/conda_bins.bins/hello.mojo": "bins/hello.mojo",
+    },
+    sole = True,
+    package = "conda_bins",
+    visibility = ["//ci:"],
+)
+
+# `buildrules mojo sync` as a farm action (rules/mojo/sync.bzl): `buck2 run //examples/mojo/registry/conda_bins:sync` writes the lock and the glue.
+mojo_sync(
+    name = "sync",
+    committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
+    files = [],
+    mopm = "0.0.101",
+    visibility = ["//ci:"],
+    workspaces = [":workspace"],
+)
+
+scrub_files()

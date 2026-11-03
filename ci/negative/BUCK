@@ -187,6 +187,22 @@ mojo_conda(
     target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
 )
 
+# A program of `[targets] bins` is the package's own file: `mojo_conda` stages it below the package's directory, and a path that leaves the directory is refused when
+# the rule is analysed (rules/mojo/pack.bzl, `workspace_tree`, whose `refuse` is `fail` here, as in every `:conda`). Faulty: the conda_bins example's library and manifest
+# with its program at `../elsewhere/hello.mojo`, a path that stays in the repository but leaves the package. Stage programs without the check and this analyses.
+mojo_conda(
+    name = "mojo_conda_of_a_program_leaving_the_package",
+    lib = "//examples/mojo/registry/conda_bins:lib_ungated",
+    manifest = "//examples/mojo/registry/conda_bins:mopm.toml",
+    bins = {"../elsewhere/hello.mojo": "//examples/mojo/registry/conda_bins:mopm.toml"},
+    dir = "examples/mojo/registry/conda_bins",
+    mojo = "1.0.0",
+    mopm = "toolchains//:mopm_0_0_101",
+    package = "conda_bins",
+    version = "0.1.0",
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
 scrub_files()
 
 # The hang limit of a test run is a positive whole number of seconds (rules/core/hang_limit.bzl, `check_hang_limit`, called by rules/mojo/unit.bzl): 0 is refused when the

@@ -5,7 +5,11 @@
 //! `--native-from` is `--native` with the digest taken from a file the caller has: the package this build just packed must hold exactly
 //! the library the build made (rules/mojo/pack.bzl, `mojo_conda_holds`).
 //!
-//! `--sole` holds the package to being itself: no member under `lib/mojo/` but its own `.mojoc` and `.mopm.json` (a package that was packed from
+//! `--holds <member>=<file>` (repeated) holds the package to carrying the member `<member>` of its payload (`lib/mojo/<name>.bins/<program name>.mojo`, where
+//! `mopm pack` ships the source of a program, named by the program and not by its path) with exactly the bytes of `<file>`. A member path that is empty, absolute, has an empty, `.` or `..` component, or is named
+//! twice (by `--holds`, or as the `.mojoc` or a native) is refused. Nothing is written for it: it is checked, as the natives are, before anything is written.
+//!
+//! `--sole` holds the package to being itself: no member under `lib/mojo/` but its own `.mojoc`, `.mopm.json` and programs (`lib/mojo/<name>.bins/`) (a package that was packed from
 //! a workspace holds none of its siblings). `--depends <spec>` (repeated) or `--no-depends` holds `info/index.json` to `mojo-compiler <pin>` and then
 //! exactly those `depends` entries in that order (`mojo-<name> <range>`: each sibling is an ordinary versioned dependency). Both are checked before
 //! anything is written.
@@ -251,9 +255,23 @@ pub const Options = struct {
     sole: bool = false,
     /// `--depends` / `--no-depends`: the Mojo packages the `.conda` depends on, exactly, in order (null: not checked).
     depends: ?[]const []const u8 = null,
+    /// `--holds`: members the package must carry with exactly a file's bytes.
+    holds: []const Held = &.{},
 };
 
-const usage = "usage: prebuilt_unpack <package.conda> <name> <out.mojoc> [--natives <out-dir> [--native <soname>=<sha256>]... [--native-from <soname>=<file>]...]] [--sole] [--depends <spec>... | --no-depends]";
+const usage = "usage: prebuilt_unpack <package.conda> <name> <out.mojoc> [--natives <out-dir> [--native <soname>=<sha256>]... [--native-from <soname>=<file>]...]] [--holds <member>=<file>]... [--sole] [--depends <spec>... | --no-depends]";
+
+/// A member of the package's payload that must be the bytes of a file the caller has (`--holds`).
+pub const Held = struct { member: []const u8, path: []const u8 };
+
+/// A member path of the payload: relative, every component a plain name (not empty, `.` or `..`).
+pub fn checkMember(member: []const u8) error{BadHolds}!void {
+    if (member.len == 0 or member[0] == '/') return error.BadHolds;
+    var it = std.mem.splitScalar(u8, member, '/');
+    while (it.next()) |c| {
+        if (c.len == 0 or std.mem.eql(u8, c, ".") or std.mem.eql(u8, c, "..")) return error.BadHolds;
+    }
+}
 
 /// The command line, or `BadUsage` / `BadNative` / `BadSoname` / `DuplicateNative` with the reason in `why.*`.
 pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8, why: *[]const u8) Error!Options {
@@ -262,6 +280,7 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8, why: *[]const u
     var natives = std.ArrayList(Native).empty;
     var files = std.ArrayList(NativeFile).empty;
     var depends = std.ArrayList([]const u8).empty;
+    var holds = std.ArrayList(Held).empty;
     var depends_given = false;
     var i: usize = 3;
     while (i < args.len) : (i += 1) {
@@ -274,6 +293,25 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8, why: *[]const u
             // Either none or some, not both: a list that was asked to be empty and is not is the thing this flag is for.
             if (depends.items.len != 0) return refuse(why, error.BadUsage, usage);
             depends_given = true;
+            continue;
+        }
+        if (std.mem.eql(u8, flag, "--holds")) {
+            if (i + 1 >= args.len) return refuse(why, error.BadUsage, usage);
+            i += 1;
+            const arg = args[i];
+            const eq = std.mem.indexOfScalar(u8, arg, '=') orelse {
+                why.* = try std.fmt.allocPrint(a, "--holds {s}: expected <member>=<file>", .{arg});
+                return error.BadHolds;
+            };
+            checkMember(arg[0..eq]) catch |e| {
+                why.* = try std.fmt.allocPrint(a, "--holds {s}: the member must be a relative path of plain names", .{arg});
+                return e;
+            };
+            if (eq + 1 == arg.len) {
+                why.* = try std.fmt.allocPrint(a, "--holds {s}: expected <member>=<file>", .{arg});
+                return error.BadHolds;
+            }
+            try holds.append(a, .{ .member = arg[0..eq], .path = arg[eq + 1 ..] });
             continue;
         }
         if (std.mem.eql(u8, flag, "--depends")) {
@@ -328,6 +366,7 @@ pub fn parseArgs(a: std.mem.Allocator, args: []const []const u8, why: *[]const u
     if ((natives.items.len != 0 or files.items.len != 0) and o.natives_dir == null) return refuse(why, error.BadUsage, usage);
     o.natives = natives.items;
     o.files = files.items;
+    o.holds = holds.items;
     if (depends_given) o.depends = depends.items;
     return o;
 }
@@ -363,8 +402,10 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, args: []const []const u8, why:
             why.* = try std.fmt.allocPrint(a, "{s}: {s}", .{ o.conda, @errorName(e) });
             return e;
         };
+        // The package's programs (`[targets] bins`) are its own too: mopm ships each as `lib/mojo/<name>.bins/<program name>.mojo`.
+        const own_bins = try std.fmt.allocPrint(a, "lib/mojo/{s}.bins/", .{o.name});
         for (listed) |n| {
-            if (std.mem.startsWith(u8, n, "lib/mojo/") and indexOf(&own, n) == null) {
+            if (std.mem.startsWith(u8, n, "lib/mojo/") and indexOf(&own, n) == null and !std.mem.startsWith(u8, n, own_bins)) {
                 why.* = try std.fmt.allocPrint(a, "{s} holds {s}, which is not the package {s} itself", .{ o.conda, n, o.name });
                 return error.ForeignMember;
             }
@@ -399,14 +440,34 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, args: []const []const u8, why:
         try wanted.append(a, .{ .soname = f.soname, .sha256 = d });
     }
     const natives = wanted.items;
-    const names = try a.alloc([]const u8, 1 + natives.len);
+    const names = try a.alloc([]const u8, 1 + natives.len + o.holds.len);
     names[0] = try std.fmt.allocPrint(a, "lib/mojo/{s}.mojoc", .{o.name});
     for (natives, 1..) |n, i| names[i] = try std.fmt.allocPrint(a, "lib/{s}", .{n.soname});
+    // The files the package must carry: read before the package is, and each member named once (two wants of one member would leave the second unfound).
+    const held_bytes = try a.alloc([]const u8, o.holds.len);
+    for (o.holds, 0..) |h, k| {
+        const at = 1 + natives.len + k;
+        if (indexOf(names[0..at], h.member) != null) {
+            why.* = try std.fmt.allocPrint(a, "--holds names {s}, which is already checked", .{h.member});
+            return error.BadHolds;
+        }
+        names[at] = h.member;
+        held_bytes[k] = cwd.readFileAlloc(a, h.path, 1 << 30) catch |e| {
+            why.* = try std.fmt.allocPrint(a, "cannot read {s}: {s}", .{ h.path, @errorName(e) });
+            return e;
+        };
+    }
     var bad: []const u8 = "";
     const bodies = members(a, pkg, names, &bad) catch |e| {
         why.* = try std.fmt.allocPrint(a, "{s}: {s}: {s}", .{ o.conda, bad, @errorName(e) });
         return e;
     };
+    for (o.holds, held_bytes, 1 + natives.len..) |h, want, i| {
+        if (!std.mem.eql(u8, bodies[i], want)) {
+            why.* = try std.fmt.allocPrint(a, "{s}: {s} hashes to {s}, {s} to {s}", .{ o.conda, h.member, hex(bodies[i]), h.path, hex(want) });
+            return error.HeldMismatch;
+        }
+    }
     for (natives, 1..) |n, i| {
         const got = hex(bodies[i]);
         const want = std.fmt.bytesToHex(n.sha256, .lower);

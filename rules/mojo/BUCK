@@ -127,12 +127,13 @@ zig_exe(
     visibility = ["PUBLIC"],
 )
 
-# The `.mojoc` of a registry package, out of its `.conda`. Behind its unit tests.
+# The `.mojoc` of a registry package, out of its `.conda`. Behind its unit tests (those of `--holds` are in tools/prebuilt_unpack_holds_test.zig, which
+# the test file imports).
 zig_test(
     name = "prebuilt_unpack_unit",
     exec_compatible_with = TOOL_EXEC,
     src = "tools/prebuilt_unpack_test.zig",
-    imports = ["tools/prebuilt_unpack.zig"],
+    imports = ["tools/prebuilt_unpack.zig", "tools/prebuilt_unpack_fixture.zig", "tools/prebuilt_unpack_holds_test.zig"],
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
 )
