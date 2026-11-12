@@ -582,6 +582,31 @@ zig_test(
     },
 )
 
+# Where a pull request runs (AGENTS.md B9; RELEASING.md, "The tiers"): every workflow a pull request starts, and the workflows those call, runs on linux x86_64 runners alone. Every other
+# platform (macOS, linux aarch64) is a leg of the beta stage of the release (.github/workflows/beta.yml). ci/pr_runners_check.zig reads all the workflows, applies the rule of
+# workflow_check.zig to the ones a pull request starts, and is tested against pull-request workflows that name a macOS, arm, windows, self-hosted, list or expression runner.
+zig_test(
+    name = "pr_runners_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "pr_runners_check.zig",
+    imports = ["workflow_check.zig", "release_check.zig"],
+    data = {
+        ".github/workflows/advisories.yml": "//:advisories.yml",
+        ".github/workflows/apt-rotation.yml": "//:apt-rotation.yml",
+        ".github/workflows/beta.yml": "//:beta.yml",
+        ".github/workflows/ci.yml": "//:ci.yml",
+        ".github/workflows/lintian.yml": "//:lintian.yml",
+        ".github/workflows/mopm-pin.yml": "//:mopm-pin.yml",
+        ".github/workflows/publish-unpack.yml": "//:publish-unpack.yml",
+        ".github/workflows/release.yml": "//:release.yml",
+        ".github/workflows/site-publish.yml": "//:site-publish.yml",
+        ".github/workflows/site.yml": "//:site.yml",
+        "tools/buck2": "//:buck2.pin",
+        # the tests of the two files this one imports run here too
+        "ci/BUCK": "BUCK",
+    },
+)
+
 # The hosts of the pinned downloads (docs/pins.md, "Mirrors"): ci/pin_mirrors_check.zig requires every pin table's URL to be on github.com (the busybox mirror is a release asset of this
 # repository, uploaded by tools/held/mirror-busybox.sh) or its host to be listed in the check with the reason it has no mirror yet. It reads the text of the tables and the held script and
 # injects a defect for each of its rules.
@@ -822,7 +847,7 @@ zig_test(
     },
 )
 
-group(name = "workflow", deps = [":mopm_pin_workflow_check", ":mopm_pin_unit", ":mopm_pin", ":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":apt_rotation_check", ":lintian_check", ":publish_unpack_check", ":pin_mirrors_check", ":unpack_macos_check", ":macho_minos", ":macho_minos_exe", ":unpack_pin_check", ":agents_check", "//ci/negative:negative_check"])
+group(name = "workflow", deps = [":mopm_pin_workflow_check", ":mopm_pin_unit", ":mopm_pin", ":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":apt_rotation_check", ":lintian_check", ":publish_unpack_check", ":pr_runners_check", ":pin_mirrors_check", ":unpack_macos_check", ":macho_minos", ":macho_minos_exe", ":unpack_pin_check", ":agents_check", "//ci/negative:negative_check"])
 
 # The coverage of every package with Zig unit tests (rules/coverage/README.md, "Zig coverage"), each held to its floor (`coverage_floor.txt` beside its
 # BUCK file) both ways: a fall fails, and so does a rise the floor has not been raised to. Building this builds the tests again under kcov and with block
@@ -1080,21 +1105,21 @@ zig_test(
     },
 )
 
-# The `unpack_macos` job of ci.yml (tools/bootstrap): GitHub's macos-15 runner builds the program, runs its tests and unpacks the real darwin zig tarball; ci/unpack_macos_check.zig
+# The `unpack_macos` job of beta.yml (the beta stage of the release) (tools/bootstrap): GitHub's macos-15 runner builds the program, runs its tests and unpacks the real darwin zig tarball; ci/unpack_macos_check.zig
 # holds the job's urls and digests to rules/pins/hosts.bzl and every step of it to its text, and injects a defect for each.
 zig_test(
     name = "unpack_macos_check",
     exec_compatible_with = LINUX_X86_64,
     src = "unpack_macos_check.zig",
     data = {
-        ".github/workflows/ci.yml": "//:ci.yml",
+        ".github/workflows/beta.yml": "//:beta.yml",
         "rules/pins/hosts.bzl": "//rules/pins:hosts.bzl",
         "rules/pins/bootstrap.bzl": "//rules/pins:bootstrap.bzl",
     },
     zig = "buildrules//rules/pins:zig_next",
 )
 
-# ci/macho_minos.zig, the reader of a Mach-O's minos that the `unpack_macos` job of ci.yml runs: its tests make Mach-O files byte by byte.
+# ci/macho_minos.zig, the reader of a Mach-O's minos that the `unpack_macos` job of beta.yml runs: its tests make Mach-O files byte by byte.
 zig_test(
     name = "macho_minos",
     exec_compatible_with = LINUX_X86_64,

@@ -1,4 +1,4 @@
-//! The `unpack_macos` job of .github/workflows/ci.yml does what it is for: GitHub's macos-15 runner builds `unpack` with the pinned zig 0.15.2 for macOS, runs its unit
+//! The `unpack_macos` job of .github/workflows/beta.yml (the beta stage of the release: a pull request runs linux x86_64 alone) does what it is for: GitHub's macos-15 runner builds `unpack` with the pinned zig 0.15.2 for macOS, runs its unit
 //! tests, and unpacks the REAL darwin zig 0.12.0 tarball, comparing the tree with the system tar's and running the zig it made. The job's urls and digests are the ones in
 //! rules/pins/hosts.bzl (a job that fetched another file would prove nothing about the pinned one). A pure function of the two texts, tested against faulty text.
 const std = @import("std");
@@ -144,7 +144,7 @@ fn real() !struct { wf: []u8, hosts: []u8, bootstrap: []u8 } {
     defer ta.free(work);
     try std.posix.chdir(work);
     return .{
-        .wf = try std.fs.cwd().readFileAlloc(ta, ".github/workflows/ci.yml", 1 << 20),
+        .wf = try std.fs.cwd().readFileAlloc(ta, ".github/workflows/beta.yml", 1 << 20),
         .hosts = try std.fs.cwd().readFileAlloc(ta, "rules/pins/hosts.bzl", 1 << 20),
         .bootstrap = try std.fs.cwd().readFileAlloc(ta, "rules/pins/bootstrap.bzl", 1 << 20),
     };
@@ -236,7 +236,7 @@ test "a missing job, a continue-on-error and a table without the rows are found"
     const gone = try mutate(r.wf, "\n  unpack_macos:\n", "\n  unpack_other:\n");
     defer ta.free(gone);
     try expectFinding(gone, r.hosts, r.bootstrap, "`unpack_macos` job is missing");
-    const coe = try mutate(r.wf, "    runs-on: macos-15\n", "    runs-on: macos-15\n    continue-on-error: true\n");
+    const coe = try mutate(r.wf, "  unpack_macos:\n    runs-on: macos-15\n", "  unpack_macos:\n    runs-on: macos-15\n    continue-on-error: true\n");
     defer ta.free(coe);
     try expectFinding(coe, r.hosts, r.bootstrap, "continue-on-error");
     const nohost = try mutate(r.hosts, "\"macos-aarch64\": {", "\"macos-arm\": {");

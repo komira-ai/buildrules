@@ -84,5 +84,6 @@ The language rules of this repository's code: Starlark rules, Zig tools and thei
 - B19 BLOCK. This repository does not name the project it grew out of anywhere except the two allowed public addresses (this repository and the mopm releases); a missing `mopm-toolchain.toml` fails loudly. Check: `buck2 build //tools/scrub:scrub` (tools/scrub/README.md), which also refuses dates, personal names, addresses, hosts and endpoints.
 
 Where the rules above are checked in this repository: coverage floors (T1, T3) by `//ci:floors`, each package's `coverage_floor.txt` held both ways;
-a target outside the PR build (B6) by `buck2 bxl //ci:completeness.bxl:check`; workflows (B9, B10) by `//ci:workflow`; this file and `CLAUDE.md` by
+a target outside the PR build (B6) by `buck2 bxl //ci:completeness.bxl:check`; workflows (B9, B10) by `//ci:workflow`, which includes the runners of a pull request (linux x86_64 alone;
+every other platform is a leg of the beta stage, `beta.yml`, run after the merge) in `ci/pr_runners_check.zig`; this file and `CLAUDE.md` by
 `//ci:agents_check`.

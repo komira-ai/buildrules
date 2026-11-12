@@ -52,12 +52,12 @@ Three tiers, and each runs where it is cheapest to be wrong:
 
 | tier | what it is | where it runs |
 |---|---|---|
-| unit | each library: build and unit tests (a coverage measurement joins this tier where a library has one) | every pull request (`ci.yml`: `//ci:all`, the completeness check, `host_arm`) |
+| unit | each library: build and unit tests (a coverage measurement joins this tier where a library has one) | every pull request (`ci.yml`: `//ci:all` and the completeness check, on linux x86_64 runners alone) |
 | beta | each component, as a user starts it: the hello-world repositories per language, built twice (see "The beta stage") | the `beta` stage of `release.yml`, on a push to `main` after the merge |
 | gamma | the whole system with real consumers: our own repositories on the farm (see "The gamma stage") | the `gamma` stage of `release.yml`, on a push to `main` after the merge |
 
 A pull request runs `ci.yml` and nothing else: it builds `//ci:all` (the unit tests of every package and the lints of every workflow, `release.yml` and `beta.yml` among them, so a broken
-`release.yml` is red before the merge) and runs the completeness check and the aarch64 host leg. It does not run the beta, the gamma, the signing, the attestation, the reproduction or the
+`release.yml` is red before the merge) and runs the completeness check, on linux x86_64 runners alone: every other platform (linux aarch64, macOS) is tested by the beta stage of the release (the legs `host_arm`, `unpack_macos`, `mojo_macos`, `beta_arm` and `beta_macos` of `beta.yml`, see "The beta stage"), after the merge and not on a pull request (`ci/pr_runners_check.zig` refuses a runner other than `ubuntu-latest`, `ubuntu-24.04` or `ubuntu-22.04` in a workflow a pull request starts). It does not run the beta, the gamma, the signing, the attestation, the reproduction or the
 verification of a release: those happen once, in the release run on the push to `main`, and a red one there leaves no tag. `release.yml` and `beta.yml` have no `pull_request` trigger
 (`ci/release_check.zig` and `ci/stages_check.zig` refuse one), and `ci.yml` calls neither (`ci/workflow_check.zig` refuses the call of `beta.yml`, a build of the stage tool or the release
 tool, `id-token` and a cosign or attestation action there).
@@ -87,6 +87,9 @@ and then, from nothing, builds again.
 | `mixed` | a Rust package, a C program, a Zig program and a Node package in one repository | ubuntu x86_64 |
 | `mojo` | a Mojo package, built by the pinned mopm 0.0.48 release | ubuntu x86_64 |
 | `ubuntu-24.04-arm`, `macos-15` (native) | `zig` and `cxx`, with the command line the release ships for `linux-aarch64` and `macos-arm64`, run on that machine: `--version` says the planned version, `init` writes the same bytes in two directories, Buck2 loads the candidate as the external cell and lists the targets. **No build**: see "The native legs" | arm Linux, macOS (Apple silicon) |
+| `host_arm` | the aarch64 hosts: the buck2 of `tools/buck2` for linux-aarch64, the execution platform local mode resolves to, and every pinned download of `//rules/pins:host_downloads` (`docs/pins.md`, "Other hosts") | arm Linux |
+| `unpack_cross`, `unpack_macos` | the macOS program of `unpack`, cross-built on linux x86_64 and handed to a Mac that checks it against its pin and unpacks the real darwin zig tarball (`docs/pins.md`, "unpack") | ubuntu x86_64, macOS (Apple silicon) |
+| `mojo_macos` | a Mac that runs Buck2 itself builds the tool tier of the Mojo rules and a Mojo package natively | macOS (Apple silicon) |
 | farm | the ubuntu legs again, built on the farm | only when the repository variables `FARM_ADDRESS` and `FARM_CONNECT_REF` are set |
 
 The runner legs run every action on the runner (`-c buildrules_re.mode=local`; nothing is built anywhere else), and each is built **twice, in two different
@@ -125,7 +128,7 @@ and the buck2 that `tools/buck2` pins for each host (url and sha256, checked bef
 **What they do not do is build, and why.** Every toolchain of the rules is `exec_compatible_with` linux x86_64 (`rules/core/platform.bzl`), and the execution platform that local mode registers on these hosts is
 `platforms:linux_aarch64` or `platforms:macos_aarch64` (`rules/platforms.bzl`), so a build has no execution platform for any action. The `platforms/BUCK` that `buildrules init` writes passes no platform for these hosts, so Buck2 refuses to load it there in local mode
 (`rules/platforms.bzl`: "buildrules knows linux-x86_64 and no other host"); `stage native` therefore names the leg's targets and does not load `//...`. Behind that, every unpack action runs under the pinned busybox,
-and none exists for these hosts (`docs/pins.md`, "Other hosts"): the zig, node and rust downloads for them are pinned and verified (`//rules/pins:host_downloads`, the `host_arm` job of `ci.yml`) and nothing unpacks them.
+and none exists for these hosts (`docs/pins.md`, "Other hosts"): the zig, node and rust downloads for them are pinned and verified (`//rules/pins:host_downloads`, the `host_arm` job of `beta.yml`) and nothing unpacks them.
 So on these hosts: rust (`cargo new` builds the pinned cargo), cxx and zig builds, node, mixed and Mojo (Linux x86_64 only, by the Mojo toolchain) do not build, and the legs say "no build yet" in their names. A leg turns into
 a build leg when the busybox for the host exists and the toolchains list the host in `exec_compatible_with`. `release tested --targets` stays `linux-x86_64`: a tarball is attested as walked by a user beta only when its binary
 built the hello-world repositories, and the native legs only start it.

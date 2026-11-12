@@ -15,7 +15,7 @@
 #   build-cli  builds the command line for the three release targets from the tested commit with the planned version stamped in, and packages the three tarballs
 #              and, from the very same two Linux binaries, the two .debs.
 #   beta       hello-world repositories per language that consume the candidate commit as a user would, with the linux-x86_64 command line that build-cli
-#              built (beta.yml, called as a workflow), built twice, the second time in a copy at another path, to prove the outputs are the same bytes.
+#              built (beta.yml, called as a workflow; it is also where every other platform is tested: linux-aarch64 and macOS, which no pull request runs), built twice, the second time in a copy at another path, to prove the outputs are the same bytes.
 #   gamma      our own repositories built with the candidate on the farm (tools/stage gamma). It FAILS the release when the farm is not configured.
 #   archive    the deterministic archive of the TESTED COMMIT (git archive of the sha, not of a tag; a fixed prefix `buildrules-<planned version>/` and time,
 #              the tool's own gzip), the tarballs the beta ran, the .debs (each must hold the program of the tarball of its architecture), and SHA256SUMS over

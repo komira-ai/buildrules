@@ -47,7 +47,24 @@ fn hasWord(cmd: []const u8, word: []const u8) bool {
     return false;
 }
 
-const all_jobs = [_][]const u8{ "tools", "beta", "beta_mojo", "beta_arm", "beta_macos", "beta_farm" };
+const all_jobs = [_][]const u8{ "tools", "beta", "beta_mojo", "beta_arm", "beta_macos", "host_arm", "unpack_cross", "unpack_macos", "mojo_macos", "beta_farm" };
+
+/// The jobs that ci.yml ran on every pull request until the owner's rule (x86_64 linux tests are the pull-request checks; every other platform is a beta stage of the release) moved them here: the job and the runner it
+/// must have. Each is held to its own text by another rule (`wc.armLeg` for host_arm, ci/unpack_macos_check.zig for unpack_cross and unpack_macos, `checkBeta` for mojo_macos), and a `run:` block is allowed in it.
+const Ported = struct { job: []const u8, runner: []const u8 };
+const ported = [_]Ported{
+    .{ .job = "host_arm", .runner = "ubuntu-24.04-arm" },
+    .{ .job = "unpack_cross", .runner = "ubuntu-latest" },
+    .{ .job = "unpack_macos", .runner = "macos-15" },
+    .{ .job = "mojo_macos", .runner = "macos-15" },
+};
+
+fn isPorted(name: []const u8) bool {
+    for (ported) |p| {
+        if (std.mem.eql(u8, p.job, name)) return true;
+    }
+    return false;
+}
 
 /// The words of `lang: [a, b, c]` in the job's text.
 fn matrixLangs(a: std.mem.Allocator, job_text: []const u8) ![]const []const u8 {
@@ -298,9 +315,26 @@ pub fn checkBeta(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, dir
         if (!contains(jt, "--farm-config \"$HOME/.buckconfig.d/farm.buckconfig\"")) try add(a, &f, "the job `beta_farm` does not hand the farm-connect file to the stage tool", .{});
     }
 
+    // The jobs a pull request used to run: on the machine they name, in every release (a job that is skipped proves nothing), and the aarch64 host job as its rule asks.
+    for (ported) |p| {
+        if (rc.jobNamed(jobs, p.job)) |j| {
+            const jt = try j.text(a);
+            if (j.if_expr != null) try add(a, &f, "the job `{s}` has an `if:`: it runs in every release (a leg that is skipped proves nothing)", .{p.job});
+            const runs_on = try std.fmt.allocPrint(a, "runs-on: {s}", .{p.runner});
+            if (!contains(jt, runs_on)) try add(a, &f, "the job `{s}` does not run on {s}", .{ p.job, p.runner });
+        }
+    }
+    for ((try wc.armLeg(a, text, dotslash)).items) |m| try f.append(m);
+    if (rc.jobNamed(jobs, "mojo_macos")) |j| {
+        const jt = try j.text(a);
+        if (!contains(jt, "run: test \"$(uname -s)-$(uname -m)\" = Darwin-arm64\n")) try add(a, &f, "the job `mojo_macos` does not assert the machine is aarch64 macOS", .{});
+        if (!contains(jt, "--target-platforms buildrules//platforms:macos_aarch64") or !contains(jt, "//examples/mojo/subdirs:lib")) try add(a, &f, "the job `mojo_macos` does not build a Mojo package for `buildrules//platforms:macos_aarch64`", .{});
+        if (!contains(jt, "audit execution-platform-resolution") or !contains(jt, "Execution platform: buildrules//platforms:macos_aarch64")) try add(a, &f, "the job `mojo_macos` does not assert the execution platform of the Mac is `platforms:macos_aarch64`", .{});
+    }
+
     // `run:` lines are one invocation each; the buck2 install of the tools job is the one block.
     for (jobs) |*j| {
-        if (std.mem.eql(u8, j.name, "tools")) continue;
+        if (std.mem.eql(u8, j.name, "tools") or isPorted(j.name)) continue;
         for (j.lines.items) |l| {
             const s = std.mem.trimLeft(u8, std.mem.trimLeft(u8, l, "- "), " ");
             if (!std.mem.startsWith(u8, s, "run:")) continue;
@@ -570,6 +604,81 @@ const fixture_wf =
     \\      - run: chmod +x tool/macos-arm64/stage tool/macos-arm64/buildrules tool/macos-arm64/buck2
     \\      - name: The command line of this target, natively, up to the build
     \\        run: tool/macos-arm64/stage native --root "$GITHUB_WORKSPACE" --lang "$LANG_DIR" --work "$RUNNER_TEMP/native" --origin "$ORIGIN" --commit "$COMMIT" --buck2 "$GITHUB_WORKSPACE/tool/macos-arm64/buck2" --buildrules "$GITHUB_WORKSPACE/tool/macos-arm64/buildrules" --host macos-arm64 --version "$VERSION" --summary "$GITHUB_STEP_SUMMARY"
+    \\
+    \\  host_arm:
+    \\    runs-on: ubuntu-24.04-arm
+    \\    timeout-minutes: 60
+    \\    permissions:
+    \\      contents: read
+    \\    steps:
+    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    \\        with:
+    \\          ref: ${{ github.sha }}
+    \\          persist-credentials: false
+    \\      - name: Install buck2
+    \\        run: |
+    \\          curl --output buck2.zst https://example.invalid/2026-09-15/buck2-aarch64-unknown-linux-gnu.zst
+    \\          echo "e35027a8e3f700000000000000000000000000000000000000000000000000aa  buck2.zst" | sha256sum --check --strict -
+    \\      - name: The machine is aarch64
+    \\        run: test "$(uname -m)" = aarch64
+    \\      - name: The execution platform of this machine is platforms:linux_aarch64
+    \\        run: |
+    \\          ./buck2 audit execution-platform-resolution -c buildrules_re.mode=local //rules/pins:host_downloads \
+    \\            | grep --fixed-strings --quiet "Execution platform: buildrules//platforms:linux_aarch64"
+    \\      - name: Download and verify the pins of the aarch64 hosts
+    \\        run: |
+    \\          ./buck2 build --console simple -c buildrules_re.mode=local \
+    \\            --target-platforms buildrules//platforms:linux_aarch64 \
+    \\            //rules/pins:host_downloads
+    \\
+    \\  unpack_cross:
+    \\    runs-on: ubuntu-latest
+    \\    timeout-minutes: 60
+    \\    permissions:
+    \\      contents: read
+    \\    steps:
+    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    \\        with:
+    \\          ref: ${{ github.sha }}
+    \\          persist-credentials: false
+    \\      - name: Build the macOS unpack
+    \\        run: ./buck2 build --console simple -c buildrules_re.mode=local --out unpack-macos-aarch64 //tools/bootstrap:unpack_macos_aarch64
+    \\
+    \\  unpack_macos:
+    \\    runs-on: macos-15
+    \\    needs: unpack_cross
+    \\    timeout-minutes: 45
+    \\    permissions:
+    \\      contents: read
+    \\    steps:
+    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    \\        with:
+    \\          ref: ${{ github.sha }}
+    \\          persist-credentials: false
+    \\      - name: The machine is aarch64 macOS
+    \\        run: test "$(uname -s)-$(uname -m)" = Darwin-arm64
+    \\
+    \\  mojo_macos:
+    \\    runs-on: macos-15
+    \\    timeout-minutes: 90
+    \\    permissions:
+    \\      contents: read
+    \\    steps:
+    \\      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    \\        with:
+    \\          ref: ${{ github.sha }}
+    \\          persist-credentials: false
+    \\      - name: The machine is aarch64 macOS
+    \\        run: test "$(uname -s)-$(uname -m)" = Darwin-arm64
+    \\      - name: The execution platform of this machine is platforms:macos_aarch64
+    \\        run: |
+    \\          ./buck2 audit execution-platform-resolution -c buildrules_re.mode=local //rules/pins:zig \
+    \\            | grep --fixed-strings --quiet "Execution platform: buildrules//platforms:macos_aarch64"
+    \\      - name: A Mojo package builds and passes its tests on the Mac
+    \\        run: |
+    \\          ./buck2 build --console simple -c buildrules_re.mode=local \
+    \\            --target-platforms buildrules//platforms:macos_aarch64 \
+    \\            //examples/mojo/subdirs:lib
     \\
     \\  beta_farm:
     \\    needs: [tools]
@@ -956,4 +1065,33 @@ test "rule: the legs run the command line the release built when it names one, a
     // the input is gone, or no longer an empty string by default
     try expectFinding(a, r, try mutate(a, r.wf, "    inputs:\n      cli-artifact:\n        type: string\n        default: \"\"\n", ""), "no string input `cli-artifact`");
     try expectFinding(a, r, try mutate(a, r.wf, "        default: \"\"\n", "        default: release-cli-bin\n"), "no string input `cli-artifact`");
+}
+
+test "rule: the jobs a pull request used to run are legs of the beta, on their own machines, in every release" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = fx();
+    // each of the four is a job of this workflow
+    for (ported) |p| {
+        const header = try std.fmt.allocPrint(a, "\n  {s}:\n", .{p.job});
+        const gone = try std.fmt.allocPrint(a, "\n  {s}_x:\n", .{p.job});
+        const msg = try std.fmt.allocPrint(a, "the job `{s}` is missing", .{p.job});
+        try expectFinding(a, r, try mutate(a, r.wf, header, gone), msg);
+        // on the machine it names, and not skipped
+        const runs_on = try std.fmt.allocPrint(a, "runs-on: {s}", .{p.runner});
+        const other = if (std.mem.eql(u8, p.runner, "ubuntu-latest")) "runs-on: macos-15" else "runs-on: ubuntu-latest";
+        const wrong = try std.fmt.allocPrint(a, "does not run on {s}", .{p.runner});
+        try expectFinding(a, r, try mutateIn(a, r.wf, p.job, runs_on, other), wrong);
+        try expectFinding(a, r, try mutateIn(a, r.wf, p.job, "    permissions:\n", "    if: ${{ vars.SKIP == '' }}\n    permissions:\n"), "has an `if:`");
+    }
+    // the aarch64 host job keeps its own rules here (they were ci.yml's)
+    try expectFinding(a, r, try mutateIn(a, r.wf, "host_arm", "        run: test \"$(uname -m)\" = aarch64\n", "        run: true\n"), "uname -m");
+    try expectFinding(a, r, try mutate(a, r.wf, "e35027a8e3f700000000000000000000000000000000000000000000000000aa  buck2.zst", "e35027a8e3f700000000000000000000000000000000000000000000000000ab  buck2.zst"), "linux-aarch64 sha256");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "host_arm", "--target-platforms buildrules//platforms:linux_aarch64", "--target-platforms buildrules//platforms:linux_x86_64"), "--target-platforms");
+    // the Mac that runs Buck2: the machine, the execution platform and the Mojo package for the Mac
+    try expectFinding(a, r, try mutateIn(a, r.wf, "mojo_macos", "test \"$(uname -s)-$(uname -m)\" = Darwin-arm64", "true"), "assert the machine is aarch64 macOS");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "mojo_macos", "--target-platforms buildrules//platforms:macos_aarch64", "--target-platforms buildrules//platforms:linux_x86_64"), "build a Mojo package for");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "mojo_macos", "//examples/mojo/subdirs:lib", "//examples/mojo/other:lib"), "build a Mojo package for");
+    try expectFinding(a, r, try mutateIn(a, r.wf, "mojo_macos", "audit execution-platform-resolution", "audit configurations"), "execution platform of the Mac");
 }
