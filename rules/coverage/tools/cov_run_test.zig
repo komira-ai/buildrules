@@ -95,7 +95,7 @@ test "cov_normalize's command line maps the tree's absolute names to repository 
     try t.expectEqualStrings("/real/share/base/=pkg/src/base/", n[6]);
     try t.expectEqualStrings("--must-contain", n[7]);
     try t.expectEqualStrings("pkg/tests/test_x.mojo", n[8]);
-    try t.expectEqualStrings("--forbid", n[9]);
+    try t.expectEqualStrings("--forbid-path", n[9]);
     try t.expectEqualStrings("/exec/root", n[10]);
 }
 

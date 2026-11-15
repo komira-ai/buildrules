@@ -19,6 +19,21 @@ zig_test(
     zig = "buildrules//rules/pins:zig_next",
 )
 
+zig_test(
+    name = "mojo_compile_unit",
+    exec_compatible_with = TOOL_EXEC,
+    src = "tools/mojo_compile_test.zig",
+    imports = [
+        "tools/mojo_compile.zig",
+        "tools/cc_shim.zig",
+        "tools/compile_args.zig",
+        "tools/modular_cfg.zig",
+        "tools/proc_tree.zig",
+    ],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
 # The compile wrapper (tools/*.zig). It is the one place
 # that knows how to run the hermetic compiler; mopm executes it through mojo_launch.
 zig_exe(
@@ -34,7 +49,7 @@ zig_exe(
     ],
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
-    unit_tests = [":proc_tree_unit", "buildrules//rules/pins:zig_next_version"],
+    unit_tests = [":proc_tree_unit", ":mojo_compile_unit", "buildrules//rules/pins:zig_next_version"],
     visibility = ["PUBLIC"],
 )
 

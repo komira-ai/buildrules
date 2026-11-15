@@ -158,7 +158,7 @@ pub fn normalizeArgv(a: std.mem.Allocator, r: Args, raw: []const u8, out: []cons
         try std.fmt.allocPrint(a, "{s}/=", .{cwd}),
         "--must-contain",
         r.must_contain,
-        "--forbid",
+        "--forbid-path",
         cwd,
     });
 }
