@@ -119,7 +119,7 @@ test "normalizeArgv: the tree is mapped to repository paths and its directory fo
     var d: []const u8 = "";
     const r = try parseWith(a, &.{}, &d);
     const v = try Z.normalizeArgv(a, r, "/w/cov.xml", "/exec/o.xml", "/exec");
-    const want = [_][]const u8{ "/n", "--in", "/w/cov.xml", "--out", "/exec/o.xml", "--map", "/exec/=", "--must-contain", "pkg/a.zig", "--forbid", "/exec" };
+    const want = [_][]const u8{ "/n", "--in", "/w/cov.xml", "--out", "/exec/o.xml", "--map", "/exec/=", "--must-contain", "pkg/a.zig", "--forbid-path", "/exec" };
     try t.expectEqual(want.len, v.len);
     for (want, v) |w, g| try t.expectEqualStrings(w, g);
 }

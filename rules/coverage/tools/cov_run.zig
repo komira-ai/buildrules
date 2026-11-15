@@ -273,7 +273,7 @@ pub fn normalizeArgv(a: std.mem.Allocator, r: Args, share: []const u8, raw: []co
         try out.append(a, "--map");
         try out.append(a, try std.fmt.allocPrint(a, "{s}/{s}={s}", .{ share, m.share_rel, m.repo }));
     }
-    try out.appendSlice(a, &.{ "--must-contain", r.must_contain, "--forbid", cwd });
+    try out.appendSlice(a, &.{ "--must-contain", r.must_contain, "--forbid-path", cwd });
     return out.toOwnedSlice(a);
 }
 

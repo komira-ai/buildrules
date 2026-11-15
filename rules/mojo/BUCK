@@ -47,6 +47,7 @@ _MOJO_COMPILE_MACOS_SRCS = [
     "tools/host_identity.zig",
     "tools/modular_cfg.zig",
     "tools/mojo_compile.zig",
+    "tools/mojo_compile_test.zig",
     "tools/proc_tree.zig",
     "tools/proc_tree_macos.zig",
 ]
