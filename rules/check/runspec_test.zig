@@ -483,6 +483,9 @@ const installed: kit.Args = &.{ "--private-scratch", "--installed", "--install-s
 fn stage(c: *kit.Case) !void {
     try c.put("data/hello.txt", "hello from share\n");
     try c.put("data/deeper/more.txt", "more\n");
+    // The installed copy is started, so its directory must be one the case owns: without BUCK_SCRATCH_PATH the parent is /tmp, which a job container
+    // can mount without exec permission (a tmpfs is `noexec` by default) and where the copy then cannot run.
+    c.environ = &.{"BUCK_SCRATCH_PATH=scratch"};
 }
 
 /// What `toolbox cat FILES` wrote when run by `marker` with `before` (stdout then stderr), the run passing.
