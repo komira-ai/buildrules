@@ -71,6 +71,7 @@ test {
     _ = @import("proc_tree.zig");
     _ = @import("proc_tree_macos.zig");
     _ = @import("host_identity.zig");
+    _ = @import("mojo_compile_test.zig");
 }
 
 const Argv = common.Argv;
