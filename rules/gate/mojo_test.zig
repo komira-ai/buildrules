@@ -417,9 +417,9 @@ test "an unenterable directory: made with its missing parents, listable at every
     try std.testing.expectEqual(@as(u32, 0o600), @as(u32, @intCast(st.mode & 0o7777)));
     // Listable: what a file watcher does with it.
     var d = try std.fs.cwd().openDir(dir, .{ .iterate = true });
+    defer d.close();
     var it = d.iterate();
     try std.testing.expectEqual(@as(?std.fs.Dir.Entry, null), try it.next());
-    d.close();
     // Never entered: a path through it is refused.
     try std.testing.expectError(error.AccessDenied, std.fs.cwd().access(try std.fmt.allocPrint(e.a, "{s}/.", .{dir}), .{}));
 }
