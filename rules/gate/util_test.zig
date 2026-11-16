@@ -313,21 +313,30 @@ test "the action's directory is $PWD where that names the working directory, els
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
+    // The working directory is one of the test's own for the length of the test, beside the links to it: a link to the action's directory or to
+    // its parent would lead back into a directory that holds the link, a loop, and buck2's file watcher, which follows the links in every directory
+    // of the project (the scratch directory included), fails the next buck2 command on a loop.
+    const dir = try kit.tempDir(a);
+    const work = try std.fmt.allocPrint(a, "{s}/work", .{dir});
+    const other = try std.fmt.allocPrint(a, "{s}/other", .{dir});
+    try std.fs.cwd().makePath(work);
+    try std.fs.cwd().makePath(other);
+    const was_here = try posix.open(".", .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+    defer posix.close(was_here);
+    try posix.chdir(work);
+    defer posix.fchdir(was_here) catch @panic("cannot return to the test's working directory");
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const real = try a.dupe(u8, try posix.getcwd(&buf));
-    const dir = try kit.tempDir(a);
     // A second name for the working directory: the shell would have kept it.
     const link = try std.fmt.allocPrint(a, "{s}/alias", .{dir});
     try posix.symlink(real, link);
     try std.testing.expectEqualStrings(link, try actionDirWith(a, link));
     // $PWD that is another directory, a relative path, empty, or nothing there is not believed.
     try std.testing.expectEqualStrings(real, try actionDirWith(a, dir));
-    // Another directory on the very device of the working directory (its parent, by a link): same device, other inode.
-    if (real.len > 1) {
-        const up = try std.fmt.allocPrint(a, "{s}/up", .{dir});
-        try posix.symlink(std.fs.path.dirname(real) orelse "/", up);
-        try std.testing.expectEqualStrings(real, try actionDirWith(a, up));
-    }
+    // Another directory on the very device of the working directory (a sibling, by a link): same device, other inode.
+    const up = try std.fmt.allocPrint(a, "{s}/up", .{dir});
+    try posix.symlink(other, up);
+    try std.testing.expectEqualStrings(real, try actionDirWith(a, up));
     try std.testing.expectEqualStrings(real, try actionDirWith(a, "relative/path"));
     try std.testing.expectEqualStrings(real, try actionDirWith(a, ""));
     try std.testing.expectEqualStrings(real, try actionDirWith(a, "/nonexistent/pwd"));

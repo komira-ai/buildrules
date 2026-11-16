@@ -71,6 +71,16 @@ pub fn tempDir(alloc: std.mem.Allocator) ![]const u8 {
     return p;
 }
 
+/// Makes `path` a directory its owner can list but not enter (mode 0600): a chdir into it, or any path through it, is refused.
+/// Never a mode without the read bit, not even for an instant: buck2's file watcher adds a watch for every directory made under
+/// the project, the action's scratch directory included, and a directory it cannot read fails the next buck2 command with
+/// `Permission denied (os error 13) about [<dir>]`, even after the directory is gone. The directory is made readable (0755)
+/// and only then loses its search bits, so it is readable at every moment.
+pub fn unenterableDir(path: []const u8) !void {
+    try std.fs.cwd().makePath(path);
+    try posix.fchmodat(posix.AT.FDCWD, path, 0o600, 0);
+}
+
 pub fn writeFile(path: []const u8, bytes: []const u8) !void {
     if (std.fs.path.dirname(path)) |d| try std.fs.cwd().makePath(d);
     const f = try std.fs.cwd().createFile(path, .{});

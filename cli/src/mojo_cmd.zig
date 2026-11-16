@@ -377,6 +377,12 @@ fn isUnder(x: []const u8, base: []const u8) bool {
     return std.mem.eql(u8, x, base) or (std.mem.startsWith(u8, x, base) and x.len > base.len and x[base.len] == '/');
 }
 
+/// `tc_real`, the toolchains directory with its symbolic links resolved, is a directory below `root_real`, the resolved repository root, and not the
+/// root itself: what a written `[cells] toolchains` path must lead to.
+pub fn strictlyUnder(tc_real: []const u8, root_real: []const u8) bool {
+    return !std.mem.eql(u8, tc_real, root_real) and isUnder(tc_real, root_real);
+}
+
 /// The places of the two pins tables: the directory of the `toolchains` cell, `[cells] toolchains = DIR` of the root .buckconfig (the one place the path
 /// is configured, so the tables cannot land where the cell does not look), else `toolchains/`. A cell path that is written must be a directory inside
 /// the root, symbolic links followed; the default is not checked, so a repository without a toolchains directory is where it was (the first sync makes
@@ -420,7 +426,7 @@ pub fn resolveTables(ctx: *Ctx, flag: ?[]const u8) !?Tables {
         defer d.close();
         const root_real = try ctx.dir.realpathAlloc(a, ".");
         const tc_real = try d.realpathAlloc(a, ".");
-        if (conf.toolchains != null and (std.mem.eql(u8, tc_real, root_real) or !isUnder(tc_real, root_real))) {
+        if (conf.toolchains != null and !strictlyUnder(tc_real, root_real)) {
             _ = ctx.fail("{s} = {s} does not lead to a directory below the repository root (a symbolic link takes it out): the toolchains directory must be inside the root", .{ from, rel });
             return null;
         }
