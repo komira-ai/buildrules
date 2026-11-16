@@ -368,7 +368,35 @@ pub fn buck2Install(a: std.mem.Allocator, f: *Findings, workflow: []const u8, do
     } else try add(a, f, "tools/buck2 has no linux-x86_64 digest and url (this parser is blind)", .{});
 }
 
-/// The aarch64 leg's install: tools/buck2 pins a linux-aarch64 release, and the workflow downloads that url and checks that sha256 (the same
+/// The runners a workflow that a pull request starts may name: hosted linux x86_64 (the owner's rule: x86_64 linux tests are the pull-request checks, and every other
+/// platform is a beta stage of the release, beta.yml). `ubuntu-24.04-arm`, `macos-*`, `windows-*`, a self-hosted label, a list of labels, a `group:` and an expression
+/// (`${{ matrix.os }}`, which could be any of them) are all refused.
+const pr_runners = [_][]const u8{ "ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04" };
+
+pub fn prRunners(a: std.mem.Allocator, f: *Findings, workflow: []const u8) !void {
+    var it = std.mem.splitScalar(u8, workflow, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \r");
+        if (!std.mem.startsWith(u8, line, "runs-on:")) continue;
+        var v = std.mem.trim(u8, line["runs-on:".len..], " ");
+        if (std.mem.indexOf(u8, v, " #")) |h| v = std.mem.trim(u8, v[0..h], " ");
+        var ok = false;
+        for (pr_runners) |r| {
+            if (std.mem.eql(u8, v, r)) ok = true;
+        }
+        if (!ok) try add(a, f, "a job a pull request runs names the runner `{s}`: a pull request runs on linux x86_64 (`ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`) alone; another platform is a job of the beta stage (beta.yml)", .{v});
+    }
+}
+
+/// The findings of the aarch64 host leg alone, on the workflow that holds it (beta.yml): the install and the job.
+pub fn armLeg(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8) !Findings {
+    var f = Findings.init(a);
+    try buck2InstallArm(a, &f, workflow, dotslash);
+    try hostArm(a, &f, workflow);
+    return f;
+}
+
+/// The aarch64 leg's install:tools/buck2 pins a linux-aarch64 release, and the workflow downloads that url and checks that sha256 (the same
 /// `buck2.zst` line as the x86 install, with the aarch64 digest).
 pub fn buck2InstallArm(a: std.mem.Allocator, f: *Findings, workflow: []const u8, dotslash: []const u8) !void {
     const p = dotslashPlatform(dotslash, "linux-aarch64") orelse {
@@ -617,8 +645,8 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
 
     // The buck2 install is the release pinned in tools/buck2.
     try buck2Install(a, &f, workflow, dotslash);
-    try buck2InstallArm(a, &f, workflow, dotslash);
-    try hostArm(a, &f, workflow);
+    // A pull request runs on linux x86_64 alone; the aarch64 host job is the beta stage's (beta.yml, ci/stages_check.zig).
+    try prRunners(a, &f, workflow);
 
     // The cache is keyed on lock files.
     const key = std.mem.indexOf(u8, workflow, "key: buck-out-");
@@ -654,7 +682,11 @@ fn mutateLast(a: std.mem.Allocator, wf: []const u8, from: []const u8, to: []cons
 }
 
 fn expectFinding(a: std.mem.Allocator, r: Real, wf: []const u8, needle: []const u8) !void {
-    const f = try check(a, wf, r.ds, r.cb);
+    try expectIn(try check(a, wf, r.ds, r.cb), needle);
+}
+
+/// A finding of `f` has `needle`; the defect survived otherwise.
+fn expectIn(f: Findings, needle: []const u8) !void {
     for (f.items) |m| {
         if (std.mem.indexOf(u8, m, needle) != null) return;
     }
@@ -662,7 +694,6 @@ fn expectFinding(a: std.mem.Allocator, r: Real, wf: []const u8, needle: []const 
     for (f.items) |m| std.debug.print("  {s}\n", .{m});
     return error.DefectSurvived;
 }
-
 
 // ---- synthetic fixtures -------------------------------------------------------------------------------------------------------------------
 //
@@ -711,6 +742,12 @@ const fixture_wf =
     \\      - name: Stop buck2
     \\        if: always()
     \\        run: ./buck2 kill
+    \\
+;
+
+/// The aarch64 host job as beta.yml holds it, and the rules of `armLeg` run on it: a pull request does not run it.
+const fixture_arm_wf =
+    \\jobs:
     \\  host_arm:
     \\    runs-on: ubuntu-24.04-arm
     \\    steps:
@@ -757,6 +794,17 @@ fn fx(a: std.mem.Allocator) !Real {
     return .{ .wf = fixture_wf, .ds = fixture_ds, .cb = fixture_cb };
 }
 
+/// The aarch64 host job alone, with the same pins.
+fn fxArm(a: std.mem.Allocator) !Real {
+    _ = a;
+    return .{ .wf = fixture_arm_wf, .ds = fixture_ds, .cb = fixture_cb };
+}
+
+/// `expectFinding` for `armLeg`.
+fn expectArm(a: std.mem.Allocator, r: Real, wf: []const u8, needle: []const u8) !void {
+    try expectIn(try armLeg(a, wf, r.ds), needle);
+}
+
 test "the synthetic fixture has no finding, so every variant below is red for its own rule" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
@@ -776,6 +824,31 @@ test "the cancel group of a called workflow is per commit, and only a pull reque
     try expectFinding(a, r, try mutate(a, r.wf, "github.event.pull_request.number || github.sha", "github.event.pull_request.number || github.ref"), "per-commit");
     try expectFinding(a, r, try mutate(a, r.wf, "cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: true"), "only a pull request");
     try expectFinding(a, r, try mutate(a, r.wf, "concurrency:\n  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n\n", ""), "per-commit");
+}
+
+test "a pull request runs on linux x86_64 runners alone" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try fx(a);
+    // the runners a pull request may use
+    for ([_][]const u8{ "ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04" }) |ok| {
+        const f = try check(a, try mutate(a, r.wf, "runs-on: ubuntu-latest", try std.fmt.allocPrint(a, "runs-on: {s}", .{ok})), r.ds, r.cb);
+        for (f.items) |m| try t.expect(std.mem.indexOf(u8, m, "a pull request runs on linux x86_64") == null);
+    }
+    // every other platform, a self-hosted label, a list of labels, a group and an expression are refused in a job a pull request runs
+    for ([_][]const u8{ "ubuntu-24.04-arm", "ubuntu-22.04-arm", "macos-15", "macos-latest", "macos-13", "windows-latest", "self-hosted", "[self-hosted, linux, x64]", "${{ matrix.os }}", "ubuntu-latest-large", "" }) |bad| {
+        try expectFinding(a, r, try mutate(a, r.wf, "runs-on: ubuntu-latest", try std.fmt.allocPrint(a, "runs-on: {s}", .{bad})), "a pull request runs on linux x86_64");
+    }
+    // a comment after the value is not part of it, and a job added beside the ubuntu one is judged on its own
+    {
+        const f = try check(a, try mutate(a, r.wf, "runs-on: ubuntu-latest", "runs-on: ubuntu-latest # the runner"), r.ds, r.cb);
+        for (f.items) |m| try t.expect(std.mem.indexOf(u8, m, "a pull request runs on linux x86_64") == null);
+    }
+    try expectFinding(a, r, try mutate(a, r.wf, "  build:\n", "  mac:\n    runs-on: macos-15\n    steps:\n      - run: true\n  build:\n"), "`macos-15`");
+    try expectFinding(a, r, try mutate(a, r.wf, "  build:\n", "  arm:\n    runs-on: ubuntu-24.04-arm\n    steps:\n      - run: true\n  build:\n"), "`ubuntu-24.04-arm`");
+    // the aarch64 host job, which used to be a job of this workflow, is refused here
+    try expectFinding(a, r, try mutate(a, r.wf, "\n  build:\n", try std.mem.concat(a, u8, &.{ "\n", fixture_arm_wf["jobs:\n".len..], "  build:\n" })), "`ubuntu-24.04-arm`");
 }
 
 test "the real workflow has no findings" {
@@ -1007,14 +1080,14 @@ test "an aarch64 buck2 install that drifted from tools/buck2 is found" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try fx(a);
-    try expectFinding(a, r, try mutate(a, r.wf, "2026-09-15/buck2-aarch64", "2026-09-16/buck2-aarch64"), "linux-aarch64 url");
-    try expectFinding(a, r, try mutate(a, r.wf, "e35027a8e3f7", "f35027a8e3f7"), "linux-aarch64 sha256");
+    const r = try fxArm(a);
+    try expectArm(a, r, try mutate(a, r.wf, "2026-09-15/buck2-aarch64", "2026-09-16/buck2-aarch64"), "linux-aarch64 url");
+    try expectArm(a, r, try mutate(a, r.wf, "e35027a8e3f7", "f35027a8e3f7"), "linux-aarch64 sha256");
     // the pin moves and the workflow does not
-    try expectFinding(a, .{ .wf = r.wf, .ds = try mutate(a, r.ds, "e35027a8e3f7", "9999fce33fb6"), .cb = r.cb }, r.wf, "linux-aarch64 sha256");
+    try expectArm(a, .{ .wf = r.wf, .ds = try mutate(a, r.ds, "e35027a8e3f7", "9999fce33fb6"), .cb = r.cb }, r.wf, "linux-aarch64 sha256");
     // the job runs on the wrong machine, or the pin is dropped
-    try expectFinding(a, r, try mutate(a, r.wf, "runs-on: ubuntu-24.04-arm", "runs-on: ubuntu-24.04"), "ubuntu-24.04-arm");
-    try expectFinding(a, .{ .wf = r.wf, .ds = try mutate(a, r.ds, "\"linux-aarch64\"", "\"linux-arm\""), .cb = r.cb }, r.wf, "no linux-aarch64");
+    try expectArm(a, r, try mutate(a, r.wf, "runs-on: ubuntu-24.04-arm", "runs-on: ubuntu-24.04"), "ubuntu-24.04-arm");
+    try expectArm(a, .{ .wf = r.wf, .ds = try mutate(a, r.ds, "\"linux-aarch64\"", "\"linux-arm\""), .cb = r.cb }, r.wf, "no linux-aarch64");
     // the x86 digest is not read from the aarch64 block, nor the reverse
     const ds = dotslashPlatform(r.ds, "linux-aarch64").?;
     try t.expect(std.mem.startsWith(u8, ds.digest, "e35027a8e3f7"));
@@ -1025,27 +1098,27 @@ test "the host_arm job must assert the machine, the execution platform and build
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
-    const r = try fx(a);
+    const r = try fxArm(a);
     const uname = "      - name: The machine is aarch64\n        run: test \"$(uname -m)\" = aarch64\n";
     const grep = " \\\n            | grep --fixed-strings --quiet \"Execution platform: buildrules//platforms:linux_aarch64\"";
     // the machine check
-    try expectFinding(a, r, try mutate(a, r.wf, uname, ""), "uname -m");
-    try expectFinding(a, r, try mutate(a, r.wf, "= aarch64\n", "= x86_64\n"), "uname -m");
-    try expectFinding(a, r, try mutate(a, r.wf, "run: test \"$(uname -m)\" = aarch64", "run: echo ok # test \"$(uname -m)\" = aarch64"), "uname -m");
+    try expectArm(a, r, try mutate(a, r.wf, uname, ""), "uname -m");
+    try expectArm(a, r, try mutate(a, r.wf, "= aarch64\n", "= x86_64\n"), "uname -m");
+    try expectArm(a, r, try mutate(a, r.wf, "run: test \"$(uname -m)\" = aarch64", "run: echo ok # test \"$(uname -m)\" = aarch64"), "uname -m");
     // the execution-platform check: dropped, loosened, aimed at another platform or another target, or without the mode
-    try expectFinding(a, r, try mutate(a, r.wf, grep, ""), "execution platform");
-    try expectFinding(a, r, try mutate(a, r.wf, " \\\n            | grep --fixed-strings --quiet \"Execution platform: buildrules//platforms:linux_aarch64\"", " \\\n            | grep --quiet \"Execution platform: buildrules//platforms:linux_aarch64\""), "execution platform");
-    try expectFinding(a, r, try mutate(a, r.wf, "Execution platform: buildrules//platforms:linux_aarch64", "Execution platform: buildrules//platforms:linux_x86_64"), "execution platform");
-    try expectFinding(a, r, try mutate(a, r.wf, "-c buildrules_re.mode=local //rules/pins:host_downloads \\\n", "-c buildrules_re.mode=local //rules/pins:zig \\\n"), "execution platform");
-    try expectFinding(a, r, try mutate(a, r.wf, "audit execution-platform-resolution", "audit configurations"), "execution platform");
+    try expectArm(a, r, try mutate(a, r.wf, grep, ""), "execution platform");
+    try expectArm(a, r, try mutate(a, r.wf, " \\\n            | grep --fixed-strings --quiet \"Execution platform: buildrules//platforms:linux_aarch64\"", " \\\n            | grep --quiet \"Execution platform: buildrules//platforms:linux_aarch64\""), "execution platform");
+    try expectArm(a, r, try mutate(a, r.wf, "Execution platform: buildrules//platforms:linux_aarch64", "Execution platform: buildrules//platforms:linux_x86_64"), "execution platform");
+    try expectArm(a, r, try mutate(a, r.wf, "-c buildrules_re.mode=local //rules/pins:host_downloads \\\n", "-c buildrules_re.mode=local //rules/pins:zig \\\n"), "execution platform");
+    try expectArm(a, r, try mutate(a, r.wf, "audit execution-platform-resolution", "audit configurations"), "execution platform");
     // the build: not for the aarch64 target platform, not the downloads, or gone
-    try expectFinding(a, r, try mutate(a, r.wf, "            --target-platforms buildrules//platforms:linux_aarch64 \\\n", ""), "--target-platforms");
-    try expectFinding(a, r, try mutate(a, r.wf, "--target-platforms buildrules//platforms:linux_aarch64", "--target-platforms buildrules//platforms:linux_x86_64"), "--target-platforms");
-    try expectFinding(a, r, try mutate(a, r.wf, "            //rules/pins:host_downloads\n", "            //rules/pins:zig\n"), "--target-platforms");
-    try expectFinding(a, r, try mutate(a, r.wf, "      - name: Download and verify the pins of the aarch64 hosts\n        run: |\n          ./buck2 build --console simple -c buildrules_re.mode=local \\\n            --target-platforms buildrules//platforms:linux_aarch64 \\\n            //rules/pins:host_downloads\n", ""), "--target-platforms");
+    try expectArm(a, r, try mutate(a, r.wf, "            --target-platforms buildrules//platforms:linux_aarch64 \\\n", ""), "--target-platforms");
+    try expectArm(a, r, try mutate(a, r.wf, "--target-platforms buildrules//platforms:linux_aarch64", "--target-platforms buildrules//platforms:linux_x86_64"), "--target-platforms");
+    try expectArm(a, r, try mutate(a, r.wf, "            //rules/pins:host_downloads\n", "            //rules/pins:zig\n"), "--target-platforms");
+    try expectArm(a, r, try mutate(a, r.wf, "      - name: Download and verify the pins of the aarch64 hosts\n        run: |\n          ./buck2 build --console simple -c buildrules_re.mode=local \\\n            --target-platforms buildrules//platforms:linux_aarch64 \\\n            //rules/pins:host_downloads\n", ""), "--target-platforms");
     // the job itself, or its steps under another job
-    try expectFinding(a, r, try mutate(a, r.wf, "\n  host_arm:\n", "\n  host_x:\n"), "`host_arm` job is missing");
-    try expectFinding(a, r, try mutate(a, r.wf, "      - name: The machine is aarch64\n", "  other:\n    runs-on: ubuntu-latest\n    steps:\n      - name: The machine is aarch64\n"), "uname -m");
+    try expectArm(a, r, try mutate(a, r.wf, "\n  host_arm:\n", "\n  host_x:\n"), "`host_arm` job is missing");
+    try expectArm(a, r, try mutate(a, r.wf, "      - name: The machine is aarch64\n", "  other:\n    runs-on: ubuntu-latest\n    steps:\n      - name: The machine is aarch64\n"), "uname -m");
 }
 
 test "a cache key that does not follow the lock files is found" {
