@@ -149,6 +149,7 @@ def _zig_cxx_toolchain_impl(ctx):
         make_comp_db = refuse("make_comp_db"),
         remap_cwd = refuse("remap_cwd"),
         serialized_diagnostics_to_json_wrapper = refuse("serialized_diagnostics_to_json_wrapper"),
+        shlib_interface_link_wrapper = refuse("shlib_interface_link_wrapper"),
         stderr_to_file = refuse("stderr_to_file"),
         stub_header_unit = refuse("stub_header_unit"),
     )
