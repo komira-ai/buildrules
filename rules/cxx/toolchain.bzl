@@ -45,7 +45,7 @@ load(
 )
 load("@prelude//cxx:headers.bzl", "HeaderMode")
 load("@prelude//linking:link_info.bzl", "LinkStyle")
-load("@prelude//python_bootstrap:python_bootstrap.bzl", "PythonBootstrapToolchainInfo")
+load("@prelude//python_bootstrap:toolchain.bzl", "PythonBootstrapToolchainInfo")
 load("//rules/core:platform.bzl", "LINUX_X86_64", "by_os_cpu")
 
 def _refusal(bb, what):

@@ -388,7 +388,7 @@ test "a build that is not the program in local mode, or the buck2 of another rel
     try expectEdit(a, r, "./buck2 build --console simple -c buildrules_re.mode=local", "./buck2 build --console simple", "does not pass `-c buildrules_re.mode=local`");
     try expectEdit(a, r, "//ci:mopm_pin\n", "//ci:mopm_pin_unit\n", "the build is not");
     try expectEdit(a, r, "      - name: Build the verifier\n", "      - name: Build the verifier\n        run: ./buck2 build --console simple -c buildrules_re.mode=local //ci:all\n      - name: Build it again\n", "2 builds of the verifier");
-    try expectEdit(a, r, "download/2026-09-15/buck2-x86_64", "download/2026-09-14/buck2-x86_64", "does not download the url pinned in tools/buck2");
+    try expectEdit(a, r, "download/2026-11-15/buck2-x86_64", "download/2026-11-14/buck2-x86_64", "does not download the url pinned in tools/buck2");
 }
 
 test "the lint dropped from ci/BUCK is found" {
