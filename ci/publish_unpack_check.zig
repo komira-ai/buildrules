@@ -556,8 +556,8 @@ test "rule: a build that is not local, an unpinned buck2, a tree that is not the
     try expectRefused(a, r, "      - name: Dry run\n", "      - run: \"$RUNNER_TEMP/buck2-bin/buck2\" build -c buildrules_re.mode=local //ci:all\n      - name: Dry run\n", "2 buck2 commands");
     try expectRefused(a, r, "--buck2-config buildrules_re.mode=local", "--buck2-config buildrules_re.mode=remote", "something other than `local`");
     try expectRefused(a, r, "sha256sum --check --strict -", "sha256sum --check -", "is not checked with `sha256sum --check --strict -`");
-    try expectRefused(a, r, "2026-09-15/buck2-x86_64", "latest/buck2-x86_64", "does not download the url pinned");
-    try expectRefused(a, r, "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89", "0000000000000000000000000000000000000000000000000000000000000000", "does not check the sha256 pinned");
+    try expectRefused(a, r, "2026-11-15/buck2-x86_64", "latest/buck2-x86_64", "does not download the url pinned");
+    try expectRefused(a, r, "51d209f834c3509bc83024bf4ede62cd907135e7b289b29ed69d763dcde67b04", "0000000000000000000000000000000000000000000000000000000000000000", "does not check the sha256 pinned");
     try expectRefused(a, r, "          rm buck2.zst\n", "", "`rm buck2.zst` is missing");
     // moved after the build of the tool (the tree would still differ from the commit while it builds)
     const moved = try edited(a, try edited(a, r.wf, "          rm buck2.zst\n", ""), "      - name: Dry run\n", "      - run: rm buck2.zst\n      - name: Dry run\n");

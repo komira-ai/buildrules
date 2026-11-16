@@ -416,8 +416,8 @@ test "a rule refuses programs that are not the repository's own, or built any wa
     defer ar.deinit();
     const a = ar.allocator();
     const r = try real(a);
-    try expectEdit(a, r, "releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst", "releases/latest/download/buck2-x86_64-unknown-linux-gnu.zst", "does not download the url pinned");
-    try expectEdit(a, r, "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst", "0000000000000000000000000000000000000000000000000000000000000000  buck2.zst", "does not check the sha256 pinned");
+    try expectEdit(a, r, "releases/download/2026-11-15/buck2-x86_64-unknown-linux-gnu.zst", "releases/latest/download/buck2-x86_64-unknown-linux-gnu.zst", "does not download the url pinned");
+    try expectEdit(a, r, "51d209f834c3509bc83024bf4ede62cd907135e7b289b29ed69d763dcde67b04  buck2.zst", "0000000000000000000000000000000000000000000000000000000000000000  buck2.zst", "does not check the sha256 pinned");
     try expectEdit(a, r, "./buck2 build --console simple -c buildrules_re.mode=local --out rot-bin/apt_publish //tools/deploy:apt_publish", "./buck2 build --console simple --out rot-bin/apt_publish //tools/deploy:apt_publish", "does not pass `-c buildrules_re.mode=local`");
     try expectEdit(a, r, "-c buildrules_re.mode=local --out rot-bin/channels //tools/channels:channels", "-c buildrules_re.mode=remote --out rot-bin/channels //tools/channels:channels", "set to something other than `local`");
     try expectEdit(a, r, "--out rot-bin/channels //tools/channels:channels", "--out rot-bin/channels //tools/channels:channels_other", "the build of //tools/channels:channels is not");
