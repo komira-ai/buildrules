@@ -94,4 +94,18 @@ MOPM_HOST_ASSETS = {
             "dir": "mopm-0.0.101-macos-arm64",
         },
     },
+    "0.0.113": {
+        "linux-aarch64": {
+            "url": "https://github.com/komira-ai/mopm/releases/download/v0.0.113/mopm-0.0.113-linux-aarch64.tar.gz",
+            "sha256": "b924fd6c69e11102b8c58c4a9c4579f73e0374d1cd1168cc1f058db43c2a40cf",
+            "size": 1621843,
+            "dir": "mopm-0.0.113-linux-aarch64",
+        },
+        "macos-aarch64": {
+            "url": "https://github.com/komira-ai/mopm/releases/download/v0.0.113/mopm-0.0.113-macos-arm64.tar.gz",
+            "sha256": "039cb4b6b24617dfcd2d9afae9441877a1a5397887120563703dd34212fe9f22",
+            "size": 1679774,
+            "dir": "mopm-0.0.113-macos-arm64",
+        },
+    },
 }
