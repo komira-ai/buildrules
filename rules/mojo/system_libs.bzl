@@ -13,21 +13,24 @@ directories as `--lib-dir` (`lib_dir_args`): on Linux they follow the compiler's
 The compile is not given them: a library a unit loads is no input of its compiled bytes.
 
 A graph of format 1 or 2 has neither key and runs as it always did (the library is whatever the worker has; on macOS, the directories of `macos_library_dirs`). A graph
-of a format above 5 is refused: a rules version that did not know a key would run the test without its libraries, which is the defect the key exists to remove.
+of a format above 6 is refused: a rules version that did not know a key would run the test without its libraries, which is the defect the key exists to remove.
 
 Formats 4 and 5 are about linking, not loading, and are read here with the others: 4 adds `provided` on a `native` unit (its archive is a target of the build, not compiled from
 sources: rules/mojo/defs.bzl), 5 adds `link` on the units that link archives (the system libraries their final link adds: rules/native/link.bzl). A graph that has neither keeps the
 format it had, and a graph of format 4 or 5 has `system_libs` and `loads` exactly when a format 3 graph would.
+
+Format 6 (mopm 0.0.113) names every package `<namespace>/<name>` and gives each unit its `import` (rules/mojo/names.bzl); every key of formats 2 to 5 is read in it as before.
+The `mopm unit build` of a mopm that prints it reads format 6 alone, so a slice of a format 6 graph says 6 (`compile_format`).
 """
 
 load("//rules/core:pinned_file.bzl", "check_pinned")
 
 # The formats of mopm's unit graph these rules read. 2 adds the native unit of a member's own library, 3 the system libraries a test loads, 4 the native unit whose archive a
-# rule of the build supplies (`provided`), 5 the system libraries of a unit's final link (`link`).
-GRAPH_FORMATS = [1, 2, 3, 4, 5]
+# rule of the build supplies (`provided`), 5 the system libraries of a unit's final link (`link`), 6 the full names of packages and the `import` of each unit.
+GRAPH_FORMATS = [1, 2, 3, 4, 5, 6]
 
 # The newest of them.
-NEWEST_FORMAT = 5
+NEWEST_FORMAT = 6
 
 # The first format with `system_libs` and `loads`, and the first with `provided` and with `link`.
 SYSTEM_LIBS_FORMAT = 3
@@ -40,6 +43,10 @@ LINK_FORMAT = 5
 # A slice that holds a provided native unit says `PROVIDED_COMPILE_FORMAT`: a reader that does not know `provided` would make an empty archive of a unit with no sources.
 COMPILE_FORMAT = 2
 PROVIDED_COMPILE_FORMAT = 4
+
+# The first format whose `mopm unit build` reads no other: a slice of a graph of this format or later says the graph's format (mopm 0.0.113 refuses a slice of 2 to 5
+# with "is unit graph format <n>; this mopm reads 6"), and only a mopm that reads it prints such a graph.
+SOLE_FORMAT = 6
 
 _ENTRY_FIELDS = ["name", "version", "build", "url", "sha256", "size"]
 
@@ -57,8 +64,10 @@ def check_graph_format(who, n, refuse = fail):
         refuse("{} is format {}; these rules read formats 1 to {}: update buildrules (a rules version that does not know a format would run the tests without what it adds)".format(who, n, NEWEST_FORMAT))
 
 def compile_format(n, provided = False):
-    """The format a unit's slice for `mopm unit build` says: the graph's, but never above `COMPILE_FORMAT`; a slice that holds a provided native unit (`provided`) says
-    `PROVIDED_COMPILE_FORMAT`, the first format that has the key."""
+    """The format a unit's slice for `mopm unit build` says: for a graph of `SOLE_FORMAT` or later the graph's (the mopm that printed it reads no other); before it the
+    graph's, but never above `COMPILE_FORMAT`, and a slice that holds a provided native unit (`provided`) says `PROVIDED_COMPILE_FORMAT`, the first format that has the key."""
+    if n >= SOLE_FORMAT:
+        return n
     if provided:
         return PROVIDED_COMPILE_FORMAT
     return n if n <= COMPILE_FORMAT else COMPILE_FORMAT

@@ -6,11 +6,11 @@ graph declares (sources and natives by sha256, each dependency's `.mojoc`, the t
 
     --graph      the unit and its transitive dependencies, cut from the committed graph (the key of the action follows)
     --src        the unit's sources, at the paths the graph names
-    --deps       `<package>.mojoc` of every unit in the closure, flat: the outputs of the dependency targets
+    --deps       `<import>.mojoc` of every unit in the closure, flat: the outputs of the dependency targets (the import name: rules/mojo/names.bzl)
     --natives    the native libraries by soname (built by buildrules, checked by mopm against the graph's sha256)
     --toolchain  `mojo_compile` (mojo_launch.zig), the wrapper, the compiler closure, the zig, CLOSURE_SHA256, toolchain.cfg
 
-A unit's output directory is the action's single output. A library's `.mojoc` is `out/<package>.mojoc`; a test or binary is
+A unit's output directory is the action's single output. A library's `.mojoc` is `out/<import>.mojoc`; a test or binary is
 `out/<name>` with its native libraries in `out/lib/`.
 """
 
@@ -58,7 +58,7 @@ def _validated(ctx, info):
     return info
 
 def check_closure_ids(who, want, have, refuse = fail):
-    """Each library the dependency targets provide is the one the graph names. `want` and `have` are `{package: unit id}` (the graph's closure of the unit,
+    """Each library the dependency targets provide is the one the graph names. `want` and `have` are `{import name: unit id}` (the graph's closure of the unit,
     and what the `MojoLibInfo` of the targets say they were built as); a unit id is `<package>@<version>#mojo<Mojo version>/lib`, so a library built
     from another version of its package, or for another Mojo, is not the graph's. `refuse` is `fail` in a build; a test passes a recorder
     (rules/rust/refusal.bzl)."""
@@ -230,12 +230,13 @@ mojo_unit_rule = rule(
         "link": attrs.list(attrs.string(), default = []),
         # Arguments mojo_launch puts right after `build` (the ISA flags of a test or binary).
         "build_args": attrs.list(attrs.string(), default = []),
-        # package name -> unit id, for every unit this one imports (directly or not): the graph's closure, which the dependency targets must give.
+        # import name -> unit id, for every unit this one imports (directly or not): the graph's closure, which the dependency targets must give.
         "closure_ids": attrs.dict(attrs.string(), attrs.string(), default = {}),
         # The directory (of the repository) the graph's paths start at: the package's own, or "" when mopm was given --workspace-root.
         "graph_base": attrs.string(default = ""),
+        # The import name of the unit's package (rules/mojo/names.bzl): what its `.mojoc` and the key of its closure are named by.
         "package": attrs.string(),
-        # The file name of the product inside the output directory: `<package>.mojoc` or the executable's name.
+        # The file name of the product inside the output directory: `<import>.mojoc` or the executable's name.
         "product": attrs.string(),
         # Paths the graph names for this unit's sources (`srcs` are the files at those paths, in this BUCK file's package).
         "src_paths": attrs.list(attrs.string(), default = []),

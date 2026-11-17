@@ -1,0 +1,112 @@
+"""mopm 0.0.113's unit graph (format 6) of a workspace, verbatim: `mopm plan --unit-graph --locked --workspace-root <root>` run in `pkgs/app`, whose package `example/app`
+has a path dependency `example/util` (`pkgs/util`), a native of its own (`[native.shim]`) and a test below its library. The same bytes are the CLI's fixture
+cli/src/fixture/mojo6.rooted.graph.json; rules/mojo/tests/names.bzl reads them."""
+
+GRAPH6_JSON = r'''
+{
+  "unit_graph": 6,
+  "package": "example/app@0.1.0",
+  "mojo": "1.0.0",
+  "toolchain": {
+    "mojo": "1.0.0",
+    "subdir": "linux-64",
+    "cc_target": "x86_64-linux-gnu.2.34",
+    "closure_sha256": "3ed75e01401544e0d660ee48dc387dacce437e3833ac296d4a0601f28abd4aec",
+    "zig": {"version": "0.12.0", "url": "https://ziglang.org/download/0.12.0/zig-linux-x86_64-0.12.0.tar.xz", "sha256": "c7ae866b8a76a568e2d5cfd31fe89cdb629bdd161fdd5018b29a4a0a17045cad", "size": 45480516},
+    "components": [
+      {"name": "libgcc", "version": "16.2.0", "url": "https://conda.anaconda.org/conda-forge/linux-64/libgcc-16.2.0-ha9f2e26_7.conda", "sha256": "e031634c3a928f9594eba868bc46ef5230d6571a364a0c63215b06c4563bfcea", "size": 1058444},
+      {"name": "libstdcxx", "version": "16.2.0", "url": "https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-16.2.0-h934c35e_7.conda", "sha256": "fa7018298629fc429971fffd6ecba3d27a7b02e4e890d6a93ea01ffebe8cb745", "size": 6615436},
+      {"name": "mojo-compiler", "version": "1.0.0", "url": "https://conda.modular.com/max/linux-64/mojo-compiler-1.0.0-release.conda", "sha256": "4394c6146d47ec7794a9a3ed5775ae158f59f83f8e1aed59408b17c4909821b3", "size": 68511359}
+    ]
+  },
+  "units": [
+    {
+      "id": "example/app@0.1.0#mojo1.0.0/lib",
+      "package": "example/app",
+      "import": "app",
+      "version": "0.1.0",
+      "kind": "lib",
+      "root": "pkgs/app/src/app",
+      "srcs": [
+        {"path": "pkgs/app/src/app/__init__.mojo", "sha256": "300019b8d5845a9c7049d89358e6c9827026dcbe2a66b95f66df8aa4b046cf07"}
+      ],
+      "deps": ["example/util@0.2.0#mojo1.0.0/lib"],
+      "natives": [
+        {"id": "shim", "soname": "libshim.a", "package": "example/app", "kind": "static", "built": "native:example/app/shim"}
+      ],
+      "profile": {"opt": 1, "assert": "all", "debug": false},
+      "outputs": ["app.mojoc"],
+      "key": "701d7a825074460fe553b3614b86fe1826d3731174d0f0619e5a6ce656eabc95"
+    },
+    {
+      "id": "example/app@0.1.0#mojo1.0.0/test:pkgs/app/src/app/tests/test_in_src.mojo",
+      "package": "example/app",
+      "import": "app",
+      "version": "0.1.0",
+      "kind": "test",
+      "srcs": [
+        {"path": "pkgs/app/src/app/tests/test_in_src.mojo", "sha256": "2e3a156f5fff2400aafc5cf23016da051a9234c378aafe43fae6fff58c2812b3"}
+      ],
+      "deps": ["example/app@0.1.0#mojo1.0.0/lib"],
+      "natives": [
+        {"id": "shim", "soname": "libshim.a", "package": "example/app", "kind": "static", "built": "native:example/app/shim"}
+      ],
+      "profile": {"opt": 1, "assert": "all", "debug": false},
+      "outputs": ["test_in_src.pass"],
+      "key": "7ffe97c6e0450e50cbc9e85e6f9cf80fcd66333d9a84113d68d8987d567e9e0c"
+    },
+    {
+      "id": "example/app@0.1.0#mojo1.0.0/test:pkgs/app/tests/test_app.mojo",
+      "package": "example/app",
+      "import": "app",
+      "version": "0.1.0",
+      "kind": "test",
+      "srcs": [
+        {"path": "pkgs/app/tests/test_app.mojo", "sha256": "3f38fe76d6d9928b96f3503a1f8d7c0812bda170e1120dd7dfb54402161d2459"}
+      ],
+      "deps": ["example/app@0.1.0#mojo1.0.0/lib"],
+      "natives": [
+        {"id": "shim", "soname": "libshim.a", "package": "example/app", "kind": "static", "built": "native:example/app/shim"}
+      ],
+      "profile": {"opt": 1, "assert": "all", "debug": false},
+      "outputs": ["test_app.pass"],
+      "key": "2671e7febc350907c0a7d8b51a3d1e5f75c4a19c54dfeae07f01388a36b24b8f"
+    },
+    {
+      "id": "example/util@0.2.0#mojo1.0.0/lib",
+      "package": "example/util",
+      "import": "util",
+      "version": "0.2.0",
+      "kind": "lib",
+      "root": "pkgs/util/src/util",
+      "srcs": [
+        {"path": "pkgs/util/src/util/__init__.mojo", "sha256": "2ef8c6e876e550ea6b2c47d06e632e2293df76cddf45b25f9f281f3d7901a343"}
+      ],
+      "deps": [],
+      "natives": [],
+      "profile": {"opt": 1, "assert": "all", "debug": false},
+      "outputs": ["util.mojoc"],
+      "key": "8813257f9cc3746f8368153583fe6d56b217d8e14b315eaa8e978328a74b120c"
+    },
+    {
+      "id": "native:example/app/shim",
+      "package": "example/app",
+      "import": "app",
+      "version": "0.1.0",
+      "kind": "native",
+      "soname": "libshim.a",
+      "srcs": [
+        {"path": "pkgs/app/native/shim.c", "sha256": "5206f9df5ac607ed93c554589f4cad470361ece05129463d4d2d3f36b79d4331"}
+      ],
+      "hdrs": [
+        {"path": "pkgs/app/native/shim.h", "sha256": "8ff12fb79b2f8fe74305d11e20334aef5045f13fac984deb13d0d257a1317461"}
+      ],
+      "includes": ["native"],
+      "deps": [],
+      "natives": [],
+      "outputs": ["libshim.a"],
+      "key": "ad77305d138f26c8d0e0cf026c0b06d45b3b30d8c7f773ba631cad6de4dc363f"
+    }
+  ]
+}
+'''

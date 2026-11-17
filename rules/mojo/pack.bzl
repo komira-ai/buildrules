@@ -1,6 +1,7 @@
 """`mojo_conda`: a library as the `.conda` a registry serves (the publisher's side, for fixtures).
 
-`mopm pack` writes one `.conda` per subdir holding `lib/mojo/<name>.mojoc` and its metadata. The registry stand-ins of the
+`mopm pack` writes one `.conda` per subdir holding `lib/mojo/<import name>.mojoc` and its metadata, named `mojo-<name>-<version>-mojo<Mojo>_0.conda`, where a full
+name `<namespace>/<name>` (a package of mopm 0.0.113 and later) is spelled `<namespace>.<name>` (`conda_name`). The registry stand-ins of the
 examples use it so that a consumer's lock can name a real package, its sha256 and its size. `mopm pack` is mopm's: this rule
 only runs it on the `.mojoc` a `mojo_package` built. (Publishing, which uploads, is not a build action.)
 
@@ -92,6 +93,11 @@ def pack_workspace(dir, manifest, members = {}, bins = {}, refuse = fail):
         return None
     return workspace_tree(dir, manifest, members, bins, refuse)
 
+def conda_name(package):
+    """The conda package name `mopm pack` gives the package `package`: `mojo-<namespace>.<name>` for a full name `<namespace>/<name>` (mopm's spec/channel.md,
+    "Package naming"), `mojo-<name>` for a name before namespaces."""
+    return "mojo-" + package.replace("/", ".")
+
 def _impl(ctx):
     lib = ctx.attrs.lib[MojoLibInfo]
     subdir = ctx.attrs.subdir
@@ -123,8 +129,8 @@ def _impl(ctx):
         info = archive.get(NativeArchiveInfo)
         named = ctx.actions.copy_file("natives/" + (info.soname if info else "lib{}.a".format(native_id)), archive[DefaultInfo].default_outputs[0])
         cmd.add("--native", cmd_args("{}={}:".format(native_id, subdir), named, delimiter = ""))
-    ctx.actions.run(cmd, category = "mopm_pack", identifier = ctx.attrs.package)
-    conda = out.project("{}/mojo-{}-{}-mojo{}_0.conda".format(subdir, ctx.attrs.package, ctx.attrs.version, ctx.attrs.mojo))
+    ctx.actions.run(cmd, category = "mopm_pack", identifier = conda_name(ctx.attrs.package))
+    conda = out.project("{}/{}-{}-mojo{}_0.conda".format(subdir, conda_name(ctx.attrs.package), ctx.attrs.version, ctx.attrs.mojo))
     return [DefaultInfo(default_output = conda, sub_targets = {"channel": [DefaultInfo(default_output = out)]})]
 
 _mojo_conda = rule(
@@ -147,6 +153,7 @@ _mojo_conda = rule(
         "link": attrs.list(attrs.string(), default = []),
         "mojo": attrs.string(),
         "mopm": attrs.exec_dep(),
+        # The package's name as its graph says it (a full name `<namespace>/<name>` in a graph of format 6): what the `.conda`'s file name is made from.
         "package": attrs.string(),
         # The conda subdir of the target platform (`linux-64`, `linux-aarch64`, `osx-arm64`): the directory of the channel the `.conda` is in, and the
         # subdir `mopm pack` is told the `.mojoc` and every native archive are built for (rules/mojo/subdirs.bzl).
@@ -186,10 +193,11 @@ _mojo_conda_holds = rule(
         # `{"lib<id>.a": <the archive target>}`: the `.conda` must hold `lib/<soname>` with exactly the bytes of that target's file.
         "natives": attrs.dict(attrs.string(), attrs.dep(), default = {}),
         # `{"<member of the package's payload>": <file>}`: the `.conda` must hold that member with exactly the file's bytes (the source of a program of `[targets] bins`,
-        # which `mopm pack` ships at `lib/mojo/<package>.bins/<program name>.mojo`, named by the program, not by its path).
+        # which `mopm pack` ships at `lib/mojo/<import>.bins/<program name>.mojo`, named by the program, not by its path).
         "holds": attrs.dict(attrs.string(), attrs.source(), default = {}),
+        # The package's import name (the name after the `/` of a full name): its `.mojoc` is `lib/mojo/<import name>.mojoc` in the `.conda`.
         "package": attrs.string(),
-        # `sole`: the `.conda` holds nothing under `lib/mojo/` but the package's own `.mojoc`, `.mopm.json` and programs (`lib/mojo/<package>.bins/`) (a package packed from a workspace holds none of
+        # `sole`: the `.conda` holds nothing under `lib/mojo/` but the package's own `.mojoc`, `.mopm.json` and programs (`lib/mojo/<import>.bins/`) (a package packed from a workspace holds none of
         # its siblings).
         "sole": attrs.bool(default = False),
         # `depends`: the dependencies the `.conda` records after the compiler, exactly and in order, each as conda spells it (`"mojo-<name> <range>"`); `[]` is

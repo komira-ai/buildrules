@@ -25,11 +25,11 @@ MojoToolchainInfo = provider(fields = {
 # A built library unit (or an unpacked registry package).
 MojoLibInfo = provider(fields = {
     "id": provider_field(str),
-    # The `<package>.mojoc` file.
+    # The `<import>.mojoc` file (the import name of the package: rules/mojo/names.bzl).
     "mojoc": provider_field(typing.Any),
-    # package name -> its `.mojoc`, this unit and everything it imports (a unit's `--deps` directory holds these, flat).
+    # import name -> its `.mojoc`, this unit and everything it imports (a unit's `--deps` directory holds these, flat).
     "closure": provider_field(dict),
-    # package name -> the id of its unit (`<name>@<version>#mojo<mojo version>/lib`), the same keys: what each `.mojoc` of the closure was built as.
+    # import name -> the id of its unit (`<package>@<version>#mojo<mojo version>/lib`), the same keys: what each `.mojoc` of the closure was built as.
     # A unit that imports it checks these against its own graph (rules/mojo/unit.bzl, `check_closure_ids`).
     "ids": provider_field(dict),
 })
