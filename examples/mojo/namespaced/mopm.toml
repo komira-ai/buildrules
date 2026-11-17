@@ -1,0 +1,11 @@
+[package]
+name = "example/nsuser"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[dependencies]
+"example/nsshim" = { path = "nsshim" }
+
+[targets]
+lib = { path = "src/nsuser" }
+tests = ["tests"]

@@ -474,6 +474,7 @@ fn lessManifest(_: void, x: lockm.Manifest, y: lockm.Manifest) bool {
     return std.mem.lessThan(u8, x.path, y.path);
 }
 
+/// The root package's name, the graph's `package` up to its `@` (a full name has none): what a unit's `package` is compared with.
 fn packageName(g: lockm.Graph) []const u8 {
     return if (std.mem.indexOfScalar(u8, g.package, '@')) |at| g.package[0..at] else g.package;
 }
@@ -500,12 +501,12 @@ fn graphBase(pkg: []const u8, rooted: bool) []const u8 {
     return if (rooted) "" else pkg;
 }
 
-/// The directory of the package whose library is at `repo_root` (a repository path): the one above `src/<name>` when the library is there, else the nearest
-/// directory, the library's own included, that holds a `mopm.toml` (a library `[targets] lib = { path = "generated/<name>" }` is below its package's
-/// directory), or null when there is none. The repository root is the empty string.
-fn memberDirOf(ctx: *Ctx, repo_root: []const u8, package: []const u8) !?[]const u8 {
+/// The directory of the package whose library is at `repo_root` (a repository path): the one above `src/<import>` when the library is there (`import` is the
+/// package's import name, the last part of a full name), else the nearest directory, the library's own included, that holds a `mopm.toml` (a library
+/// `[targets] lib = { path = "generated/<name>" }` is below its package's directory), or null when there is none. The repository root is the empty string.
+fn memberDirOf(ctx: *Ctx, repo_root: []const u8, import: []const u8) !?[]const u8 {
     const a = ctx.a;
-    const suffix = try std.fmt.allocPrint(a, "src/{s}", .{package});
+    const suffix = try std.fmt.allocPrint(a, "src/{s}", .{import});
     if (std.mem.eql(u8, repo_root, suffix)) return "";
     if (std.mem.endsWith(u8, repo_root, suffix) and repo_root[repo_root.len - suffix.len - 1] == '/') return repo_root[0 .. repo_root.len - suffix.len - 1];
     var dir = repo_root;
@@ -530,7 +531,7 @@ fn memberDirs(ctx: *Ctx, g: lockm.Graph, pkg: []const u8, rooted: bool, outside:
             if (outside.* == null) outside.* = try std.fmt.allocPrint(a, "{s} lives in {s}, which is outside the repository root: a path dependency must be a directory below the root that holds .buckconfig", .{ u.id, u.root });
             continue;
         }
-        const dir = (try memberDirOf(ctx, repo_root, u.package)) orelse continue;
+        const dir = (try memberDirOf(ctx, repo_root, u.import)) orelse continue;
         const rel = try relFrom(a, pkg, dir);
         if (rel.len == 0) continue;
         try out.append(a, rel);
@@ -951,7 +952,8 @@ fn checkListings(ctx: *Ctx, pkg: []const u8, g: lockm.Graph, bad: *usize, rooted
     // dependency's own table.)
     for (g.units) |u| {
         if (!std.mem.eql(u8, u.kind, "lib") or u.root.len == 0 or !std.mem.eql(u8, u.package, packageName(g))) continue;
-        const suffix = try std.fmt.allocPrint(a, "src/{s}", .{u.package});
+        // The library is at `src/<import>` of its package (the import name: a full name's `<namespace>/` is no directory).
+        const suffix = try std.fmt.allocPrint(a, "src/{s}", .{u.import});
         const member = if (std.mem.eql(u8, u.root, suffix)) "" else if (std.mem.endsWith(u8, u.root, suffix)) u.root[0 .. u.root.len - suffix.len - 1] else "";
         var files = std.ArrayList([]const u8).empty;
         try listMojo(ctx, try join(a, base, u.root), &files);

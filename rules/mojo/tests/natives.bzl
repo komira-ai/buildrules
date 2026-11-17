@@ -57,11 +57,14 @@ def built_natives_are_the_targets_of_their_units(refuse = fail):
         refuse("the targets are not the units': {}".format(labels))
 
 def native_units_are_told_by_their_id(refuse = fail):
-    """`native:<package>/<id>` is a native unit and its id is what follows the slash; a library or a test is neither."""
-    if not is_native_unit("native:app/shim") or is_native_unit("app@1.0.0#mojo1.0.0/lib") or is_native_unit("x/native:y"):
+    """`native:<package>/<id>` is a native unit and its id is what follows the package and its slash, whether the package is a name of a graph before format 6 or a
+    full name `<namespace>/<name>` with a slash of its own; a library or a test is neither."""
+    if not is_native_unit("native:app/shim") or not is_native_unit("native:example/app/shim") or is_native_unit("app@1.0.0#mojo1.0.0/lib") or is_native_unit("x/native:y"):
         refuse("is_native_unit does not tell a native unit by its id")
-    if native_unit_id("native:app/shim") != "shim" or native_unit_id("native:core/a/b") != "a/b":
-        refuse("native_unit_id is not what follows the first slash")
+    if native_unit_id("native:app/shim", "app", refuse) != "shim" or native_unit_id("native:core/a/b", "core", refuse) != "a/b":
+        refuse("native_unit_id is not what follows the package of a graph before format 6")
+    if native_unit_id("native:example/app/shim", "example/app", refuse) != "shim" or native_unit_id("native:example/core/a/b", "example/core", refuse) != "a/b":
+        refuse("native_unit_id is not what follows the full name of a graph of format 6")
 
 def native_includes_are_below_the_package_in_both_bases(refuse = fail):
     """`includes` is used as the graph prints it, in a rooted graph and an unrooted one (mopm prints directories below the member either way), and is

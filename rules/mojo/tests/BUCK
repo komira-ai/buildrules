@@ -13,8 +13,9 @@ load(":sync.bzl", "packages_are_normalized", "stage_holds_the_workspaces_and_the
 load(":subdirs.bzl", "LINUX_64", "LINUX_AARCH64", "OSX_ARM64", "a_table_with_graphs_per_subdir_is_read_as_it_is", "a_table_with_graphs_per_subdir_refuses_the_platforms_it_has_none_for", "a_table_with_the_linux_64_graph_alone_is_refused_on_arm_only", "a_table_without_graphs_per_subdir_has_the_linux_64_graph_alone", "every_vocabulary_of_a_subdir_chooses_its_value", "graph_with_a_unit_more", "graph_with_other_dependencies", "same_units_in_every_graph", "the_graph_of_a_single_subdir_gives_the_value_itself", "toolchain_rows_are_told_by_their_key")
 load("//rules/mojo:subdirs.bzl", "table_graphs")
 load(":test_data_targets.bzl", "test_data_targets")
+load(":names.bzl", "a_bare_package_name_in_format_six_is_refused", "a_native_unit_not_named_for_its_package_is_refused", "a_slice_of_a_graph_of_format_five_is_as_it_was", "a_slice_of_a_graph_of_format_six_says_six_and_keeps_the_import_names", "a_unit_of_format_six_without_import_is_refused", "an_import_in_a_graph_older_than_six_is_refused", "an_import_that_is_not_the_name_of_the_package_is_refused", "import_names_are_the_name_after_the_namespace", "mopm_graph_of_format_six_says_the_import_names_mopm_prints", "the_archive_of_a_registry_package_of_format_six_is_named_by_its_import", "the_conda_name_of_a_full_name_spells_the_namespace_with_a_dot", "the_member_of_a_rooted_graph_of_format_six_is_named_by_its_import")
 load(":link.bzl", "a_graph_of_format_five_with_link_and_a_provided_native_is_accepted", "a_graph_of_format_four_with_a_provided_native_and_no_link_is_accepted", "a_graph_of_format_three_without_either_key_is_accepted", "a_link_in_a_graph_older_than_five_is_refused", "a_link_name_outside_the_list_is_refused", "a_link_name_twice_is_refused", "a_link_on_a_native_unit_is_refused", "a_provided_native_in_a_graph_older_than_four_is_refused", "a_provided_that_is_not_a_bool_is_refused", "a_provided_unit_that_is_not_native_is_refused", "a_subdir_that_provides_another_unit_is_refused", "a_subdir_whose_unit_links_other_libraries_is_refused", "a_unit_link_is_what_the_graph_says_and_none_is_empty", "an_empty_link_in_an_old_graph_is_the_same_as_none", "subdirs_with_one_link_are_accepted")
-load(":system_libs.bzl", "a_graph_without_loads_needs_no_pin", "a_format_above_five_is_refused", "a_slice_with_a_provided_native_unit_says_format_four", "a_format_that_is_no_number_is_refused", "a_library_a_unit_loads_and_the_graph_does_not_pin_is_refused", "a_library_a_unit_loads_is_pinned", "a_library_pinned_twice_is_refused", "a_slice_for_the_compile_is_never_above_format_two", "a_subdir_that_pins_another_library_is_refused", "a_subdir_whose_unit_loads_another_library_is_refused", "an_entry_with_a_short_sha256_is_refused", "an_entry_without_a_size_is_refused", "loads_in_an_older_graph_are_refused", "pinned_system_libs_are_read_by_name", "subdirs_that_pin_the_same_libraries_are_accepted", "system_libs_in_an_older_graph_are_refused", "the_formats_of_the_rules_are_accepted")
+load(":system_libs.bzl", "a_graph_without_loads_needs_no_pin", "a_format_above_six_is_refused", "a_slice_with_a_provided_native_unit_says_format_four", "a_format_that_is_no_number_is_refused", "a_library_a_unit_loads_and_the_graph_does_not_pin_is_refused", "a_library_a_unit_loads_is_pinned", "a_library_pinned_twice_is_refused", "a_slice_for_the_compile_is_never_above_format_two", "a_slice_of_a_graph_of_format_six_says_six", "a_subdir_that_pins_another_library_is_refused", "a_subdir_whose_unit_loads_another_library_is_refused", "an_entry_with_a_short_sha256_is_refused", "an_entry_without_a_size_is_refused", "loads_in_an_older_graph_are_refused", "pinned_system_libs_are_read_by_name", "subdirs_that_pin_the_same_libraries_are_accepted", "system_libs_in_an_older_graph_are_refused", "the_formats_of_the_rules_are_accepted")
 
 _NAMED = ["mopm-toolchain.toml", "is required", "no default", "[toolchain]", "mopm = \"0.0.48\"", "mojo = \"1.0.0\""]
 
@@ -449,13 +450,13 @@ refuses(
 )
 
 # The system libraries a graph of format 3 pins for the tests to load (rules/mojo/system_libs.bzl, docs/contract.md section 12.11; the checks are in tests/system_libs.bzl).
-accepts(name = "graph_formats_1_to_5_are_accepted", check = the_formats_of_the_rules_are_accepted, args = [])
+accepts(name = "graph_formats_1_to_6_are_accepted", check = the_formats_of_the_rules_are_accepted, args = [])
 
 refuses(
-    name = "graph_format_6_is_refused",
-    check = a_format_above_five_is_refused,
+    name = "graph_format_7_is_refused",
+    check = a_format_above_six_is_refused,
     args = [],
-    contains = ["the committed unit graph is format 6", "formats 1 to 5", "update buildrules"],
+    contains = ["the committed unit graph is format 7", "formats 1 to 6", "update buildrules"],
 )
 
 refuses(
@@ -530,6 +531,8 @@ refuses(
 )
 
 accepts(name = "compile_slice_is_never_above_format_two", check = a_slice_for_the_compile_is_never_above_format_two, args = [])
+
+accepts(name = "compile_slice_of_format_6_says_format_6", check = a_slice_of_a_graph_of_format_six_says_six, args = [])
 
 # What `mojo_conda` stages for `mopm pack` (rules/mojo/pack.bzl, `workspace_tree`): the programs of `[targets] bins` at their paths below the package, and nothing
 # changed for a package without them.
@@ -701,3 +704,54 @@ refuses(
     args = ["examples/x", "shim", "libshim.a", {"libother.a": "//x:other"}],
     contains = ["examples/x: [native.shim] is `provided = true`", "its archive is built by a rule", "natives = {\"libshim.a\":"],
 )
+
+# The names of a graph of format 6 (rules/mojo/names.bzl; the checks are in tests/names.bzl, over mopm 0.0.113's real graph in tests/graph6.bzl): a package is
+# `<namespace>/<name>`, and every target, file and directory made from it is made from its import name, the name.
+accepts(name = "import_name_is_the_name_after_the_namespace", check = import_names_are_the_name_after_the_namespace, args = [])
+
+accepts(name = "graph_of_format_6_with_mopms_import_names_is_accepted", check = mopm_graph_of_format_six_says_the_import_names_mopm_prints, args = [])
+
+refuses(
+    name = "unit_of_format_6_without_import_is_refused",
+    check = a_unit_of_format_six_without_import_is_refused,
+    args = [],
+    contains = ["g: example/json@0.1.0#mojo1.0.0/lib, a unit of a graph of format 6, has no `import`: run `buildrules mojo sync`"],
+)
+
+refuses(
+    name = "import_other_than_the_packages_name_is_refused",
+    check = an_import_that_is_not_the_name_of_the_package_is_refused,
+    args = [],
+    contains = ["g: example/json@0.1.0#mojo1.0.0/lib has `import` \"example\" but its package is \"example/json\": in a graph of format 6 a package is `<namespace>/<name>`"],
+)
+
+refuses(
+    name = "bare_package_name_in_format_6_is_refused",
+    check = a_bare_package_name_in_format_six_is_refused,
+    args = [],
+    contains = ["has `import` \"json\" but its package is \"json\""],
+)
+
+refuses(
+    name = "import_in_a_graph_older_than_format_6_is_refused",
+    check = an_import_in_a_graph_older_than_six_is_refused,
+    args = [],
+    contains = ["g: p@1.0.0#mojo1.0.0/lib has `import` in a graph of format 5; it is a format 6 key"],
+)
+
+refuses(
+    name = "native_unit_not_named_for_its_package_is_refused",
+    check = a_native_unit_not_named_for_its_package_is_refused,
+    args = [],
+    contains = ["the native unit native:example/other/shim is not named for its package example/app"],
+)
+
+accepts(name = "member_of_a_rooted_graph_of_format_6_is_named_by_its_import", check = the_member_of_a_rooted_graph_of_format_six_is_named_by_its_import, args = [])
+
+accepts(name = "slice_of_a_graph_of_format_6_keeps_the_import_names", check = a_slice_of_a_graph_of_format_six_says_six_and_keeps_the_import_names, args = [])
+
+accepts(name = "slice_of_a_graph_of_format_5_is_as_it_was", check = a_slice_of_a_graph_of_format_five_is_as_it_was, args = [])
+
+accepts(name = "archive_of_a_registry_package_of_format_6_is_named_by_its_import", check = the_archive_of_a_registry_package_of_format_six_is_named_by_its_import, args = [])
+
+accepts(name = "conda_name_of_a_full_name_spells_the_namespace_with_a_dot", check = the_conda_name_of_a_full_name_spells_the_namespace_with_a_dot, args = [])

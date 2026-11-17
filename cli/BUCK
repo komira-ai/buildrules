@@ -81,6 +81,7 @@ _TESTS = [
     "lockreaders",
     "failclosed",
     "mojo_cmd",
+    "mojo_format6",
     "mojo_lock",
     "mojo_subdir",
     "mojo_toolchains",

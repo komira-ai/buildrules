@@ -181,11 +181,11 @@ test "parseGraph: the fixture, and the leniencies: missing optional fields are e
 }
 
 // Defect caught: a graph of format 3 (system libraries a test loads) refused by the command that writes the table, so a package that names one could not be synced.
-test "parseGraph: formats 1 to 5 are read, and a format 3 graph's system libraries and `loads` do not stop it" {
+test "parseGraph: formats 1 to 6 are read, and a format 3 graph's system libraries and `loads` do not stop it" {
     var e = Env.init();
     defer e.deinit();
     const a = e.a();
-    for ([_][]const u8{ "1", "2", "3", "4", "5" }) |n| {
+    for ([_][]const u8{ "1", "2", "3", "4", "5", "6" }) |n| {
         var d = Diag.init(a);
         const text = try std.fmt.allocPrint(a, "{{\"unit_graph\": {s}, \"package\": \"p@1.0.0\", \"toolchain\": {{}}, \"units\": []}}", .{n});
         const g = try lockm.parseGraph(a, "g", text, &d);
@@ -208,9 +208,9 @@ test "parseGraph: a graph that is not mopm's format is refused, one reason each"
         .{ .text = "[]", .needle = "the unit graph is not a JSON object" },
         .{ .text = "\"x\"", .needle = "the unit graph is not a JSON object" },
         .{ .text = "{}", .needle = "no `unit_graph` format number" },
-        .{ .text = "{\"unit_graph\": 6}", .needle = "unit_graph format is not 1, 2, 3, 4 or 5" },
-        .{ .text = "{\"unit_graph\": 6}", .needle = "update buildrules" },
-        .{ .text = "{\"unit_graph\": 0}", .needle = "unit_graph format is not 1, 2, 3, 4 or 5" },
+        .{ .text = "{\"unit_graph\": 7}", .needle = "unit_graph format is not 1, 2, 3, 4, 5 or 6" },
+        .{ .text = "{\"unit_graph\": 7}", .needle = "update buildrules" },
+        .{ .text = "{\"unit_graph\": 0}", .needle = "unit_graph format is not 1, 2, 3, 4, 5 or 6" },
         .{ .text = "{\"unit_graph\": \"1\"}", .needle = "unit_graph format is not 1" },
         .{ .text = "{\"unit_graph\": 1}", .needle = "no `toolchain` object" },
         .{ .text = "{\"unit_graph\": 1, \"toolchain\": 5}", .needle = "no `toolchain` object" },

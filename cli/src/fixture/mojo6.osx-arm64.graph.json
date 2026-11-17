@@ -1,0 +1,48 @@
+{
+  "unit_graph": 6,
+  "package": "example/base@0.1.0",
+  "mojo": "1.0.0",
+  "toolchain": {
+    "mojo": "1.0.0",
+    "subdir": "osx-arm64",
+    "cc_target": "aarch64-macos.11.0",
+    "closure_sha256": "0d34e9a60951231f6c2161f6620957ff086542b217b187774fdf9d82b76046a1",
+    "zig": {"version": "0.12.0", "url": "https://ziglang.org/download/0.12.0/zig-macos-aarch64-0.12.0.tar.xz", "sha256": "294e224c14fd0822cfb15a35cf39aa14bd9967867999bf8bdfe3db7ddec2a27f", "size": 43447724},
+    "components": [
+      {"name": "mojo-compiler", "version": "1.0.0", "url": "https://conda.modular.com/max/osx-arm64/mojo-compiler-1.0.0-release.conda", "sha256": "c52054bc444d851e5c38cc33e790fb011a1080470244aaa59351ac5056d08c59", "size": 61221085}
+    ]
+  },
+  "units": [
+    {
+      "id": "example/base@0.1.0#mojo1.0.0/lib",
+      "package": "example/base",
+      "import": "base",
+      "version": "0.1.0",
+      "kind": "lib",
+      "root": "src/base",
+      "srcs": [
+        {"path": "src/base/__init__.mojo", "sha256": "fb0f853364953595d2c32433c6ffc27013146e9afbbb8e8e12ff472453038116"}
+      ],
+      "deps": [],
+      "natives": [],
+      "profile": {"opt": 1, "assert": "all", "debug": false},
+      "outputs": ["base.mojoc"],
+      "key": "91dd14d9dbf51e7886ba3d58cc603a0bc65488104dd3259a81525afd578704ba"
+    },
+    {
+      "id": "example/base@0.1.0#mojo1.0.0/test:tests/test_base.mojo",
+      "package": "example/base",
+      "import": "base",
+      "version": "0.1.0",
+      "kind": "test",
+      "srcs": [
+        {"path": "tests/test_base.mojo", "sha256": "35516852663564abe5b5bdc74703846e0833e0b69cc1481a51701fbe9543bea5"}
+      ],
+      "deps": ["example/base@0.1.0#mojo1.0.0/lib"],
+      "natives": [],
+      "profile": {"opt": 1, "assert": "all", "debug": false},
+      "outputs": ["test_base.pass"],
+      "key": "b257e62755b0972d635a39ab2ca2a2313f49d940152628120cf39888858e15bf"
+    }
+  ]
+}

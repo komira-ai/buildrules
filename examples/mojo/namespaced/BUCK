@@ -1,0 +1,21 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/mojo:sync.bzl", "mojo_sync")
+load(":buildrules.mojo.bzl", "mojo_package")
+
+# Two packages of mopm 0.0.113, which names a package `<namespace>/<name>` (its unit graph is format 6, its lock lock_version 3): `example/nsuser` imports the member
+# `example/nsshim` (nsshim/), which builds a C shim of its own. Mojo code imports each by its import name (`nsuser`, `nsshim`), and every target, `.mojoc` and staged
+# directory the macro makes is named by it; the graph's ids and packages keep the full names. Its own mopm-toolchain.toml names 0.0.113: the packages beside it keep
+# their older mopm and the formats it prints.
+mojo_package(path = ".")
+
+# `buildrules mojo sync` as a farm action (rules/mojo/sync.bzl): `buck2 run //examples/mojo/namespaced:sync` writes the lock and the glue with mopm 0.0.113.
+mojo_sync(
+    name = "sync",
+    committed = ["buildrules.mojo.lock.bzl", "buildrules.mojo.bzl"],
+    files = [],
+    mopm = "0.0.113",
+    visibility = ["//ci:"],
+    workspaces = [":workspace"],
+)
+
+scrub_files()

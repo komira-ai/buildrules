@@ -76,18 +76,17 @@ catalog all unpack with `conda_unpack --all-libs` (`rules/mojo/system_libs.bzl`)
 mopm 0.0.101 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.101, pinned for all three hosts beside 0.0.86 in the same two tables, with the sizes and digests of its assets
 as in the release's `SHA256SUMS` (downloaded and `sha256sum -c` checked, 2026-10-30; nothing was run). Since 0.0.86 two things changed that this tree reads: a `[native.<id>]` can say `provided = true`
 (the archive is the product of a rule of the build system, not compiled from `srcs`: unit graph format 4), and `link = ["c++"]` (the system libraries the final link of every consumer adds, from the
-closed list `c++`, `dl`, `m`, `pthread`: unit graph format 5, a `link` on each unit that links archives). `rules/mojo` reads formats 1 to 5 (docs/contract.md, section 12.4); the packages
+closed list `c++`, `dl`, `m`, `pthread`: unit graph format 5, a `link` on each unit that links archives). `rules/mojo` read formats 1 to 5 then (1 to 6 since 0.0.113, below; docs/contract.md, section 12.4); the packages
 `examples/mojo/native_library`, `native_library_cuser` and `native_library_deps` name 0.0.101 in their `mopm-toolchain.toml` and are the committed graphs of formats 5, 5 and 4.
 
 ## mopm 0.0.113
 
 mopm 0.0.113 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.113, pinned for all three hosts beside 0.0.101 in the same two tables, with the sizes and digests of its assets
 as in the release's `SHA256SUMS` (downloaded and `sha256sum -c` checked, and each tarball's Sigstore bundle checked with `cosign verify-blob` against the signer `mopm-pin / verify` requires, 2026-11-16).
-Nothing names it yet. It is the first release with namespaces: a package's name is its full name, `<namespace>/<name>`, in `mopm.toml`, the lock and the unit graph. Its `mopm plan --unit-graph`
-prints unit graph format 6 (unit ids and `package` carry the full name, and each unit has `import`, the import name) and its `mopm lock` writes `lock_version` 3. This tree reads unit
-graph formats 1 to 5, so a repository that names 0.0.113 in its `mopm-toolchain.toml` cannot be synced: `buildrules mojo sync` refuses the format 6 graph that mopm prints ("a newer
-format needs a newer buildrules: update buildrules"), `buildrules mojo check` reports its existing lock as made with another mopm, and the rules refuse a committed format 6 graph by its format
-number. It needs the buildrules release that teaches `rules/mojo` format 6. Until then a row is all this tree has of 0.0.113, as it was for 0.0.83, and no target reads it.
+It is the first release with namespaces: a package's name is its full name, `<namespace>/<name>`, in `mopm.toml`, the lock and the unit graph. Its `mopm plan --unit-graph`
+prints unit graph format 6 (unit ids and `package` carry the full name, and each unit has `import`, the import name) and its `mopm lock` writes `lock_version` 3. `rules/mojo` and
+`buildrules mojo sync` read formats 1 to 6 (docs/contract.md, section 12.13); `examples/mojo/namespaced` and its member `nsshim` name 0.0.113 in their `mopm-toolchain.toml` and are the
+committed graphs of format 6.
 
 ## Mirrors
 

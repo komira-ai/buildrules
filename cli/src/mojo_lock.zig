@@ -188,7 +188,11 @@ pub const Built = struct { soname: []const u8, unit: []const u8 };
 
 pub const Unit = struct {
     id: []const u8,
+    /// The package's name: `<namespace>/<name>` (a full name) in a graph of format 6, the bare name before it.
     package: []const u8,
+    /// The package's import name (format 6: the graph's `import`, the part of `package` after its `/`; before it, `package` itself). It names the library's directory
+    /// (`src/<import>`) and its `.mojoc`.
+    import: []const u8 = "",
     kind: []const u8,
     root: []const u8,
     srcs: []const Src,
@@ -219,8 +223,39 @@ fn field(o: std.json.ObjectMap, k: []const u8) ?std.json.Value {
     return o.get(k);
 }
 
-/// The newest unit graph format this reads: 4 adds `provided`, 5 adds `link` (mopm's spec/unit-graph.md).
-pub const newest_format: i64 = 5;
+/// The newest unit graph format this reads: 4 adds `provided`, 5 adds `link`, 6 names every package by its full name, `<namespace>/<name>`, and gives each unit its
+/// `import` (mopm's spec/unit-graph.md, "Names").
+pub const newest_format: i64 = 6;
+
+/// The first format whose packages have full names and whose units have `import`.
+pub const names_format: i64 = 6;
+
+/// The import name of the package `full`: the part after its last `/` (`json` for `example/json`), or the whole of a name of a graph before format 6, which has none.
+pub fn importName(full: []const u8) []const u8 {
+    return if (std.mem.lastIndexOfScalar(u8, full, '/')) |i| full[i + 1 ..] else full;
+}
+
+/// `import` of a unit, held to what mopm prints: in a graph of format 6 every unit has it, and it is the part of `package` after the `/`; a graph before
+/// format 6 has no such key (its package names are the import names). The answer is the import name either way; a problem is in `diag`.
+fn readImport(diag: *Diag, name: []const u8, id: []const u8, package: []const u8, format: i64, v: ?std.json.Value) []const u8 {
+    const want = importName(package);
+    if (format < names_format) {
+        if (v != null) diag.add("{s}: {s}: has `import` in a graph of format {d}; it is a format 6 key: run `buildrules mojo sync`", .{ name, id, format });
+        return want;
+    }
+    const x = v orelse {
+        diag.add("{s}: {s}: a unit of a graph of format 6 has no `import`", .{ name, id });
+        return want;
+    };
+    const got = str(x) orelse {
+        diag.add("{s}: {s}: `import` is not a string", .{ name, id });
+        return want;
+    };
+    if (!std.mem.eql(u8, got, want) or std.mem.indexOfScalar(u8, package, '/') == null) {
+        diag.add("{s}: {s}: `import` is {s} but the package is {s}: in a graph of format 6 a package is `<namespace>/<name>` and its import name is the name", .{ name, id, got, package });
+    }
+    return want;
+}
 
 /// The system libraries mopm lets a native name in `link` (`mopm.toml`, the metadata, the lock and the graph are all held to this list): they reach a linker command
 /// line as `-l<name>`, so a name outside it is refused here as mopm refuses it.
@@ -291,9 +326,9 @@ pub fn parseGraph(a: std.mem.Allocator, name: []const u8, text: []const u8, diag
         return error.Invalid;
     };
     if (version != .integer or version.integer < 1 or version.integer > newest_format) {
-        diag.add("{s}: unit_graph format is not 1, 2, 3, 4 or 5 (this buildrules reads 1, 2, which adds the native unit of a member's own library, 3, which adds the system libraries a test loads, " ++
-            "4, which adds the native unit whose archive a rule of the build system supplies (`provided`), and 5, which adds the system libraries of a final link (`link`)); " ++
-            "a newer format needs a newer buildrules: update buildrules", .{name});
+        diag.add("{s}: unit_graph format is not 1, 2, 3, 4, 5 or 6 (this buildrules reads 1, 2, which adds the native unit of a member's own library, 3, which adds the system libraries a test loads, " ++
+            "4, which adds the native unit whose archive a rule of the build system supplies (`provided`), 5, which adds the system libraries of a final link (`link`), " ++
+            "and 6, which names each package `<namespace>/<name>` and gives each unit its `import`); a newer format needs a newer buildrules: update buildrules", .{name});
         return error.Invalid;
     }
     const format: i64 = version.integer;
@@ -353,9 +388,12 @@ pub fn parseGraph(a: std.mem.Allocator, name: []const u8, text: []const u8, diag
         const is_native = std.mem.eql(u8, kind, "native");
         const provided = readProvided(diag, name, id, is_native, format, field(uo, "provided"));
         const link = readLink(a, diag, name, id, is_native, format, field(uo, "link")) catch return error.Invalid;
+        const package = str(field(uo, "package") orelse .null) orelse "";
+        const import = readImport(diag, name, id, package, format, field(uo, "import"));
         units.append(a, .{
             .id = id,
-            .package = str(field(uo, "package") orelse .null) orelse "",
+            .package = package,
+            .import = import,
             .kind = kind,
             .root = str(field(uo, "root") orelse .null) orelse "",
             .srcs = srcs.toOwnedSlice(a) catch return error.Invalid,
@@ -365,7 +403,7 @@ pub fn parseGraph(a: std.mem.Allocator, name: []const u8, text: []const u8, diag
         }) catch return error.Invalid;
     }
     if (diag.count() != unit_problems) return error.Invalid;
-    // A native a member builds is a unit of the graph (`native:<package>/<id>`), and every entry that says `built` names one: a graph in which an entry
+    // A native a member builds is a unit of the graph (`native:<package>/<id>`, the package a full name in format 6), and every entry that says `built` names one: a graph in which an entry
     // names a unit that is not there cannot be linked, and the rules would only find that out when a test fails to link.
     const before = diag.count();
     for (units.items) |u| {

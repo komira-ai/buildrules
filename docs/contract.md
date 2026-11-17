@@ -539,14 +539,14 @@ every declared input, then executes `T/mojo_compile` with an empty environment).
   mopm's `key` hashes every dependency's key, so it moves with any edit below the unit; Buck2's own key (the digests of the inputs) replaces it, and a
   dependency's sources, key and profile are not inputs of the unit that imports it. This is what makes unchanged `.mojoc` bytes stop a cascade.
 - `--src`: the unit's sources at the paths the graph names (from the package, or from the repository root when the table's `workspace_root` is true); the target's `srcs` are the graph's, so a file the graph does not name is not an input.
-- `--deps`: `<package>.mojoc` of every unit in the closure, flat: the outputs of the dependency targets (a member's `:lib`, a registry package's `prebuilt_<name>`),
+- `--deps`: `<import>.mojoc` of every unit in the closure, flat (the import name: section 12.13): the outputs of the dependency targets (a member's `:lib`, a registry package's `prebuilt_<import>`),
   checked against the graph's closure at analysis: the same packages, and each built as the graph names it (the unit id, `<package>@<version>#mojo<Mojo version>/lib`, of the
   dependency target's `MojoLibInfo` is the graph's), so a sibling on another version or another Mojo is refused, naming both ids.
 - `--natives`: the native libraries by soname. mopm checks each against the sha256 in the graph before it compiles anything. A static library (`lib<stem>.a`) of a registry package is
-  not named in the BUCK file: it is the sub-target `:prebuilt_<package>[<soname>]` of the package's unpacked `.conda`, chosen from the graph (`kind` static, the package of the unit that ships it). Every other
+  not named in the BUCK file: it is the sub-target `:prebuilt_<import>[<soname>]` of the package's unpacked `.conda`, chosen from the graph (`kind` static, the package of the unit that ships it). Every other
   native is a target of `natives = {...}`, and one the lock provides may not be named there. mopm lists the libraries of a unit in link order (a library before every library it needs), `native_sonames` keeps
   that order, and mopm links them in it; `--natives` itself is a flat directory. A static library a workspace member builds from its own C (`[native.<id>] kind = "static"` in its `mopm.toml`) is a
-  native unit of the graph (format 2; these rules read formats 1 to 5, and refuse a newer one: update buildrules), `native:<package>/<id>`, and every unit that links it (the member's library, tests and binaries, and every dependent member's) lists it in `natives` with a `built` field
+  native unit of the graph (format 2; these rules read formats 1 to 6, and refuse a newer one: update buildrules), `native:<package>/<id>`, and every unit that links it (the member's library, tests and binaries, and every dependent member's) lists it in `natives` with a `built` field
   naming that unit and no `sha256`: it is a product of this build. It is not named in the BUCK file either. `mojo_package` of the member compiles the unit's `srcs` with the pinned zig into `:native_<id>_cxx`
   (a `cxx_library`, at the platform's baseline CPU whatever ISA level the rest of the program is built for, optimised, with `-I` for each of the unit's `includes`, `cflags` and then the
   flags of the OS) and writes `lib<id>.a` as `:native_<id>` (`native_archive`, rules/cxx/native.bzl); a dependent's units take the member's target. These two names are stable: a repository that lists
@@ -565,10 +565,10 @@ every declared input, then executes `T/mojo_compile` with an empty environment).
   beside its `path`: the `.conda` holds the package alone and records the member as `mojo-<name> <range>`, never a path. `mojo_conda_holds(sole = True, depends = [...])` requires exactly that of the built file:
   nothing under `lib/mojo/` but the package's own `.mojoc` and `.mopm.json`, and, after the compiler, exactly the listed dependencies in order. A package that lists programs
   (`[targets] bins`) is packed in the same workspace with the source of each program at `<dir>/<path>`, the path as the manifest writes it, because `mopm pack` reads and ships it
-  (at `lib/mojo/<package>.bins/<name>.mojo`, named by the program's `name` and not by its path: `{ name = "greet", path = "bins/tools/say.mojo" }` is `lib/mojo/<package>.bins/greet.mojo`); `mojo_package` takes the programs from the package's own `bin` units of the graph, and `mojo_conda` takes them as `bins = {"<path>": <file>}`.
+  (at `lib/mojo/<import>.bins/<name>.mojo`, named by the program's `name` and not by its path: `{ name = "greet", path = "bins/tools/say.mojo" }` is `lib/mojo/<import>.bins/greet.mojo`); `mojo_package` takes the programs from the package's own `bin` units of the graph, and `mojo_conda` takes them as `bins = {"<path>": <file>}`.
   Nothing else of the package is staged. A program path that leaves the package's directory (absolute, climbing out with `..`, or naming the directory itself), goes through a directory with `..` or ends in `/` or `/.`, or lands on a file already staged, is refused when the
   rule is analysed. A package with neither members nor programs passes its manifest alone. `mojo_conda_holds(holds = {"<member>": <file>})` requires the `.conda` to carry each
-  member with exactly the file's bytes; with `sole = True` the package's own programs (`lib/mojo/<package>.bins/`) are part of it.
+  member with exactly the file's bytes; with `sole = True` the package's own programs (`lib/mojo/<import>.bins/`) are part of it.
 - `--toolchain`: a directory assembled from `mojo_launch` (as `mojo_compile`), the wrapper (`wrapper`), the compiler closure (`compiler`), the zig (`zig`), `CLOSURE_SHA256`
   and `toolchain.cfg`. `mojo_launch` puts the wrapper's options (where the closure and the zig are) in front of mopm's arguments, inserts the ISA flags after `build`,
   and rewrites mopm's `--source-root` for `precompile` (below). It runs no compiler and owns no policy.
@@ -909,6 +909,26 @@ The directories are inputs of the run, so a change to a pin re-runs the tests th
 - **`mojo_package`.** An entry of `natives` whose key is the soname of one of the package's own `[native.<id>]` is that target: `:native_<id>` is an alias of it and nothing is compiled from the manifest's sources. The manifest says `provided = true` for such a native (mopm 0.0.101 and later; an older mopm needed a source that was never compiled), and a provided native that no entry of `natives` supplies is refused. An entry of `natives` that no unit of the graph links and no `[native.<id>]` of the manifest builds is refused by name (`check_natives_used`). `validate = False` turns the archive check into an output of the target: it is for tests that count the failed action (ci/faulty), not for a library anyone links.
 
 The examples are `examples/native` (zlib from a pinned tarball, a C++ library, assembly chosen by the CPU, a chain of dependencies) and `examples/mojo/native_library`, whose tests call each through `natives` on linux x86_64 and macOS arm64; `ci/faulty` holds that a dependent which includes a header its dependency does not export fails to compile.
+
+### 12.13 Package names: unit graph format 6
+
+mopm 0.0.113 and later name a package by its full name, `<namespace>/<name>` (`example/json`, written so in `mopm.toml`), and Mojo code imports it by its import name, the name
+after the `/` (`import json`). Its `plan --unit-graph` prints format 6: the unit ids (`example/json@0.1.0#mojo1.0.0/lib`), a unit's `package`, the `package` of a native entry, a native
+unit's id (`native:example/json/<id>`) and the root `package` carry the full name, and every unit has `import`; its `mopm lock` writes `lock_version` 3, whose path dependencies are keyed by the
+full name. buildrules reads the lock for the toolchain closures it records alone, which keep their shape, and reads graphs of format 6 beside formats 1 to 5:
+
+- every target, file and directory the rules make from a package is made from its import name (rules/mojo/names.bzl, `import_name`): `:prebuilt_<import>`, `<import>.mojoc`, the
+  staged sources and the coverage names (`<import>/<file>`), and a path dependency is the package above `src/<import>`. Two packages of one import name never meet in one graph (mopm
+  refuses the closure), so the name is enough within a package's build. A package of a graph before format 6 has no namespace, its name is its import name, and every name is as it was.
+- the `.conda` `mojo_conda` makes is `mojo-<namespace>.<name>-<version>-mojo<Mojo>_0.conda`, the name `mopm pack` gives it.
+- a native unit's id is its package's full name and then the id of `[native.<id>]`: `native:example/json/shim` is `:native_shim`.
+- the slice `mopm unit build` is given says format 6: the mopm that prints such a graph reads no other format. A graph of an older format is sliced as before (format 2, or 4 with a
+  provided native), since the mopm that printed it reads those.
+- a unit of a format 6 graph without `import`, or with one that is not the name of its package's full name, and `import` in an older graph, are refused by `buildrules mojo sync` and when
+  the table is loaded: the rules would name a library otherwise than its importers look for it.
+
+`examples/mojo/namespaced` (`example/nsuser` over the member `example/nsshim`, which builds a C shim) names mopm 0.0.113 in its `mopm-toolchain.toml`; the other examples keep the mopm
+they name and the formats it prints.
 
 ## 13. npm packages: `npm_package(path = ".")` **[chosen]**
 
