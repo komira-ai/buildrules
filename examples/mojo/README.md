@@ -6,6 +6,8 @@
     registry/conda_bins/   a package with two `[targets] bins` programs (mopm 0.0.101): its `:conda` is `mopm pack`, which reads each program's source, so `mojo_conda` stages them (`bins`, rules/mojo/pack.bzl) from the unit graph; `:conda_holds` requires each in the `.conda` under the program's name (below)
     registry/probe_sys/    the publisher's side of probe_sys: a `-sys` package (an empty Mojo module over a static C library) that needs base_sys's
       base_sys/            the other `-sys` package, a workspace member of probe_sys
+    namespaced/            two packages of mopm 0.0.113 (`example/nsuser` over the member `example/nsshim`, which builds a C shim): unit graph format 6, full names, import names
+    nsreg/                 imports `example/nsshim` from the registry stand-in (the `.conda` of namespaced/nsshim:conda): a prebuilt unit of format 6, `:prebuilt_nsshim`
     sys_app/               imports probe_sys from the registry stand-in: both static archives come out of the `.conda` files, with no `natives` in its BUCK file; its test takes both arms of a decision in the library, so the package has branch records of its own through the native link and a `coverage_floor.txt` of `lines 100.00` and `branches 100.00`
     generated/             user -> lib: `lib` is a package whose library is committed generator output at `generated/gen_lib` (`[targets] lib = { path = "generated/gen_lib" }`), not at `src/gen_lib`; `user` imports it as a sibling (`{ path = "../lib" }`). The target of its library is named from the directory of its own `mopm.toml`, which `user`'s table records; `:conda` of each is `mopm pack` of that layout. `user` carries `:sync_check` for both tables
     sibfake/chain/         a -> b -> c: every dependency is a sibling directory (`{ path = "../b" }`), not a directory below its user. `a` names only `b`; its `mopm.lock` records `c` too, and its table holds `b` and `c` by identity
@@ -56,6 +58,9 @@ When `cnative`'s sources change, rebuild both, put the new sha256 and size in `w
 (`lib/libbase_sys.a` and `lib/libprobe_sys.a` of the `.conda`, which are the archives `:native_base_sys` and `:native_probe_sys` that `mojo_package` builds from each package's `[native.<id>]`), its `kind`, and probe_sys's `needs`.
 Build the two `:conda` targets (`registry/probe_sys:conda`, `registry/probe_sys/base_sys:conda`) and the two archives, put the four sha256 and the two sizes in the lock, and run `buildrules mojo sync`:
 a lock that disagrees with a `.conda` fails the download's check, and one that disagrees with an archive fails `prebuilt_unpack` (a hash that differs) before anything is linked.
+
+`nsreg/mopm.lock` (lock_version 3) records `example/nsshim` the same way: the sha256 and size of `namespaced/nsshim:conda`, `mojo-example.nsshim-0.1.0-mojo1.0.0_0.conda` under the
+channel of the namespace (`https://conda.mopm.dev/example/`), and the sha256 of `lib/libnsshim.a`. When nsshim's sources change, rebuild both and update the lock.
 
 The URL in the lock is a placeholder channel; a machine that has the file points the download at it in the `.buckconfig.local` of the cell that declares it, for example
 `[buildrules] url_map = https://conda.mopm.dev/=http://mirror.invalid/channel/` in the root `.buckconfig.local` (the sha256 is still checked). The mopm tarball

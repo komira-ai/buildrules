@@ -1,0 +1,11 @@
+[package]
+name = "example/nsreg"
+version = "0.1.0"
+mojo = ["1.0.0"]
+
+[dependencies]
+"example/nsshim" = "0.1"
+
+[targets]
+lib = { path = "src/nsreg" }
+tests = ["tests"]

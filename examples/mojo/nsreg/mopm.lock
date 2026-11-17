@@ -1,0 +1,31 @@
+{
+  "lock_version": 3,
+  "mojo": [
+    "1.0.0"
+  ],
+  "toolchain": {
+    "1.0.0": {
+      "linux-64": "3ed75e01401544e0d660ee48dc387dacce437e3833ac296d4a0601f28abd4aec"
+    }
+  },
+  "channels": [
+    "https://conda.mopm.dev/"
+  ],
+  "packages": [
+    {
+      "name": "example/nsshim",
+      "version": "0.1.0",
+      "subdir": "linux-64",
+      "channel": "https://conda.mopm.dev/example/",
+      "artifacts": {
+        "1.0.0": {
+          "build": "mojo1.0.0_0",
+          "url": "https://conda.mopm.dev/example/linux-64/mojo-example.nsshim-0.1.0-mojo1.0.0_0.conda",
+          "sha256": "f24c096910516f27e29a194e61b082cf53299b5397d62966fe2f36af6a01f968",
+          "size": 42521
+        }
+      },
+      "native": [{"id": "nsshim", "soname": "libnsshim.a", "sha256": "50909f5da9e22fd69a84215328b774559eccf03c5239543ca6be022ae4948655", "kind": "static"}]
+    }
+  ]
+}
