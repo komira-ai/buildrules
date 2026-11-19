@@ -117,12 +117,16 @@ directory of shared native libraries ([above](#native-libraries)), the test's `-
 A package whose tests run in the installed layout (`test_layout = "installed"`, docs/contract.md, section 12.9) also gives `--installed` and, when the test has data, `--data <directory>`: the run is
 laid out as the test run and the kcov run have it (`install_root.zig`, shared with `check` and `cov_run`). The directory of `--binary` (the instrumented test) is copied to `<root>/bin` and the test is started as
 `<root>/bin/<name>`, so `/proc/self/exe` is there; `--share` (the sources) is copied into `<root>`, `--data` into `<root>/share` (empty without `--data`), `<root>` is the working directory, and `--data-env` names
-`<root>/share`. `TMPDIR`, `TEST_TMPDIR` and `HOME` are the empty directories of the run's own, beside `<root>`; `--env` and `--data-env` may not name them. A `--share` that holds a `bin` or a `share` is refused
+`<root>/share`, beside the run's private directories (below). A `--share` that holds a `bin` or a `share` is refused
 (exit 1, the test never starts). The layout is made inside the scratch directory, so a failed run keeps it with the rest of the scratch for diagnosis and a success removes it. The profile does not name the binary
 or the sources: it is keyed by function name and hash, so the annotate and classify steps read the same counters whether the test ran from the build output or from `<root>/bin`.
 
+Every run, in either layout, gives the test `TMPDIR`, `TEST_TMPDIR` and `HOME` of its own (docs/contract.md, "Scratch the runner owns"): absolute paths of empty directories made by `install_root.zig` in a fresh
+`<scratch>/buildrules_test.<random>`, `TMPDIR` and `TEST_TMPDIR` the same directory, `HOME` another, never the host's `/tmp` (which can be a small tmpfs, too small for a test that writes large files). `--env`
+and `--data-env` may not name them. They are inside the scratch directory: a success removes them with it, a failure keeps them.
+
 1. The test runs in `--share`, the tree of copies of the test source and the library's sources at the relative names the line tables use (the tree `cov_run` gives kcov), with exactly this
-   environment: `PATH=/usr/bin:/bin`, `LD_LIBRARY_PATH=<compiler>/lib` followed by each `--lib-dir` (made absolute), the `--env` entries, `--data-env`'s variable, and `LLVM_PROFILE_FILE=<scratch>/prof/%p.profraw` (`%p`, the pid: a child the test starts writes
+   environment: `PATH=/usr/bin:/bin`, `LD_LIBRARY_PATH=<compiler>/lib` followed by each `--lib-dir` (made absolute), the `--env` entries, `--data-env`'s variable, `TMPDIR`, `TEST_TMPDIR`, `HOME` and `LLVM_PROFILE_FILE=<scratch>/prof/%p.profraw` (`%p`, the pid: a child the test starts writes
    a profile of its own; setting it by `--env` is a usage error). Nothing of the tool's own environment reaches the test. The test must pass; when it fails, so does the action, with the
    test's output and `BRANCH COVERAGE RUN FAILED`.
 2. At least one `.profraw` was written there; otherwise `The test passed but wrote no .profraw` (the runtime was not linked, the variable did not reach the test, or the test left without

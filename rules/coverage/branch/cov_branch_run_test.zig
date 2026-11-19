@@ -184,6 +184,7 @@ test "a run: the test in its tree with exactly its environment, then merge and s
     var fake = Fake.init();
     const b = good();
     fake.raw_bytes = &b;
+    fake.probe = &.{"tests/test_one.mojo"};
     try testing.expectEqual(@as(u8, 0), try c.go(&fake));
     try testing.expectEqualStrings("", c.err.items);
     try testing.expectEqual(@as(usize, 3), fake.calls.items.len);
@@ -193,11 +194,20 @@ test "a run: the test in its tree with exactly its environment, then merge and s
     try testing.expectEqual(@as(usize, 1), t.argv.len);
     try testing.expectEqualStrings(c.p("bin/test_one"), t.argv[0]);
     try testing.expectEqualStrings(c.p("share"), t.cwd.?);
-    // Nothing of this tool's own environment reaches the test.
-    try testing.expectEqual(@as(usize, 3), t.env.len);
+    // Nothing of this tool's own environment reaches the test (its HOME=/h/user least of all): TMPDIR, TEST_TMPDIR and HOME are the run's own,
+    // <scratch>/buildrules_test.<random>/{tmp,home}, in the default layout as in the installed one.
+    try testing.expectEqual(@as(usize, 6), t.env.len);
     try testing.expectEqualStrings("PATH=/usr/bin:/bin", t.env[0]);
     try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "LD_LIBRARY_PATH={s}/lib", .{c.p("tc/compiler")}), t.env[1]);
-    try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "LLVM_PROFILE_FILE={s}/prof/%p.profraw", .{k}), t.env[2]);
+    const tmp = envOf(t, "TMPDIR");
+    const dir = std.fs.path.dirname(tmp).?;
+    try testing.expect(std.mem.startsWith(u8, dir, try std.fmt.allocPrint(c.a(), "{s}/buildrules_test.", .{k})));
+    try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "TMPDIR={s}/tmp", .{dir}), t.env[2]);
+    try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "TEST_TMPDIR={s}/tmp", .{dir}), t.env[3]);
+    try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "HOME={s}/home", .{dir}), t.env[4]);
+    try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "LLVM_PROFILE_FILE={s}/prof/%p.profraw", .{k}), t.env[5]);
+    // What the test found while it ran: its source in its working directory, and the three directories there and empty.
+    try testing.expectEqualStrings("tests/test_one.mojo=def main(): pass\n\nbinary=there\nTMPDIR=empty\nTEST_TMPDIR=empty\nHOME=empty\n", fake.seen.items);
 
     const m = fake.calls.items[1];
     try testing.expectEqual(@as(usize, 5), m.argv.len);
@@ -229,10 +239,11 @@ test "the test's --env entries come before LLVM_PROFILE_FILE, which is always th
     try full.appendSlice(c.a(), &.{ "--env", "A=1", "--env", "B=two words" });
     try testing.expectEqual(@as(u8, 0), try r.cli(c.a(), full.items, c.where(), fake.runner(), &c.err));
     const env = fake.calls.items[0].env;
-    try testing.expectEqual(@as(usize, 5), env.len);
+    try testing.expectEqual(@as(usize, 8), env.len);
     try testing.expectEqualStrings("A=1", env[2]);
     try testing.expectEqualStrings("B=two words", env[3]);
-    try testing.expect(std.mem.startsWith(u8, env[4], "LLVM_PROFILE_FILE="));
+    try testing.expect(std.mem.startsWith(u8, env[4], "TMPDIR="));
+    try testing.expect(std.mem.startsWith(u8, env[7], "LLVM_PROFILE_FILE="));
 }
 
 test "each --lib-dir follows the compiler's lib on the library path, in the order given and made absolute; the rest of the environment is as it was" {
@@ -248,10 +259,11 @@ test "each --lib-dir follows the compiler's lib on the library path, in the orde
     try full.appendSlice(c.a(), &.{ "--lib-dir", c.p("natives"), "--env", "A=1", "--lib-dir", "rel/libs" });
     try testing.expectEqual(@as(u8, 0), try r.cli(c.a(), full.items, c.where(), fake.runner(), &c.err));
     const env = fake.calls.items[0].env;
-    try testing.expectEqual(@as(usize, 4), env.len);
+    try testing.expectEqual(@as(usize, 7), env.len);
     try testing.expectEqualStrings("PATH=/usr/bin:/bin", env[0]);
     try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "LD_LIBRARY_PATH={s}/lib:{s}:{s}/rel/libs", .{ c.p("tc/compiler"), c.p("natives"), c.root }), env[1]);
     try testing.expectEqualStrings("A=1", env[2]);
+    try testing.expect(std.mem.startsWith(u8, env[6], "LLVM_PROFILE_FILE="));
 }
 
 test "--lib-dir is repeatable, and an empty one is a usage error" {
@@ -283,11 +295,12 @@ test "--data-env names the tree the test runs in, absolute, after the --env entr
     try full.appendSlice(c.a(), &.{ "--lib-dir", c.p("natives"), "--env", "A=1", "--data-env", "BUILDRULES_TEST_DATA" });
     try testing.expectEqual(@as(u8, 0), try r.cli(c.a(), full.items, c.where(), fake.runner(), &c.err));
     const t = fake.calls.items[0];
-    try testing.expectEqual(@as(usize, 5), t.env.len);
+    try testing.expectEqual(@as(usize, 8), t.env.len);
     try testing.expectEqualStrings("A=1", t.env[2]);
     try testing.expectEqualStrings(try std.fmt.allocPrint(c.a(), "BUILDRULES_TEST_DATA={s}", .{c.p("share")}), t.env[3]);
     try testing.expectEqualStrings(c.p("share"), t.cwd.?);
-    try testing.expect(std.mem.startsWith(u8, t.env[4], "LLVM_PROFILE_FILE="));
+    try testing.expect(std.mem.startsWith(u8, t.env[4], "TMPDIR="));
+    try testing.expect(std.mem.startsWith(u8, t.env[7], "LLVM_PROFILE_FILE="));
 }
 
 test "--data-env: a name the run sets itself, an empty one, one with '=' and a repeat are usage errors" {
@@ -317,6 +330,9 @@ test "a test that fails fails the action with its own exit status, the label and
         try c.has(try std.fmt.allocPrint(c.a(), "The test failed instrumented for branch coverage (exit {d})", .{cs.rc}));
         try testing.expectEqual(@as(usize, 1), fake.calls.items.len);
         try testing.expect(!c.exists("out/test_one.profdata"));
+        // The run's private directories are kept in the scratch directory for the failure's reader, with what the test wrote there.
+        try std.fs.cwd().access(envOf(fake.calls.items[0], "TMPDIR"), .{});
+        try std.fs.cwd().access(envOf(fake.calls.items[0], "HOME"), .{});
     }
 }
 
@@ -638,16 +654,69 @@ test "--installed takes no value, in any place among the flags; --data takes a d
     }
 }
 
-test "installed: TMPDIR, TEST_TMPDIR and HOME are the run's own, so --env and --data-env may not name them" {
+test "TMPDIR, TEST_TMPDIR and HOME are the run's own in either layout, so --env and --data-env may not name them" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     var why: []const u8 = "";
-    const full = [_][]const u8{ "--compiler", "c", "--share", "s", "--label", "l", "--profdata", "p", "--raw-version", "11", "--binary", "b", "--out", "o", "--installed" };
-    for ([_][]const u8{ "TMPDIR", "TEST_TMPDIR", "HOME" }) |n| {
-        try testing.expect((try r.parseArgs(a, &(full ++ [_][]const u8{ "--env", try std.fmt.allocPrint(a, "{s}=/x", .{n}) }), &why)) == null);
-        try testing.expectEqualStrings(try std.fmt.allocPrint(a, "--env {s}=/x: an installed run sets {s} itself (its private scratch directories)", .{ n, n }), why);
-        try testing.expect((try r.parseArgs(a, &(full ++ [_][]const u8{ "--data-env", n }), &why)) == null);
-        try testing.expectEqualStrings(try std.fmt.allocPrint(a, "--data-env '{s}' is a variable the installed run sets itself", .{n}), why);
+    const full = [_][]const u8{ "--compiler", "c", "--share", "s", "--label", "l", "--profdata", "p", "--raw-version", "11", "--binary", "b", "--out", "o" };
+    for ([_][]const []const u8{ &.{}, &.{"--installed"} }) |layout| {
+        for ([_][]const u8{ "TMPDIR", "TEST_TMPDIR", "HOME" }) |n| {
+            var v = std.ArrayList([]const u8).empty;
+            try v.appendSlice(a, &full);
+            try v.appendSlice(a, layout);
+            const base = v.items.len;
+            try v.appendSlice(a, &.{ "--env", try std.fmt.allocPrint(a, "{s}=/x", .{n}) });
+            try testing.expect((try r.parseArgs(a, v.items, &why)) == null);
+            try testing.expectEqualStrings(try std.fmt.allocPrint(a, "--env {s}=/x: a branch coverage run sets {s} itself (its private scratch directories)", .{ n, n }), why);
+            v.shrinkRetainingCapacity(base);
+            try v.appendSlice(a, &.{ "--data-env", n });
+            try testing.expect((try r.parseArgs(a, v.items, &why)) == null);
+            try testing.expectEqualStrings(try std.fmt.allocPrint(a, "--data-env '{s}' is a variable the run sets itself", .{n}), why);
+        }
     }
+    // A name that only starts like one of them is the test's own.
+    const ok = (try r.parseArgs(a, &(full ++ [_][]const u8{ "--env", "HOMEDIR=/x", "--data-env", "TMPDIRS" }), &why)).?;
+    try testing.expectEqualStrings("HOMEDIR=/x", ok.env[0]);
+    try testing.expectEqualStrings("TMPDIRS", ok.data_env);
+}
+
+test "testEnv of the default layout: TMPDIR, TEST_TMPDIR and HOME are set once each, absolute, existing, empty, private to the run and never under /tmp" {
+    // A branch coverage run of a test without the installed layout got none of the three, so the test fell back to /tmp, which can be a small
+    // tmpfs: a test that writes files of tens of MiB there failed for want of space in this run alone.
+    var c = try Case.init();
+    defer c.deinit();
+    var why: []const u8 = "";
+    const args = (try r.parseArgs(c.a(), c.argv(), &why)).?;
+    try testing.expect(!args.installed);
+    const k = c.p("scratch/cov_branch_run");
+    const one = try r.stage(c.a(), args, c.root, k);
+    const two = try r.stage(c.a(), args, c.root, k);
+    var tmps: [2][]const u8 = undefined;
+    for ([_]r.Staged{ one, two }, 0..) |st, i| {
+        // The default layout: the tree and the binary where they are.
+        try testing.expectEqualStrings(c.p("share"), st.tree);
+        try testing.expectEqualStrings(c.p("bin/test_one"), st.binary);
+        const env = try r.testEnv(c.a(), args, c.root, k, st);
+        for ([_][]const u8{ "TMPDIR", "TEST_TMPDIR", "HOME" }) |name| {
+            var count: usize = 0;
+            for (env) |e| {
+                if (std.mem.startsWith(u8, e, name) and e.len > name.len and e[name.len] == '=') count += 1;
+            }
+            try testing.expectEqual(@as(usize, 1), count);
+            const v = Fake.envValue(env, name).?;
+            try testing.expect(std.fs.path.isAbsolute(v));
+            try testing.expect(!std.mem.eql(u8, v, "/tmp") and !std.mem.startsWith(u8, v, "/tmp/"));
+            try testing.expect(std.mem.startsWith(u8, v, try std.fmt.allocPrint(c.a(), "{s}/buildrules_test.", .{k})));
+            var d = try std.fs.cwd().openDir(v, .{ .iterate = true });
+            defer d.close();
+            var it = d.iterate();
+            try testing.expect((try it.next()) == null);
+        }
+        try testing.expectEqualStrings(Fake.envValue(env, "TMPDIR").?, Fake.envValue(env, "TEST_TMPDIR").?);
+        try testing.expect(!std.mem.eql(u8, Fake.envValue(env, "TMPDIR").?, Fake.envValue(env, "HOME").?));
+        tmps[i] = Fake.envValue(env, "TMPDIR").?;
+    }
+    // Two runs never share them.
+    try testing.expect(!std.mem.eql(u8, tmps[0], tmps[1]));
 }

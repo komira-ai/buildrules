@@ -647,7 +647,7 @@ def _branch_run_impl(ctx):
 
     # The tree the test runs in: the test source and the library's sources at the relative names the line tables use, and its staged data, as the kcov run's.
     # In the installed layout (`test_layout = "installed"`) the instrumented binary is run from `<root>/bin`, the sources are copied into `<root>` and the data into
-    # `<root>/share`, with a TMPDIR, TEST_TMPDIR and HOME of the run's own: the layout of the test run and of the kcov run (`cov_branch run --installed`).
+    # `<root>/share`: the layout of the test run and of the kcov run (`cov_branch run --installed`). Either layout gets a TMPDIR, TEST_TMPDIR and HOME of the run's own.
     share, installed, data_dir = _coverage_tree(ctx)
     profdata = ctx.actions.declare_output(ctx.label.name + ".profdata")
     cmd = cmd_args(
