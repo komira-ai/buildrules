@@ -799,7 +799,8 @@ mojo_package(
   the committed table or in `:table`. They are arguments of the unit action, as the ISA flags are (`build_arg=` lines of its toolchain file, put right after `build`), and the action's key moves with them: a changed define builds and runs the test again, an unchanged one is a cache hit.
 - **Scratch the runner owns.** Every test run and every coverage run, in either layout, gets `TMPDIR`, `TEST_TMPDIR` and `HOME` of its own: absolute paths of directories that exist, are empty when the test starts, and are
   writable. `TMPDIR` and `TEST_TMPDIR` are the same directory, `HOME` another. They are made fresh for each run (the directory is `buildrules_test.<random>`, in `BUCK_SCRATCH_PATH`, else `TMPDIR`, else `/tmp`, with no
-  link in its path), so two tests never share them, and the whole directory is removed when the run ends. The three names are the runner's: `test_env` refuses them, and nothing a build or an earlier run left in the process's
+  link in its path; the branch-coverage run makes it in its own scratch directory, `<BUCK_SCRATCH_PATH>/cov_branch_run`), so two tests never share them, and the whole directory is removed when the run ends
+  (the branch-coverage run keeps it, with the rest of its scratch, when the test fails). The three names are the runner's: `test_env` refuses them, and nothing a build or an earlier run left in the process's
   own environment reaches the test under them. `BUCK_SCRATCH_PATH`, which Buck2 sets for a build action (not for `buck2 test`), is left as it is and is **relative** to the action's directory, not to the test's working
   directory: a test must not use it, `TMPDIR` is the absolute path to write under.
 - **The installed layout.** `test_layout = "installed"` (the default is `"default"`, the layout above, unchanged) runs each test the way a program installed on a machine runs: from a fresh root made for that run, in the

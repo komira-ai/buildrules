@@ -145,7 +145,11 @@ test "a run as a process: argv, BUCK_SCRATCH_PATH, the test's working directory 
     try testing.expectEqualStrings(b.p("share"), b.read("bin/cwd").?);
     const env = b.read("bin/env").?;
     const k = b.p("scr/cov_branch_run");
-    try testing.expectEqualStrings(try std.fmt.allocPrint(b.a(), "PATH=/usr/bin:/bin\nLD_LIBRARY_PATH={s}/lib\nA=1\nLLVM_PROFILE_FILE={s}/prof/%p.profraw\n", .{ b.p("tc"), k }), env);
+    // TMPDIR, TEST_TMPDIR and HOME are the run's own in the default layout too: <scratch>/buildrules_test.<random>/{tmp,home}, absolute.
+    const at = std.mem.indexOf(u8, env, "\nTMPDIR=").? + "\nTMPDIR=".len;
+    const dir = std.fs.path.dirname(env[at .. at + std.mem.indexOfScalar(u8, env[at..], '\n').?]).?;
+    try testing.expect(std.mem.startsWith(u8, dir, try std.fmt.allocPrint(b.a(), "{s}/buildrules_test.", .{k})));
+    try testing.expectEqualStrings(try std.fmt.allocPrint(b.a(), "PATH=/usr/bin:/bin\nLD_LIBRARY_PATH={s}/lib\nA=1\nTMPDIR={s}/tmp\nTEST_TMPDIR={s}/tmp\nHOME={s}/home\nLLVM_PROFILE_FILE={s}/prof/%p.profraw\n", .{ b.p("tc"), dir, dir, dir, k }), env);
     try testing.expectEqualStrings("", b.read("bin/argv").?);
 
     // llvm-profdata: merge of the one profile the test wrote (the process id in its name), then show; LC_ALL=C alone.

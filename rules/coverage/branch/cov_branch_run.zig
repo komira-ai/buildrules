@@ -18,15 +18,20 @@
 //!                  working directory (as `cov_run --data-env`); with --installed it names <root>/share
 //!   --installed    the test is run from an installed layout, the same one the test run (`check --installed`) and the kcov run (`cov_run --installed`)
 //!                  have, made by install_root.zig: the directory of --binary is copied to <root>/bin and the test is started as <root>/bin/<name>, the
-//!                  tree of --share (the sources) is copied into <root>, --data into <root>/share; <root> is the working directory. TMPDIR, TEST_TMPDIR
-//!                  and HOME are empty private directories made beside <root>. A --share that holds a `bin` or a `share` is refused (exit 1); --env and
-//!                  --data-env may not name TMPDIR, TEST_TMPDIR or HOME. The directories are inside the scratch directory (below)
+//!                  tree of --share (the sources) is copied into <root>, --data into <root>/share; <root> is the working directory, beside the private
+//!                  directories (below). A --share that holds a `bin` or a `share` is refused (exit 1)
 //!   --data         the tree copied to <root>/share (with --installed only); <root>/share is there, empty, without it
+//!
+//! Every run, in either layout, gives the test TMPDIR, TEST_TMPDIR and HOME of its own (docs/contract.md, "Scratch the runner owns"): absolute paths of
+//! empty directories made by install_root.zig in a fresh <scratch>/buildrules_test.<random>, TMPDIR and TEST_TMPDIR the same directory, HOME another.
+//! They are never the host's /tmp, which can be small (a test that writes large files there fails for want of space). --env and --data-env may not
+//! name TMPDIR, TEST_TMPDIR or HOME.
 //!
 //! Steps:
 //!   1. The test runs in <share> with exactly this environment: PATH=/usr/bin:/bin, LD_LIBRARY_PATH=<compiler>/lib (then each --lib-dir), the --env
-//!      entries and LLVM_PROFILE_FILE=<scratch>/prof/%p.profraw (an absolute path; %p is the pid, so a child the test starts writes
-//!      a profile of its own). The test must pass: when it fails, so does this action, with the test's output and this tool's message.
+//!      entries, the --data-env variable, TMPDIR, TEST_TMPDIR, HOME and LLVM_PROFILE_FILE=<scratch>/prof/%p.profraw (an absolute path; %p is the
+//!      pid, so a child the test starts writes a profile of its own). The test must pass: when it fails, so does this action, with the test's
+//!      output and this tool's message.
 //!   2. At least one raw profile was written there; none (the runtime was not linked, the variable did not reach the test, the test
 //!      left without running its exit handlers) fails the action.
 //!   3. Each raw profile starts with the 64-bit raw magic, its version is <raw_version>, and its variant flags carry the
@@ -40,7 +45,7 @@
 //! counts are not in <profdata_out>. It has no time limit of its own: a test that hangs holds the action until the executor's timeout.
 //!
 //! The scratch directory is $BUCK_SCRATCH_PATH/cov_branch_run (relative to the working directory when it is relative), or
-//! .cov_branch_run in the working directory without one; it is removed after a success.
+//! .cov_branch_run in the working directory without one; it is removed after a success, with the private directories in it, and kept for a failure.
 //!
 //! Exit status: the test's when it fails (128 + N when signal N killed it); 1 when no profile was written or one is refused; 2 for a
 //! usage error, or a program this tool cannot start.
@@ -66,7 +71,7 @@ pub const Args = struct {
     env: []const []const u8,
     /// The variable that names --share (made absolute), or empty.
     data_env: []const u8 = "",
-    /// The installed layout (module comment): the test runs from `<root>/bin/<name>` with private TMPDIR, TEST_TMPDIR and HOME.
+    /// The installed layout (module comment): the test runs from `<root>/bin/<name>`.
     installed: bool = false,
     /// The tree copied to `<root>/share`, or empty; needs `installed`.
     data: []const u8 = "",
@@ -140,8 +145,8 @@ pub fn parseArgs(alloc: std.mem.Allocator, argv: []const []const u8, why: *[]con
         why.* = "--data needs --installed";
         return null;
     }
-    if (installed and ownsScratch(data_env)) {
-        why.* = try std.fmt.allocPrint(alloc, "--data-env '{s}' is a variable the installed run sets itself", .{data_env});
+    if (ownsScratch(data_env)) {
+        why.* = try std.fmt.allocPrint(alloc, "--data-env '{s}' is a variable the run sets itself", .{data_env});
         return null;
     }
     for (env.items) |e| {
@@ -150,8 +155,8 @@ pub fn parseArgs(alloc: std.mem.Allocator, argv: []const []const u8, why: *[]con
             why.* = try std.fmt.allocPrint(alloc, "--env '{s}' is not NAME=VALUE", .{e});
             return null;
         }
-        if (installed and ownsScratch(e[0..eq])) {
-            why.* = try std.fmt.allocPrint(alloc, "--env {s}: an installed run sets {s} itself (its private scratch directories)", .{ e, e[0..eq] });
+        if (ownsScratch(e[0..eq])) {
+            why.* = try std.fmt.allocPrint(alloc, "--env {s}: a branch coverage run sets {s} itself (its private scratch directories)", .{ e, e[0..eq] });
             return null;
         }
         if (std.mem.eql(u8, e[0..eq], "LLVM_PROFILE_FILE")) {
@@ -175,7 +180,7 @@ pub fn parseArgs(alloc: std.mem.Allocator, argv: []const []const u8, why: *[]con
     };
 }
 
-/// The variables an installed run gives the test as its private directories (as `cov_run --private-scratch` does).
+/// The variables every run gives the test as its private directories (as `cov_run --private-scratch` does).
 fn ownsScratch(name: []const u8) bool {
     inline for (.{ "TMPDIR", "TEST_TMPDIR", "HOME" }) |own| {
         if (std.mem.eql(u8, name, own)) return true;
@@ -191,24 +196,25 @@ fn parseVersion(s: []const u8) ?u32 {
 }
 
 /// What the test runs on: `tree` is its working directory, `binary` the program started, `data` what `--data-env` names, and `scratch` the private
-/// directories of an installed run (null otherwise). Every path is absolute.
+/// directories of the run (its TMPDIR, TEST_TMPDIR and HOME; in the installed layout also its root). Every path is absolute.
 pub const Staged = struct {
     tree: []const u8,
     binary: []const u8,
     data: []const u8,
-    scratch: ?ir.Scratch,
+    scratch: ir.Scratch,
 };
 
-/// The layout of the run. The default layout is the tree `--share` and the binary where they are. With `--installed` a fresh private directory is made in `parent`
-/// and laid out as the test run and the kcov run have it (install_root.zig, `installTree`): the directory of the binary copied to `<root>/bin`, the tree of
-/// `--share` (the sources the line tables name) copied into `<root>`, `--data` copied to `<root>/share`; `<root>` is then the working directory and
-/// `<root>/share` what `--data-env` names. A tree that holds a `bin` or a `share` is refused. The directory is removed when the layout fails.
+/// The layout of the run. Every run first gets a fresh private directory in `parent` (install_root.zig, `make`), whose `tmp` and `home` are its TMPDIR,
+/// TEST_TMPDIR and HOME. The default layout is then the tree `--share` and the binary where they are. With `--installed` the private directory is laid out as
+/// the test run and the kcov run have it (install_root.zig, `installTree`): the directory of the binary copied to `<root>/bin`, the tree of `--share` (the
+/// sources the line tables name) copied into `<root>`, `--data` copied to `<root>/share`; `<root>` is then the working directory and `<root>/share` what
+/// `--data-env` names. A tree that holds a `bin` or a `share` is refused. The directory is removed when the layout fails.
 pub fn stage(alloc: std.mem.Allocator, a: Args, cwd: []const u8, parent: []const u8) !Staged {
     const share = try common.abs(alloc, cwd, a.share);
     const binary = try common.abs(alloc, cwd, a.binary);
-    if (!a.installed) return .{ .tree = share, .binary = binary, .data = share, .scratch = null };
     const s = try ir.make(alloc, parent);
     errdefer ir.remove(s);
+    if (!a.installed) return .{ .tree = share, .binary = binary, .data = share, .scratch = s };
     // The binary is installed under the name it is given, not the name a link of it leads to.
     const data: ?[]const u8 = if (a.data.len > 0) try common.abs(alloc, cwd, a.data) else null;
     const installed = try ir.installTree(alloc, s, share, binary, data);
@@ -225,11 +231,9 @@ pub fn testEnv(alloc: std.mem.Allocator, a: Args, cwd: []const u8, k: []const u8
     try v.append(alloc, ld.items);
     try v.appendSlice(alloc, a.env);
     if (a.data_env.len > 0) try v.append(alloc, try std.fmt.allocPrint(alloc, "{s}={s}", .{ a.data_env, staged.data }));
-    if (staged.scratch) |s| {
-        try v.append(alloc, try std.fmt.allocPrint(alloc, "TMPDIR={s}", .{s.tmp}));
-        try v.append(alloc, try std.fmt.allocPrint(alloc, "TEST_TMPDIR={s}", .{s.tmp}));
-        try v.append(alloc, try std.fmt.allocPrint(alloc, "HOME={s}", .{s.home}));
-    }
+    try v.append(alloc, try std.fmt.allocPrint(alloc, "TMPDIR={s}", .{staged.scratch.tmp}));
+    try v.append(alloc, try std.fmt.allocPrint(alloc, "TEST_TMPDIR={s}", .{staged.scratch.tmp}));
+    try v.append(alloc, try std.fmt.allocPrint(alloc, "HOME={s}", .{staged.scratch.home}));
     try v.append(alloc, try std.fmt.allocPrint(alloc, "LLVM_PROFILE_FILE={s}/prof/%p.profraw", .{k}));
     return v.toOwnedSlice(alloc);
 }
@@ -379,8 +383,8 @@ pub fn runAll(alloc: std.mem.Allocator, a: Args, where: common.Where, runner: co
     const prof = try std.fmt.allocPrint(alloc, "{s}/prof", .{k});
     try std.fs.cwd().makePath(prof);
 
-    // 1. The test, in the tree of its sources (the installed layout's root, with --installed). The installed run's directories are inside the scratch
-    // directory, so they are removed with it after a success and kept with it for a failure.
+    // 1. The test, in the tree of its sources (the installed layout's root, with --installed). The run's private directories (its TMPDIR, TEST_TMPDIR, HOME
+    // and installed layout) are inside the scratch directory, so they are removed with it after a success and kept with it for a failure.
     const staged = stage(alloc, a, where.cwd, k) catch |e| {
         try err.writer(alloc).print("cov_branch run: cannot stage the run in {s}: {s}\n", .{ k, @errorName(e) });
         return 1;
