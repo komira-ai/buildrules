@@ -55,7 +55,7 @@ export const concepts: Page = {
     p('A table that no longer matches Cargo\'s files is red, never silently used. There are three layers, from cheap to thorough:'),
     ul(
       '`buildrules check` is offline and read-only. It compares hashes and the presence of files. It is meant for pull requests.',
-      '`:check`, a Buck2 validation attached to `:debug`, `:release`, `:test` and `:lint`, compares the same hashes at build time, so a stale table cannot be built.',
+      '`:check`, a Buck2 validation attached to `:debug`, `:release`, `:test`, `:lint` and `:fmt`, compares the same hashes at build time, so a stale table cannot be built.',
       '`buildrules sync --check` regenerates into `buck-out/` and exits 1 unless every generated file is byte-identical to the committed one. It needs the pinned Cargo (which Buck2 builds), and the network only the first time.',
     ),
     p('Generated files say "Do not edit" in their first line. `check` fails on a hand-edited `buildrules.bzl`. A second `sync` on unchanged inputs writes the same bytes.'),

@@ -10,6 +10,7 @@ control's own error. ci/negative_check.zig holds the wiring of this file to the 
 load("//examples/mojo/sys_app:buildrules.mojo.lock.bzl", SYS_APP_GRAPH = "GRAPH")
 load("//examples/mojo/ws:buildrules.mojo.lock.bzl", WS_GRAPH = "GRAPH")
 load("//rules/mopm:pins.bzl", "MOPM_DEFAULT", "vname")
+load("//rules/rust:pins.bzl", "RUST_DEFAULT", rust_vname = "vname")
 load(":native_library.bzl", "native_library_problems", "native_link_cfg_problems")
 load(":native_macos.bzl", "native_macos_problems")
 load(":system_libs.bzl", "system_libs_problems")
@@ -64,6 +65,10 @@ CASES = [
     # at analysis, naming the target.
     ("//ci/faulty:zig_dist_of_a_short_sha256", "buildrules//platforms:linux_x86_64", "`sha256` must be the archive's 64 lower-case hex digits"),
     ("//ci/faulty:zig_dist_of_a_zero_max_output", "buildrules//platforms:linux_x86_64", "`max_output` must be a positive number of decompressed bytes"),
+    # `:fmt` (rules/rust/fmt.bzl) refuses by name: a toolchain that pins no rustfmt, and a member or workspace whose rustfmt config it would not read as cargo fmt does.
+    ("//ci/faulty:fmt_with_a_toolchain_without_rustfmt", "buildrules//platforms:linux_x86_64", "has no pinned rustfmt (a version pinned in buildrules-pins.toml pins none)"),
+    ("//ci/faulty:fmt_refused_with_its_reason", "buildrules//platforms:linux_x86_64", "fmt_refused_with_its_reason: src/bin/rustfmt.toml is the rustfmt config of src/bin/tool.rs"),
+    ("//ci/faulty:fmt_config_refused_with_its_reason", "buildrules//platforms:linux_x86_64", "fmt_config_refused_with_its_reason: crates/rustfmt.toml is the rustfmt config of the member crates/a"),
 ] + [
     ("//examples/mojo/subdirs:lib", platform, "has no unit graph for this target platform. It holds graphs for linux-64, linux-aarch64, osx-arm64")
     for platform in UNSUPPORTED_SUBDIR_PLATFORMS
@@ -497,15 +502,21 @@ FAULTY = [
     ("//ci/faulty:zig_dist_of_other_bytes", "//rules/pins:zig", "the archive's sha256 is not the one given with --sha256"),
     ("//ci/faulty:zig_dist_over_its_max_output", "//rules/pins:zig", "the archive holds more decompressed bytes than --max-output allows"),
     ("//ci/faulty:zig_dist_of_a_corrupt_archive", "//rules/pins:zig", "the compressed data is corrupt"),
+    # `:fmt` (rules/rust/fmt.bzl): the pinned rustfmt finds a file it would change, as a root, as a module reached only through `mod`, and as a file under
+    # the config it is given (and not under its defaults); rustfmt names the file and the line (`Diff in <path>:<line>:`). The control is the same rule over a
+    # file it leaves as it is.
+    ("//ci/faulty:fmt_of_a_badly_formatted_file", "//ci/faulty:fmt_of_a_well_formatted_file", "ci/faulty/fmt/bad.rs:1:"),
+    ("//ci/faulty:fmt_of_a_badly_formatted_module", "//ci/faulty:fmt_of_a_well_formatted_file", "ci/faulty/fmt/module/inner.rs:1:"),
+    ("//ci/faulty:fmt_against_its_config", "//ci/faulty:fmt_of_a_well_formatted_file", "ci/faulty/fmt/good.rs:2:"),
 ]
 
 # Every action that unpacks an archive is the pinned `unpack` given the archive's sha256 and size, its format and a limit on its decompressed bytes
 # (rules/core/unpack.bzl). The rules are found by kind in the closure of what CI builds, their actions are read, and each must run the program pinned for the
 # execution platform (rules/pins:unpack, a download: no rule builds it) with all four checks and a well formed value for each. The targets that must be among them
 # are named, so a rule that stops unpacking this way (or stops being built) does not leave an empty list that passes.
-UNPACK_KINDS = "zig_dist_rule|_mopm"
-UNPACK_CATEGORIES = ["zig_unpack", "mopm_unpack"]
-UNPACK_TARGETS = ["buildrules//rules/pins:zig", "buildrules//rules/pins:zig_next", "toolchains//:mopm_" + vname(MOPM_DEFAULT), "toolchains//:mojo_1_0_0_zig"]
+UNPACK_KINDS = "zig_dist_rule|_mopm|rustfmt_dist"
+UNPACK_CATEGORIES = ["zig_unpack", "mopm_unpack", "rustfmt_unpack"]
+UNPACK_TARGETS = ["buildrules//rules/pins:zig", "buildrules//rules/pins:zig_next", "toolchains//:mopm_" + vname(MOPM_DEFAULT), "toolchains//:mojo_1_0_0_zig", "toolchains//:rustfmt_" + rust_vname(RUST_DEFAULT)]
 
 # The pin `//rules/pins:unpack` resolves to on each platform that has one, and a platform that has none (macOS on Intel), which is refused with the platform named.
 UNPACK_PLATFORMS = [

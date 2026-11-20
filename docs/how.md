@@ -357,11 +357,11 @@ and the file.
 
 | key | meaning |
 |---|---|
-| `actions` | named chains of steps, e.g. `ci = ["lint", "test"]`; a name may not be a step name |
+| `actions` | named chains of steps, e.g. `ci = ["fmt", "lint", "test"]`; a name may not be a step name |
 | `lint.deny-warnings` | clippy `-D warnings` for `:lint` |
 | `default-action` | recorded in the table (no target derives from it yet) |
 
-Steps are `lint`, `debug`, `test`, `release` and `coverage` (`coverage` refuses for Rust: not built).
+Steps are `fmt`, `lint`, `debug`, `test`, `release` and `coverage` (`coverage` refuses for Rust: not built).
 `init` writes a virtual workspace with `resolver = "3"` and `[profile.dev] incremental = false`.
 Incremental builds cannot be hermetic, and `sync` refuses an incremental profile with this fix.
 Link-time optimization, a custom codegen backend, rpath and split-debuginfo profile fields are
@@ -442,11 +442,12 @@ buildrules init . --git <origin> --commit <commit>
 buildrules cargo new crates/hello
 buildrules sync
 buildrules check
-buck2 build //crates/hello:bin //crates/hello:test //crates/hello:lint
+buck2 build //crates/hello:bin //crates/hello:test //crates/hello:lint //crates/hello:fmt
 ```
 
 Per member the targets are `:lib`, `:bin` (if it has a binary), `:debug`, `:release`, `:test` (one
-`.passed` marker per Cargo test target), `:lint`, `:sources`, and one per action named in the policy.
+`.passed` marker per Cargo test target), `:lint`, `:fmt` (the pinned `rustfmt --check` over the files `cargo fmt` reads, with
+the member's or the workspace's `rustfmt.toml`), `:sources`, and one per action named in the policy.
 `buck2 build //crates/hello:ci` builds the `ci` action if you defined it.
 
 A member's BUCK file:

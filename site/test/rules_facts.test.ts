@@ -233,7 +233,7 @@ describe('the Rust version table on the pages is the table in pins.bzl', () => {
 
   test('the toolchain targets named on the page are the ones rust_toolchains declares', () => {
     const tc = repoFile('rules/rust/toolchain.bzl');
-    for (const role of ['sysroot', 'cargo', 'clippy']) {
+    for (const role of ['sysroot', 'cargo', 'clippy', 'rustfmt']) {
       expect(tc).toContain(`name = "${role}_" + n`);
       expect(rust).toContain(`:${role}_${vname(oldest)}`);
     }

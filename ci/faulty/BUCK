@@ -12,6 +12,7 @@ load("@buildrules//rules/mojo:same.bzl", "mojo_same")
 load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
 load("@buildrules//rules/rust:cargo.bzl", "cargo_table_check")
 load("@buildrules//rules/rust:defs.bzl", "rust_library", "rust_test")
+load("@buildrules//rules/rust:fmt.bzl", "rustfmt_check", "rustfmt_config")
 load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "ZIG_CC_TARGET")
 load("@buildrules//rules/rust:toolchain.bzl", "rust_toolchain")
 load("@buildrules//rules/pins:pins.bzl", "PINS", "strip_prefix")
@@ -101,6 +102,69 @@ rust_test(
     crate_root = "fails.rs",
     crate_name = "fails",
 )
+
+# `:fmt` (rules/rust/fmt.bzl): the pinned rustfmt over files it would change, each red with rustfmt's own difference. The control is the same rule over
+# fmt/good.rs, which rustfmt leaves as it is (built by //ci:all); the macro's own `:fmt` over a member is crates//crates/zdemo:fmt, also built by //ci:all.
+rustfmt_config(name = "fmt_defaults")
+
+rustfmt_check(
+    name = "fmt_of_a_well_formatted_file",
+    roots = {"2021": ["fmt/good.rs"]},
+    config = ":fmt_defaults",
+    srcs = ["fmt/good.rs"],
+    toolchain = "toolchains//:rust",
+    visibility = ["//ci:"],
+)
+
+# A root rustfmt would change.
+rustfmt_check(
+    name = "fmt_of_a_badly_formatted_file",
+    roots = {"2021": ["fmt/bad.rs"]},
+    config = ":fmt_defaults",
+    srcs = ["fmt/bad.rs"],
+    toolchain = "toolchains//:rust",
+)
+
+# A formatted root whose module, reached only through `mod inner;`, rustfmt would change: what is checked is every file a root reaches, not the roots alone.
+rustfmt_check(
+    name = "fmt_of_a_badly_formatted_module",
+    roots = {"2021": ["fmt/module/lib.rs"]},
+    config = ":fmt_defaults",
+    srcs = ["fmt/module/lib.rs", "fmt/module/inner.rs"],
+    toolchain = "toolchains//:rust",
+)
+
+# fmt/good.rs under a config that indents by two: red only if the config given is the one rustfmt reads (it is in no directory above the file, so rustfmt
+# would not find it by itself).
+rustfmt_check(
+    name = "fmt_against_its_config",
+    roots = {"2021": ["fmt/good.rs"]},
+    config = "fmt/config/rustfmt.toml",
+    srcs = ["fmt/good.rs"],
+    toolchain = "toolchains//:rust",
+)
+
+# Refused at analysis, by name (ci/negative.bzl, CASES): a toolchain with no rustfmt (as a version of buildrules-pins.toml has: the toolchain of the version
+# check above is declared without one), a check given a reason to refuse (a member whose rustfmt config `:fmt` would not read as cargo fmt does), and a
+# workspace config given one.
+rustfmt_check(
+    name = "fmt_with_a_toolchain_without_rustfmt",
+    roots = {"2021": ["fmt/good.rs"]},
+    config = ":fmt_defaults",
+    srcs = ["fmt/good.rs"],
+    toolchain = ":rust_toolchain_of_other_version",
+)
+
+rustfmt_check(
+    name = "fmt_refused_with_its_reason",
+    roots = {"2021": ["fmt/good.rs"]},
+    config = ":fmt_defaults",
+    srcs = ["fmt/good.rs"],
+    toolchain = "toolchains//:rust",
+    why = "src/bin/rustfmt.toml is the rustfmt config of src/bin/tool.rs under `cargo fmt`",
+)
+
+rustfmt_config(name = "fmt_config_refused_with_its_reason", why = "crates/rustfmt.toml is the rustfmt config of the member crates/a under `cargo fmt`")
 
 # A library welded to that test: the copy that is the published library is made by an action that reads the test's marker. (Control: //examples/hello:hello_lib.)
 rust_library(

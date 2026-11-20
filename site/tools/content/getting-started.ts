@@ -46,7 +46,7 @@ export const gettingStarted: Page = {
     p('`sync` resolves with Cargo (a new dependency updates `Cargo.lock`; nothing else is upgraded), reads the unit graphs Cargo prints for each package, and writes the generated files: `buildrules.lock.bzl`, `buildrules.bzl`, the root `BUCK` if absent, and `third_party/buildrules/`. Commit all of them. The first sync downloads crate sources, so it needs the network; nothing is compiled. Run `sync` again after every change to `Cargo.toml`, `Cargo.lock` or `rust-toolchain.toml`.'),
     h2('6. Build and test'),
     code('buck2 build //crates/hello:test //crates/hello:debug', 'shell'),
-    p('Each package gets `:lib`, `:bin` (if it has a binary), `:debug`, `:release`, `:test`, `:lint` and one target per action named in the policy. [The Rust rules page](/rules/rust/) lists them. Building `:test` runs the package\'s tests on the farm, so a cached rebuild means the tests passed on identical inputs.'),
+    p('Each package gets `:lib`, `:bin` (if it has a binary), `:debug`, `:release`, `:test`, `:lint`, `:fmt` and one target per action named in the policy. [The Rust rules page](/rules/rust/) lists them. Building `:test` runs the package\'s tests on the farm, so a cached rebuild means the tests passed on identical inputs.'),
     h2('7. Check in CI'),
     code('buildrules check', 'shell'),
     p('`check` is offline and read-only. It exits 1 if the generated files no longer match `Cargo.toml`, `Cargo.lock` and `rust-toolchain.toml`, and prints `buildrules sync` as the fix. Use it as the pull-request gate. [Concepts](/concepts/#the-sync-and-check-model) explains why there are two layers of checking.'),
