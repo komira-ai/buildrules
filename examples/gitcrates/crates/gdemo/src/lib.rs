@@ -25,7 +25,9 @@ pub fn parse_size(text: &str, limit: u64) -> Result<u64, SizeError> {
     if text.is_empty() {
         return Err(SizeError::Empty);
     }
-    let size: u64 = text.parse().map_err(|_| SizeError::NotANumber(text.to_string()))?;
+    let size: u64 = text
+        .parse()
+        .map_err(|_| SizeError::NotANumber(text.to_string()))?;
     if size > limit {
         return Err(SizeError::TooLarge { size, limit });
     }
@@ -45,8 +47,14 @@ mod tests {
     #[test]
     fn each_refusal_says_what_was_wrong_in_the_derived_message() {
         assert_eq!(parse_size("", 10).unwrap_err().to_string(), "no size given");
-        assert_eq!(parse_size("ten", 10).unwrap_err().to_string(), "`ten` is not a size in bytes");
-        assert_eq!(parse_size("11", 10).unwrap_err().to_string(), "11 bytes is more than the limit of 10");
+        assert_eq!(
+            parse_size("ten", 10).unwrap_err().to_string(),
+            "`ten` is not a size in bytes"
+        );
+        assert_eq!(
+            parse_size("11", 10).unwrap_err().to_string(),
+            "11 bytes is more than the limit of 10"
+        );
     }
 
     #[test]
