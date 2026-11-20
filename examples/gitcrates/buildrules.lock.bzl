@@ -6,8 +6,8 @@ RUSTC = "1.95.0"
 TARGET = "x86_64-unknown-linux-gnu"
 CARGO_LOCK_SHA256 = "28379f036b0b57f285eb4597447d4ae514840c19679475a7cbe28f04ace661f0"
 MANIFEST_SHA256 = {
-    "Cargo.toml": "2873f4650c27e44fe6691bd1b2ed6922c12df6ad75bd0fd619e430c12c4ca177",
-    "crates/gdemo/Cargo.toml": "1f184095229948bb6f2f0d6fa9f78e5bde66105c755a0155dff190cb8c16a011",
+    "Cargo.toml": "c32955f86745625748cc226bd6f756f5aa6399d356328b1a5f78eb5b518fa0e7",
+    "crates/gdemo/Cargo.toml": "9b9aa0c5f02119966e02740184e14b96aea33406b06ee825d5a7d6abac755ac6",
     "rust-toolchain.toml": "2081082533ff134426c07fae80605f229fa3b3cc0f7b7d68167746e9b8372979",
 }
 

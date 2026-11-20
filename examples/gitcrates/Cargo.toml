@@ -3,6 +3,11 @@
 resolver = "3"
 members = ["crates/gdemo"]
 
+# Every external dependency is declared once, here; members name it with `workspace = true`. thiserror comes from its git repository,
+# pinned by commit (a branch, a tag or a short rev is refused by `buildrules sync`).
+[workspace.dependencies]
+thiserror = { git = "https://github.com/dtolnay/thiserror", rev = "95a512669395f30cf9ae10343149726c0563ed76" }
+
 [workspace.metadata.buildrules]
 # Policy only (profiles and lints stay in cargo's own tables). `ci` is what `buck2 build //:ci` builds.
 default-action = "ci"
