@@ -1,7 +1,8 @@
-# A virtual workspace, as `buildrules init` writes it, with one member that links a C library (zstd) built by a crates.io build script.
+# A virtual workspace, as `buildrules init` writes it, with one member that links a C library (zstd) built by a crates.io build script and one
+# whose tests run with the Postgres fixture (crates/pgdemo).
 [workspace]
 resolver = "3"
-members = ["crates/zdemo"]
+members = ["crates/pgdemo", "crates/zdemo"]
 
 [workspace.metadata.buildrules]
 # Policy only (profiles and lints stay in cargo's own tables). `ci` is what `buck2 build //:ci` builds.

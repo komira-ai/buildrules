@@ -4,9 +4,10 @@
 SCHEMA = 2
 RUSTC = "1.95.0"
 TARGET = "x86_64-unknown-linux-gnu"
-CARGO_LOCK_SHA256 = "6dc03d4ab6064e4446bbdde4f072d34cc9dc445428c71ba9f0daabd185b3bc1f"
+CARGO_LOCK_SHA256 = "f3a037cdbe33b2185937bf955f680c32f23c7bb3b72e1fd13ecb2675ab60f416"
 MANIFEST_SHA256 = {
-    "Cargo.toml": "7327ad5cd2810d410c7916a922c0ca67ce87216115ee42281a095c02a30d5bcc",
+    "Cargo.toml": "c41616239183904b9b134574b41d9e651481f9ec8c4dd88952a22f2d1465cbc2",
+    "crates/pgdemo/Cargo.toml": "02a4702a927d31c0c2264d30ba052cf89f534275b36d1ce9f876c251a3384fd9",
     "crates/zdemo/Cargo.toml": "88da4dacae32d9681847d28c964c31c88a106dfa3ec23a548972bfc9aa1a9942",
     "rust-toolchain.toml": "2081082533ff134426c07fae80605f229fa3b3cc0f7b7d68167746e9b8372979",
 }
@@ -36,6 +37,21 @@ WORKSPACE = {
 
 # One row per member: its directory, `[lints]` as flags, and `[package.metadata.buildrules]` resolved over the workspace's.
 PACKAGES = {
+    "pgdemo": {
+        "path": "crates/pgdemo",
+        "version": "0.1.0",
+        "check_cfg": ["--check-cfg", "cfg(docsrs,test)", "--check-cfg", "cfg(feature, values())"],
+        "lints": {
+            "rust": [],
+            "clippy": [],
+        },
+        "actions": {
+            "ci": ["lint", "test"],
+        },
+        "deny_warnings": True,
+        "default_action": "ci",
+        "postgres": {"url_env": "PGDEMO_URL"},
+    },
     "zdemo": {
         "path": "crates/zdemo",
         "version": "0.1.0",
@@ -57,6 +73,23 @@ GRAPHS = {}
 
 # `cargo <verb> -p <member> --target TARGET`, per member.
 MEMBERS = {
+    "pgdemo": {
+        "build": {
+            "units": 1,
+            "graph_units": 1,
+            "roots": ["pgdemo-0.1.0:23021ceda1"],
+        },
+        "test": {
+            "units": 4,
+            "graph_units": 4,
+            "roots": ["pgdemo-0.1.0:3cd87baa53", "pgdemo-0.1.0:6690fa0988", "pgdemo-0.1.0:9ff37c4d80"],
+        },
+        "release": {
+            "units": 1,
+            "graph_units": 1,
+            "roots": ["pgdemo-0.1.0:5bd55c0d4c"],
+        },
+    },
     "zdemo": {
         "build": {
             "units": 13,
@@ -256,6 +289,96 @@ UNITS = {
         "deps": [],
         "sha256": "89d92a4743f9a61002fae18374ed11e7973f530cb3a3255fb354818118b2203c",
         "test_flags": {"test": False, "doctest": False},
+    },
+    "pgdemo-0.1.0:23021ceda1": {
+        "crate": "pgdemo",
+        "version": "0.1.0",
+        "source": "path",
+        "target_kind": ["lib"],
+        "crate_types": ["lib"],
+        "target_name": "pgdemo",
+        "mode": "build",
+        "side": "target",
+        "edition": "2021",
+        "crate_root": "src/lib.rs",
+        "features": [],
+        "cfgs": [],
+        "profile": {"opt_level": "0", "lto": "false", "codegen_backend": None, "codegen_units": None, "debuginfo": 2, "split_debuginfo": None, "debug_assertions": True, "overflow_checks": True, "rpath": False, "incremental": False, "panic": "unwind", "strip": {"deferred": "None"}},
+        "deps": [],
+        "path": "crates/pgdemo",
+        "test_flags": {"test": True, "doctest": True},
+    },
+    "pgdemo-0.1.0:3cd87baa53": {
+        "crate": "pgdemo",
+        "version": "0.1.0",
+        "source": "path",
+        "target_kind": ["lib"],
+        "crate_types": ["lib"],
+        "target_name": "pgdemo",
+        "mode": "test",
+        "side": "target",
+        "edition": "2021",
+        "crate_root": "src/lib.rs",
+        "features": [],
+        "cfgs": [],
+        "profile": {"opt_level": "0", "lto": "false", "codegen_backend": None, "codegen_units": None, "debuginfo": 2, "split_debuginfo": None, "debug_assertions": True, "overflow_checks": True, "rpath": False, "incremental": False, "panic": "unwind", "strip": {"deferred": "None"}},
+        "deps": [],
+        "path": "crates/pgdemo",
+        "test_flags": {"test": True, "doctest": True},
+    },
+    "pgdemo-0.1.0:5bd55c0d4c": {
+        "crate": "pgdemo",
+        "version": "0.1.0",
+        "source": "path",
+        "target_kind": ["lib"],
+        "crate_types": ["lib"],
+        "target_name": "pgdemo",
+        "mode": "build",
+        "side": "target",
+        "edition": "2021",
+        "crate_root": "src/lib.rs",
+        "features": [],
+        "cfgs": [],
+        "profile": {"opt_level": "3", "lto": "false", "codegen_backend": None, "codegen_units": None, "debuginfo": 0, "split_debuginfo": None, "debug_assertions": False, "overflow_checks": False, "rpath": False, "incremental": False, "panic": "unwind", "strip": {"resolved": {"Named": "debuginfo"}}},
+        "deps": [],
+        "path": "crates/pgdemo",
+        "test_flags": {"test": True, "doctest": True},
+    },
+    "pgdemo-0.1.0:6690fa0988": {
+        "crate": "pgdemo",
+        "version": "0.1.0",
+        "source": "path",
+        "target_kind": ["lib"],
+        "crate_types": ["lib"],
+        "target_name": "pgdemo",
+        "mode": "doctest",
+        "side": "target",
+        "edition": "2021",
+        "crate_root": "src/lib.rs",
+        "features": [],
+        "cfgs": [],
+        "profile": {"opt_level": "0", "lto": "false", "codegen_backend": None, "codegen_units": None, "debuginfo": 2, "split_debuginfo": None, "debug_assertions": True, "overflow_checks": True, "rpath": False, "incremental": False, "panic": "unwind", "strip": {"deferred": "None"}},
+        "deps": [["pgdemo", "pgdemo-0.1.0:23021ceda1"]],
+        "path": "crates/pgdemo",
+        "test_flags": {"test": True, "doctest": True},
+    },
+    "pgdemo-0.1.0:9ff37c4d80": {
+        "crate": "pgdemo",
+        "version": "0.1.0",
+        "source": "path",
+        "target_kind": ["test"],
+        "crate_types": ["bin"],
+        "target_name": "row",
+        "mode": "test",
+        "side": "target",
+        "edition": "2021",
+        "crate_root": "tests/row.rs",
+        "features": [],
+        "cfgs": [],
+        "profile": {"opt_level": "0", "lto": "false", "codegen_backend": None, "codegen_units": None, "debuginfo": 2, "split_debuginfo": None, "debug_assertions": True, "overflow_checks": True, "rpath": False, "incremental": False, "panic": "unwind", "strip": {"deferred": "None"}},
+        "deps": [["pgdemo", "pgdemo-0.1.0:23021ceda1"]],
+        "path": "crates/pgdemo",
+        "test_flags": {"test": True, "doctest": False},
     },
     "pkg-config-0.3.28:8f301fcbac": {
         "crate": "pkg-config",

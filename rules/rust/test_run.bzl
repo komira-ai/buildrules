@@ -5,6 +5,10 @@ RUN of a test built for x86-64-v3 must land on a worker that has v3. So the run 
 `exec_compatible_with` (rules/isa.bzl `test_exec_compatible_with()`), and it checks, while the build graph is analysed,
 that the platform it was given reports at least the level the test was built for. A test at a level whose run target lost
 `exec_compatible_with` fails here with the fix, instead of running on whatever worker is free and dying with SIGILL.
+
+A run given `postgres_url_env` (a cargo package that declares `postgres = { url-env = "NAME" }`, rules/postgres/README.md) runs under `pg_run`: it starts
+a private Postgres from the pinned tree (`buildrules//rules/postgres:prefix`), listening only on a Unix socket in the action's TMPDIR, runs the `check`
+command below with NAME set to the server's URL, and stops the server after it. A run without it is the command it always was.
 """
 
 load("//rules:isa.bzl", "isa_satisfies")
@@ -23,7 +27,7 @@ def _impl(ctx):
 
     # `check marker` (rules/check): the marker is written only when the binary exited 0, and a failed run is the binary's output and its status.
     ctx.actions.run(
-        cmd_args(check, "marker", "--out", marker.as_output(), info.marker, info.start, "--", info.exe, hidden = info.hidden),
+        cmd_args(_fixture(ctx), check, "marker", "--out", marker.as_output(), info.marker, info.start, "--", info.exe, hidden = info.hidden),
         category = "rust_test",
         identifier = ctx.label.name,
         env = info.env,
@@ -36,18 +40,29 @@ def _impl(ctx):
         # `buck2 test` runs the same pinned binary with the same environment and working directory, outside the build (no marker).
         out.append(ExternalRunnerTestInfo(
             type = "custom",
-            command = [cmd_args(check, "run", info.start, "--", info.exe, hidden = info.hidden)],
+            command = [cmd_args(_fixture(ctx), check, "run", info.start, "--", info.exe, hidden = info.hidden)],
             env = info.env,
             labels = ["test"] + list(info.labels),
         ))
     return out
 
+def _fixture(ctx):
+    """What the `check` command runs under: `pg_run ... --` for a run that declares the Postgres fixture, else nothing."""
+    name = ctx.attrs.postgres_url_env
+    if name == None:
+        return []
+    return [ctx.attrs._pg_run[RunInfo], "--prefix", ctx.attrs._pg_prefix[DefaultInfo].default_outputs[0], "--url-env", name, "--"]
+
 test_run = rule(
     impl = _impl,
     attrs = {
+        # The variable the test reads the URL of its private Postgres from (rules/postgres/README.md); None: no server.
+        "postgres_url_env": attrs.option(attrs.string(), default = None),
         "required_isa": attrs.string(default = ""),
         "unit": attrs.dep(providers = [TestUnitInfo]),
         "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
         "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
+        "_pg_prefix": attrs.exec_dep(default = "buildrules//rules/postgres:prefix"),
+        "_pg_run": attrs.exec_dep(default = "buildrules//rules/postgres:pg_run", providers = [RunInfo]),
     },
 )

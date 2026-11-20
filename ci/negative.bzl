@@ -441,6 +441,7 @@ FAULTY = [
     ("//ci/faulty:table_of_other_bytes", "//ci/faulty:table_in_sync", "STALE ci/faulty/empty.txt"),
     ("//ci/faulty:rust_toolchain_of_other_version", "toolchains//:rust", "rust_toolchain: expected output starting with 'rustc 0.0.0 (' but"),
     ("//ci/faulty:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
+    ("//ci/faulty:pgdemo_row_without_postgres", "crates//crates/pgdemo:pgdemo-0.1.0_9ff37c4d80", "PGDEMO_URL names no Postgres server"),
     ("//ci/faulty:lib_behind_a_failing_test", "//examples/hello:hello_lib", "this test fails by design"),
     ("//ci/faulty:mojo_test_that_fails", None, "check marker: TEST FAILED: "),
     # A test that blocks forever (ci/faulty/hang.zig) under a hang limit of one second (`test_hang_limit_s = 1`): red, with the hang-limit verdict (docs/contract.md, section 12.8)
@@ -609,6 +610,12 @@ TEST_COMMANDS = [
     ("//ci/cargo_run:bin_test", [
         _CARGO_START + "\"--\", <build artifact bin_test__bin_bin/cargo_run",
     ], _CARGO_ENV, ["CARGO_TARGET_TMPDIR"], ["test", "cargo_run"], ["hidden=[", "ci/cargo_run/src/main.rs"]),
+    # A test of a package with the Postgres fixture: the `check run` of the start above, under `pg_run`, given the pinned tree and the variable the package names.
+    ("crates//crates/pgdemo:pgdemo-0.1.0_9ff37c4d80", [
+        "\"--url-env\", \"PGDEMO_URL\", \"--\", RunInfo(args=cmd_args(cmd_args(<build artifact check",
+        "\"--prefix\", <build artifact prefix",
+        _CARGO_START + "\"--abs\", \"CARGO_TARGET_TMPDIR\", \"--mkdir-env\", \"CARGO_TARGET_TMPDIR\", \"--\", <build artifact",
+    ], _CARGO_ENV + ["CARGO_TARGET_TMPDIR"], ["PGDEMO_URL"], ["test"], ["hidden=[", "tests/row.rs"]),
     ("//examples/p4ws/crates/probe_ok:probe_ok-0.1.0_2662e7548e", [
         _CARGO_START + "\"--\", <build artifact",
     ], _CARGO_ENV, ["CARGO_TARGET_TMPDIR"], ["test"], ["hidden=[", "src/lib.rs"]),

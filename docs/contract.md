@@ -120,7 +120,8 @@ MANIFEST_SHA256 = {
 `MANIFEST_SHA256` is written one entry per line, sorted, closed by a `}` at column 0; its keys are the
 root `Cargo.toml`, `rust-toolchain.toml`, `buildrules-pins.toml` (when there is one) and every member's `Cargo.toml`. Then: `TOOLCHAIN` (section 6), `WORKSPACE` (resolved
 policy, `clippy_conf`), `PACKAGES` (one row per member: `path`, `version`, `check_cfg`, `lints.rust`,
-`lints.clippy`, `actions`, `deny_warnings`, `default_action`), `GRAPHS` (whole-workspace graphs; empty from
+`lints.clippy`, `actions`, `deny_warnings`, `default_action`, and `postgres` = `{"url_env": NAME}` only in the row of a member that has
+the fixture, section 5; `WORKSPACE` has it only when the workspace declares it), `GRAPHS` (whole-workspace graphs; empty from
 the CLI), `MEMBERS` (per member and verb `build|test|release`: `roots`, `units`, `graph_units`) and
 `UNITS` (one entry per distinct unit: `crate`, `version`, `source` = `path|registry`, `target_kind`,
 `crate_types`, `target_name`, `mode`, `side`, `edition`, `crate_root`, `features`, `cfgs`, `profile`,
@@ -147,8 +148,20 @@ them from there. Allowed in `[workspace.metadata.buildrules]` and, overriding it
 | `default-action` | string | an action or a step; recorded in the table (`WORKSPACE`, `PACKAGES`), no target is derived from it in v0 |
 | `actions` | table: name -> non-empty list of steps | `ci = ["lint", "test"]`; a name may not be a step name |
 | `lint.deny-warnings` | bool | clippy `-D warnings` for `:lint` |
+| `postgres` | table `{ url-env = "NAME" }` | every test of the package runs with a private Postgres, its URL in `NAME` (below); a package's replaces the workspace's as a whole |
 
 Steps: `lint`, `debug`, `test`, `release`, `coverage` (`coverage` refuses until P8).
+
+**The Postgres fixture.** `postgres = { url-env = "NAME" }` makes every test target of the package (`:test`, and the same `buck2 test` targets) run
+under `pg_run` (rules/postgres/README.md): before the test it starts a private server of the pinned Postgres (`rules/postgres/pins.bzl`, conda-forge,
+by version, sha256 and size) with a fresh database cluster in the action's scratch directory, listening only on a Unix socket in a directory of its own
+in the action's `TMPDIR` (no TCP listener: `listen_addresses` is empty); the test gets `NAME=postgresql://postgres@<socket directory, percent-encoded>:5432/postgres`
+(user `postgres`, trust authentication, the form the `postgres` and `sqlx` crates read as a socket directory); after the test the server is stopped
+and both directories are removed. The run's status is the test's; a server that does not start, is not ready within 300 s, or exits during the
+test fails the run with a `pg_run:` line that says so. `sync` refuses: a `postgres` that is not a table, a key other than `url-env`, a missing or
+non-string `url-env`, a value that is not an environment variable name, and a name the test run sets itself (`PATH`, `HOME`, `TMPDIR`,
+`TEST_TMPDIR`, `LD_LIBRARY_PATH`, `CARGO_*`, `BUILDRULES_*`). A test that needs the server and runs without the fixture finds `NAME` unset; it is the
+test's own business to fail saying so (examples/crates/crates/pgdemo does, and ci/faulty holds that it does).
 
 `init` writes this root manifest **[chosen]** (a virtual workspace: v0 refuses a root `[package]`):
 

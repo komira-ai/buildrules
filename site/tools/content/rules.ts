@@ -118,6 +118,7 @@ export const rust: Page = {
       ['`default-action`', 'string', 'an action or a step; recorded in the table, and no target is derived from it yet'],
       ['`actions`', 'table of name to non-empty list of steps', 'for example `ci = ["lint", "test"]`; a name may not be a step name'],
       ['`lint.deny-warnings`', 'bool', 'clippy `-D warnings` for `:lint`'],
+      ['`postgres`', 'table `{ url-env = "NAME" }`', 'every test of the package runs with a private Postgres, started for that run and stopped after it, its URL in `NAME`; a package\'s replaces the workspace\'s'],
     ),
     p('The steps are `lint`, `debug`, `test`, `release` and `coverage`; `coverage` refuses.'),
     h3('Refused when the package loads'),

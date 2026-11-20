@@ -360,6 +360,11 @@ and the file.
 | `actions` | named chains of steps, e.g. `ci = ["lint", "test"]`; a name may not be a step name |
 | `lint.deny-warnings` | clippy `-D warnings` for `:lint` |
 | `default-action` | recorded in the table (no target derives from it yet) |
+| `postgres` | `{ url-env = "NAME" }`: every test of the package runs with a private Postgres, its URL in `NAME` |
+
+`postgres = { url-env = "NAME" }` starts, for each test run, a server of the pinned Postgres (17, from conda-forge) on a Unix socket in the
+action's `TMPDIR`, sets `NAME=postgresql://postgres@<socket directory, percent-encoded>:5432/postgres` for the test, and stops the server after it
+(docs/contract.md section 5; rules/postgres/README.md). A package's `postgres` replaces the workspace's.
 
 Steps are `lint`, `debug`, `test`, `release` and `coverage` (`coverage` refuses for Rust: not built).
 `init` writes a virtual workspace with `resolver = "3"` and `[profile.dev] incremental = false`.

@@ -1,0 +1,118 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The Postgres fixture of the Rust tests (README.md): a cargo test target whose package declares `postgres = { url-env = "NAME" }` in
+# [*.metadata.buildrules] runs under `pg_run`, which starts a private server from the pinned tree for that one run and names it in NAME.
+load("@buildrules//rules/core:pinned_file.bzl", "pinned_file")
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load(":defs.bzl", "postgres_prefix")
+load(":pins.bzl", "POSTGRES_PACKAGES")
+
+# ---- the pinned packages and the tree ------------------------------------------------------------------------------------------------
+
+[
+    pinned_file(
+        name = name + ".conda",
+        url = p["url"],
+        sha256 = p["sha256"],
+        size_bytes = p["size"],
+    )
+    for name, p in POSTGRES_PACKAGES.items()
+]
+
+# The pin table, for ci/pin_mirrors_check.zig (the hosts of the pinned downloads).
+export_file(name = "pins.bzl", src = "pins.bzl", visibility = ["PUBLIC"])
+
+postgres_prefix(
+    name = "prefix",
+    postgres = ":postgresql.conda",
+    packages = [":" + name + ".conda" for name in sorted(POSTGRES_PACKAGES) if name != "postgresql"],
+    visibility = ["PUBLIC"],
+)
+
+# ---- the tools (Zig): pg_prefix, pg_run --------------------------------------------------------------------------------------------
+
+# Zig 0.15 code (std.Io, ArrayList.empty): it builds with the pinned zig_next, as check and toolbox do.
+_ZIG = "buildrules//rules/pins:zig_next"
+_ZIG_VERSION = "buildrules//rules/pins:zig_next_version"
+_TOOLBOX = "buildrules//rules/toolbox:toolbox"
+
+# The sources of the two tools: conda.zig (the zip, the tar, the placeholder) is pg_prefix's; pg_plat.zig (processes, signals, the clock) is pg_run's real platform.
+_SRCS = [
+    "conda.zig",
+    "pg_plat.zig",
+    "pg_prefix.zig",
+    "pg_run.zig",
+]
+
+# The in-memory `.conda` of the tests, and the cases of each part. The cases of pg_plat start programs for real: the toolbox (rules/toolbox) is the program that
+# only has a status (`true`, `false`, `sleep`), and fake_pg is the one that reads its environment back.
+_SUPPORT = ["conda_fixture.zig"]
+_TESTS = ["conda", "pg_plat", "pg_prefix", "pg_run"]
+_TOOLS = {"TOOLBOX": _TOOLBOX, "FAKE_PG": ":fake_pg"}
+
+[
+    zig_test(
+        name = name + "_unit",
+        src = name + "_test.zig",
+        imports = _SRCS + _SUPPORT,
+        env_tools = _TOOLS,
+        zig = _ZIG,
+    )
+    for name in _TESTS
+]
+
+# All the cases in one test program. The coverage is measured on this one: the blocks that ran in it, so a block that one part's cases run and another's do not is
+# counted once.
+zig_test(
+    name = "all_unit",
+    src = "all_test.zig",
+    imports = _SRCS + _SUPPORT + [name + "_test.zig" for name in _TESTS],
+    env_tools = _TOOLS,
+    zig = _ZIG,
+)
+
+# A stand-in for the server and initdb pg_run starts, for the process tests (fake_pg.zig). Never an input of a rule.
+zig_exe(
+    name = "fake_pg",
+    src = "fake_pg.zig",
+    zig = _ZIG,
+)
+
+# The executables, built only when the unit tests passed.
+zig_exe(
+    name = "pg_prefix",
+    src = "pg_prefix.zig",
+    imports = ["conda.zig"],
+    unit_tests = [":" + name + "_unit" for name in _TESTS] + [_ZIG_VERSION],
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+zig_exe(
+    name = "pg_run",
+    src = "pg_run.zig",
+    imports = ["pg_plat.zig"],
+    unit_tests = [":" + name + "_unit" for name in _TESTS] + [_ZIG_VERSION],
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+# The executables as processes (pg_exe_test.zig): the command line from argv, the real environment and working directory, the real platform, the exit status.
+# A validation of `:pg_prefix` and `:pg_run`; it adds nothing to the coverage.
+zig_test(
+    name = "pg_exe_test",
+    src = "pg_exe_test.zig",
+    imports = _SUPPORT,
+    env_tools = {"PG_PREFIX": ":pg_prefix", "PG_RUN": ":pg_run", "FAKE_PG": ":fake_pg", "TOOLBOX": _TOOLBOX},
+    visibility = ["PUBLIC"],
+    zig = _ZIG,
+)
+
+# The coverage of the sources the unit tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. `main` is compiled into no unit test
+# (the process test runs it), so it has neither lines nor blocks there.
+zig_coverage(
+    test_targets = [":all_unit"],
+    expect = ["rules/postgres/" + f for f in _SRCS],
+)
+
+scrub_files()
