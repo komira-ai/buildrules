@@ -1,0 +1,10 @@
+[package]
+name = "pgdemo"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The Postgres fixture: every test of this package runs with a private Postgres server, started for that one run and stopped after it,
+# its URL in PGDEMO_URL (buildrules' rules/postgres/README.md). std alone speaks to it (src/lib.rs), so the example needs no registry crate.
+[package.metadata.buildrules]
+postgres = { url-env = "PGDEMO_URL" }

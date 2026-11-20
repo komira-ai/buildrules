@@ -427,7 +427,35 @@ pub fn checkCfgFlags(a: std.mem.Allocator, features: []const []const u8) Error!V
     return val.strList(a, &.{ "--check-cfg", "cfg(docsrs,test)", "--check-cfg", try std.fmt.allocPrint(a, "cfg(feature, values({s}))", .{vals.items}) });
 }
 
-const policy_keys = [_][]const u8{ "actions", "default-action", "lint" };
+const policy_keys = [_][]const u8{ "actions", "default-action", "lint", "postgres" };
+
+/// `[A-Za-z_][A-Za-z0-9_]*`.
+fn isEnvName(s: []const u8) bool {
+    if (s.len == 0 or std.ascii.isDigit(s[0])) return false;
+    for (s) |c| if (!(std.ascii.isAlphanumeric(c) or c == '_')) return false;
+    return true;
+}
+
+/// Variables the test run sets itself (the farm test wrapper and `cargo_package` own them).
+fn runSetsEnv(s: []const u8) bool {
+    for ([_][]const u8{ "PATH", "HOME", "TMPDIR", "TEST_TMPDIR", "LD_LIBRARY_PATH" }) |n| if (std.mem.eql(u8, n, s)) return true;
+    return std.mem.startsWith(u8, s, "CARGO_") or std.mem.startsWith(u8, s, "BUILDRULES_");
+}
+
+/// `postgres = { url-env = "NAME" }`: the one key, the variable the test reads the server's URL from.
+fn checkPostgres(a: std.mem.Allocator, d: *Diag, pg: Value, where: []const u8) Error!void {
+    if (pg != .object) return die(d, "{s}: postgres must be a table {{ url-env = \"<NAME>\" }}", .{where});
+    var bad = std.ArrayList([]const u8).empty;
+    for (pg.object.keys()) |k| if (!std.mem.eql(u8, k, "url-env")) try bad.append(a, k);
+    if (bad.items.len != 0) {
+        std.mem.sort([]const u8, bad.items, {}, lessStr);
+        return die(d, "{s}: unknown postgres key(s) {s} (known: ['url-env'])", .{ where, try pyList(a, bad.items) });
+    }
+    const v = pg.object.get("url-env") orelse .null;
+    if (v != .string) return die(d, "{s}: postgres needs url-env, the name of the variable the test reads the server's URL from", .{where});
+    if (!isEnvName(v.string)) return die(d, "{s}: postgres url-env '{s}' is not an environment variable name", .{ where, v.string });
+    if (runSetsEnv(v.string)) return die(d, "{s}: postgres url-env '{s}' is a variable the test run sets itself; name another", .{ where, v.string });
+}
 
 /// `[*.metadata.buildrules]`: policy only (which steps chain into which action, lint strictness). Unknown keys are refused.
 pub fn policyOf(a: std.mem.Allocator, d: *Diag, meta: ?Value, where: []const u8) Error!Value {
@@ -443,8 +471,9 @@ pub fn policyOf(a: std.mem.Allocator, d: *Diag, meta: ?Value, where: []const u8)
     }
     if (bad.items.len != 0) {
         std.mem.sort([]const u8, bad.items, {}, lessStr);
-        return die(d, "{s}: unknown key(s) {s} in metadata.buildrules (known: ['actions', 'default-action', 'lint']); profiles and lints belong to cargo's own tables", .{ where, try pyList(a, bad.items) });
+        return die(d, "{s}: unknown key(s) {s} in metadata.buildrules (known: ['actions', 'default-action', 'lint', 'postgres']); profiles and lints belong to cargo's own tables", .{ where, try pyList(a, bad.items) });
     }
+    if (b.object.get("postgres")) |pg| try checkPostgres(a, d, pg, where);
     return b;
 }
 
@@ -497,7 +526,15 @@ pub fn resolvePolicy(a: std.mem.Allocator, d: *Diag, ws: Value, pkg: Value, wher
     try val.put(&out, "actions", try sortedObject(a, acts));
     try val.put(&out, "deny_warnings", val.boolean(val.truthy(val.get(lint, "deny-warnings"))));
     try val.put(&out, "default_action", dflt);
+    if (val.get(pkg, "postgres") orelse val.get(ws, "postgres")) |pg| try val.put(&out, "postgres", try postgresRow(a, pg));
     return out;
+}
+
+/// The baked row of a validated `postgres` policy: `{"url_env": NAME}`.
+fn postgresRow(a: std.mem.Allocator, pg: Value) !Value {
+    var row = val.newObject(a);
+    try val.put(&row, "url_env", pg.object.get("url-env").?);
+    return row;
 }
 
 fn sortedObject(a: std.mem.Allocator, o: Value) !Value {
@@ -568,6 +605,7 @@ fn packagesOf(a: std.mem.Allocator, d: *Diag, units: Value, root: []const u8) Er
     var wsrec = val.newObject(a);
     try val.put(&wsrec, "actions", val.get(wpol, "actions").?);
     try val.put(&wsrec, "default_action", val.get(wspol, "default-action") orelse .null);
+    if (val.get(wspol, "postgres")) |pg| try val.put(&wsrec, "postgres", try postgresRow(a, pg));
     const clippy = try std.fmt.allocPrint(a, "{s}/clippy.toml", .{base});
     const has_clippy = if (std.fs.cwd().access(clippy, .{})) |_| true else |_| false;
     try val.put(&wsrec, "clippy_conf", if (has_clippy) val.str("clippy.toml") else .null);

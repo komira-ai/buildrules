@@ -147,7 +147,7 @@ describe('docs/pins.md figures are the figures in the pin tables', () => {
 // A digest copied into prose goes stale when the pin moves. Pages other than docs/pins.md (which the tests above compare row by row) point at the
 // pin table instead; where a page does quote a digest, in full or as `head...tail`, it must be one a pin table holds, and a line about mopm must
 // quote mopm's.
-const PIN_TABLES = [RUST, PINS, MOPM, repoFile('rules/node/pins.bzl')];
+const PIN_TABLES = [RUST, PINS, MOPM, repoFile('rules/node/pins.bzl'), repoFile('rules/postgres/pins.bzl')];
 const PINNED = new Set(PIN_TABLES.flatMap((t) => t.match(/\b[0-9a-f]{64}\b/g) ?? []));
 
 /** The digests a page quotes that no pin table holds, and the digests on mopm lines that are not mopm's. */

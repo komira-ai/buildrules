@@ -3,6 +3,7 @@ load("@buildrules//rules:isa.bzl", "required_isa", "test_exec_compatible_with")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/zig:zig.bzl", "zig_test")
 load("@buildrules//rules/rust:test_run.bzl", "test_run")
+load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test")
 load("@buildrules//rules/cxx:defs.bzl", "checked_cxx_library")
 load("@buildrules//rules/native:defs.bzl", "native_library")
@@ -101,6 +102,25 @@ npm_tarball(
     integrity = "sha512-3a81oZNherrMQXNJriBBMRLm+k6JqX6iCp7u5ktV05ohkpkqJ0/BqDa6PCOj/uu9RU1EI2Q86A4qmslPpUyknw==",
     tarball = "//examples/zig:hello_zig",
     deps = ["//examples/zig:hello_zig"],
+    target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
+)
+
+# The Postgres fixture on a unit that is not a test: only the run of a test starts a server, so the unit refuses it (rules/rust/cargo_unit.bzl).
+cargo_unit(
+    name = "postgres_on_a_library_unit",
+    pkg = "pgfix",
+    version = "0.1.0",
+    crate_name = "pgfix",
+    mode = "build",
+    edition = "2021",
+    root = "src/lib.rs",
+    crate_hash = "0123456789",
+    opt_level = "0",
+    debuginfo = "0",
+    debug_assertions = True,
+    overflow_checks = True,
+    postgres_url_env = "PGFIX_URL",
+    exec_compatible_with = LINUX_X86_64,
     target_compatible_with = ["buildrules//platforms:isa_x86_64_v3"],
 )
 

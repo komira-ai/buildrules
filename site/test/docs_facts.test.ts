@@ -279,11 +279,11 @@ describe('init and the generated files', () => {
   test('the policy init writes, and the policy keys the page lists', () => {
     expect(contract).toContain('resolver = \\"3\\"');
     expect(contract).toContain('incremental = false');
-    expect(contract).toContain('policy_keys = [_][]const u8{ "default-action", "actions", "lint" }');
+    expect(contract).toContain('policy_keys = [_][]const u8{ "default-action", "actions", "lint", "postgres" }');
     expect(contract).toContain('lint_keys = [_][]const u8{"deny-warnings"}');
     expect(contract).toContain('steps = [_][]const u8{ "lint", "debug", "test", "release", "coverage" }');
     const t = pageText(HOW[1]);
-    for (const k of ['`actions`', '`lint.deny-warnings`', '`default-action`', 'resolver = "3"', '`incremental = false`']) expect({ k, has: t.includes(k) }).toEqual({ k, has: true });
+    for (const k of ['`actions`', '`lint.deny-warnings`', '`default-action`', '`postgres`', 'resolver = "3"', '`incremental = false`']) expect({ k, has: t.includes(k) }).toEqual({ k, has: true });
     expect(t).toContain('Steps are `lint`, `debug`, `test`, `release` and `coverage`');
   });
   test('the How pages name no flag that no command has', () => {

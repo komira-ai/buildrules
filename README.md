@@ -12,6 +12,8 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     rules/cxx, third_party/aws-lc   hermetic C/C++ on the pinned zig (binaries carry no debug info and no build path); AWS-LC 1.39.0 (crypto[static-pic]) with prefix, symbol and glibc-floor gates
     rules/mojo        mojo_package (docs/contract.md section 12): one `mopm unit build` action per unit of mopm's graph, tests, coverage, `:check`; mojo_launch, prebuilt_unpack
     rules/mopm        the pinned mopm (pins.bzl, toolchain.bzl)
+    rules/postgres    the Postgres fixture of the Rust tests: pins.bzl (Postgres 17 and its conda-forge closure), pg_prefix (one tree of them), pg_run (a private
+                      server for one test run, on a Unix socket in the action's TMPDIR, or /tmp when that is too long)
     rules/coverage    kcov v42 built from source and the coverage path tools, cov_run, cov_summary; branch/: the branch coverage of Mojo tests (cov_branch, the IR classifier, the LLVM pieces)
     cli/              the `buildrules` command line (Zig): init, cargo new/init/adopt, sync, check, npm sync/check, mojo sync/check. The unit-graph generator is part of it
     rules/platforms.bzl   the execution platforms: remote by default (properties come from .buckconfig.local), local on request (`-c buildrules_re.mode=local`, docs/contract.md section 14)
@@ -96,7 +98,9 @@ Per member: `:lib`, `:bin` (if any), `:debug`, `:release`, `:test` (one `.passed
 member's `[lints]`, `clippy.toml`, `-D warnings` by policy), `:coverage` (refuses: not built for Rust yet), `:sources` (the package's files) and one target per action named in
 `[workspace.metadata.buildrules]` / `[package.metadata.buildrules]` (`actions = { ci = ["lint", "test"] }`). Every step carries the workspace's `:check`
 as a validation: a Cargo.toml, Cargo.lock or rust-toolchain.toml that differs from what the table was made from is red, and no compile
-action takes a Cargo.toml as an input. Doctests are out of v0.
+action takes a Cargo.toml as an input. Doctests are out of v0. A package that declares `postgres = { url-env = "NAME" }` in the same tables runs
+each of its tests with a private Postgres (rules/postgres: the pinned Postgres 17 from conda-forge, started on a Unix socket for that one run, its URL
+in `NAME`, stopped after it; examples/crates/crates/pgdemo).
 
 ## The contract
 
