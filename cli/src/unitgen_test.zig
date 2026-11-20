@@ -237,6 +237,22 @@ test "policy: a package overrides one action and keeps the rest of the workspace
     try t.expectEqualStrings("ci", val.getStr(r, "default_action").?);
 }
 
+test "policy: `fmt` is a step: an action chains it, a default may name it, and an action named `fmt` is refused" {
+    // Defects: a chain with `fmt` refused as "not a step" (no repository could put `:fmt` in its `ci`); an action called `fmt` accepted, which would
+    // declare a second target of that name beside the member's own `:fmt`.
+    var e = Env.init();
+    defer e.deinit();
+    const none = val.newObject(e.a());
+    var d = Diag.init(e.a());
+    const r = try unitgen.resolvePolicy(e.a(), &d, try tomlOf(e.a(), "default-action = \"fmt\"\n[actions]\nci = [\"fmt\", \"lint\", \"test\"]\n"), none, "w");
+    try t.expectEqualStrings("{\n    \"ci\": [\"fmt\", \"lint\", \"test\"],\n}", try val.litString(e.a(), val.get(r, "actions").?, 0));
+    try t.expectEqualStrings("fmt", val.getStr(r, "default_action").?);
+    var d2 = Diag.init(e.a());
+    try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d2, try tomlOf(e.a(), "[actions]\nfmt = [\"lint\"]\n"), none, "w"));
+    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[actions]\nfmt = [\"lint\"]\n"), none, "w" });
+    try refusedWith(&d2, "w: action 'fmt' has the name of a step (['fmt', 'lint', 'debug', 'test', 'release', 'coverage']); name it differently");
+}
+
 test "policy: refusals (a typo'd key, an action that shadows a step, a step that is not one, a default that is nothing)" {
     // Defects: a typo'd policy key that silently does nothing; an action named like a step; a step the build has no action for.
     var e = Env.init();
@@ -251,8 +267,8 @@ test "policy: refusals (a typo'd key, an action that shadows a step, a step that
     try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[actions]\ntest = [\"lint\"]\n"), none, "w" });
     try refusedWith(&d2, "name of a step");
     var d3 = Diag.init(e.a());
-    try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d3, try tomlOf(e.a(), "[actions]\nci = [\"lint\", \"fmt\"]\n"), none, "w"));
-    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[actions]\nci = [\"lint\", \"fmt\"]\n"), none, "w" });
+    try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d3, try tomlOf(e.a(), "[actions]\nci = [\"lint\", \"doc\"]\n"), none, "w"));
+    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[actions]\nci = [\"lint\", \"doc\"]\n"), none, "w" });
     try refusedWith(&d3, "non-empty list of steps");
     var d4 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d4, try tomlOf(e.a(), "[actions]\nci = []\n"), none, "w"));

@@ -1,0 +1,5 @@
+# rustfmt's configuration for the workspace: `cargo fmt` and every member's `:fmt` read it (a member without a config of its own).
+# crates/zdemo/src/lib.rs is formatted under it and not under rustfmt's defaults (lines over 100 columns), so `crates//crates/zdemo:fmt` is green only when
+# this file is the config rustfmt is given.
+max_width = 160
+use_small_heuristics = "Max"
