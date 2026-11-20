@@ -143,12 +143,19 @@ def _unit_args(uid, u, row, kind_globs):
         kw["codegen_units"] = str(p["codegen_units"])
     if u["cfgs"]:
         kw["cfgs"] = list(u["cfgs"])
-    kw["srcs"] = native.glob(kind_globs)
+    kw["srcs"] = native.glob(kind_globs, exclude = _NOT_SOURCES)
     return kw
+
+# Files of a package that no unit reads: the BUCK file, the manifest (the table holds what the compile needs from it, and `:check` its hash) and
+# cargo's own output directory.
+_NOT_SOURCES = ["BUCK", "Cargo.toml", "target/**"]
 
 def _globs_for(u):
     kind = u["target_kind"][0]
-    g = {"test": ["tests/**"], "custom-build": ["build.rs"]}.get(kind, ["src/**"])
+
+    # A build script, compiled and run, has the whole package, as under cargo: it reads what it compiles from (`proto/`) and its `#[path]`
+    # modules (`src/names.rs`) from there. A cargo `rerun-if-changed` would narrow that; it is recorded, not used (cargo_unit.bzl).
+    g = {"test": ["tests/**"], "custom-build": ["**"]}.get(kind, ["src/**"])
     if kind == "lib":
         g = g + ["build.rs"]
     # A [[bin]] or [[test]] whose `path` is outside src/ and tests/ (tools/lambda/canary/main.rs): its directory is a source too.
@@ -161,6 +168,9 @@ def _outside_globs(mine):
     """Globs of the directories that hold the roots of this package's targets outside src/ and tests/."""
     out = []
     for u in mine.values():
+        if u["target_kind"] == ["custom-build"]:
+            # A build script's whole package is its own input; a test run reads what its targets read.
+            continue
         for g in _globs_for(u):
             if not (g.startswith("src/") or g.startswith("tests/") or g == "build.rs") and g not in out:
                 out.append(g)
@@ -230,7 +240,7 @@ def check_toolchain(table, refuse = fail):
         return None
     return v
 
-def cargo_package(path = ".", table = None, third_party = None, check = None, extra_srcs = [], refuse = fail):
+def cargo_package(path = ".", table = None, third_party = None, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {}):
     """Declares the targets of one cargo package (see the module comment).
 
     Args:
@@ -241,7 +251,12 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
         extra_srcs: files or directories of the source tree outside this package that the sources read at compile time
             (`include_str!("../../../api/golden.json")`), as labels (`//service/api:golden.json`, `//:tests/corpus`): inputs of
             every unit of the package, and of its test runs. Cargo needs them at those same paths, so a build that works
-            under cargo works here.
+            under cargo works here. Each must be a file (or directory) of the tree, not a copy: `export_file(mode = "reference")`.
+        stamp_env: variable name -> label of a text file (`stamp_file`), for the runs of the package's build script: the variable is set to
+            the file's text, trimmed. A script that reads a commit from a variable it prefers to `git` gets it this way.
+        stamp_rustc_env: rustc-env name -> label of a text file: the value the build script prints for that name (from `git rev-parse`,
+            which it cannot run here) is replaced by the file's text, trimmed (and set, if the script printed none). The stamp is an input of the run only, so a new commit
+            re-runs the script and rebuilds what reads the value, and nothing else.
         refuse: what a refused table calls with the reason; `fail` (the default) stops the load. Only the tests of the refusal
             pass anything else (rules/rust/refusal.bzl): a package that was refused declares nothing.
     """
@@ -275,6 +290,11 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
             kw["extra_srcs"] = list(extra_srcs)
         if u["mode"] == "test":
             kw["run_data"] = native.glob(["src/**", "tests/**", "build.rs"] + _outside_globs(mine))
+        if u["mode"] == "run-custom-build":
+            if stamp_env:
+                kw["stamp_env"] = dict(stamp_env)
+            if stamp_rustc_env:
+                kw["stamp_rustc_env"] = dict(stamp_rustc_env)
         deps = _deps_of(u, units, ws, third_party, here)
         if deps:
             kw["deps"] = deps

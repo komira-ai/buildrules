@@ -1,7 +1,9 @@
-# A virtual workspace, as `buildrules init` writes it, with one member that links a C library (zstd) built by a crates.io build script.
+# A virtual workspace, as `buildrules init` writes it. zdemo links a C library (zstd) built by a crates.io build script; macros uses the
+# proc-macro crates serde_derive, clap_derive and tokio-macros; protos compiles protobuf in its build script (protox, tonic-prost-build);
+# stamped embeds a commit given as an input and reads a source outside its directory (shared/).
 [workspace]
 resolver = "3"
-members = ["crates/zdemo"]
+members = ["crates/macros", "crates/protos", "crates/stamped", "crates/zdemo"]
 
 [workspace.metadata.buildrules]
 # Policy only (profiles and lints stay in cargo's own tables). `ci` is what `buck2 build //:ci` builds.

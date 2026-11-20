@@ -1,0 +1,35 @@
+load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//:buildrules.bzl", "cargo_package")
+
+# The build script imports protos from ../../shared/proto, a directory outside this package: declared here, so it is an input of the script's run.
+cargo_package(
+    path = ".",
+    extra_srcs = ["//shared:proto"],
+)
+
+# ---- The build script's run with the declared directory left out: red by design, on a farm ----------------------------------------------------------------
+# Written by hand like the run cargo_package makes (the debug profile of the table), and run by the script it compiles (`protos-0.1.0_301de1e199`, a
+# name the table gives: a sync that changes it makes this target fail to load, by name). Without ../../shared/proto the script's import of
+# common/v1/labels.proto finds nothing. An action of local mode runs in the checkout, where the directory is there anyway, so it is held on a farm only
+# (ci/negative.bzl, FAULTY_ON_A_FARM); it is excluded from the wildcard build (ci/all.bzl).
+cargo_unit(
+    name = "script_run_without_the_shared_protos",
+    pkg = "protos",
+    version = "0.1.0",
+    crate_name = "protos",
+    build_script_name = "build_script_build",
+    mode = "run-custom-build",
+    crate_type = "bin",
+    edition = "2024",
+    root = "build.rs",
+    crate_hash = "faulty",
+    opt_level = "0",
+    debuginfo = "2",
+    debug_assertions = True,
+    overflow_checks = False,
+    srcs = glob(["**"], exclude = ["BUCK", "Cargo.toml", "target/**"]),
+    deps = {"build_script_build": ":protos-0.1.0_301de1e199"},
+)
+
+scrub_files()

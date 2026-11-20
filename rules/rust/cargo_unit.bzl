@@ -21,7 +21,8 @@ The build-script contract (decision.md 6.1) is implemented by `bs_runner.zig`; t
   refused   rustc-link-arg*, rustc-cdylib-link-arg and any other rustc-* key (the run fails), so nothing is dropped.
   links     `links` on the run unit sets CARGO_MANIFEST_LINKS; `link_deps` are the run units of dependencies that have it.
   stamp     `stamp_env` / `stamp_rustc_env`: a file's text fed to the script's environment, or into a rustc-env value.
-  inputs    a registry script: the unpacked crate. A first-party script: the whole package directory (generated `srcs`).
+  inputs    a registry script: the unpacked crate. A first-party script: the whole package directory but BUCK, Cargo.toml and target/ (generated
+            `srcs`), compiled and run, and the package's `extra_srcs` (files outside it, which must be files of the tree).
   not yet   `rerun-if-*` narrowing of the input set.
 """
 
@@ -405,7 +406,16 @@ def _lint_impl(ctx):
     _rustc(ctx, ctx.attrs.crate_type, out, test = (ctx.attrs.unit_mode == "test"), lint = True)
     return [DefaultInfo(default_output = out)]
 
+def _check_extra_srcs(ctx):
+    """An extra source is read at its path in the tree (`#[path]`, `include_str!`, a build script's relative path), so it must be that file and
+    not a copy a rule made in buck-out, where the relative path finds nothing: the copy is refused here, naming the fix."""
+    for s in ctx.attrs.extra_srcs:
+        if not s.is_source:
+            fail(("{}: extra_srcs names {}, a copy made by a rule and not a file of the tree: a source or a build script reads it at its own path. " +
+                  "Export it with `export_file(name = ..., src = ..., mode = \"reference\")`").format(ctx.label.raw_target(), s.short_path))
+
 def _impl(ctx):
+    _check_extra_srcs(ctx)
     if ctx.attrs.mode == "lint":
         return _lint_impl(ctx)
     if ctx.attrs.mode == "build":
