@@ -234,10 +234,7 @@ mod tests {
     #[test]
     fn the_fixtures_url_names_a_socket_directory() {
         let url = Url::parse("postgresql://postgres@%2Frun%2Fpg.1a2b:5432/postgres").unwrap();
-        assert_eq!(
-            url,
-            Url { user: "postgres".to_owned(), host: Host::Socket("/run/pg.1a2b".to_owned()), port: 5432, dbname: "postgres".to_owned() }
-        );
+        assert_eq!(url, Url { user: "postgres".to_owned(), host: Host::Socket("/run/pg.1a2b".to_owned()), port: 5432, dbname: "postgres".to_owned() });
     }
 
     #[test]
