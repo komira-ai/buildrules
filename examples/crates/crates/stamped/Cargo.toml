@@ -1,0 +1,10 @@
+[package]
+name = "stamped"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# A build script that embeds the commit it is built from, in the usual way (`git rev-parse` in the checkout, or
+# `unknown`), and sources outside this crate's directory (`#[path]` to ../../shared/stamp.rs, from the build script and from the library).
+# Under buildrules the commit is an input given in BUCK, never asked of `git`, and the tests (src/lib.rs) hold that: under plain cargo they
+# see git's commit and fail. No dependencies.

@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package common.v1;
+
+// A label of a host: a key and its value.
+message Label {
+  string key = 1;
+  string value = 2;
+}

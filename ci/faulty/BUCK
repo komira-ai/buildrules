@@ -11,6 +11,7 @@ load("@buildrules//rules/native:defs.bzl", "native_library")
 load("@buildrules//rules/mojo:same.bzl", "mojo_same")
 load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
 load("@buildrules//rules/rust:cargo.bzl", "cargo_table_check")
+load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit")
 load("@buildrules//rules/rust:defs.bzl", "rust_library", "rust_test")
 load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "ZIG_CC_TARGET")
 load("@buildrules//rules/rust:test_run.bzl", "test_run")
@@ -549,6 +550,28 @@ zig_dist(
     sha256 = _ZIG["sha256"],
     size_bytes = _ZIG["size"],
     strip_prefix = strip_prefix("zig"),
+)
+
+# A crate unit whose extra source (a file outside its package that `#[path]` or `include_str!` reads at its own path) is a copy made by a rule (export_file's
+# default mode puts it in buck-out, where the relative path finds nothing): refused at analysis, naming the fix (rules/rust/cargo_unit.bzl). The same file
+# exported as itself is what examples/crates/shared/BUCK gives crates/stamped, which //ci:all builds.
+export_file(name = "fails_rs_copied", src = "fails.rs")
+
+cargo_unit(
+    name = "rust_unit_with_a_copied_extra_source",
+    pkg = "fails",
+    version = "0.1.0",
+    crate_name = "fails",
+    mode = "build",
+    edition = "2021",
+    root = "fails.rs",
+    crate_hash = "0",
+    opt_level = "0",
+    debuginfo = "0",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = ["fails.rs"],
+    extra_srcs = [":fails_rs_copied"],
 )
 
 scrub_files()

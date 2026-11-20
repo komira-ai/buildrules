@@ -1,0 +1,9 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+# Files outside every crate's directory that crates read: `stamp.rs` (`#[path]`, crates/stamped) and `proto/` (protox imports, crates/protos).
+# Exported as themselves (mode "reference"), so an action has them at their own paths, where a relative path written in a source finds them.
+export_file(name = "stamp.rs", src = "stamp.rs", mode = "reference", visibility = ["PUBLIC"])
+
+export_file(name = "proto", src = "proto", mode = "reference", visibility = ["PUBLIC"])
+
+scrub_files()

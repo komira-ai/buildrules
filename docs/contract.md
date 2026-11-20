@@ -50,11 +50,15 @@ Called once, in the package of the workspace root (v0: the repository root). Dec
 target per step (`:lint :debug :test :release`) and one per action named in the policy. Each aggregate
 depends on the same-named target of every member listed in the table.
 
-### `cargo_package(path = ".", table, third_party, check = None, extra_srcs = [], refuse = fail)` **[p7]**
+### `cargo_package(path = ".", table, third_party, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {})` **[p7]**
 Called once per member, in the member's own package. `path` is the member directory relative to the BUCK
 file (`.`). `table` is the generated table as a dict; `third_party` is the package holding registry
-units; `check` overrides the label of the workspace `:check` (default `//:check`); `extra_srcs` are files outside the package that its sources read at
-compile time; `refuse` is what a refused table calls with the reason (default `fail`, which stops the load; the tests of the refusal pass a recorder,
+units; `check` overrides the label of the workspace `:check` (default `//:check`); `extra_srcs` are files or directories outside the package that its sources (`#[path]`,
+`include_str!`) or its build script read, inputs of every unit of the package; each must be a file of the tree at its own path,
+`export_file(mode = "reference")`, and a copy made by a rule is refused at analysis naming that fix. `stamp_env` and `stamp_rustc_env` map a name
+to the label of a text file (`stamp_file`), an input of the runs of the package's build script only: `stamp_env` sets the variable to the
+file's trimmed text, `stamp_rustc_env` replaces the value the script prints for that `rustc-env` name (or sets it). They give a commit in place
+of `git rev-parse`, which a build script cannot run here (its `PATH` is an empty directory). `refuse` is what a refused table calls with the reason (default `fail`, which stops the load; the tests of the refusal pass a recorder,
 `rules/rust/refusal.bzl`). Through `//:buildrules.bzl` the table and the third-party package are bound and the call is `cargo_package(path = ".")`. Every
 member package also has `:sources`, a `filegroup` of its files (a glob of the root package cannot cross into a member's package), and the generated
 `third_party/buildrules` has `:files` (its `BUCK`, `crate_sizes.tsv` and `overrides.json` when there is one); `cargo_sync` (`rules/rust/sync.bzl`) stages a
@@ -65,7 +69,10 @@ Targets of a member **[p7]**: `:lib`, `:bin` (only when the member has a binary)
 the member's `[lints]` as flags, `clippy.toml` as an input, `-D warnings` when the policy says so),
 `:coverage` (refuses until P8), and one target per action in the policy. Every `:debug :release :test
 :lint` carries the workspace `:check` as a validation. No compile action takes a `Cargo.toml` as an
-input, so a policy edit re-runs the check and nothing else. The `cargo_unit` targets themselves are named
+input, so a policy edit re-runs the check and nothing else. A build script, compiled and run, has every file of its package but
+`BUCK`, `Cargo.toml` and `target/`, as under cargo, where it runs in the package directory (`rerun-if-changed` is recorded, not
+used to narrow this, so any edit in the package re-runs the script, and a script that reads its own `Cargo.toml` fails); the other
+units have `src/` (a library also `build.rs`, an integration test `tests/`, and a target whose root is outside both, that root's directory). The `cargo_unit` targets themselves are named
 by content id (`<crate>-<version>_<hash>`).
 
 Refused at load (the rule `fail`s with the fix): a table whose `RUSTC` is neither a version of `rules/rust/pins.bzl`
