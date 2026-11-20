@@ -82,7 +82,7 @@ export const why: Page = {
     p('Staleness has three layers, from cheap to thorough:'),
     ul(
       '`buildrules check` is offline and read-only. It compares hashes and the presence of files and exits 1 on any difference, printing the fix. It is meant for pull requests.',
-      '`:check`, a Buck2 validation attached to every `:debug`, `:release`, `:test`, `:lint` and `:fmt` target, compares the same hashes at build time. A stale table cannot be built.',
+      '`:check`, a Buck2 validation attached to every `:debug`, `:release`, `:test`, `:lint`, `:typecheck` and `:fmt` target, compares the same hashes at build time. A stale table cannot be built.',
       '`buildrules sync --check` regenerates into `buck-out/` and exits 1 unless every generated file is byte-identical to the committed one.',
     ),
     p('No compile action takes a `Cargo.toml` as an input, so editing the policy in `[package.metadata.buildrules]` re-runs the check and nothing else. The cost is real: a developer must remember to run `sync` after changing a manifest. The design makes forgetting loud (the pull-request check fails; the build fails) instead of silent.'),

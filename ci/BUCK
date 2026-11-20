@@ -454,7 +454,7 @@ group(name = "mojo", deps = [
     "//examples/mojo/ws/util/base:coverage",
 ])
 
-# A workspace with crates.io dependencies, a build script and a native library (examples/crates, its own cell): format-check, lint and test it, and prove its
+# A workspace with crates.io dependencies, a build script and a native library (examples/crates, its own cell): format-check, lint, type-check and test it, and prove its
 # generated files are what `buildrules sync` writes now (on the farm, against a local copy of the registry: no network). Its members also hold the
 # proc-macros (macros), a protox and tonic-prost-build build script (protos) and a commit stamp with a source outside the crate (stamped).
 group(name = "crates", deps = [
@@ -483,6 +483,10 @@ group(name = "crates", deps = [
     "crates//crates/pgdemo:lib",
     "crates//:fmt",
     "crates//crates/zdemo:fmt",
+    # `:typecheck`, the pinned rustc to metadata only over the units `:lint` checks: a proc-macro user (macros), generated code from a build script's
+    # OUT_DIR (protos), a source outside the crate (stamped), and the library and integration test targets of every member.
+    "crates//:typecheck",
+    "crates//crates/zdemo:typecheck",
 ])
 
 # The public CI workflow (.github/workflows/ci.yml, docs/contract.md section 14): the pinned actionlint accepts it, and ci/workflow_check.zig
@@ -1014,6 +1018,8 @@ group(name = "all", deps = [
     "//ci/faulty:native_prefix_namespace_good",
     "//ci/faulty:table_in_sync",
     "//ci/faulty:fmt_of_a_well_formatted_file",
+    "//ci/faulty:typecheck_of_a_clippy_warning",
+    "//ci/faulty:typecheck_of_the_library_beside_a_type_error_in_its_tests",
     "//ci/faulty:archive_files_of_files_without_links",
     "//ci/faulty:archive_files_of_separate_files_without_links",
     "//ci/faulty:archive_abs_link.tar.gz",

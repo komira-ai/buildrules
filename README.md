@@ -87,7 +87,7 @@ a `#[path]` outside the crate.
 
 ## The front door (`cargo_workspace`, `cargo_package`)
 
-    BUCK                      cargo_workspace(path = ".")      :check, :lint :debug :test :release, one target per action
+    BUCK                      cargo_workspace(path = ".")      :check, :lint :typecheck :debug :test :release, one target per action
     crates/<m>/BUCK           cargo_package(path = ".")
     buildrules.bzl            written by `buildrules sync`: binds the table to the two macros
     buildrules.lock.bzl       the generated table: units, lints, policy, manifest hashes; pure data
@@ -95,7 +95,7 @@ a `#[path]` outside the crate.
     rules/rust/cargo.bzl      the macros; rules/rust/cargo_unit.bzl the one rule behind every unit
 
 Per member: `:lib`, `:bin` (if any), `:debug`, `:release`, `:test` (one `.passed` marker per cargo test target), `:lint` (clippy-driver, the
-member's `[lints]`, `clippy.toml`, `-D warnings` by policy), `:coverage` (refuses: not built for Rust yet), `:sources` (the package's files) and one target per action named in
+member's `[lints]`, `clippy.toml`, `-D warnings` by policy), `:typecheck` (the pinned rustc to metadata only, as `cargo check`: no clippy), `:coverage` (refuses: not built for Rust yet), `:sources` (the package's files) and one target per action named in
 `[workspace.metadata.buildrules]` / `[package.metadata.buildrules]` (`actions = { ci = ["lint", "test"] }`). Every step carries the workspace's `:check`
 as a validation: a Cargo.toml, Cargo.lock or rust-toolchain.toml that differs from what the table was made from is red, and no compile
 action takes a Cargo.toml as an input. Doctests are out of v0. A package that declares `postgres = { url-env = "NAME" }` in the same tables runs

@@ -48,7 +48,7 @@ keeps p7's names and signatures.
 Called once, in the package of the workspace root (v0: the repository root). Declares `:check`, the
 `Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml` (and `clippy.toml` if present) exports, `:rustfmt_config`
 (the workspace root's `.rustfmt.toml` or `rustfmt.toml`, else an empty file), one aggregate
-target per step (`:fmt :lint :debug :test :release`) and one per action named in the policy. Each aggregate
+target per step (`:fmt :lint :typecheck :debug :test :release`) and one per action named in the policy. Each aggregate
 depends on the same-named target of every member listed in the table.
 
 ### `cargo_package(path = ".", table, third_party, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {})` **[p7]**
@@ -68,9 +68,9 @@ workspace from them.
 Targets of a member **[p7]**: `:lib`, `:bin` (only when the member has a binary), `:debug`, `:release`,
 `:test` (one `.passed` marker per cargo test target; doctests are out of v0), `:lint` (clippy-driver with
 the member's `[lints]` as flags, `clippy.toml` as an input, `-D warnings` when the policy says so),
-`:fmt` (the pinned `rustfmt --check`, red on any difference; below),
+`:typecheck` (the pinned rustc over the units `:lint` checks, to metadata only, as `cargo check --all-targets`: no clippy and no `-D warnings`, so a type or borrow error is red and a clippy warning is not; the member's `[lints.rust]` levels apply, as under `cargo check`), `:fmt` (the pinned `rustfmt --check`, red on any difference; below),
 `:coverage` (refuses until P8), and one target per action in the policy. Every `:debug :release :test
-:lint :fmt` carries the workspace `:check` as a validation. No compile action takes a `Cargo.toml` as an
+:lint :typecheck :fmt` carries the workspace `:check` as a validation. No compile action takes a `Cargo.toml` as an
 input, so a policy edit re-runs the check and nothing else. A build script, compiled and run, has every file of its package but
 `BUCK`, `Cargo.toml` and `target/`, as under cargo, where it runs in the package directory (`rerun-if-changed` is recorded, not
 used to narrow this, so any edit in the package re-runs the script, and a script that reads its own `Cargo.toml` fails); the other
@@ -170,7 +170,7 @@ them from there. Allowed in `[workspace.metadata.buildrules]` and, overriding it
 | `lint.deny-warnings` | bool | clippy `-D warnings` for `:lint` |
 | `postgres` | table `{ url-env = "NAME" }` | every test of the package runs with a private Postgres, its URL in `NAME` (below); a package's replaces the workspace's as a whole |
 
-Steps: `fmt`, `lint`, `debug`, `test`, `release`, `coverage` (`coverage` refuses until P8).
+Steps: `fmt`, `lint`, `typecheck`, `debug`, `test`, `release`, `coverage` (`coverage` refuses until P8).
 
 **The Postgres fixture.** `postgres = { url-env = "NAME" }` makes every test target of the package (`:test`, and the same `buck2 test` targets) run
 under `pg_run` (rules/postgres/README.md): before the test it starts a private server of the pinned Postgres (`rules/postgres/pins.bzl`, conda-forge,
@@ -338,7 +338,7 @@ the compiler with `pins.bzl` (that needs the cell; the rules do it at load).
 `sync --check` is the heavier gate: it regenerates into `buck-out/` and exits 1 unless every generated
 file is byte-identical to the committed one (it needs the pinned cargo, never the network for sizes).
 
-On the build side the same staleness is red too: `:check` (the validation on `:test :lint :fmt :debug
+On the build side the same staleness is red too: `:check` (the validation on `:test :lint :typecheck :fmt :debug
 :release`) compares the sha256 of `Cargo.lock`, `rust-toolchain.toml` and every `Cargo.toml` with the
 table. Two layers on purpose: `check` is the cheap pull-request gate, `:check` is what makes a stale
 table impossible to build.

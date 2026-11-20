@@ -24,7 +24,7 @@ pub const profile_fields = [_][]const u8{
     "debug_assertions", "overflow_checks", "rpath",           "incremental",   "panic",     "strip",
 };
 
-pub const steps = [_][]const u8{ "fmt", "lint", "debug", "test", "release", "coverage" };
+pub const steps = [_][]const u8{ "fmt", "lint", "typecheck", "debug", "test", "release", "coverage" };
 const components = [_][]const u8{ "cargo", "clippy", "rust_std", "rustc" }; // sorted
 
 pub const GraphIn = struct { scope: []const u8, verb: []const u8, json: []const u8 };
@@ -496,7 +496,7 @@ fn merged(a: std.mem.Allocator, base: ?Value, over: ?Value) !Value {
 
 pub fn resolvePolicy(a: std.mem.Allocator, d: *Diag, ws: Value, pkg: Value, where: []const u8) Error!Value {
     const acts = try merged(a, val.get(ws, "actions"), val.get(pkg, "actions"));
-    const steps_repr = "['fmt', 'lint', 'debug', 'test', 'release', 'coverage']";
+    const steps_repr = "['fmt', 'lint', 'typecheck', 'debug', 'test', 'release', 'coverage']";
     var it = acts.object.iterator();
     while (it.next()) |e| {
         const name = e.key_ptr.*;

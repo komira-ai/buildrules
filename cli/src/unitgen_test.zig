@@ -250,7 +250,23 @@ test "policy: `fmt` is a step: an action chains it, a default may name it, and a
     var d2 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d2, try tomlOf(e.a(), "[actions]\nfmt = [\"lint\"]\n"), none, "w"));
     try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[actions]\nfmt = [\"lint\"]\n"), none, "w" });
-    try refusedWith(&d2, "w: action 'fmt' has the name of a step (['fmt', 'lint', 'debug', 'test', 'release', 'coverage']); name it differently");
+    try refusedWith(&d2, "w: action 'fmt' has the name of a step (['fmt', 'lint', 'typecheck', 'debug', 'test', 'release', 'coverage']); name it differently");
+}
+
+test "policy: `typecheck` is a step: an action chains it, a default may name it, and an action named `typecheck` is refused" {
+    // Defects: a chain with `typecheck` refused as "not a step" (no repository could put `:typecheck` in an action); an action called `typecheck`
+    // accepted, which would declare a second target of that name beside the member's own `:typecheck`.
+    var e = Env.init();
+    defer e.deinit();
+    const none = val.newObject(e.a());
+    var d = Diag.init(e.a());
+    const r = try unitgen.resolvePolicy(e.a(), &d, try tomlOf(e.a(), "default-action = \"typecheck\"\n[actions]\nquick = [\"fmt\", \"typecheck\"]\n"), none, "w");
+    try t.expectEqualStrings("{\n    \"quick\": [\"fmt\", \"typecheck\"],\n}", try val.litString(e.a(), val.get(r, "actions").?, 0));
+    try t.expectEqualStrings("typecheck", val.getStr(r, "default_action").?);
+    var d2 = Diag.init(e.a());
+    try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d2, try tomlOf(e.a(), "[actions]\ntypecheck = [\"lint\"]\n"), none, "w"));
+    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[actions]\ntypecheck = [\"lint\"]\n"), none, "w" });
+    try refusedWith(&d2, "w: action 'typecheck' has the name of a step (['fmt', 'lint', 'typecheck', 'debug', 'test', 'release', 'coverage']); name it differently");
 }
 
 test "policy: refusals (a typo'd key, an action that shadows a step, a step that is not one, a default that is nothing)" {

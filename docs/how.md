@@ -366,7 +366,7 @@ and the file.
 action's `TMPDIR` (in `/tmp` when that path is too long for a socket), sets `NAME=postgresql://postgres@<socket directory, percent-encoded>:5432/postgres` for the test, and stops the server after it
 (docs/contract.md section 5; rules/postgres/README.md). A package's `postgres` replaces the workspace's.
 
-Steps are `fmt`, `lint`, `debug`, `test`, `release` and `coverage` (`coverage` refuses for Rust: not built).
+Steps are `fmt`, `lint`, `typecheck`, `debug`, `test`, `release` and `coverage` (`coverage` refuses for Rust: not built).
 `init` writes a virtual workspace with `resolver = "3"` and `[profile.dev] incremental = false`.
 Incremental builds cannot be hermetic, and `sync` refuses an incremental profile with this fix.
 Link-time optimization, a custom codegen backend, rpath and split-debuginfo profile fields are
@@ -451,7 +451,8 @@ buck2 build //crates/hello:bin //crates/hello:test //crates/hello:lint //crates/
 ```
 
 Per member the targets are `:lib`, `:bin` (if it has a binary), `:debug`, `:release`, `:test` (one
-`.passed` marker per Cargo test target), `:lint`, `:fmt` (the pinned `rustfmt --check` over the files `cargo fmt` reads, with
+`.passed` marker per Cargo test target), `:lint`, `:typecheck` (the pinned rustc to metadata only, as `cargo check`: red on a
+type error, not on a clippy warning; no clippy), `:fmt` (the pinned `rustfmt --check` over the files `cargo fmt` reads, with
 the member's or the workspace's `rustfmt.toml`), `:sources`, and one per action named in the policy.
 `buck2 build //crates/hello:ci` builds the `ci` action if you defined it.
 
