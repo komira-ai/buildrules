@@ -8,14 +8,14 @@ publish = false
 # gRPC proto crate: messages, a service trait and a client, no transport. It reads `proto/` and `src/names.rs` of this package, and `../../shared/proto`,
 # which is outside it (declared in BUCK).
 [dependencies]
-prost = "0.14.4"
-tonic = { version = "0.14.6", default-features = false, features = ["codegen"] }
-tonic-prost = "0.14.6"
+prost.workspace = true
+tonic = { workspace = true, features = ["codegen"] }
+tonic-prost.workspace = true
 
 [build-dependencies]
-protox = "0.10.0"
-tonic-prost-build = "0.14.6"
+protox.workspace = true
+tonic-prost-build.workspace = true
 
 [dev-dependencies]
-prost-types = "0.14.4"
-tokio = { version = "1.54.1", default-features = false, features = ["rt", "macros"] }
+prost-types.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

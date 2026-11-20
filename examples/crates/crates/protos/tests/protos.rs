@@ -1,10 +1,11 @@
-//! What the build script generated, used as a caller would: the messages, the service trait, and the descriptor set.
+//! What the build script generated, used as a caller would: the messages, the client and server of the service, and the descriptor set.
 
 use std::collections::BTreeMap;
 
 use prost::Message;
 use protos::common::v1::Label;
-use protos::fixture::v1::hosts_server::{self, Hosts};
+use protos::fixture::v1::hosts_client::HostsClient;
+use protos::fixture::v1::hosts_server::{self, Hosts, HostsServer};
 use protos::fixture::v1::{Host, ListHostsRequest, ListHostsResponse};
 use tonic::{Request, Response, Status};
 
@@ -74,18 +75,31 @@ impl Hosts for Fixed {
     }
 }
 
+/// The generated client, sending to the generated server in this process: the client takes the server as its channel (it is a tower
+/// service of HTTP requests), so every call is encoded, routed by path to `list_hosts`, and decoded, with no network.
+fn client(hosts: Vec<Host>) -> HostsClient<HostsServer<Fixed>> {
+    HostsClient::new(HostsServer::new(Fixed(hosts)))
+}
+
 #[tokio::test]
-async fn the_generated_service_trait_answers_through_an_implementation() {
-    let service = Fixed(vec![host("node-a"), host("node-b"), host("mac-a")]);
-    let answer = service.list_hosts(Request::new(ListHostsRequest { prefix: "node-".to_owned() })).await.unwrap();
+async fn a_call_through_the_generated_client_and_server_is_answered() {
+    let mut client = client(vec![host("node-a"), host("node-b"), host("mac-a")]);
+    let answer = client.list_hosts(ListHostsRequest { prefix: "node-".to_owned() }).await.unwrap();
     let names: Vec<String> = answer.into_inner().hosts.into_iter().map(|h| h.name).collect();
     assert_eq!(names, ["node-a", "node-b"]);
 }
 
 #[tokio::test]
-async fn the_generated_service_trait_carries_a_refusal() {
-    let service = Fixed(vec![host("node-a")]);
-    let status = service.list_hosts(Request::new(ListHostsRequest { prefix: String::new() })).await.unwrap_err();
+async fn a_call_that_matches_nothing_is_answered_with_no_hosts() {
+    let mut client = client(vec![host("node-a")]);
+    let answer = client.list_hosts(ListHostsRequest { prefix: "mac-".to_owned() }).await.unwrap();
+    assert_eq!(answer.into_inner(), ListHostsResponse { hosts: Vec::new() });
+}
+
+#[tokio::test]
+async fn a_refusal_of_the_server_reaches_the_client_with_its_code_and_message() {
+    let mut client = client(vec![host("node-a")]);
+    let status = client.list_hosts(ListHostsRequest { prefix: String::new() }).await.unwrap_err();
     assert_eq!(status.code(), tonic::Code::InvalidArgument);
     assert_eq!(status.message(), "a prefix is required");
 }

@@ -6,11 +6,11 @@ RUSTC = "1.95.0"
 TARGET = "x86_64-unknown-linux-gnu"
 CARGO_LOCK_SHA256 = "2ffbdc8a1b131edb70e032dace4116dec91f5f6af983f941ba27368859387f66"
 MANIFEST_SHA256 = {
-    "Cargo.toml": "d9d76d9ef7dbb0c4213271c4ca9e341e26702ff2d0ec634f482109c519c4482d",
-    "crates/macros/Cargo.toml": "e4d82ad77cc37d1f2ddf29aea4fd1fc986462a91aa9c14aa315780e627243072",
-    "crates/protos/Cargo.toml": "84e4fa3d47e0d4b4702b5c24512ba0408b5fe3e0a571c7f2dea3efbc0e7ed451",
+    "Cargo.toml": "4e1fbe336e697bbcfe8261aa216e282d9c4430b6404ddcd3bde3a03a6d7b2993",
+    "crates/macros/Cargo.toml": "312c86a7ab024cc0dfb610a3e3831f33f8faa835e2a585d79937d5b513cae707",
+    "crates/protos/Cargo.toml": "948b2b5546f8505678244e9e5f617bd212085fa8f1ea7c9a61e41623974a4c3e",
     "crates/stamped/Cargo.toml": "434c44755cd1ee1e64a015aa58523d176bfde4c74cb2b274ea6c51e6e4c99f02",
-    "crates/zdemo/Cargo.toml": "88da4dacae32d9681847d28c964c31c88a106dfa3ec23a548972bfc9aa1a9942",
+    "crates/zdemo/Cargo.toml": "4616f29b73a0d62b6a6a40c35c17c8edb6f4e3259b262be77934803978405e4d",
     "rust-toolchain.toml": "2081082533ff134426c07fae80605f229fa3b3cc0f7b7d68167746e9b8372979",
 }
 
