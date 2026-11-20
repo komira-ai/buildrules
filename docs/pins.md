@@ -4,7 +4,10 @@
 supported, 1.85.0: rustc 118068031 `bddacba2...2999`, rust-std 49657114 `b3ad2196...c4a9`, cargo 12817517 `e27ffcaf...c372`, clippy 4573789
 `fe8fd470...122c`, every tarball downloaded from its versioned URL and sha256/size computed independently; `rustc --version` must start with
 `rustc 1.85.0 (` and `cargo --version` with `cargo 1.85.0 (`. llvm-tools-preview 1.95.0 (for `isa_audit`):
-66089964 bytes, `55b57b2a...1f7a`.
+66089964 bytes, `55b57b2a...1f7a`. rustfmt-preview (for `:fmt`, rules/rust/fmt.bzl): 1.95.0 3028435 bytes
+`6d3e64adc505ad4bef6935f6e6f5e4c6956d9782607fb8394df3a5d2b30d2733`, 1.85.0 3665005 bytes `a90de11ca6d86290fd7dddd6e27685ca1a7c4aa7d8e5fb622827902ef54f1b25`
+(`rustfmt-<version>-x86_64-unknown-linux-gnu.tar.gz`, each downloaded, `sha256sum`/`stat` computed and the sha256 compared with the `.sha256` file beside it);
+they decompress to 9112576 and 11510272 bytes, under the 16 MiB `max_output` the pinned `unpack` is given (rules/rust/toolchain.bzl).
 
 Rust 1.95.0. The URLs are the versioned ones, `https://static.rust-lang.org/dist/<component>-1.95.0-x86_64-unknown-linux-gnu.tar.gz`, which carry no date; every tarball was downloaded and
 `sha256sum`/`stat` computed independently. buck2 re-checks the

@@ -1,0 +1,2 @@
+# A config under which ../good.rs is not formatted (it indents by four). It is not in a directory above good.rs, so rustfmt reads it only when it is given.
+tab_spaces = 2
