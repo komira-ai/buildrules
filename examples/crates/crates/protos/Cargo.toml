@@ -1,0 +1,21 @@
+[package]
+name = "protos"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# A build script that compiles protobuf with protox (pure Rust, no `protoc`) and tonic-prost-build, the common shape of a
+# gRPC proto crate: messages, a service trait and a client, no transport. It reads `proto/` and `src/names.rs` of this package, and `../../shared/proto`,
+# which is outside it (declared in BUCK).
+[dependencies]
+prost.workspace = true
+tonic = { workspace = true, features = ["codegen"] }
+tonic-prost.workspace = true
+
+[build-dependencies]
+protox.workspace = true
+tonic-prost-build.workspace = true
+
+[dev-dependencies]
+prost-types.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

@@ -1,7 +1,23 @@
-# A virtual workspace, as `buildrules init` writes it, with one member that links a C library (zstd) built by a crates.io build script.
+# A virtual workspace, as `buildrules init` writes it. zdemo links a C library (zstd) built by a crates.io build script; macros uses the
+# proc-macro crates serde_derive, clap_derive and tokio-macros; protos compiles protobuf in its build script (protox, tonic-prost-build);
+# stamped embeds a commit given as an input and reads a source outside its directory (shared/).
 [workspace]
 resolver = "3"
-members = ["crates/zdemo"]
+members = ["crates/macros", "crates/protos", "crates/stamped", "crates/zdemo"]
+
+# Every external dependency's version, declared once; a member names it with `workspace = true` and adds the features it uses.
+[workspace.dependencies]
+clap = { version = "4.6.7", default-features = false }
+prost = "0.14.4"
+prost-types = "0.14.4"
+protox = "0.10.0"
+serde = "1.0.229"
+serde_json = "1.0.151"
+tokio = { version = "1.54.1", default-features = false }
+tonic = { version = "0.14.6", default-features = false }
+tonic-prost = "0.14.6"
+tonic-prost-build = "0.14.6"
+zstd-safe = { version = "7.0.0", default-features = false }
 
 [workspace.metadata.buildrules]
 # Policy only (profiles and lints stay in cargo's own tables). `ci` is what `buck2 build //:ci` builds.

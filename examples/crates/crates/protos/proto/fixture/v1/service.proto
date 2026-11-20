@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package fixture.v1;
+
+import "fixture/v1/hosts.proto";
+
+message ListHostsRequest {
+  string prefix = 1;
+}
+
+message ListHostsResponse {
+  repeated Host hosts = 1;
+}
+
+// The hosts whose name starts with a prefix.
+service Hosts {
+  rpc ListHosts(ListHostsRequest) returns (ListHostsResponse);
+}

@@ -10,6 +10,7 @@
 
 load("@buildrules//ci:all.bzl", "EXCLUDED", "MIRROR_ONLY", "NOT_BUILT_KINDS")
 load("@buildrules//ci:negative.bzl", "negative_problems")
+load("@buildrules//ci:negative.bzl", "farm_only_note")
 load("@buildrules//ci:no_shell.bzl", "NO_SHELL_EXCLUDED")
 
 def _targets(q, expr):
@@ -76,7 +77,7 @@ def _impl(ctx):
         if negative:
             report.append("ci/negative: {} problem(s) with the known defect (ci/negative.bzl):\n  ".format(len(negative)) + "\n  ".join(negative))
         fail("\n".join(report))
-    ctx.output.print("ok: every target of the tree is built by //ci:all or //ci:mojo, or excluded with a reason ({} exclusions); the known defects of ci/negative are red and the Mojo gate holds".format(len(EXCLUDED)))
+    ctx.output.print("ok: every target of the tree is built by //ci:all or //ci:mojo, or excluded with a reason ({} exclusions); the known defects of ci/negative are red and the Mojo gate holds{}".format(len(EXCLUDED), farm_only_note()))
 
 check = bxl_main(
     impl = _impl,
