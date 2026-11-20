@@ -1,0 +1,13 @@
+[package]
+name = "macros"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# One use of each of three widely used proc-macro crates: serde_derive (serde's `derive`), clap_derive (clap's `derive`) and
+# tokio-macros (tokio's `macros`). A proc-macro is a `.so` compiled for the build host and loaded by rustc; it is never linked.
+[dependencies]
+clap = { workspace = true, features = ["std", "derive", "help", "usage", "error-context"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

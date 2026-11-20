@@ -440,7 +440,8 @@ group(name = "mojo", deps = [
 ])
 
 # A workspace with crates.io dependencies, a build script and a native library (examples/crates, its own cell): lint and test it, and prove its
-# generated files are what `buildrules sync` writes now (on the farm, against a local copy of the registry: no network).
+# generated files are what `buildrules sync` writes now (on the farm, against a local copy of the registry: no network). Its members also hold the
+# proc-macros (macros), a protox and tonic-prost-build build script (protos) and a commit stamp with a source outside the crate (stamped).
 group(name = "crates", deps = [
     "crates//:ci",
     "crates//:sync_check",
@@ -452,6 +453,15 @@ group(name = "crates", deps = [
     "crates//crates/zdemo:debug",
     "crates//crates/zdemo:release",
     "crates//crates/zdemo:lib",
+    "crates//crates/macros:lib",
+    "crates//crates/macros:debug",
+    "crates//crates/macros:release",
+    "crates//crates/protos:lib",
+    "crates//crates/protos:debug",
+    "crates//crates/protos:release",
+    "crates//crates/stamped:lib",
+    "crates//crates/stamped:debug",
+    "crates//crates/stamped:release",
 ])
 
 # The public CI workflow (.github/workflows/ci.yml, docs/contract.md section 14): the pinned actionlint accepts it, and ci/workflow_check.zig
@@ -801,7 +811,11 @@ _PACKAGES = [
     "//tools/scrub:scrub_files",
     "//tools/stage:scrub_files",
     "crates//:scrub_files",
+    "crates//crates/macros:scrub_files",
+    "crates//crates/protos:scrub_files",
+    "crates//crates/stamped:scrub_files",
     "crates//crates/zdemo:scrub_files",
+    "crates//shared:scrub_files",
     "rootcell//:scrub_files",
 ]
 

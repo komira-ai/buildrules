@@ -64,6 +64,8 @@ CASES = [
     # at analysis, naming the target.
     ("//ci/faulty:zig_dist_of_a_short_sha256", "buildrules//platforms:linux_x86_64", "`sha256` must be the archive's 64 lower-case hex digits"),
     ("//ci/faulty:zig_dist_of_a_zero_max_output", "buildrules//platforms:linux_x86_64", "`max_output` must be a positive number of decompressed bytes"),
+    # A crate unit's extra source must be the file of the tree, at the path a `#[path]` or `include_str!` names, and not a copy (rules/rust/cargo_unit.bzl).
+    ("//ci/faulty:rust_unit_with_a_copied_extra_source", "buildrules//platforms:linux_x86_64", "a copy made by a rule and not a file of the tree: a source or a build script reads it at its own path. Export it with `export_file("),
 ] + [
     ("//examples/mojo/subdirs:lib", platform, "has no unit graph for this target platform. It holds graphs for linux-64, linux-aarch64, osx-arm64")
     for platform in UNSUPPORTED_SUBDIR_PLATFORMS
@@ -497,7 +499,32 @@ FAULTY = [
     ("//ci/faulty:zig_dist_of_other_bytes", "//rules/pins:zig", "the archive's sha256 is not the one given with --sha256"),
     ("//ci/faulty:zig_dist_over_its_max_output", "//rules/pins:zig", "the archive holds more decompressed bytes than --max-output allows"),
     ("//ci/faulty:zig_dist_of_a_corrupt_archive", "//rules/pins:zig", "the compressed data is corrupt"),
+    # A commit stamp is an input of the build script's run (cargo_package's stamp_env and stamp_rustc_env, examples/crates/crates/stamped/BUCK): the same
+    # units run without it find no `git`, say `unknown`, and the library's test refuses that. The control is the package's test, given the stamp.
+    ("crates//crates/stamped:test_without_the_stamps", "crates//crates/stamped:test", "the commit is not the stamp given as an input"),
 ]
+
+# Defects only a farm shows. An action of local mode runs in the checkout (docs/contract.md, section 14), where a file a unit does not declare is there to
+# read anyway; on a farm an action has only its declared inputs. So a unit with a declared input left out is red on a farm and may be green in local mode.
+# The rows are held like those of FAULTY when the mode is remote (the default); in local mode they are not built, and the check says so and why.
+FAULTY_ON_A_FARM = [
+    # A `#[path]` module outside the crate's directory is an input only through cargo_package's extra_srcs (examples/crates/crates/stamped/BUCK): the build
+    # script compiled without it cannot read it. The control is the package's debug build, which compiles that script with it.
+    ("crates//crates/stamped:script_without_its_outside_source", "crates//crates/stamped:debug", "couldn't read `examples/crates/crates/stamped/../../shared/stamp.rs`"),
+    # A directory outside the package that a build script reads at run time (protox's import path ../../shared/proto, extra_srcs of crates/protos): the run
+    # without it finds no import. The control is the package's debug build, whose run has it.
+    ("crates//crates/protos:script_run_without_the_shared_protos", "crates//crates/protos:debug", "import 'common/v1/labels.proto' not found"),
+]
+
+def on_a_farm():
+    """True when the actions run on a farm (`[buildrules_re] mode`, remote by default, rules/platforms.bzl), where an action has only its declared inputs."""
+    return read_root_config("buildrules_re", "mode", "remote").strip() == "remote"
+
+def farm_only_note():
+    """What the check did not build in local mode, and why: empty on a farm."""
+    if on_a_farm():
+        return ""
+    return "; not built in local mode, which runs actions in the checkout where an undeclared file is readable: {}".format(", ".join([r[0] for r in FAULTY_ON_A_FARM]))
 
 # Every action that unpacks an archive is the pinned `unpack` given the archive's sha256 and size, its format and a limit on its decompressed bytes
 # (rules/core/unpack.bzl). The rules are found by kind in the closure of what CI builds, their actions are read, and each must run the program pinned for the
@@ -581,7 +608,7 @@ def _failures(ctx, label):
 def faulty_problems(ctx):
     """Every way a check or marker does not refuse its bad input for its reason, or its control is not green: a list of strings, empty when all hold."""
     problems = []
-    for faulty, control, reason in FAULTY:
+    for faulty, control, reason in FAULTY + (FAULTY_ON_A_FARM if on_a_farm() else []):
         built, failed = _built(ctx, faulty)
         if not failed:
             problems.append("{} built ({} artifact(s)): the check it carries is gone, a failure leaves the target green".format(faulty, built))
