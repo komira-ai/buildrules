@@ -1,0 +1,5 @@
+# The compiler of every build and of plain `cargo`: an exact release, never a channel.
+[toolchain]
+channel = "1.95.0"
+components = ["clippy"]
+profile = "minimal"

@@ -19,6 +19,8 @@ pub const third_party = "third_party/buildrules";
 pub const sizes_file = "third_party/buildrules/crate_sizes.tsv";
 /// Hand-written, optional: registry crates whose build script a buildrules target replaces (cli/src/buckgen.zig).
 pub const overrides_file = "third_party/buildrules/overrides.json";
+/// The archive of every git source (repository and commit): its sha256, size and top directory, measured by `sync` (git_archive.zig).
+pub const git_archives_file = "third_party/buildrules/git_archives.tsv";
 
 /// Hand-written, optional: the Rust versions this repository pins itself (docs/contract.md, section 6). `sync` copies it into
 /// the generated `toolchains/rust_pins.bzl`, which `toolchains/BUCK` loads; `check` fails when either differs from the other.

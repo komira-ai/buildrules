@@ -62,7 +62,7 @@ _cargo_sync = rule(
         "check": attrs.bool(default = False),
         # name -> pinned_file of the `.crate`, and the files of the registry's index (paths relative to `registry_root`).
         "crates": attrs.dict(attrs.string(), attrs.dep(), default = {}),
-        # The files of the packages below the workspace root (the members: `:sources` of cargo_package; the registry units: `:files`), which a glob of
+        # The files of the packages below the workspace root (the members: `:sources` of cargo_package; the registry and git units: `:files`), which a glob of
         # the root package cannot reach.
         "deps": attrs.list(attrs.dep(), default = []),
         "index": attrs.list(attrs.source(), default = []),

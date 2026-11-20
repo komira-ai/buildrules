@@ -23,7 +23,7 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     tools/deploy      the deploy half (Zig): the signed apt index and its upload, and the pull request that adds the formula to the tap; both do nothing until their settings are made (RELEASING.md)
     packaging/deb     the metadata of the command line's .deb (control fields, copyright, lintian overrides)
     beta/             the files and commands (STEPS) of those hello-world repositories, per language; not built by //ci:all (README.md in it)
-    ci/               the CI matrix (`buck2 build //ci:matrix`): examples on the default and oldest Rust, both zigs, ISA v1 and v3, the refusals, examples/crates;
+    ci/               the CI matrix (`buck2 build //ci:matrix`): examples on the default and oldest Rust, both zigs, ISA v1 and v3, the refusals, examples/crates, examples/gitcrates;
                       `//ci:mojo`: the Mojo examples; ci/negative known defects; `//ci:no_shell`: the lint that keeps shells and busybox out of the rules (ci/no_shell_allow.tsv lists what is left)
     AGENTS.md         the rules every change is written and reviewed against; CLAUDE.md imports it, `//ci:agents_check` holds its shared core to ci/shared_core.md
     docs/             docs/why.md (the argument and the design) and docs/how.md (the manual): the site's Why and How pages repeat them and its tests check both against the sources;
@@ -33,6 +33,8 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     examples/isa      Rust and C built at an ISA level; isa_audit reads the machine code for ymm
     examples/crates   a workspace of its own (the cell `crates`) with crates.io dependencies: a build script (cc) that compiles zstd and a crate that links it;
                       `buck2 build //ci:crates` lints and tests it and proves its generated files are what `buildrules sync` writes (no network: a local registry)
+    examples/gitcrates a workspace of its own (the cell `gitcrates`) whose dependency is a git repository pinned by commit (thiserror: a build script and a proc-macro);
+                      `buck2 build //ci:gitcrates` lints and tests it
     examples/p4ws     std-only crates for the build-script contract (links/DEP_*, undeclared reads), in the unit-level form
     examples/unpinned a table for a Rust nobody pins: cargo_package must refuse it (rules/rust/refusal.bzl)
     examples/mojo     ws: app -> util -> base (workspace members) and a registry package with a native C library; registry/cnative: its publisher's side
@@ -86,7 +88,7 @@ outside the package that `include_str!` reads; a `[[bin]]`/`[[test]]` whose path
     crates/<m>/BUCK           cargo_package(path = ".")
     buildrules.bzl            written by `buildrules sync`: binds the table to the two macros
     buildrules.lock.bzl       the generated table: units, lints, policy, manifest hashes; pure data
-    third_party/buildrules    the registry units (BUCK, crate_sizes.tsv), generated
+    third_party/buildrules    the registry and git units (BUCK, crate_sizes.tsv, git_archives.tsv), generated
     rules/rust/cargo.bzl      the macros; rules/rust/cargo_unit.bzl the one rule behind every unit
 
 Per member: `:lib`, `:bin` (if any), `:debug`, `:release`, `:test` (one `.passed` marker per cargo test target), `:lint` (clippy-driver, the

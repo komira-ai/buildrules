@@ -1,6 +1,7 @@
-//! The table to Buck2 targets: one `cargo_unit` target per registry unit of the table, named by the entry's content id,
-//! and one `crate_src` per registry crate (a sha256-pinned download from static.crates.io plus an unpack), all in the one
-//! package `third_party/buildrules`. Member units are not written here: `cargo_package` makes them from the table.
+//! The table to Buck2 targets: one `cargo_unit` target per registry or git unit of the table, named by the entry's content id,
+//! one `crate_src` per registry crate (a sha256-pinned download from static.crates.io plus an unpack) and one per git
+//! repository and commit (GitHub's archive of the commit, pinned by the sha256 and size `git_archives.tsv` records; git_archive.zig),
+//! all in the one package `third_party/buildrules`. Member units are not written here: `cargo_package` makes them from the table.
 //!
 //! Nothing here reads cargo, the workspace or (but for `sizesFile`) the network: table and sizes in, one BUCK file out, byte
 //! for byte the same on a rerun. The sizes file (`name version bytes` per line) is what a registry download needs besides
@@ -15,6 +16,7 @@
 
 const std = @import("std");
 const fetch = @import("fetch.zig");
+const git_archive = @import("git_archive.zig");
 const val = @import("val.zig");
 const Diag = @import("diag.zig").Diag;
 const Value = val.Value;
@@ -24,8 +26,20 @@ pub const Error = anyerror;
 const load_line = "load(\"@buildrules//rules/rust:cargo_unit.bzl\", \"cargo_unit\", \"crate_src\")\n";
 
 /// The package's own files as a target, for `cargo_sync` (rules/rust/sync.bzl): a glob cannot cross into this package from the root's.
-fn filesTarget(a: std.mem.Allocator, overrides: bool) ![]const u8 {
-    return std.fmt.allocPrint(a, "filegroup(\n    name = \"files\",\n    srcs = [\"BUCK\", \"crate_sizes.tsv\"{s}],\n    visibility = [\"PUBLIC\"],\n)\n", .{if (overrides) ", \"overrides.json\"" else ""});
+fn filesTarget(a: std.mem.Allocator, overrides: bool, git: bool) ![]const u8 {
+    return std.fmt.allocPrint(a, "filegroup(\n    name = \"files\",\n    srcs = [\"BUCK\", \"crate_sizes.tsv\"{s}{s}],\n    visibility = [\"PUBLIC\"],\n)\n", .{
+        if (git) ", \"git_archives.tsv\"" else "",
+        if (overrides) ", \"overrides.json\"" else "",
+    });
+}
+
+/// The `crate_src` target of a git repository at a commit (`repo` is `github.com/<owner>/<name>`).
+fn gitSrcName(a: std.mem.Allocator, repo: []const u8, rev: []const u8) ![]const u8 {
+    const path = repo["github.com/".len..];
+    const owner = path[0..std.mem.indexOfScalar(u8, path, '/').?];
+    const name = path[owner.len + 1 ..];
+    // A GitHub owner is letters, digits and hyphens: `_` after it cannot be part of it, so two repositories never share a name.
+    return std.fmt.allocPrint(a, "git-{s}_{s}-{s}", .{ owner, name, rev });
 }
 
 fn die(d: *Diag, comptime fmt: []const u8, args: anytype) error{Refused} {
@@ -180,7 +194,7 @@ fn applyOverrides(a: std.mem.Allocator, d: *Diag, units: Value, overrides: Overr
     var it2 = units.object.iterator();
     while (it2.next()) |e| {
         const u = e.value_ptr.*;
-        if (!std.mem.eql(u8, strField(u, "source"), "registry") and !std.mem.eql(u8, strField(u, "mode"), "doctest")) try todo.append(a, e.key_ptr.*);
+        if (std.mem.eql(u8, strField(u, "source"), "path") and !std.mem.eql(u8, strField(u, "mode"), "doctest")) try todo.append(a, e.key_ptr.*);
     }
     while (todo.pop()) |k| {
         if (reach.contains(k) or dropped.contains(k)) continue;
@@ -199,7 +213,7 @@ fn requireStr(d: *Diag, uid: []const u8, u: Value, key: []const u8) Error![]cons
     return val.getStr(u, key) orelse die(d, "{s}: the table entry has no `{s}`", .{ uid, key });
 }
 
-/// One registry unit as a `cargo_unit` call.
+/// One registry or git unit as a `cargo_unit` call.
 fn emitUnit(a: std.mem.Allocator, d: *Diag, units: Value, uid: []const u8, u: Value, override: ?Value, dropped: *const std.StringHashMap(void), rustc: ?[]const u8) Error![]const u8 {
     const p = val.get(u, "profile") orelse return die(d, "{s}: the table entry has no profile", .{uid});
     const lto = try val.pyStr(a, val.get(p, "lto") orelse .null);
@@ -299,7 +313,14 @@ fn emitUnit(a: std.mem.Allocator, d: *Diag, units: Value, uid: []const u8, u: Va
         try lines.append(a, try std.fmt.allocPrint(a, "    native_deps = {s},", .{try qlist(a, try strings(a, val.get(o, "native_deps")), "        ")}));
     };
     try lines.append(a, "    cap_lints = True,");
-    try lines.append(a, try std.fmt.allocPrint(a, "    src = {s},", .{try q(a, try std.fmt.allocPrint(a, ":src-{s}-{s}", .{ crate, strField(u, "version") }))}));
+    if (std.mem.eql(u8, strField(u, "source"), "git")) {
+        const repo = try requireStr(d, uid, u, "repo"); // checked by `generate`
+        try lines.append(a, try std.fmt.allocPrint(a, "    src = {s},", .{try q(a, try std.fmt.allocPrint(a, ":{s}", .{try gitSrcName(a, repo, try requireStr(d, uid, u, "rev"))}))}));
+        const sub = try requireStr(d, uid, u, "subdir");
+        if (sub.len != 0) try lines.append(a, try std.fmt.allocPrint(a, "    src_dir = {s},", .{try q(a, sub)}));
+    } else {
+        try lines.append(a, try std.fmt.allocPrint(a, "    src = {s},", .{try q(a, try std.fmt.allocPrint(a, ":src-{s}-{s}", .{ crate, strField(u, "version") }))}));
+    }
     if (dep_names.items.len != 0) {
         try lines.append(a, "    deps = {");
         for (dep_names.items, dep_ids.items) |n, i| {
@@ -344,13 +365,23 @@ fn lessSrc(_: void, x: Src, y: Src) bool {
 pub const Options = struct {
     /// The Rust version every unit names, when it is not buildrules' default (a proc-macro must load into the rustc that builds its user).
     non_default_rustc: ?[]const u8 = null,
+    /// git_archives.tsv: the archive of every git source of the table. Required when the table has a git unit.
+    git_archives: ?*const git_archive.Record = null,
 };
 
-/// The BUCK file of the registry package.
+const GitSrc = struct { repo: []const u8, rev: []const u8 };
+
+fn lessGit(_: void, x: GitSrc, y: GitSrc) bool {
+    const c = std.mem.order(u8, x.repo, y.repo);
+    if (c != .eq) return c == .lt;
+    return std.mem.lessThan(u8, x.rev, y.rev);
+}
+
+/// The BUCK file of the third-party package: the registry and git units.
 pub fn generate(a: std.mem.Allocator, d: *Diag, units: Value, sizes: Sizes, overrides: ?Overrides, opts: Options) Error![]const u8 {
     var reg = std.ArrayList([]const u8).empty;
     for (units.object.keys(), units.object.values()) |k, u| {
-        if (std.mem.eql(u8, strField(u, "source"), "registry") and !std.mem.eql(u8, strField(u, "mode"), "doctest")) try reg.append(a, k);
+        if (!std.mem.eql(u8, strField(u, "source"), "path") and !std.mem.eql(u8, strField(u, "mode"), "doctest")) try reg.append(a, k);
     }
     std.mem.sort([]const u8, reg.items, {}, lessStr);
     var dropped = std.StringHashMap(void).init(a);
@@ -362,10 +393,34 @@ pub fn generate(a: std.mem.Allocator, d: *Diag, units: Value, sizes: Sizes, over
         reg = kept;
     };
     var srcs = std.ArrayList(Src).empty;
+    var gits = std.ArrayList(GitSrc).empty;
+    var n_registry: usize = 0;
     for (reg.items) |k| {
         const u = units.object.get(k).?;
+        if (std.mem.eql(u8, strField(u, "source"), "git")) {
+            const g = GitSrc{ .repo = strField(u, "repo"), .rev = strField(u, "rev") };
+            if (!std.mem.startsWith(u8, g.repo, "github.com/") or std.mem.count(u8, g.repo, "/") != 2) return die(d, "{s}: repo {s} is not github.com/<owner>/<name>", .{ k, g.repo });
+            var dup = false;
+            for (gits.items) |x| if (std.mem.eql(u8, x.repo, g.repo) and std.mem.eql(u8, x.rev, g.rev)) {
+                dup = true;
+            };
+            if (!dup) try gits.append(a, g);
+            continue;
+        }
+        if (!std.mem.eql(u8, strField(u, "source"), "registry")) return die(d, "{s}: source {s} is not registry, git or path", .{ k, strField(u, "source") });
+        n_registry += 1;
         try srcs.append(a, .{ .name = strField(u, "crate"), .version = strField(u, "version"), .sha = strField(u, "sha256") });
     }
+    std.mem.sort(GitSrc, gits.items, {}, lessGit);
+    var git_missing = std.ArrayList(u8).empty;
+    for (gits.items) |g| {
+        const rec = opts.git_archives;
+        if (rec == null or rec.?.get(try std.fmt.allocPrint(a, "{s}@{s}", .{ g.repo, g.rev })) == null) {
+            if (git_missing.items.len != 0) try git_missing.appendSlice(a, ", ");
+            try git_missing.print(a, "{s} at {s}", .{ g.repo, g.rev });
+        }
+    }
+    if (git_missing.items.len != 0) return die(d, "{s} lacks: {s} (run `buildrules sync`)", .{ git_archive.file_label, git_missing.items });
     std.mem.sort(Src, srcs.items, {}, lessSrc);
     var uniq = std.ArrayList(Src).empty;
     for (srcs.items) |s| {
@@ -387,8 +442,9 @@ pub fn generate(a: std.mem.Allocator, d: *Diag, units: Value, sizes: Sizes, over
     var out = std.ArrayList([]const u8).empty;
     try out.append(a, "# Generated by `buildrules sync` from the unit table. Do not edit.");
     try out.append(a, try std.fmt.allocPrint(a, "# {d} cargo units, {d} registry crates (sha256 from Cargo.lock, size from the crate_sizes file).", .{ reg.items.len, uniq.items.len }));
+    if (gits.items.len != 0) try out.append(a, try std.fmt.allocPrint(a, "# {d} of the units come from {d} git commit(s) (GitHub archives, sha256 and size from git_archives.tsv).", .{ reg.items.len - n_registry, gits.items.len }));
     try out.append(a, load_line);
-    try out.append(a, try filesTarget(a, overrides != null));
+    try out.append(a, try filesTarget(a, overrides != null, gits.items.len != 0));
     for (uniq.items) |s| {
         const bytes = sizes.get(try std.fmt.allocPrint(a, "{s} {s}", .{ s.name, s.version })).?;
         var b = std.ArrayList(u8).empty;
@@ -405,9 +461,20 @@ pub fn generate(a: std.mem.Allocator, d: *Diag, units: Value, sizes: Sizes, over
         try b.appendSlice(a, ")\n");
         try out.append(a, b.items);
     }
+    for (gits.items) |g| {
+        const row = opts.git_archives.?.get(try std.fmt.allocPrint(a, "{s}@{s}", .{ g.repo, g.rev })).?;
+        const name = try gitSrcName(a, g.repo, g.rev);
+        const repo_name = g.repo[std.mem.lastIndexOfScalar(u8, g.repo, '/').? + 1 ..];
+        var b = std.ArrayList(u8).empty;
+        try b.print(a, "crate_src(\n    name = {s},\n    pkg = {s},\n    version = {s},\n", .{ try q(a, name), try q(a, repo_name), try q(a, g.rev) });
+        try b.print(a, "    url = {s},\n", .{try q(a, try std.fmt.allocPrint(a, "https://{s}/archive/{s}.tar.gz", .{ g.repo, g.rev }))});
+        try b.print(a, "    sha256 = {s},\n    size_bytes = {d},\n    top = {s},\n)\n", .{ try q(a, row.sha256), row.size, try q(a, row.top) });
+        try out.append(a, b.items);
+    }
     for (reg.items) |k| {
         const u = units.object.get(k).?;
-        const ov: ?Value = if (overrides) |o| o.get(try unitKey(a, u)) else null;
+        // overrides are for registry crates: a git fork of the same name and version is not the crate they were written for
+        const ov: ?Value = if (overrides != null and std.mem.eql(u8, strField(u, "source"), "registry")) overrides.?.get(try unitKey(a, u)) else null;
         try out.append(a, try emitUnit(a, d, units, k, u, ov, &dropped, opts.non_default_rustc));
     }
     return std.mem.join(a, "\n", out.items);

@@ -64,6 +64,7 @@ export const rules: Page = {
       ['`//ci:isa_v1`, `//ci:isa_v3`', 'the CPU-level example at the baseline and at x86-64-v3 (`isa_at`): the machine code is audited and the test runs on a worker of the level'],
       ['`//ci:refusals`', 'what the rules must refuse, as analysis tests: an unpinned Rust version, a wrong hash, a user pin that shadows a reviewed one'],
       ['`//ci:crates`', 'the example with crates.io dependencies, a build script and a native library, and `sync --check` over it'],
+      ['`//ci:gitcrates`', 'the example whose dependency is a git repository pinned by commit (a build script and a proc-macro from GitHub\'s archive of the commit)'],
       ['`//ci:matrix`', 'all of the above'],
     ),
     p('Reproduce one cell by hand with a target platform: `buck2 build --target-platforms buildrules//platforms:linux_x86_64_rust_1_85_0 //examples/hello:hello_runs`. A Rust version added to the version table needs its line in `rules/matrix.bzl`, or loading fails.'),
@@ -137,7 +138,7 @@ export const rust: Page = {
       '`patch`: copy, substitute or add files in the unpacked crate.',
     ),
     p('The example `examples/crates` has a crate whose `cc` build script compiles zstd; the script runs as an action, with no override. The override keys are exercised by the unit tests of the generator, and no shipped example uses `drop_build_script` or `native_deps`. The C libraries that the [C/C++ rules](/rules/cxx/) can build, such as AWS-LC, are not yet wired to any Rust crate.'),
-    limit('crates.io only; git and alternate registries are refused. Doctests and coverage are out. Linux x86_64 only.'),
+    limit('crates.io, and git repositories on github.com pinned by commit; alternate registries, branches and tags are refused. Doctests and coverage are out. Linux x86_64 only.'),
     h2('Toolchains'),
     p('The version table, `RUST_VERSIONS` in `rules/rust/pins.bzl`, maps an exact release to the sha256 and size of the `.tar.gz` of `rustc`, `rust_std`, `cargo` and `clippy`, fetched from their versioned URLs (`static.rust-lang.org/dist/rustc-1.95.0-x86_64-unknown-linux-gnu.tar.gz`, no date in them). Nothing is fetched without a hash, and the toolchain refuses to exist if `rustc --version` and `cargo --version` do not start with `rustc <version> (` and `cargo <version> (`.'),
     table(

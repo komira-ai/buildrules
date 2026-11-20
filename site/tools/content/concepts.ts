@@ -76,7 +76,7 @@ export const concepts: Page = {
     h2('Limits today'),
     ul(
       'Linux x86_64 only, for clients as well as the farm.',
-      'Rust: crates.io only (git and alternate registries are refused), the Cargo workspace root is the repository root, and a root `[package]` is refused.',
+      'Rust: crates.io, and git repositories on github.com pinned by commit (alternate registries, and a branch or tag, are refused), the Cargo workspace root is the repository root, and a root `[package]` is refused.',
       'Every workspace package must be listed in `members`; a `members` glob other than `dir/*` is refused.',
       'Python rules are planned and do not exist yet. macOS, Windows and Arm are planned too. Mojo builds with the one Mojo version that mopm pins. A release is a tagged source archive and the command line for three platforms: see [Releases](/rules/#releases).',
     ),

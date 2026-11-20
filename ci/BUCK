@@ -202,6 +202,7 @@ group(name = "refusals", deps = [
 group(name = "matrix", deps = [
     ":refusals",
     ":crates",
+    ":gitcrates",
     ":rust_default",
     ":rust_oldest",
     ":zig_next",
@@ -452,6 +453,22 @@ group(name = "crates", deps = [
     "crates//crates/zdemo:debug",
     "crates//crates/zdemo:release",
     "crates//crates/zdemo:lib",
+])
+
+# A workspace whose dependency is a git repository pinned by commit (examples/gitcrates, its own cell): lint and test it. Its two git packages
+# (a build script that reads a file of the repository, a proc-macro in a subdirectory) build from GitHub's archive of the commit.
+group(name = "gitcrates", deps = [
+    "gitcrates//:ci",
+    "gitcrates//:debug",
+    "gitcrates//:release",
+    "gitcrates//:lint",
+    "gitcrates//:test",
+    "gitcrates//crates/gdemo:debug",
+    "gitcrates//crates/gdemo:release",
+    "gitcrates//crates/gdemo:lib",
+    # the files of the packages, as `cargo_sync` would stage them (there is no farm sync here: a farm action cannot clone a git source)
+    "gitcrates//crates/gdemo:sources",
+    "gitcrates//third_party/buildrules:files",
 ])
 
 # The public CI workflow (.github/workflows/ci.yml, docs/contract.md section 14): the pinned actionlint accepts it, and ci/workflow_check.zig
@@ -802,6 +819,8 @@ _PACKAGES = [
     "//tools/stage:scrub_files",
     "crates//:scrub_files",
     "crates//crates/zdemo:scrub_files",
+    "gitcrates//:scrub_files",
+    "gitcrates//crates/gdemo:scrub_files",
     "rootcell//:scrub_files",
 ]
 

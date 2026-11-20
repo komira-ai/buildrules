@@ -243,8 +243,8 @@ means the tests passed on identical inputs. (Doctests are not run; section 9.)
 
 **Refusals at load.** The macros refuse, with the fix in the message: a compiler that is not
 pinned; a table whose recorded toolchain hashes differ from the pins; lto, a custom codegen
-backend, rpath, incremental and split-debuginfo profile fields; git or alternate-registry
-dependencies; a root `[package]`.
+backend, rpath, incremental and split-debuginfo profile fields; alternate-registry dependencies,
+and git dependencies not pinned by commit or not on github.com (refused by `sync`); a root `[package]`.
 
 There is also a set of hand-written rules (`rust_library`, `rust_binary`, `rust_test`) for
 crates described without Cargo. They share the toolchain and the launcher. `rust_library` can weld
@@ -543,7 +543,7 @@ channels are planned (section 9).
   built for them. `beta.yml` runs the command line of each (`ubuntu-24.04-arm`, `macos-15`) natively on a
   hello-world repository, up to the build: its version, `init`, Buck2 loading the candidate. It cannot
   build there: no toolchain of the rules runs on those hosts.
-- **Rust:** crates.io only; the workspace root is the repository root and must be a virtual workspace;
+- **Rust:** crates.io, and git repositories on github.com pinned by commit; the workspace root is the repository root and must be a virtual workspace;
   every package listed in `members` (a glob other than `dir/*` is refused); doctests not run;
   `:coverage` refuses; lto, rpath, incremental and split-debuginfo refused; `sync` needs the network
   the first time a registry crate is fetched.
