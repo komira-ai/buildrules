@@ -89,6 +89,18 @@ export function disagreements(md: string, rust: string, pins: string, mopm: stri
   if (!llvm) bad.push('llvm-tools: not in the page');
   else short(`Rust ${dflt} llvm-tools`, { size: llvm[1], head: llvm[2], tail: llvm[3] }, rustRow(rust, dflt).llvm_tools);
 
+  // The rustfmt of the default and the oldest Rust (`:fmt`, rules/rust/fmt.bzl): `<version> <size> bytes` and the whole sha256.
+  for (const ver of [dflt, oldest]) {
+    const fmtPin = rustRow(rust, ver).rustfmt;
+    const m = new RegExp(`${ver.replace(/\./g, '\\.')} (\\d+) bytes\\s+\`([0-9a-f]{64})\``).exec(md.slice(md.indexOf('rustfmt-preview')));
+    if (!fmtPin) bad.push(`Rust ${ver} rustfmt: not in the pins table`);
+    else if (!m) bad.push(`Rust ${ver} rustfmt: not in the page`);
+    else {
+      same(`Rust ${ver} rustfmt size`, m[1], fmtPin.size);
+      same(`Rust ${ver} rustfmt sha256`, m[2], fmtPin.sha256);
+    }
+  }
+
   // The mopm section: its heading, the version in every sentence, the tarball's name, its size and its sha256.
   const v = one(mopm, /MOPM_DEFAULT = "([^"]+)"/);
   const pin = entry(mopm, v);
@@ -146,6 +158,8 @@ describe('docs/pins.md figures are the figures in the pin tables', () => {
   faulty('the oldest rustc size is one more', 'rustc 118068031', 'rustc 118068032', /Rust 1\.85\.0 rustc size/);
   faulty('the oldest cargo sha prefix differs', '`e27ffcaf...c372`', '`e27ffcae...c372`', /Rust 1\.85\.0 cargo sha256/);
   faulty('the llvm-tools size is one more', '66089964 bytes', '66089965 bytes', /llvm-tools size/);
+  faulty('the rustfmt size is one more', '1.95.0 3028435 bytes', '1.95.0 3028436 bytes', /Rust 1\.95\.0 rustfmt size/);
+  faulty('one digit of the oldest rustfmt sha256 differs', 'a90de11ca6d8', 'a90de11ca6d9', /Rust 1\.85\.0 rustfmt sha256/);
   faulty('a new row nothing compares', '| busybox 1.35.0 |', '| newpin 1.0 | f | 1 | ab |\n| busybox 1.35.0 |', /row newpin 1\.0 is not compared/);
   faulty('a row is deleted','| zig 0.15.2 | zig-x86_64-linux-0.15.2.tar.xz | 53733924 | 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239 |\n', '', /0 rows for zig 0\.15\.2/);
 });
@@ -153,7 +167,7 @@ describe('docs/pins.md figures are the figures in the pin tables', () => {
 // A digest copied into prose goes stale when the pin moves. Pages other than docs/pins.md (which the tests above compare row by row) point at the
 // pin table instead; where a page does quote a digest, in full or as `head...tail`, it must be one a pin table holds, and a line about mopm must
 // quote mopm's.
-const PIN_TABLES = [RUST, PINS, MOPM, repoFile('rules/node/pins.bzl')];
+const PIN_TABLES = [RUST, PINS, MOPM, repoFile('rules/node/pins.bzl'), repoFile('rules/postgres/pins.bzl')];
 const PINNED = new Set(PIN_TABLES.flatMap((t) => t.match(/\b[0-9a-f]{64}\b/g) ?? []));
 
 /** The digests a page quotes that no pin table holds, and the digests on mopm lines that are not mopm's. */

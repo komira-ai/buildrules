@@ -25,7 +25,7 @@ pub const Allow = struct { host: []const u8, reason: []const u8 };
 /// Hosts a pin may name without a mirror on github.com, each with the reason. Remove a line when its pins are hosted; the check fails on a line no table needs.
 pub const allow = [_]Allow{
     .{ .host = "ziglang.org", .reason = "zig compilers: the beta stage retries through zig.linus.dev (docs/pins.md); no release asset yet" },
-    .{ .host = "conda.anaconda.org", .reason = "conda-forge runtime libraries and kcov's static libraries: the beta stage retries through repo.prefix.dev; no release asset yet" },
+    .{ .host = "conda.anaconda.org", .reason = "conda-forge runtime libraries, kcov's static libraries and the Postgres of the Rust test fixture: the beta stage retries through repo.prefix.dev; no release asset yet" },
     .{ .host = "nodejs.org", .reason = "the node tarballs: the beta stage retries through registry.npmmirror.com; no release asset yet" },
     .{ .host = "static.rust-lang.org", .reason = "the Rust distribution (CloudFront): no mirror found or checked; no release asset yet" },
     .{ .host = "registry.npmjs.org", .reason = "npm packages, each pinned by sha256 and integrity; no mirror found or checked; no release asset yet" },
@@ -172,7 +172,7 @@ fn work(a: std.mem.Allocator, sub: []const u8) ![]u8 {
     return std.fs.cwd().readFileAlloc(a, p, 1 << 20);
 }
 
-const names = [_][]const u8{ "rules/pins/pins.bzl", "rules/pins/hosts.bzl", "rules/rust/pins.bzl", "rules/node/pins.bzl", "rules/coverage/pins.bzl", "rules/mopm/pins.bzl", "rules/mopm/hosts.bzl" };
+const names = [_][]const u8{ "rules/pins/pins.bzl", "rules/pins/hosts.bzl", "rules/rust/pins.bzl", "rules/node/pins.bzl", "rules/coverage/pins.bzl", "rules/postgres/pins.bzl", "rules/mopm/pins.bzl", "rules/mopm/hosts.bzl" };
 
 fn realFiles(a: std.mem.Allocator) ![]File {
     const out = try a.alloc(File, names.len);

@@ -1,10 +1,12 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
-# The refusals of rules/rust/cargo.bzl (check_toolchain), as targets: each is green only if the table is refused (or accepted) as stated.
+# The refusals of rules/rust/cargo.bzl (check_toolchain) and the plan of `:fmt` (rules/rust/fmt.bzl), as targets: each is green only if the input is refused
+# (or accepted, and planned) as stated.
 # They are analysis tests; see rules/rust/refusal.bzl. The same refusal through the front door is
 # //examples/unpinned/crates/app:unpinned_rustc_is_refused.
 load("//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_VERSIONS")
 load("//rules/rust:refusal.bzl", "refusal_test")
-load(":cases.bzl", "refused", "table")
+load("//rules/rust:fmt.bzl", "workspace_config_candidates")
+load(":cases.bzl", "MID_EDITION", "NEW_EDITION", "OLD_EDITION", "fmt_plan_mismatch", "fmt_refusals", "refused", "same", "table", "unit", "ws_config_of")
 
 # A pinned version with the hashes the pins file has: accepted.
 refusal_test(name = "pinned_is_accepted", refusals = refused(table(RUST_DEFAULT, "builtin")), none = True, visibility = ["PUBLIC"])
@@ -48,5 +50,153 @@ refusal_test(
 )
 
 # The same refusal through the front door and the consumer's own table is in //examples/unpinned/crates/app.
+
+# ---- :fmt (rules/rust/fmt.bzl): which roots, editions and config rustfmt is given, and what is refused ------------------------------------------------
+
+# The table's roots, each once (a library and its test binary share src/lib.rs), sorted, under the edition of their unit; a bin with an edition of its own
+# gets its own group.
+refusal_test(
+    name = "fmt_takes_each_table_root_once_under_its_edition",
+    refusals = fmt_plan_mismatch(
+        [unit("src/lib.rs"), unit("src/lib.rs"), unit("tests/it.rs"), unit("build.rs"), unit("src/bin/old.rs", OLD_EDITION)],
+        [],
+        [],
+        {"config": None, "roots": {OLD_EDITION: ["src/bin/old.rs"], MID_EDITION: ["build.rs", "src/lib.rs", "tests/it.rs"]}},
+    ),
+    none = True,
+    visibility = ["PUBLIC"],
+)
+
+# An example and a bench (no unit in the table) are checked too, under the edition most of the units have; a discovered root that is in the table keeps
+# its unit's edition.
+refusal_test(
+    name = "fmt_adds_discovered_examples_and_benches_under_the_package_edition",
+    refusals = fmt_plan_mismatch(
+        [unit("src/lib.rs", NEW_EDITION), unit("src/lib.rs", NEW_EDITION), unit("src/bin/old.rs", OLD_EDITION)],
+        ["benches/speed.rs", "examples/demo/main.rs", "src/bin/old.rs", "src/lib.rs"],
+        [],
+        {"config": None, "roots": {OLD_EDITION: ["src/bin/old.rs"], NEW_EDITION: ["benches/speed.rs", "examples/demo/main.rs", "src/lib.rs"]}},
+    ),
+    none = True,
+    visibility = ["PUBLIC"],
+)
+
+# The member directory's own config is the one passed; with both names there, `.rustfmt.toml` (rustfmt reads it first). A config in a directory that holds
+# no root (a test fixture's) is not one cargo fmt reads, and is accepted.
+refusal_test(
+    name = "fmt_reads_the_member_config_dot_name_first",
+    refusals = fmt_plan_mismatch(
+        [unit("src/lib.rs")],
+        [],
+        ["rustfmt.toml", ".rustfmt.toml", "tests/fixtures/rustfmt.toml"],
+        {"config": ".rustfmt.toml", "roots": {MID_EDITION: ["src/lib.rs"]}},
+    ),
+    none = True,
+    visibility = ["PUBLIC"],
+)
+
+refusal_test(
+    name = "fmt_reads_the_member_config",
+    refusals = fmt_plan_mismatch([unit("src/lib.rs")], [], ["rustfmt.toml"], {"config": "rustfmt.toml", "roots": {MID_EDITION: ["src/lib.rs"]}}),
+    none = True,
+    visibility = ["PUBLIC"],
+)
+
+# A config in a directory above a root and below the member directory: cargo fmt reads it for that root, `:fmt` would not, so it is refused by name.
+refusal_test(
+    name = "fmt_refuses_a_config_between_the_member_and_a_root",
+    refusals = fmt_refusals([unit("src/lib.rs"), unit("src/bin/tool/main.rs")], [], ["src/bin/rustfmt.toml"]),
+    contains = ["src/bin/rustfmt.toml is the rustfmt config of src/bin/tool/main.rs under `cargo fmt`", "move its settings"],
+    visibility = ["PUBLIC"],
+)
+
+# The same for a discovered root (an example).
+refusal_test(
+    name = "fmt_refuses_a_config_above_a_discovered_root",
+    refusals = fmt_refusals([unit("src/lib.rs")], ["examples/demo.rs"], ["examples/.rustfmt.toml"]),
+    contains = ["examples/.rustfmt.toml is the rustfmt config of examples/demo.rs"],
+    visibility = ["PUBLIC"],
+)
+
+# A target root outside the member directory, and a member with no unit: refused by name.
+refusal_test(
+    name = "fmt_refuses_a_root_outside_the_member",
+    refusals = fmt_refusals([unit("src/lib.rs"), unit("../shared/main.rs")]),
+    contains = ["the target root ../shared/main.rs is outside the member's directory"],
+    visibility = ["PUBLIC"],
+)
+
+# Every spelling of a path that leaves the member: absolute, a `..` in the middle, a trailing `..`.
+refusal_test(
+    name = "fmt_refuses_an_absolute_root",
+    refusals = fmt_refusals([unit("/etc/main.rs")]),
+    contains = ["the target root /etc/main.rs is outside the member's directory"],
+    visibility = ["PUBLIC"],
+)
+
+refusal_test(
+    name = "fmt_refuses_a_root_through_dot_dot",
+    refusals = fmt_refusals([unit("src/../../x.rs")]),
+    contains = ["the target root src/../../x.rs is outside"],
+    visibility = ["PUBLIC"],
+)
+
+# Two editions with as many units each: the discovered root takes the lower edition (a stable choice, never the order of the table).
+refusal_test(
+    name = "fmt_breaks_an_edition_tie_by_the_lower_edition",
+    refusals = fmt_plan_mismatch(
+        [unit("src/main.rs", NEW_EDITION), unit("src/lib.rs", MID_EDITION)],
+        ["examples/demo.rs"],
+        [],
+        {"config": None, "roots": {MID_EDITION: ["examples/demo.rs", "src/lib.rs"], NEW_EDITION: ["src/main.rs"]}},
+    ),
+    none = True,
+    visibility = ["PUBLIC"],
+)
+
+refusal_test(
+    name = "fmt_refuses_a_member_without_units",
+    refusals = fmt_refusals([], ["src/lib.rs"]),
+    contains = ["has no units in the table"],
+    visibility = ["PUBLIC"],
+)
+
+# The workspace root's config (`.rustfmt.toml` first), none when there is none, and a config in a directory between the root and a member refused by name.
+refusal_test(
+    name = "fmt_workspace_config_is_the_root_one",
+    refusals = same("workspace_fmt_config", ws_config_of(["crates/a", "b"], ["rustfmt.toml", ".rustfmt.toml"]), (".rustfmt.toml", [])),
+    none = True,
+    visibility = ["PUBLIC"],
+)
+
+refusal_test(
+    name = "fmt_workspace_without_config_has_none",
+    refusals = same("workspace_fmt_config", ws_config_of(["crates/a"], []), (None, [])),
+    none = True,
+    visibility = ["PUBLIC"],
+)
+
+refusal_test(
+    name = "fmt_workspace_refuses_a_config_between_the_root_and_a_member",
+    refusals = ws_config_of(["crates/deep/a", "b"], ["rustfmt.toml", "crates/rustfmt.toml"])[1],
+    contains = ["crates/rustfmt.toml is the rustfmt config of the member crates/deep/a under `cargo fmt`"],
+    visibility = ["PUBLIC"],
+)
+
+# The paths the workspace globs for: both names in the root and in every directory between it and each member, and not in the member directory itself
+# (that one is the member's to read).
+refusal_test(
+    name = "fmt_workspace_globs_the_root_and_each_directory_above_a_member",
+    refusals = same("workspace_config_candidates", workspace_config_candidates(["crates/deep/a", "b"]), [
+        ".rustfmt.toml",
+        "crates/.rustfmt.toml",
+        "crates/deep/.rustfmt.toml",
+        "crates/deep/rustfmt.toml",
+        "crates/rustfmt.toml",
+        "rustfmt.toml",
+    ]),
+    none = True,
+    visibility = ["PUBLIC"],
+)
 
 scrub_files()

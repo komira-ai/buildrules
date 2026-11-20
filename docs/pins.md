@@ -4,7 +4,10 @@
 supported, 1.85.0: rustc 118068031 `bddacba2...2999`, rust-std 49657114 `b3ad2196...c4a9`, cargo 12817517 `e27ffcaf...c372`, clippy 4573789
 `fe8fd470...122c`, every tarball downloaded from its versioned URL and sha256/size computed independently; `rustc --version` must start with
 `rustc 1.85.0 (` and `cargo --version` with `cargo 1.85.0 (`. llvm-tools-preview 1.95.0 (for `isa_audit`):
-66089964 bytes, `55b57b2a...1f7a`.
+66089964 bytes, `55b57b2a...1f7a`. rustfmt-preview (for `:fmt`, rules/rust/fmt.bzl): 1.95.0 3028435 bytes
+`6d3e64adc505ad4bef6935f6e6f5e4c6956d9782607fb8394df3a5d2b30d2733`, 1.85.0 3665005 bytes `a90de11ca6d86290fd7dddd6e27685ca1a7c4aa7d8e5fb622827902ef54f1b25`
+(`rustfmt-<version>-x86_64-unknown-linux-gnu.tar.gz`, each downloaded, `sha256sum`/`stat` computed and the sha256 compared with the `.sha256` file beside it);
+they decompress to 9112576 and 11510272 bytes, under the 16 MiB `max_output` the pinned `unpack` is given (rules/rust/toolchain.bzl).
 
 Rust 1.95.0. The URLs are the versioned ones, `https://static.rust-lang.org/dist/<component>-1.95.0-x86_64-unknown-linux-gnu.tar.gz`, which carry no date; every tarball was downloaded and
 `sha256sum`/`stat` computed independently. buck2 re-checks the
@@ -92,6 +95,44 @@ It is the first release with namespaces: a package's name is its full name, `<na
 prints unit graph format 6 (unit ids and `package` carry the full name, and each unit has `import`, the import name) and its `mopm lock` writes `lock_version` 3. `rules/mojo` and
 `buildrules mojo sync` read formats 1 to 6 (docs/contract.md, section 12.13); `examples/mojo/namespaced` and its member `nsshim` name 0.0.113 in their `mopm-toolchain.toml` and are the
 committed graphs of format 6.
+
+## Postgres 17.12 (the fixture of the Rust tests)
+
+`rules/postgres/pins.bzl` `POSTGRES_PACKAGES`: conda-forge's `postgresql 17.12` for linux-64 (`hfefc96f_0`) and every package of its run closure but one, one build per name, 27 packages and 41267099 bytes.
+The closure was read from conda-forge's package index (the `depends` of each build, followed until nothing new was named; `__glibc` is the host's). The sha256 and size
+are the index's; `postgresql`'s was also downloaded and hashed independently (`6567686133ba8a59...d10b3b`, 5673711 bytes). buck2 checks every one on download.
+Left out: `libedit` (only krb5's `bin/ktutil` and `bin/kadmin` link it, read from every ELF file's `NEEDED` entries; the fixture runs neither, and its versions are dates).
+17 is the major the hosted lanes of the Rust repositories run (their CI uses the 17.9 image; one uses 16). Only linux-x86_64: the Rust tests run there only.
+
+| package | version | build | size (bytes) | sha256 |
+|---|---|---|---|---|
+| _openmp_mutex | 4.5 | 20_gnu | 28948 | 1dd3fffd892081df9726d7eb7e0dea6198962ba775bd88842135a4ddb4deb3c9 |
+| ca-certificates | 2026.10.23 | hbd8a1cb_0 | 130057 | 95619b9c1184be7175392eeb0ee7eeb5ccf25d280951f4225f2d62e725790be3 |
+| cyrus-sasl | 2.1.28 | hac629b4_1 | 210103 | 7684da83306bb69686c0506fb09aa7074e1a55ade50c3a879e4e5df6eebb1009 |
+| icu | 78.3 | h54a6638_2 | 14455340 | d7c260b7e1cf22ce04d6ba8a86eabf4e6c50bc96a5c27fe2ecb32298af3e88eb |
+| keyutils | 1.6.3 | h7cc23a3_1 | 135295 | dd053c96dcb0dcfd59422aefea9d2fe937a190167f34fba7893ec1e10a7e8963 |
+| krb5 | 1.22.2 | hbc21106_2 | 1394333 | 2a5c38c85e63df84c4e69ee71439841ce570d259ae3060627bb9a49a938d66f4 |
+| libgcc | 16.2.0 | ha9f2e26_7 | 1058444 | e031634c3a928f9594eba868bc46ef5230d6571a364a0c63215b06c4563bfcea |
+| libgomp | 16.2.0 | he0feb66_7 | 640566 | 92a0bb350c7be6a4eedcb4e111c60aefd176018e6b1c009a6e025dbe9bbcd758 |
+| libiconv | 1.18 | h0cb94f2_3 | 789471 | f943117edb9cd4d9c61cc972eee5a34291dc55ea7a6e9e38da104995841cbcb6 |
+| liblzma | 5.8.3 | hb03c661_1 | 112995 | 9787df8c22a59c9a70d3e5a10db9ad663485e75e9ccc3f09bd092cb7b95e0dab |
+| libntlm | 1.8 | hb9d3cd8_0 | 33418 | 3b3f19ced060013c2dd99d9d46403be6d319d4601814c772a3472fe2955612b0 |
+| libpq | 17.12 | h9d76c99_0 | 2686425 | f17e367a493174b96fbf8b0fcecc52eaa933a21e2f2ee1b219ae75b6d54af0a7 |
+| libstdcxx | 16.2.0 | h934c35e_7 | 6615436 | fa7018298629fc429971fffd6ecba3d27a7b02e4e890d6a93ea01ffebe8cb745 |
+| libxcrypt | 4.4.38 | h280c20c_0 | 101957 | f7e9292dd219a6435bbb1223da9586c3e70d66d169c5a92f08db3f2127df04e9 |
+| libxml2 | 2.15.4 | h7df9aa5_1 | 46570 | 8c32be9e8720bc413d2b4267517459d7d71fad4a5f398a2aa8319b6d7b8a00e6 |
+| libxml2-16 | 2.15.4 | hf3af7cc_1 | 569062 | d1906463070c21f3215cd5de93164f31c44d5bac6ae9b5d8f5adf42b1e304039 |
+| libxslt | 1.1.45 | h8e12856_1 | 250314 | 3beb51b5ce8d2e0690b8517d3d955972d502cfbe2899279cbb9cbb6ff134d360 |
+| libzlib | 1.3.2 | h25fd6f3_3 | 63713 | eb8a0db0aa570124f7d2a93d7c7f596e3390df5e047818d873baad32985fc736 |
+| lz4-c | 1.11.1 | hee9eb32_0 | 237352 | e66dc54f3f3547f1988dc3ef606f2790d7fde24037ffd0a19b4f58e2895f4183 |
+| ncurses | 6.6 | hdb14827_1 | 911196 | 5d46557214ed184381dafe835b7c94a474a1c3b307a08a250b1ea4779b44ffb3 |
+| openldap | 2.6.13 | hbde042b_0 | 786149 | 21c4f6c7f41dc9bec2ea2f9c80440d9a4d45a6f2ac13243e658f10dcf1044146 |
+| openssl | 3.6.5 | h781a0a9_0 | 3195299 | 9c1533f1cf784f0e250919c0c9762d0b0e6bc727a79290ffb7cea1ceca1d038c |
+| postgresql | 17.12 | hfefc96f_0 | 5673711 | 6567686133ba8a59277c4e7016a53bbac5cd276be5d6280125a3bb5c49d10b3b |
+| readline | 8.3 | hd6e31c0_1 | 348899 | 01b3fe073a66e321970d09e04b388708f8cbdca5cdfbfcb7c9eeb470ad10383d |
+| tzcode | 2026f | hebe6cf0_0 | 71537 | 6e17f0f65ee110f1dbb4375021901daf3ef9d908e9c07a3e9fcbdb3d723a848a |
+| tzdata | 2026e | h5d301ff_0 | 119208 | 2b7ca858879f183ce2dcc65b300f48a0133d5430550f35b23d80d405a0788dbf |
+| zstd | 1.5.7 | hb78ec9c_7 | 601301 | 47d682b9f6d6ec9eb1a6e6c3e75ea6273e899e78fb7fc59f81d39745009fbc60 |
 
 ## Mirrors
 

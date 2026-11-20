@@ -22,28 +22,32 @@ Targets of a member package (all always present; `coverage` refuses until P8):
     :debug     lib + bins, as `cargo build -p`                  :release   the same under `--release`
     :test      every cargo test target: the lib test binary, each tests/*.rs, each bin test; one `.passed` marker each
                Each is also a `buck2 test` target (label `test`): the same pinned binary, environment and working directory.
+               A package that declares `postgres = { url-env = "NAME" }` runs each with a private Postgres, its URL in NAME.
     :lint      clippy over every unit `cargo clippy -p --all-targets` checks, `[lints]` as flags, `clippy.toml` as an input
+    :fmt       the pinned `rustfmt --check` over the files `cargo fmt --check -p` reads, red on any difference (fmt.bzl)
     :flycheck  the same runs as diagnostics: one directory of `<unit>.json` files (rustc's JSON diagnostics, one per line), built
                even when the code has errors; what `buildrules rust-project check` builds for an editor's check on save
     :coverage  refuses with the reason (P8)
     :<action>  one per action named in [workspace.metadata.buildrules] / [package.metadata.buildrules]: its steps, chained
 
-Actions (policy only, resolved at sync):  `actions = { ci = ["lint", "test"] }`; an action may not take a step's name.
+Actions (policy only, resolved at sync):  `actions = { ci = ["fmt", "lint", "test"] }`; an action may not take a step's name.
+The Postgres fixture (resolved at sync, the package's over the workspace's): `postgres = { url-env = "NAME" }` (rules/postgres/README.md).
 Doctests are out of v0: `:test` runs what `cargo test` runs minus them (a recorded gap).
 
 The workspace root package also has `:rust_analyzer_inputs` (rules/rust/rust_analyzer.bzl): what rust-analyzer needs that only a build
 makes, which `buildrules rust-project develop` downloads and writes rust-project.json from.
 
-A stale table is red: every `:test`, `:lint`, `:debug` and `:release` carries the workspace's `:check` as a validation, which compares
+A stale table is red: every `:test`, `:lint`, `:fmt`, `:debug` and `:release` carries the workspace's `:check` as a validation, which compares
 the sha256 of Cargo.lock, rust-toolchain.toml and every Cargo.toml with what the table was made from. The compile actions
 never take a Cargo.toml as an input, so editing policy or metadata re-runs the check and nothing else.
 """
 
 load(":cargo_unit.bzl", "cargo_unit", "unit_group")
+load(":fmt.bzl", "AUTO_ROOTS", "CONFIG_NAMES", "fmt_plan", "rustfmt_check", "rustfmt_config", "workspace_config_candidates", "workspace_fmt_config")
 load(":pins.bzl", "RUST_VERSIONS")
+load(":refusal.bzl", "recording")
 load(":rust_analyzer.bzl", "rust_analyzer_inputs")
-
-_STEPS = ["lint", "debug", "test", "release", "coverage"]
+load(":select.bzl", "toolchain_for")
 
 def _tname(uid):
     return uid.replace(":", "_")
@@ -306,6 +310,10 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
 
     m = table["MEMBERS"][name]
 
+    # `postgres = { url-env = "NAME" }` (resolved by sync, absent from the rows of packages that do not declare it): every test of the package runs with a
+    # private Postgres, its URL in NAME (rules/postgres/README.md).
+    pg = row.get("postgres")
+
     # 1. the member's units, one cargo_unit each (named by content id, as in third_party)
     for uid in sorted(mine):
         u = mine[uid]
@@ -314,6 +322,8 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
             kw["extra_srcs"] = list(extra_srcs)
         if u["mode"] == "test":
             kw["run_data"] = native.glob(["src/**", "tests/**", "build.rs"] + _outside_globs(mine))
+            if pg:
+                kw["postgres_url_env"] = pg["url_env"]
         if u["mode"] == "run-custom-build":
             if stamp_env:
                 kw["stamp_env"] = dict(stamp_env)
@@ -368,12 +378,32 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
     _flycheck_step(name = "flycheck", deps = [t(r) + "_flycheck" for r in lint_ids], check = chk, visibility = ["PUBLIC"])
     _refuse(name = "coverage", why = "coverage is P8: not implemented in this prototype", target_compatible_with = ["buildrules//platforms:not_implemented"], visibility = ["PUBLIC"])
 
+    # 3b. fmt: rustfmt over the roots `cargo fmt -p <pkg>` hands it (fmt.bzl). A member that `:fmt` cannot check as cargo fmt would is refused when built, by name.
+    why, refuse_fmt = recording()
+    plan = fmt_plan(
+        [mine[k] for k in sorted(mine)],
+        native.glob(AUTO_ROOTS, exclude = ["target/**"]),
+        native.glob(["**/" + n for n in CONFIG_NAMES], exclude = ["target/**"]),
+        refuse = refuse_fmt,
+    )
+    ws_conf = "//" + ws + ":rustfmt_config" if ws else "//:rustfmt_config"
+    rustfmt_check(
+        name = "fmt_rustfmt",
+        roots = plan["roots"] if plan else {},
+        config = (plan["config"] or ws_conf) if plan else ws_conf,
+        srcs = native.glob(["**/*.rs"], exclude = ["target/**"]) + list(extra_srcs),
+        toolchain = toolchain_for(rustc),
+        why = why[0] if why else None,
+        visibility = ["PUBLIC"],
+    )
+    _step(name = "fmt", deps = [":fmt_rustfmt"], check = chk, visibility = ["PUBLIC"])
+
     # 4. actions: the policy's chains of steps
     for act, steps in row["actions"].items():
         _step(name = act, deps = [":" + s for s in steps], visibility = ["PUBLIC"])
 
 def cargo_workspace(path = ".", table = None):
-    """The workspace root package: `:check`, the clippy.toml export, and one aggregate target per step and per action.
+    """The workspace root package: `:check`, the clippy.toml export, `:rustfmt_config`, and one aggregate target per step and per action.
 
     Every member listed in the table must have its own package (`<root>/<member path>/BUCK` calling `cargo_package`).
     """
@@ -404,8 +434,21 @@ def cargo_workspace(path = ".", table = None):
         label_of = lambda uid: _label(uid, table["UNITS"], ws, third_party, here),
         check = ":check",
     )
+
+    # :rustfmt_config: the workspace root's rustfmt config, which a member's `:fmt` reads unless it has its own (fmt.bzl); refused when a directory between
+    # the root and a member holds one, since `cargo fmt` would read that one instead.
+    members = [rows[n]["path"] for n in sorted(rows)]
+    found = [c for c in workspace_config_candidates(members) if native.glob([_join(path, c) if path not in ("", ".") else c])]
+    why, refuse_fmt = recording()
+    conf = workspace_fmt_config(members, found, refuse = refuse_fmt)
+    rustfmt_config(
+        name = "rustfmt_config",
+        src = (_join(path, conf) if path not in ("", ".") else conf) if conf else None,
+        why = why[0] if why else None,
+        visibility = ["PUBLIC"],
+    )
     names = sorted(rows)
-    for step in ["lint", "debug", "test", "release"]:
+    for step in ["fmt", "lint", "debug", "test", "release"]:
         _step(name = step, deps = ["//" + _join(ws, rows[n]["path"]) + ":" + step for n in names], visibility = ["PUBLIC"])
     acts = {}
     for n in names:

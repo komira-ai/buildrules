@@ -161,6 +161,6 @@ comptime {
 
 /// The keys `[workspace.metadata.buildrules]` and `[package.metadata.buildrules]` accept (the generator,
 /// cli/src/unitgen.zig, refuses any other), the one key under `lint`, and the steps an action may chain.
-pub const policy_keys = [_][]const u8{ "default-action", "actions", "lint" };
+pub const policy_keys = [_][]const u8{ "default-action", "actions", "lint", "postgres" };
 pub const lint_keys = [_][]const u8{"deny-warnings"};
-pub const steps = [_][]const u8{ "lint", "debug", "test", "release", "coverage" };
+pub const steps = [_][]const u8{ "fmt", "lint", "debug", "test", "release", "coverage" };

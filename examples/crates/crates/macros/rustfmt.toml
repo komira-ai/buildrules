@@ -1,0 +1,4 @@
+# This member is formatted at 120 columns, not at the workspace's 160 (../../rustfmt.toml): a member's own config is the one its `:fmt` and `cargo fmt`
+# read, so `crates//crates/macros:fmt` is green only when the member's config wins over the workspace's.
+max_width = 120
+use_small_heuristics = "Max"

@@ -10,6 +10,7 @@ control's own error. ci/negative_check.zig holds the wiring of this file to the 
 load("//examples/mojo/sys_app:buildrules.mojo.lock.bzl", SYS_APP_GRAPH = "GRAPH")
 load("//examples/mojo/ws:buildrules.mojo.lock.bzl", WS_GRAPH = "GRAPH")
 load("//rules/mopm:pins.bzl", "MOPM_DEFAULT", "vname")
+load("//rules/rust:pins.bzl", "RUST_DEFAULT", rust_vname = "vname")
 load(":native_library.bzl", "native_library_problems", "native_link_cfg_problems")
 load(":native_macos.bzl", "native_macos_problems")
 load(":system_libs.bzl", "system_libs_problems")
@@ -33,6 +34,7 @@ CASES = [
     ("//ci/negative:cxx_library_gated_by_the_wrong_kind", PLATFORM, "Attribute requires a dep that provides `ValidationInfo`"),
     ("//ci/negative:npm_tarball_with_a_dep_of_the_wrong_kind", PLATFORM, "Attribute requires a dep that provides `NpmPackageInfo`"),
     ("//ci/negative:zig_coverage_of_no_test", PLATFORM, "test_targets is empty: a package with no test has no coverage to measure"),
+    ("//ci/negative:postgres_on_a_library_unit", PLATFORM, ":postgres_on_a_library_unit: postgres_url_env is for a unit in mode test (the run of a test), not mode build"),
     ("//ci/negative:cross_exe_with_other_tests", PLATFORM, "waits for the unit tests"),
     ("//ci/negative:mojo_instrumented_link_without_a_native_the_unit_links", PLATFORM, "the unit links the native library libbase_sys.a and the instrumented link of its branch coverage is not given it"),
     ("//ci/negative:mojo_instrumented_link_with_a_needed_archive_before_its_user", PLATFORM, "libbase_sys.a is linked before libprobe_sys.a, which needs it"),
@@ -66,6 +68,10 @@ CASES = [
     ("//ci/faulty:zig_dist_of_a_zero_max_output", "buildrules//platforms:linux_x86_64", "`max_output` must be a positive number of decompressed bytes"),
     # A crate unit's extra source must be the file of the tree, at the path a `#[path]` or `include_str!` names, and not a copy (rules/rust/cargo_unit.bzl).
     ("//ci/faulty:rust_unit_with_a_copied_extra_source", "buildrules//platforms:linux_x86_64", "a copy made by a rule and not a file of the tree: a source or a build script reads it at its own path. Export it with `export_file("),
+    # `:fmt` (rules/rust/fmt.bzl) refuses by name: a toolchain that pins no rustfmt, and a member or workspace whose rustfmt config it would not read as cargo fmt does.
+    ("//ci/faulty:fmt_with_a_toolchain_without_rustfmt", "buildrules//platforms:linux_x86_64", "has no pinned rustfmt (a version pinned in buildrules-pins.toml pins none)"),
+    ("//ci/faulty:fmt_refused_with_its_reason", "buildrules//platforms:linux_x86_64", "fmt_refused_with_its_reason: src/bin/rustfmt.toml is the rustfmt config of src/bin/tool.rs"),
+    ("//ci/faulty:fmt_config_refused_with_its_reason", "buildrules//platforms:linux_x86_64", "fmt_config_refused_with_its_reason: crates/rustfmt.toml is the rustfmt config of the member crates/a"),
 ] + [
     ("//examples/mojo/subdirs:lib", platform, "has no unit graph for this target platform. It holds graphs for linux-64, linux-aarch64, osx-arm64")
     for platform in UNSUPPORTED_SUBDIR_PLATFORMS
@@ -443,6 +449,7 @@ FAULTY = [
     ("//ci/faulty:table_of_other_bytes", "//ci/faulty:table_in_sync", "STALE ci/faulty/empty.txt"),
     ("//ci/faulty:rust_toolchain_of_other_version", "toolchains//:rust", "rust_toolchain: expected output starting with 'rustc 0.0.0 (' but"),
     ("//ci/faulty:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
+    ("//ci/faulty:pgdemo_row_without_postgres", "crates//crates/pgdemo:pgdemo-0.1.0_9ff37c4d80", "PGDEMO_URL names no Postgres server"),
     ("//ci/faulty:lib_behind_a_failing_test", "//examples/hello:hello_lib", "this test fails by design"),
     ("//ci/faulty:mojo_test_that_fails", None, "check marker: TEST FAILED: "),
     # A test that blocks forever (ci/faulty/hang.zig) under a hang limit of one second (`test_hang_limit_s = 1`): red, with the hang-limit verdict (docs/contract.md, section 12.8)
@@ -502,6 +509,12 @@ FAULTY = [
     # A commit stamp is an input of the build script's run (cargo_package's stamp_env and stamp_rustc_env, examples/crates/crates/stamped/BUCK): the same
     # units run without it find no `git`, say `unknown`, and the library's test refuses that. The control is the package's test, given the stamp.
     ("crates//crates/stamped:test_without_the_stamps", "crates//crates/stamped:test", "the commit is not the stamp given as an input"),
+    # `:fmt` (rules/rust/fmt.bzl): the pinned rustfmt finds a file it would change, as a root, as a module reached only through `mod`, and as a file under
+    # the config it is given (and not under its defaults); rustfmt names the file and the line (`Diff in <path>:<line>:`). The control is the same rule over a
+    # file it leaves as it is.
+    ("//ci/faulty:fmt_of_a_badly_formatted_file", "//ci/faulty:fmt_of_a_well_formatted_file", "ci/faulty/fmt/bad.rs:1:"),
+    ("//ci/faulty:fmt_of_a_badly_formatted_module", "//ci/faulty:fmt_of_a_well_formatted_file", "ci/faulty/fmt/module/inner.rs:1:"),
+    ("//ci/faulty:fmt_against_its_config", "//ci/faulty:fmt_of_a_well_formatted_file", "ci/faulty/fmt/good.rs:2:"),
 ]
 
 # Defects only a farm shows. An action of local mode runs in the checkout (docs/contract.md, section 14), where a file a unit does not declare is there to
@@ -530,9 +543,9 @@ def farm_only_note():
 # (rules/core/unpack.bzl). The rules are found by kind in the closure of what CI builds, their actions are read, and each must run the program pinned for the
 # execution platform (rules/pins:unpack, a download: no rule builds it) with all four checks and a well formed value for each. The targets that must be among them
 # are named, so a rule that stops unpacking this way (or stops being built) does not leave an empty list that passes.
-UNPACK_KINDS = "zig_dist_rule|_mopm"
-UNPACK_CATEGORIES = ["zig_unpack", "mopm_unpack"]
-UNPACK_TARGETS = ["buildrules//rules/pins:zig", "buildrules//rules/pins:zig_next", "toolchains//:mopm_" + vname(MOPM_DEFAULT), "toolchains//:mojo_1_0_0_zig"]
+UNPACK_KINDS = "zig_dist_rule|_mopm|rustfmt_dist"
+UNPACK_CATEGORIES = ["zig_unpack", "mopm_unpack", "rustfmt_unpack"]
+UNPACK_TARGETS = ["buildrules//rules/pins:zig", "buildrules//rules/pins:zig_next", "toolchains//:mopm_" + vname(MOPM_DEFAULT), "toolchains//:mojo_1_0_0_zig", "toolchains//:rustfmt_" + rust_vname(RUST_DEFAULT)]
 
 # The pin `//rules/pins:unpack` resolves to on each platform that has one, and a platform that has none (macOS on Intel), which is refused with the platform named.
 UNPACK_PLATFORMS = [
@@ -636,6 +649,12 @@ TEST_COMMANDS = [
     ("//ci/cargo_run:bin_test", [
         _CARGO_START + "\"--\", <build artifact bin_test__bin_bin/cargo_run",
     ], _CARGO_ENV, ["CARGO_TARGET_TMPDIR"], ["test", "cargo_run"], ["hidden=[", "ci/cargo_run/src/main.rs"]),
+    # A test of a package with the Postgres fixture: the `check run` of the start above, under `pg_run`, given the pinned tree and the variable the package names.
+    ("crates//crates/pgdemo:pgdemo-0.1.0_9ff37c4d80", [
+        "\"--url-env\", \"PGDEMO_URL\", \"--\", RunInfo(args=cmd_args(cmd_args(<build artifact check",
+        "\"--prefix\", <build artifact prefix",
+        _CARGO_START + "\"--abs\", \"CARGO_TARGET_TMPDIR\", \"--mkdir-env\", \"CARGO_TARGET_TMPDIR\", \"--\", <build artifact",
+    ], _CARGO_ENV + ["CARGO_TARGET_TMPDIR"], ["PGDEMO_URL"], ["test"], ["hidden=[", "tests/row.rs"]),
     ("//examples/p4ws/crates/probe_ok:probe_ok-0.1.0_2662e7548e", [
         _CARGO_START + "\"--\", <build artifact",
     ], _CARGO_ENV, ["CARGO_TARGET_TMPDIR"], ["test"], ["hidden=[", "src/lib.rs"]),

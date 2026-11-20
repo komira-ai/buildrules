@@ -47,8 +47,9 @@ keeps p7's names and signatures.
 
 ### `cargo_workspace(path = ".", table)` **[p7]**
 Called once, in the package of the workspace root (v0: the repository root). Declares `:check`, the
-`Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml` (and `clippy.toml` if present) exports, one aggregate
-target per step (`:lint :debug :test :release`) and one per action named in the policy. Each aggregate
+`Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml` (and `clippy.toml` if present) exports, `:rustfmt_config`
+(the workspace root's `.rustfmt.toml` or `rustfmt.toml`, else an empty file), one aggregate
+target per step (`:fmt :lint :debug :test :release`) and one per action named in the policy. Each aggregate
 depends on the same-named target of every member listed in the table.
 
 It also declares `:rust_analyzer_inputs` (`rules/rust/rust_analyzer.bzl`): what rust-analyzer needs that only a build makes, as one
@@ -80,11 +81,12 @@ workspace from them.
 Targets of a member **[p7]**: `:lib`, `:bin` (only when the member has a binary), `:debug`, `:release`,
 `:test` (one `.passed` marker per cargo test target; doctests are out of v0), `:lint` (clippy-driver with
 the member's `[lints]` as flags, `clippy.toml` as an input, `-D warnings` when the policy says so),
+`:fmt` (the pinned `rustfmt --check`, red on any difference; below),
 `:flycheck` (the same clippy runs as `:lint` as diagnostics runs: `rules/rust/rustc_diag.zig` writes rustc's diagnostics as JSON
 lines to the unit's output and succeeds when rustc's status is `1`, an error in the code; one directory of `<unit>.json` files,
 built even when the code has errors; what `buildrules rust-project check` builds),
 `:coverage` (refuses until P8), and one target per action in the policy. Every `:debug :release :test
-:lint :flycheck` carries the workspace `:check` as a validation. No compile action takes a `Cargo.toml` as an
+:lint :fmt :flycheck` carries the workspace `:check` as a validation. No compile action takes a `Cargo.toml` as an
 input, so a policy edit re-runs the check and nothing else. A build script, compiled and run, has every file of its package but
 `BUCK`, `Cargo.toml` and `target/`, as under cargo, where it runs in the package directory (`rerun-if-changed` is recorded, not
 used to narrow this, so any edit in the package re-runs the script, and a script that reads its own `Cargo.toml` fails); the other
@@ -95,6 +97,17 @@ Refused at load (the rule `fail`s with the fix): a table whose `RUSTC` is neithe
 `RUST_VERSIONS` nor one the table records as pinned by the repository (`TOOLCHAIN.origin`, section 6), or whose recorded
 `TOOLCHAIN` hashes are not the pinned ones; a path that is not a member in the table; lto, a codegen backend, rpath, incremental or
 split-debuginfo profile fields (v0).
+
+`:fmt` (`rules/rust/fmt.bzl`) runs the pinned rustfmt of the table's Rust version as `rustfmt --check --edition <E> --config-path <config> <roots>`,
+one action per edition, with every `.rs` file of the member (and its `extra_srcs`) as inputs; it is red when rustfmt would change a file or cannot parse
+one, and the failure is rustfmt's own difference. The roots are what `cargo fmt --check -p <member>` hands rustfmt: the root of every unit of the member
+in the table, and every file at one of cargo's conventional target paths (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, `src/bin/*/main.rs`, and the
+same two shapes under `examples/`, `tests/` and `benches/`, and `build.rs`), so examples and benches, which have no unit, are checked too. A root of the
+table keeps its unit's edition; any other takes the edition most of the member's units have. rustfmt follows `mod` from each root. The config is one
+file, given with `--config-path` so rustfmt reads nothing else: the member directory's `.rustfmt.toml` or `rustfmt.toml` (in that order, as rustfmt
+looks), else the workspace root's (`:rustfmt_config`), else an empty file (rustfmt's defaults). Refused when built, naming the files: a config in a
+directory between the member and one of its roots, or between the workspace root and a member (`cargo fmt` would read it for those files and `:fmt`
+would not); a root outside the member directory; a Rust version whose row pins no rustfmt (a version of `buildrules-pins.toml`).
 
 ## 3. The files and who writes them
 
@@ -145,7 +158,8 @@ MANIFEST_SHA256 = {
 `MANIFEST_SHA256` is written one entry per line, sorted, closed by a `}` at column 0; its keys are the
 root `Cargo.toml`, `rust-toolchain.toml`, `buildrules-pins.toml` (when there is one) and every member's `Cargo.toml`. Then: `TOOLCHAIN` (section 6), `WORKSPACE` (resolved
 policy, `clippy_conf`), `PACKAGES` (one row per member: `path`, `version`, `check_cfg`, `lints.rust`,
-`lints.clippy`, `actions`, `deny_warnings`, `default_action`), `GRAPHS` (whole-workspace graphs; empty from
+`lints.clippy`, `actions`, `deny_warnings`, `default_action`, and `postgres` = `{"url_env": NAME}` only in the row of a member that has
+the fixture, section 5; `WORKSPACE` has it only when the workspace declares it), `GRAPHS` (whole-workspace graphs; empty from
 the CLI), `MEMBERS` (per member and verb `build|test|release`: `roots`, `units`, `graph_units`) and
 `UNITS` (one entry per distinct unit: `crate`, `version`, `source` = `path|registry`, `target_kind`,
 `crate_types`, `target_name`, `mode`, `side`, `edition`, `crate_root`, `features`, `cfgs`, `profile`,
@@ -170,10 +184,23 @@ them from there. Allowed in `[workspace.metadata.buildrules]` and, overriding it
 | key | type | meaning |
 |---|---|---|
 | `default-action` | string | an action or a step; recorded in the table (`WORKSPACE`, `PACKAGES`), no target is derived from it in v0 |
-| `actions` | table: name -> non-empty list of steps | `ci = ["lint", "test"]`; a name may not be a step name |
+| `actions` | table: name -> non-empty list of steps | `ci = ["fmt", "lint", "test"]`; a name may not be a step name |
 | `lint.deny-warnings` | bool | clippy `-D warnings` for `:lint` |
+| `postgres` | table `{ url-env = "NAME" }` | every test of the package runs with a private Postgres, its URL in `NAME` (below); a package's replaces the workspace's as a whole |
 
-Steps: `lint`, `debug`, `test`, `release`, `coverage` (`coverage` refuses until P8).
+Steps: `fmt`, `lint`, `debug`, `test`, `release`, `coverage` (`coverage` refuses until P8).
+
+**The Postgres fixture.** `postgres = { url-env = "NAME" }` makes every test target of the package (`:test`, and the same `buck2 test` targets) run
+under `pg_run` (rules/postgres/README.md): before the test it starts a private server of the pinned Postgres (`rules/postgres/pins.bzl`, conda-forge,
+by version, sha256 and size) with a fresh database cluster in the action's scratch directory, listening only on a Unix socket in a directory of its own
+in the action's `TMPDIR`, or in `/tmp` when that path would not fit the 107 bytes of a socket path (a local action's `TMPDIR` is its scratch directory)
+(no TCP listener: `listen_addresses` is empty); the test gets `NAME=postgresql://postgres@<socket directory, percent-encoded>:5432/postgres`
+(user `postgres`, trust authentication, the form the `postgres` and `sqlx` crates read as a socket directory); after the test the server is stopped
+and both directories are removed. The run's status is the test's; a server that does not start, is not ready within 300 s, or exits during the
+test fails the run with a `pg_run:` line that says so. `sync` refuses: a `postgres` that is not a table, a key other than `url-env`, a missing or
+non-string `url-env`, a value that is not an environment variable name, and a name the test run sets itself (`PATH`, `HOME`, `TMPDIR`,
+`TEST_TMPDIR`, `LD_LIBRARY_PATH`, `CARGO_*`, `BUILDRULES_*`). A test that needs the server and runs without the fixture finds `NAME` unset; it is the
+test's own business to fail saying so (examples/crates/crates/pgdemo does, and ci/faulty holds that it does).
 
 `init` writes this root manifest **[chosen]** (a virtual workspace: v0 refuses a root `[package]`):
 
@@ -212,13 +239,13 @@ Plain `cargo` (rustup) and Buck2 therefore use the same compiler, and `rust-tool
 (no date anywhere). The toolchain refuses to exist unless `rustc --version` and `cargo --version` print the prefixes `rustc <version> (` and
 `cargo <version> (`; plus `RUST_DEFAULT` (the version `toolchains//:rust` is) and `RUST_OLDEST` (the oldest supported).
 Today: 1.95.0 (default) and 1.85.0 (oldest; edition 2024 needs 1.85). The default row also pins the `llvm-tools-preview`
-component (`llvm_tools`, for `isa_audit`, section 11), and, for code intelligence, `rust_src` (`rust-src-<version>.tar.gz`, the standard
-library's sources: one tarball for every triple, so the file name carries none) and `rust_analyzer` (the `rust-analyzer-preview` component).
-Nothing is fetched without a hash.
+component (`llvm_tools`, for `isa_audit`, section 11), every row the `rustfmt-preview` component (`rustfmt`, for `:fmt`), and, for code
+intelligence, `rust_src` (`rust-src-<version>.tar.gz`, the standard library's sources: one tarball for every triple, so the file name carries
+none) and `rust_analyzer` (the `rust-analyzer-preview` component). Nothing is fetched without a hash.
 
-`rust_toolchains()` declares one toolchain per version: `toolchains//:rust_<v>`, `:sysroot_<v>`, `:cargo_<v>`, `:clippy_<v>` and the
-pins behind them (`<v>` is the version with `_` for `.`: `rust_1_85_0`). `:rust`, `:sysroot`, `:cargo`, `:clippy`
-(and `:llvm_tools`, `:rust_src`, `:rust_analyzer`) are aliases of the default's. A version whose row pins them also has `:rust_src_<v>` and
+`rust_toolchains()` declares one toolchain per version: `toolchains//:rust_<v>`, `:sysroot_<v>`, `:cargo_<v>`, `:clippy_<v>`, `:rustfmt_<v>`
+(a version whose row pins rustfmt) and the pins behind them (`<v>` is the version with `_` for `.`: `rust_1_85_0`). `:rust`, `:sysroot`, `:cargo`, `:clippy`
+(and `:llvm_tools`, `:rustfmt`, `:rust_src`, `:rust_analyzer`) are aliases of the default's. A version whose row pins them also has `:rust_src_<v>` and
 `:rust_analyzer_<v>`, each the component's tarball unpacked as it is (`buildrules-pins.toml` cannot pin these two). A toolchain is an input of every compile, test and lint action of its
 units, so **two versions never share an action key**.
 
@@ -334,7 +361,7 @@ the compiler with `pins.bzl` (that needs the cell; the rules do it at load).
 `sync --check` is the heavier gate: it regenerates into `buck-out/` and exits 1 unless every generated
 file is byte-identical to the committed one (it needs the pinned cargo, never the network for sizes).
 
-On the build side the same staleness is red too: `:check` (the validation on `:test :lint :debug
+On the build side the same staleness is red too: `:check` (the validation on `:test :lint :fmt :debug
 :release`) compares the sha256 of `Cargo.lock`, `rust-toolchain.toml` and every `Cargo.toml` with the
 table. Two layers on purpose: `check` is the cheap pull-request gate, `:check` is what makes a stale
 table impossible to build.

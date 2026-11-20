@@ -86,6 +86,8 @@ var buck2_build_code: u8 = 0;
 var buck2_root_code: u8 = 0;
 var buck2_root_out: []const u8 = "/proj\n";
 var exec_error: ?anyerror = null;
+/// An error from the exec seam for `buck2 root` only (the build ran).
+var root_exec_error: ?anyerror = null;
 /// What the fake `buck2 build //x:flycheck --out DIR` writes into DIR: file name -> lines.
 var flycheck_files: []const [2][]const u8 = &.{};
 
@@ -95,7 +97,10 @@ fn fakeExec(ctx: *ctxm.Ctx, spec: ctxm.Exec) anyerror!ctxm.ExecResult {
         n_calls += 1;
     }
     if (exec_error) |e| return e;
-    if (spec.argv.len >= 2 and std.mem.eql(u8, spec.argv[1], "root")) return .{ .code = buck2_root_code, .stdout = buck2_root_out };
+    if (spec.argv.len >= 2 and std.mem.eql(u8, spec.argv[1], "root")) {
+        if (root_exec_error) |e| return e;
+        return .{ .code = buck2_root_code, .stdout = buck2_root_out };
+    }
     if (buck2_build_code != 0) return .{ .code = buck2_build_code };
     // `build TARGET --out DIR`: the output lands in DIR.
     const out = spec.argv[spec.argv.len - 1];
@@ -128,6 +133,7 @@ fn fresh() !*kit.Harness {
     buck2_root_code = 0;
     buck2_root_out = "/proj\n";
     exec_error = null;
+    root_exec_error = null;
     flycheck_files = &.{};
     try h.put("buildrules.lock.bzl", table);
     try h.put("third_party/buildrules/overrides.json", overrides);
@@ -671,6 +677,15 @@ test "check refuses a project root buck2 does not give, a line that is not JSON,
     flycheck_files = &.{};
     r = h.run(&.{ "rust-project", "check", "//crates/app:lint" });
     try t.expect(r.code == 1 and kit.contains(r.err, "(is //crates/app:lint a :flycheck target?)"));
+}
+
+test "check names a buck2 that cannot be run to ask for the project root, after the build ran" {
+    const h = try fresh();
+    defer h.destroy();
+    root_exec_error = error.AccessDenied;
+    const r = h.run(&.{ "rust-project", "check", "//crates/app:flycheck" });
+    try t.expect(r.code == 1 and kit.contains(r.err, "cannot run buck2: AccessDenied"));
+    try t.expectEqualStrings("", r.out);
 }
 
 test "check names a buck2 that cannot be run" {

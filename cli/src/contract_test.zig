@@ -204,6 +204,11 @@ fn knownKey(k: []const u8) bool {
     return false;
 }
 
+test "the policy keys include postgres, and the manifest init writes does not set it" {
+    try t.expect(knownKey("postgres"));
+    try t.expect(std.mem.indexOf(u8, contract.workspace_manifest, "postgres") == null);
+}
+
 test "the policy init writes uses only keys, steps and tables the contract names" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();

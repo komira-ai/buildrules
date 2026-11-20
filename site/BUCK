@@ -83,6 +83,7 @@ jest_test(
         "rules/node/defs.bzl": "//rules/node:defs.bzl",
         "rules/node/npm.bzl": "//rules/node:npm.bzl",
         "rules/node/pins.bzl": "//rules/node:pins.bzl",
+        "rules/postgres/pins.bzl": "//rules/postgres:pins.bzl",
         "rules/rust/pins.bzl": "//rules/rust:pins.bzl",
         "rules/rust/cargo.bzl": "//rules/rust:cargo.bzl",
         "rules/rust/rust.bzl": "//rules/rust:rust.bzl",

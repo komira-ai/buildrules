@@ -21,6 +21,9 @@ RustToolchainInfo = provider(fields = {
     "version": provider_field(str),
     # Directory: bin/clippy-driver. It runs against `sysroot` (the launcher points LD_LIBRARY_PATH at its lib/).
     "clippy": provider_field(typing.Any),
+    # Directory: bin/rustfmt, or None when the version pins no rustfmt (a version of buildrules-pins.toml). It runs against `sysroot` too: `:fmt`
+    # (rules/rust/fmt.bzl) points LD_LIBRARY_PATH at its lib/.
+    "rustfmt": provider_field(typing.Any, default = None),
 })
 
 RustCrateInfo = provider(fields = {

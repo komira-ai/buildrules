@@ -3,10 +3,11 @@
 `rust_toolchains()` is the one call a consumer's toolchains/BUCK makes. It declares, in the
 calling package: busybox, zig (+ its archive) and, for EVERY Rust version in `RUST_VERSIONS` (pins.bzl) plus the
 user's `extra` versions (the generated `rust_pins.bzl`, from `buildrules-pins.toml`): the rustc, rust-std, cargo and
-clippy pins, `sysroot_<v>`, `cargo_<v>`, `clippy_<v>` and `rust_<v>` (`v` = the version with `_` for `.`: `rust_1_85_0`), and for a
-version whose row pins them, `llvm_tools_<v>`, `rust_src_<v>` and `rust_analyzer_<v>`.
-`:rust`, `:sysroot`, `:cargo` and `:clippy` (and `:llvm_tools`, `:rust_src`, `:rust_analyzer` when the default pins them) are aliases of the
-default version's (`RUST_DEFAULT`); the Rust rules take `:rust` unless a platform or the table selects another (cargo.bzl).
+clippy pins, `sysroot_<v>`, `cargo_<v>`, `clippy_<v>` and `rust_<v>` (`v` = the version with `_` for `.`: `rust_1_85_0`), `rustfmt_<v>` for a
+version whose row pins rustfmt (every version of `RUST_VERSIONS`; none of the user's), and `llvm_tools_<v>`, `rust_src_<v>` and
+`rust_analyzer_<v>` for a version whose row pins them.
+`:rust`, `:sysroot`, `:cargo`, `:clippy` and `:rustfmt` (and `:llvm_tools`, `:rust_src`, `:rust_analyzer` when the default pins them) are
+aliases of the default version's (`RUST_DEFAULT`); the Rust rules take `:rust` unless a platform or the table selects another (cargo.bzl).
 
 Every tool an action runs is one of its inputs; nothing is searched on the worker's PATH.
 The worker supplies glibc, libgcc_s.so.1 and libz.so.1 (rustc's own dependencies), a Linux
@@ -14,6 +15,7 @@ kernel, and nothing else; no host rustc, cargo or cc is read.
 """
 
 load("//rules/core:pinned_file.bzl", "pinned_file")
+load("//rules/core:unpack.bzl", "UNPACK", "unpack_cmd")
 load(":pins.bzl", "PINS", "RUST_DEFAULT", "RUST_TRIPLE", "RUST_VERSIONS", "ZIG_CC_TARGET", "ZIG_STRIP_PREFIX", "component", "vname")
 load(":providers.bzl", "RustToolchainInfo")
 
@@ -213,6 +215,44 @@ llvm_tools_dist = rule(
     },
 )
 
+# The most decompressed bytes (the tar stream, headers and padding included) a rustfmt archive may hold: 16 MiB. The 1.95.0 archive decompresses to
+# 9112576 bytes and the 1.85.0 one to 11510272 (`gzip -dc | wc -c`), so the limit leaves about 45% to spare over the larger.
+_RUSTFMT_MAX_OUTPUT = 16 * 1024 * 1024
+
+def _rustfmt_dist_impl(ctx):
+    out = ctx.actions.declare_output("rustfmt", dir = True)
+
+    # The archive holds `rustfmt-<version>-<triple>/rustfmt-preview/{bin,share}`: two components are dropped, so `bin/rustfmt` is at the top of the output
+    # (and the installer's own files beside `rustfmt-preview`, which have two components or fewer, are left out).
+    ctx.actions.run(
+        unpack_cmd(
+            ctx.label,
+            ctx.attrs.unpack,
+            _file(ctx.attrs.archive),
+            out,
+            ctx.attrs.sha256,
+            ctx.attrs.size_bytes,
+            _RUSTFMT_MAX_OUTPUT,
+            2,
+            "tar.gz",
+        ),
+        category = "rustfmt_unpack",
+        env = _ENV,
+    )
+    return [DefaultInfo(default_output = out)]
+
+# The rustfmt of one version (the `rustfmt-preview` component), unpacked by the pinned `unpack` with the pin's sha256 and size: `bin/rustfmt`, which loads
+# rustc's own libraries from the sysroot of the same version.
+rustfmt_dist = rule(
+    impl = _rustfmt_dist_impl,
+    attrs = {
+        "archive": attrs.dep(),
+        "sha256": attrs.string(),
+        "size_bytes": attrs.int(),
+        "unpack": attrs.exec_dep(default = UNPACK, providers = [RunInfo]),
+    },
+)
+
 # ---- code intelligence: rust-src and rust-analyzer --------------------------------
 
 def _component_dist_impl(ctx):
@@ -277,6 +317,7 @@ def _rust_toolchain_impl(ctx):
             version_ok = ok,
             version = ctx.attrs.version,
             clippy = _file(ctx.attrs.clippy),
+            rustfmt = _file(ctx.attrs.rustfmt) if ctx.attrs.rustfmt else None,
         ),
     ]
 
@@ -288,6 +329,8 @@ rust_toolchain = rule(
         "cc_target": attrs.string(),
         "clippy": attrs.exec_dep(),
         "launcher": attrs.exec_dep(default = "buildrules//rules/rust:rustc_launch"),
+        # None for a version that pins no rustfmt: its `:fmt` is refused by name (rules/rust/fmt.bzl).
+        "rustfmt": attrs.option(attrs.exec_dep(), default = None),
         "sysroot": attrs.exec_dep(),
         "version": attrs.string(),
         "version_line": attrs.string(),
@@ -386,6 +429,23 @@ def rust_toolchains(extra = {}):
                 version = v,
                 visibility = ["PUBLIC"],
             )
+        if "rustfmt" in row:
+            p = component(v, row, "rustfmt")
+            pinned_file(
+                name = "rustfmt_pin_" + n,
+                out = p["name"],
+                url = p["url"],
+                sha256 = p["sha256"],
+                size_bytes = p["size"],
+                visibility = ["PUBLIC"],
+            )
+            rustfmt_dist(
+                name = "rustfmt_" + n,
+                archive = ":rustfmt_pin_" + n,
+                sha256 = p["sha256"],
+                size_bytes = p["size"],
+                visibility = ["PUBLIC"],
+            )
         for role in ["rust_src", "rust_analyzer"]:
             if role not in row:
                 continue
@@ -408,6 +468,7 @@ def rust_toolchains(extra = {}):
         rust_toolchain(
             name = "rust_" + n,
             clippy = ":clippy_" + n,
+            rustfmt = (":rustfmt_" + n) if "rustfmt" in row else None,
             busybox = ":busybox_pin",
             sysroot = ":sysroot_" + n,
             zig = ":zig",
@@ -417,6 +478,6 @@ def rust_toolchains(extra = {}):
             visibility = ["PUBLIC"],
         )
     d = vname(RUST_DEFAULT)
-    optional = [r for r in ["llvm_tools", "rust_src", "rust_analyzer"] if r in versions[RUST_DEFAULT]]
+    optional = [r for r in ["llvm_tools", "rustfmt", "rust_src", "rust_analyzer"] if r in versions[RUST_DEFAULT]]
     for name in ["rust", "sysroot", "cargo", "clippy"] + optional:
         native.alias(name = name, actual = ":{}_{}".format(name, d), visibility = ["PUBLIC"])

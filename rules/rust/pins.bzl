@@ -27,6 +27,9 @@ RUST_VERSIONS = {
         "clippy": {"sha256": "5230c92fb0ae1346ee30a1b4e01413cc3e1ead8ded20391fb2826619775f1ccb", "size": 7042718},
         # Optional (the `llvm-tools-preview` component): llvm-objdump for rules/rust/isa_audit.bzl. A version without it has no `:llvm_tools_<v>`.
         "llvm_tools": {"sha256": "55b57b2aff59cff2acffa1319513e7c74b0a09ef5a58e1d5f4beba4c8d911f7a", "size": 66089964},
+        # Optional (the `rustfmt-preview` component): `rustfmt --check` for a member's `:fmt` (rules/rust/fmt.bzl), linked against the sysroot's libraries.
+        # A version without it has no `:rustfmt_<v>`, and a `:fmt` built with it is refused by name.
+        "rustfmt": {"sha256": "6d3e64adc505ad4bef6935f6e6f5e4c6956d9782607fb8394df3a5d2b30d2733", "size": 3028435},
         # Optional, for code intelligence (rules/rust/rust_analyzer.bzl): the standard library's sources (`rust-src`, one tarball for every
         # triple, so its file name carries none) and the `rust-analyzer-preview` component. rust-analyzer's proc-macro server is part of rustc
         # (libexec/rust-analyzer-proc-macro-srv in the sysroot), so it is the same release as the compiler that built the proc-macros it loads.
@@ -40,6 +43,7 @@ RUST_VERSIONS = {
         "rust_std": {"sha256": "b3ad21966023d24fac039385201dc4109a2f25e6f7a0a5b2a0910eccfdc0c4a9", "size": 49657114},
         "cargo": {"sha256": "e27ffcafa0c7a8eee305085155530974ba62edf5278548ba6de4e0674f55c372", "size": 12817517},
         "clippy": {"sha256": "fe8fd47014b7c240e84d658057d1296c75f75717e00c58990871bb0fa8c1122c", "size": 4573789},
+        "rustfmt": {"sha256": "a90de11ca6d86290fd7dddd6e27685ca1a7c4aa7d8e5fb622827902ef54f1b25", "size": 3665005},
     },
 }
 
@@ -49,6 +53,7 @@ _COMPONENT_DIR = {
     "cargo": "cargo",
     "clippy": "clippy",
     "llvm_tools": "llvm-tools",
+    "rustfmt": "rustfmt",
     "rust_src": "rust-src",
     "rust_analyzer": "rust-analyzer",
 }
