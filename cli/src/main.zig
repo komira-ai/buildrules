@@ -11,6 +11,7 @@ const ctxm = @import("ctx.zig");
 const init = @import("init.zig");
 const npm_cmd = @import("npm_cmd.zig");
 const mojo_cmd = @import("mojo_cmd.zig");
+const rust_project = @import("rust_project.zig");
 const sync = @import("sync.zig");
 const Ctx = ctxm.Ctx;
 
@@ -32,6 +33,8 @@ pub const usage_text =
     \\  check   offline: exit 1 unless the generated files still match cargo's files (and, for Mojo packages, mopm's files)
     \\  mojo    `mojo sync` / `mojo check`: mopm's unit graph of each Mojo package to buildrules.mojo.lock.bzl, and the offline gate
     \\  autopin  `autopin compute`: regenerate the pin tables of a Dependabot pull request from its package-lock.json (for CI, not for people)
+    \\  rust-project  `rust-project develop`: build what rust-analyzer needs on the farm and write rust-project.json;
+    \\          `rust-project check TARGET`: a member's diagnostics as JSON lines, rust-analyzer's check on save
     \\
     \\`buildrules <command> --help` prints the flags. Exit codes: 0 ok, 1 failed or stale, 2 usage.
     \\The contract (files, schema, metadata, exit codes) is docs/contract.md in the buildrules repository.
@@ -51,7 +54,7 @@ pub fn run(ctx: *Ctx, argv: []const []const u8) u8 {
         return ctxm.exit_ok;
     }
     if (rest.len == 1 and (std.mem.eql(u8, rest[0], "--help") or std.mem.eql(u8, rest[0], "-h"))) {
-        const text: ?[]const u8 = if (std.mem.eql(u8, cmd, "init")) init.usage_text else if (std.mem.eql(u8, cmd, "cargo")) cargo_cmd.usage_text else if (std.mem.eql(u8, cmd, "sync")) sync.usage_text else if (std.mem.eql(u8, cmd, "check")) check.usage_text else if (std.mem.eql(u8, cmd, "npm")) npm_cmd.usage_text else if (std.mem.eql(u8, cmd, "mojo")) mojo_cmd.usage_text else if (std.mem.eql(u8, cmd, "autopin")) autopin.usage_text else null;
+        const text: ?[]const u8 = if (std.mem.eql(u8, cmd, "init")) init.usage_text else if (std.mem.eql(u8, cmd, "cargo")) cargo_cmd.usage_text else if (std.mem.eql(u8, cmd, "sync")) sync.usage_text else if (std.mem.eql(u8, cmd, "check")) check.usage_text else if (std.mem.eql(u8, cmd, "npm")) npm_cmd.usage_text else if (std.mem.eql(u8, cmd, "mojo")) mojo_cmd.usage_text else if (std.mem.eql(u8, cmd, "autopin")) autopin.usage_text else if (std.mem.eql(u8, cmd, "rust-project")) rust_project.usage_text else null;
         if (text) |t| {
             ctx.say("{s}", .{t});
             return ctxm.exit_ok;
@@ -64,6 +67,7 @@ pub fn run(ctx: *Ctx, argv: []const []const u8) u8 {
     if (std.mem.eql(u8, cmd, "npm")) return npm_cmd.run(ctx, rest);
     if (std.mem.eql(u8, cmd, "mojo")) return mojo_cmd.run(ctx, rest);
     if (std.mem.eql(u8, cmd, "autopin")) return autopin.run(ctx, rest);
+    if (std.mem.eql(u8, cmd, "rust-project")) return rust_project.run(ctx, rest);
     return ctx.usage("unknown command {s}\n{s}", .{ cmd, usage_text });
 }
 

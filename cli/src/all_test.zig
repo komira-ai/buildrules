@@ -35,6 +35,7 @@ test {
     _ = @import("mopm_pins_test.zig");
     _ = @import("npm_cmd_test.zig");
     _ = @import("pins_toml_test.zig");
+    _ = @import("rust_project_test.zig");
     _ = @import("sync_check_test.zig");
     _ = @import("toml_test.zig");
     _ = @import("unitgen_test.zig");

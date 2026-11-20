@@ -241,6 +241,7 @@ cheap step that needs no build.
 | `buildrules.lock.bzl`, `buildrules.bzl` | `sync` | yes | the generated table and its binding (Rust and npm, per directory) |
 | `third_party/buildrules/` | `sync` | yes | registry crates as units |
 | `toolchains/rust_pins.bzl`, `mopm_pins.bzl`, `mojo_pins.bzl` | `sync`, `mojo sync` | yes | generated pins |
+| `rust-project.json` | `rust-project develop` | **no** | rust-analyzer's view of the workspace, with this machine's paths |
 | `<pkg>/buildrules.mojo.lock.bzl`, `buildrules.mojo.bzl` | `mojo sync` | yes | a Mojo package's graph and binding |
 
 Generated files say "Do not edit" in their first line, and editing one is detected.
@@ -446,7 +447,7 @@ buck2 build //crates/hello:bin //crates/hello:test //crates/hello:lint
 ```
 
 Per member the targets are `:lib`, `:bin` (if it has a binary), `:debug`, `:release`, `:test` (one
-`.passed` marker per Cargo test target), `:lint`, `:sources`, and one per action named in the policy.
+`.passed` marker per Cargo test target), `:lint`, `:flycheck` (the lint as diagnostics, for an editor), `:sources`, and one per action named in the policy.
 `buck2 build //crates/hello:ci` builds the `ci` action if you defined it.
 
 A member's BUCK file:
@@ -462,6 +463,20 @@ means every member).
 
 Not supported: doctests (`cargo test` still runs them; `:test` does not), coverage, git or
 alternate-registry dependencies, a root `[package]`.
+
+#### rust-analyzer
+
+```sh
+buildrules rust-project develop
+```
+
+This builds what rust-analyzer needs that only a build makes (registry sources, build-script output, proc-macros, the pinned
+standard library and rust-analyzer itself) where actions run, downloads it under `buck-out/buildrules/ra`, and writes
+`rust-project.json` at the root. Nothing runs a rustc or cargo of your machine. Point the editor's rust-analyzer at
+`buck-out/buildrules/ra/sysroot/bin/rust-analyzer`, the pinned one whose proc-macro server matches the compiler that built the proc-macros;
+it finds `rust-project.json` at the root. Its check on save is `buildrules rust-project check`, which builds the member's
+`:flycheck`. The file holds this machine's absolute paths: add it to `.gitignore`, and run `develop` again after `Cargo.lock`
+changes or `buck2 clean`. The command and the file: `docs/contract.md`, sections 2 and 8.
 
 ### 3.2 Node.js
 

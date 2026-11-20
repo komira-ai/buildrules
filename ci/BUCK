@@ -462,6 +462,15 @@ group(name = "crates", deps = [
     "crates//crates/stamped:lib",
     "crates//crates/stamped:debug",
     "crates//crates/stamped:release",
+    # Code intelligence: what rust-analyzer needs that only a build makes, each member's diagnostics for a check on save, and the pinned
+    # rust-analyzer resolving the workspace's proc-macros and generated modules from what `buildrules rust-project develop` writes.
+    "crates//:rust_analyzer_inputs",
+    "crates//:rust_analyzer_test",
+    "crates//:flycheck_test",
+    "crates//crates/zdemo:flycheck",
+    "crates//crates/macros:flycheck",
+    "crates//crates/protos:flycheck",
+    "crates//crates/stamped:flycheck",
 ])
 
 # The public CI workflow (.github/workflows/ci.yml, docs/contract.md section 14): the pinned actionlint accepts it, and ci/workflow_check.zig

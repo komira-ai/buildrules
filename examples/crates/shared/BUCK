@@ -1,3 +1,4 @@
+load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit")
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 
 # Files outside every crate's directory that crates read: `stamp.rs` (`#[path]`, crates/stamped) and `proto/` (protox imports, crates/protos).
@@ -5,5 +6,26 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 export_file(name = "stamp.rs", src = "stamp.rs", mode = "reference", visibility = ["PUBLIC"])
 
 export_file(name = "proto", src = "proto", mode = "reference", visibility = ["PUBLIC"])
+
+# The lint of one crate as a diagnostics run, what a member's `:flycheck` is made of (flycheck_test.zig): diag_fixture.rs has a type error, so
+# the run must succeed and hold rustc's diagnostics as JSON, where the same unit's `:lint` would fail.
+cargo_unit(
+    name = "diag_fixture",
+    pkg = "diag_fixture",
+    version = "0.1.0",
+    crate_name = "diag_fixture",
+    mode = "lint",
+    diag = True,
+    crate_type = "rlib",
+    edition = "2024",
+    root = "diag_fixture.rs",
+    crate_hash = "diagfixture",
+    opt_level = "0",
+    debuginfo = "0",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = ["diag_fixture.rs"],
+    visibility = ["PUBLIC"],
+)
 
 scrub_files()

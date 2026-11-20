@@ -61,6 +61,7 @@ jest_test(
         "cli/src/mojo_cmd.zig": "//cli:mojo_cmd.zig",
         "cli/src/npm_cmd.zig": "//cli:npm_cmd.zig",
         "cli/src/pins_toml.zig": "//cli:pins_toml.zig",
+        "cli/src/rust_project.zig": "//cli:rust_project.zig",
         "cli/src/sync.zig": "//cli:sync.zig",
         "docs/contract.md": "//docs:contract.md",
         "docs/cxx_defects.md": "//docs:cxx_defects.md",

@@ -3,9 +3,10 @@
 `rust_toolchains()` is the one call a consumer's toolchains/BUCK makes. It declares, in the
 calling package: busybox, zig (+ its archive) and, for EVERY Rust version in `RUST_VERSIONS` (pins.bzl) plus the
 user's `extra` versions (the generated `rust_pins.bzl`, from `buildrules-pins.toml`): the rustc, rust-std, cargo and
-clippy pins, `sysroot_<v>`, `cargo_<v>`, `clippy_<v>` and `rust_<v>` (`v` = the version with `_` for `.`: `rust_1_85_0`).
-`:rust`, `:sysroot`, `:cargo` and `:clippy` are aliases of the default version's (`RUST_DEFAULT`); the Rust rules
-take `:rust` unless a platform or the table selects another (cargo.bzl).
+clippy pins, `sysroot_<v>`, `cargo_<v>`, `clippy_<v>` and `rust_<v>` (`v` = the version with `_` for `.`: `rust_1_85_0`), and for a
+version whose row pins them, `llvm_tools_<v>`, `rust_src_<v>` and `rust_analyzer_<v>`.
+`:rust`, `:sysroot`, `:cargo` and `:clippy` (and `:llvm_tools`, `:rust_src`, `:rust_analyzer` when the default pins them) are aliases of the
+default version's (`RUST_DEFAULT`); the Rust rules take `:rust` unless a platform or the table selects another (cargo.bzl).
 
 Every tool an action runs is one of its inputs; nothing is searched on the worker's PATH.
 The worker supplies glibc, libgcc_s.so.1 and libz.so.1 (rustc's own dependencies), a Linux
@@ -212,6 +213,31 @@ llvm_tools_dist = rule(
     },
 )
 
+# ---- code intelligence: rust-src and rust-analyzer --------------------------------
+
+def _component_dist_impl(ctx):
+    # The tarball's one top directory is `top`; an output declared with that name is the directory busybox tar extracts it into, under the
+    # output's parent (as `crate_src` does). One command, no shell: the tree is used as the tarball has it (`artifact.project` names a path in it).
+    out = ctx.actions.declare_output(ctx.attrs.top, dir = True)
+    ctx.actions.run(
+        cmd_args(_file(ctx.attrs.busybox), "tar", "-xzf", _file(ctx.attrs.archive), "-C", cmd_args(out.as_output(), parent = 1)),
+        category = "rust_component_unpack",
+        identifier = ctx.attrs.top,
+        env = _ENV,
+    )
+    return [DefaultInfo(default_output = out)]
+
+# An unpacked component tarball (`rust_src_<v>`: `<top>/rust-src/lib/rustlib/src/rust/library`; `rust_analyzer_<v>`:
+# `<top>/rust-analyzer-preview/bin/rust-analyzer`), for rules/rust/rust_analyzer.bzl.
+rust_component_dist = rule(
+    impl = _component_dist_impl,
+    attrs = {
+        "archive": attrs.dep(),
+        "busybox": attrs.dep(),
+        "top": attrs.string(),
+    },
+)
+
 # ---- the toolchain ---------------------------------------------------------------
 
 def _rust_toolchain_impl(ctx):
@@ -360,6 +386,25 @@ def rust_toolchains(extra = {}):
                 version = v,
                 visibility = ["PUBLIC"],
             )
+        for role in ["rust_src", "rust_analyzer"]:
+            if role not in row:
+                continue
+            p = component(v, row, role)
+            pinned_file(
+                name = "{}_pin_{}".format(role, n),
+                out = p["name"],
+                url = p["url"],
+                sha256 = p["sha256"],
+                size_bytes = p["size"],
+                visibility = ["PUBLIC"],
+            )
+            rust_component_dist(
+                name = "{}_{}".format(role, n),
+                archive = ":{}_pin_{}".format(role, n),
+                busybox = ":busybox_pin",
+                top = p["name"][:-len(".tar.gz")],
+                visibility = ["PUBLIC"],
+            )
         rust_toolchain(
             name = "rust_" + n,
             clippy = ":clippy_" + n,
@@ -372,5 +417,6 @@ def rust_toolchains(extra = {}):
             visibility = ["PUBLIC"],
         )
     d = vname(RUST_DEFAULT)
-    for name in ["rust", "sysroot", "cargo", "clippy"] + (["llvm_tools"] if "llvm_tools" in versions[RUST_DEFAULT] else []):
+    optional = [r for r in ["llvm_tools", "rust_src", "rust_analyzer"] if r in versions[RUST_DEFAULT]]
+    for name in ["rust", "sysroot", "cargo", "clippy"] + optional:
         native.alias(name = name, actual = ":{}_{}".format(name, d), visibility = ["PUBLIC"])

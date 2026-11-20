@@ -15,11 +15,16 @@ sha256 of every pin on download (a wrong hash fails: `Invalid sha256 digest. Exp
 | rustc | rustc-1.95.0-x86_64-unknown-linux-gnu.tar.gz | 135179262 | fef749c4abb4b4bde5ebf773bec550003ce5b4410579cecd69a365e5c0c5106a |
 | rust-std | rust-std-1.95.0-x86_64-unknown-linux-gnu.tar.gz | 49435219 | edbd20f8fc0a617f85ffb79fa6c22aa6def0e570de3f94be1a6e5ab1f77f763c |
 | cargo | cargo-1.95.0-x86_64-unknown-linux-gnu.tar.gz | 15405121 | 47ebc468721a6ff3fb27dff33e632a4cb6246d0ea061814bcd4fe601d18c69a8 |
+| rust-src | rust-src-1.95.0.tar.gz | 5823939 | 98548815569318eb60afe7189ace6bca4ba6e4ae59a54f111d276ab78d6ddd10 |
+| rust-analyzer | rust-analyzer-1.95.0-x86_64-unknown-linux-gnu.tar.gz | 14476394 | 7809a7f622bda16abe6e18cbaf94bd98d5c496ec25b8c5ec93e4bdfb80ca5f54 |
 | zig 0.15.2 | zig-x86_64-linux-0.15.2.tar.xz | 53733924 | 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239 |
 | busybox 1.35.0 | busybox (static musl) | 1131168 | 6e123e7f3202a8c1e9b1f94d8941580a25135382b99e8d3e34fb858bba311348 |
 
 xz variants (not used): rustc 80351960 / 8426a3d1...dfc15; rust-std 29573972 / 047ea709...aa382; cargo 10984780 / e74edd2c...07425.
 `rustc --version` must start with `rustc 1.95.0 (` and `cargo --version` with `cargo 1.95.0 (`; an action refuses the toolchain otherwise.
+rust-src and rust-analyzer are the inputs of code intelligence (`rules/rust/rust_analyzer.bzl`), not of a compile; both digests are also the ones the release's
+channel manifest (`channel-rust-1.95.0.toml`) lists. rust-src is one tarball for every triple, so its file name carries none. rust-analyzer's proc-macro server is
+not a pin of its own: it is `libexec/rust-analyzer-proc-macro-srv` of the rustc tarball, so it is the release that compiled the proc-macros it loads.
 Host floor: a Linux x86_64 kernel, glibc >= 2.34, and `libgcc_s.so.1` (rustc's driver needs it; it is not pinned yet).
 
 ## mopm 0.0.48

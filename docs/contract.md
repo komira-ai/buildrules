@@ -40,6 +40,7 @@ files is red (section 8), never silently used.
 | `@buildrules//rules/rust:cargo.bzl` **[p7]** | the unbound macros (`table` and `third_party` are required arguments) | `defs.bzl` |
 | `@buildrules//rules/rust:cargo_unit.bzl` **[p7]** | `cargo_unit`, `crate_src`: one compile / build-script / test / lint action each | the generated `third_party/buildrules/BUCK` |
 | `@buildrules//rules/rust:toolchain.bzl` | `rust_toolchains()` | the `toolchains` cell, one call |
+| `@buildrules//rules/rust:rust_analyzer.bzl` | `rust_analyzer_inputs` (the target of that name, below) | `cargo.bzl` (`cargo_workspace`) |
 
 `defs.bzl` re-exporting the two macros is the one change this contract makes to p7's tree; `cargo.bzl`
 keeps p7's names and signatures.
@@ -49,6 +50,18 @@ Called once, in the package of the workspace root (v0: the repository root). Dec
 `Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml` (and `clippy.toml` if present) exports, one aggregate
 target per step (`:lint :debug :test :release`) and one per action named in the policy. Each aggregate
 depends on the same-named target of every member listed in the table.
+
+It also declares `:rust_analyzer_inputs` (`rules/rust/rust_analyzer.bzl`): what rust-analyzer needs that only a build makes, as one
+directory. `index.json` (`"version": 1`, the table's `rustc`, the unit ids that `rust-project.json` has a row for, and where each part
+is, and each member's directories outside its package that its `extra_srcs` name), `sysroot/` (the pinned sysroot: `bin/rustc`, `lib/`,
+and `libexec/rust-analyzer-proc-macro-srv`, the proc-macro server of the compiler that built the proc-macros; with the pinned `rust_analyzer`
+component's binary as `bin/rust-analyzer`, beside the libraries it loads), `rust-src/library/` (the pinned `rust_src` component, section 6),
+`crates/<name>-<version>/` (each registry crate's sources, patched as its units compile them), `build/<unit>/` (each build-script run:
+`OUT_DIR/`, `rustc_args`, `rustc_env`) and `proc-macro/<unit>/lib<name>.so` (each proc-macro). The rows are the units `cargo build`
+and `cargo test` of the members reach, without descending into a registry crate's build-script run (what only a registry build script
+uses, an override may drop: section 2.11 of `docs/how.md`); a registry crate's sources and run come from its unit's provider, so a
+dropped run is simply absent. It carries `:check` as a validation. For a table whose Rust version does not pin both components it is
+a target that fails naming why when built, and that a wildcard skips. `buildrules rust-project develop` (section 8) builds it.
 
 ### `cargo_package(path = ".", table, third_party, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {})` **[p7]**
 Called once per member, in the member's own package. `path` is the member directory relative to the BUCK
@@ -67,8 +80,11 @@ workspace from them.
 Targets of a member **[p7]**: `:lib`, `:bin` (only when the member has a binary), `:debug`, `:release`,
 `:test` (one `.passed` marker per cargo test target; doctests are out of v0), `:lint` (clippy-driver with
 the member's `[lints]` as flags, `clippy.toml` as an input, `-D warnings` when the policy says so),
+`:flycheck` (the same clippy runs as `:lint` as diagnostics runs: `rules/rust/rustc_diag.zig` writes rustc's diagnostics as JSON
+lines to the unit's output and succeeds when rustc's status is `1`, an error in the code; one directory of `<unit>.json` files,
+built even when the code has errors; what `buildrules rust-project check` builds),
 `:coverage` (refuses until P8), and one target per action in the policy. Every `:debug :release :test
-:lint` carries the workspace `:check` as a validation. No compile action takes a `Cargo.toml` as an
+:lint :flycheck` carries the workspace `:check` as a validation. No compile action takes a `Cargo.toml` as an
 input, so a policy edit re-runs the check and nothing else. A build script, compiled and run, has every file of its package but
 `BUCK`, `Cargo.toml` and `target/`, as under cargo, where it runs in the package directory (`rerun-if-changed` is recorded, not
 used to narrow this, so any edit in the package re-runs the script, and a script that reads its own `Cargo.toml` fails); the other
@@ -103,6 +119,8 @@ root (v0). "Committed" means the file belongs in git.
 | `third_party/buildrules/BUCK` | `sync` (the generator, `buckgen.zig`) | every sync | yes | member packages (registry units) |
 | `third_party/buildrules/crate_sizes.tsv` | `sync` (`buckgen.zig`, sizes) | every sync | yes | the generator; each row's sha256 was checked against `Cargo.lock` |
 | `buck-out/buildrules/` | `sync` | scratch: cargo home, unit graphs, the `--check` output | no (under `buck-out/`) | `sync` |
+| `buck-out/buildrules/ra/`, `buck-out/buildrules/flycheck/` | `rust-project develop`, `rust-project check` | emptied and downloaded again (`buck2 build --out`) on every run | no (under `buck-out/`) | `rust-project`, rust-analyzer |
+| `rust-project.json` | `rust-project develop` | when you run it | no: absolute paths of this machine; add it to `.gitignore` | rust-analyzer |
 
 Generated files say "Do not edit" in their first line. `check` fails on a hand-edited `buildrules.bzl`;
 `sync --check` fails on any hand-edited generated file.
@@ -194,11 +212,14 @@ Plain `cargo` (rustup) and Buck2 therefore use the same compiler, and `rust-tool
 (no date anywhere). The toolchain refuses to exist unless `rustc --version` and `cargo --version` print the prefixes `rustc <version> (` and
 `cargo <version> (`; plus `RUST_DEFAULT` (the version `toolchains//:rust` is) and `RUST_OLDEST` (the oldest supported).
 Today: 1.95.0 (default) and 1.85.0 (oldest; edition 2024 needs 1.85). The default row also pins the `llvm-tools-preview`
-component (`llvm_tools`, for `isa_audit`, section 11). Nothing is fetched without a hash.
+component (`llvm_tools`, for `isa_audit`, section 11), and, for code intelligence, `rust_src` (`rust-src-<version>.tar.gz`, the standard
+library's sources: one tarball for every triple, so the file name carries none) and `rust_analyzer` (the `rust-analyzer-preview` component).
+Nothing is fetched without a hash.
 
 `rust_toolchains()` declares one toolchain per version: `toolchains//:rust_<v>`, `:sysroot_<v>`, `:cargo_<v>`, `:clippy_<v>` and the
 pins behind them (`<v>` is the version with `_` for `.`: `rust_1_85_0`). `:rust`, `:sysroot`, `:cargo`, `:clippy`
-(and `:llvm_tools`) are aliases of the default's. A toolchain is an input of every compile, test and lint action of its
+(and `:llvm_tools`, `:rust_src`, `:rust_analyzer`) are aliases of the default's. A version whose row pins them also has `:rust_src_<v>` and
+`:rust_analyzer_<v>`, each the component's tarball unpacked as it is (`buildrules-pins.toml` cannot pin these two). A toolchain is an input of every compile, test and lint action of its
 units, so **two versions never share an action key**.
 
 **Which toolchain a target uses:** the table's `RUSTC` (the macros pass it as `rustc =`), or `RUST_DEFAULT` for the hand-written
@@ -296,6 +317,8 @@ limit (section 12.8). It is not `124`, which is a killed compiler deadlock that 
 | `cargo adopt [PATH...]` | metadata table + BUCK + `members` for packages that already build with cargo; no PATH = every member | nothing |
 | `sync [--check] [--cargo C --rustc R --pins F] [--buck2 B]` | section 3 rows marked `sync`; with no tool flags builds `toolchains//:cargo_<v>`, `:sysroot_<v>` (the version of `rust-toolchain.toml`) and `buildrules//rules/rust:pins.bzl` through `buck2`; the generator is part of the program | cargo |
 | `check [--dir D]` | read-only comparison, below | nothing |
+| `rust-project develop [--dir D] [--buck2 B] [--inputs I] [--project F]` | builds `//:rust_analyzer_inputs` into an emptied `buck-out/buildrules/ra` (`buck2 build --out`; with `--inputs I`, reads `I` and builds nothing) and writes `rust-project.json` (or `F`), below | `buck2` |
+| `rust-project check [--dir D] [--buck2 B] TARGET` | builds `TARGET` (a member's `:flycheck`) into an emptied `buck-out/buildrules/flycheck` and prints its diagnostics | `buck2` |
 
 `cargo new/init/adopt` refuse (exit 1, nothing written) unless the root `Cargo.toml` is a virtual
 workspace; `init PATH` and `adopt .` refuse the workspace root itself.
@@ -316,6 +339,22 @@ On the build side the same staleness is red too: `:check` (the validation on `:t
 table. Two layers on purpose: `check` is the cheap pull-request gate, `:check` is what makes a stale
 table impossible to build.
 
+`rust-project develop` writes one crate per unit `index.json` names that rustc compiles (a build-script run is not a crate; the
+script it runs is), each with its table dependencies by extern name (not a run, not a binary of the package), the unit's cfgs plus
+`debug_assertions` from its profile, `test` for a test unit, an override's `cfgs` for a registry crate, cargo's package variables,
+and, from the run it is compiled with, `OUT_DIR`, the run's `--cfg` values and `rustc_env` variables (the run's `{OUT_DIR}` and
+`{MANIFEST_DIR}` tokens made paths); the crate's directory, its `OUT_DIR` and, for a member, the directories of its `extra_srcs` are its
+source directories. A field the table leaves out gets cargo's default (no version, the crate's name, edition 2015). A proc-macro names its shared
+object; a member names its `:flycheck` as its build label, and the file's one runnable, the check on save, is this program's
+`rust-project check --dir <root> --buck2 <buck2> {label}`. The standard library is described in the file (`sysroot_project`: `core`,
+`alloc`, `std`, `proc_macro`, `test`, and `std_detect` when the sources have it), so rust-analyzer runs no cargo to find it. Paths are
+absolute. It refuses, naming the unit or file, inputs made for another `rustc` or another index version, and inputs that lack a run,
+a proc-macro or a registry crate's sources the table needs (a registry run an override drops is not needed). It empties
+`buck-out/buildrules/ra` before the build, so after a failed build the inputs are gone until `develop` succeeds. `rust-project check`
+prints each diagnostic, one JSON object per line, with every relative `file_name` made absolute against `buck2 root --kind project`;
+it exits 1 when the build fails or its output cannot be read (no project root from buck2, a line that is not JSON), never for a
+diagnostic. Neither verb runs a rustc, cargo or rust-analyzer of the machine.
+
 ## 9. Convergence with p7, and v0 limits
 
 - The macros' `ws` handling (a workspace below the cell root) is p7's and works; the CLI does not
@@ -328,6 +367,9 @@ table impossible to build.
   workspace package must be listed in `members`; doctests and coverage out; lto / rpath / incremental refused;
   `sync` needs the network the first time a registry crate is fetched (cargo's own cache under
   `buck-out/buildrules/cargo-home`).
+- Code intelligence (`rust-project`): the pinned rust-analyzer is Linux x86_64 only; `buildrules-pins.toml` cannot pin `rust_src` or
+  `rust_analyzer`, so a version of your own has no `:rust_analyzer_inputs`; an `extra_srcs` entry adds its parent directory to the
+  member's source directories, so a directory given there adds the directory above it as well.
 
 ## 10. The CI matrix **[chosen]**
 

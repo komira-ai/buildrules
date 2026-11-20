@@ -59,6 +59,9 @@ export function disagreements(md: string, rust: string, pins: string, mopm: stri
     rustc: { file: `rustc-${dflt}-${triple}.tar.gz`, pin: rustRows.rustc },
     'rust-std': { file: `rust-std-${dflt}-${triple}.tar.gz`, pin: rustRows.rust_std },
     cargo: { file: `cargo-${dflt}-${triple}.tar.gz`, pin: rustRows.cargo },
+    // the standard library's sources: one tarball for every triple, so its name carries none
+    'rust-src': { file: `rust-src-${dflt}.tar.gz`, pin: rustRows.rust_src },
+    'rust-analyzer': { file: `rust-analyzer-${dflt}-${triple}.tar.gz`, pin: rustRows.rust_analyzer },
     'zig 0.15.2': { file: 'zig-x86_64-linux-0.15.2.tar.xz', pin: entry(pins, 'zig_next') },
     'busybox 1.35.0': { file: null, pin: entry(pins, 'busybox') },
   };
@@ -136,6 +139,9 @@ describe('docs/pins.md figures are the figures in the pin tables', () => {
   faulty('the rust-std size is one more', `| ${rs.rust_std.size} |`, `| ${Number(rs.rust_std.size) + 1} |`, /rust-std size/);
   faulty('one digit of the cargo sha256 differs', rs.cargo.sha256, rs.cargo.sha256.slice(0, 5) + (rs.cargo.sha256[5] === '0' ? '1' : '0') + rs.cargo.sha256.slice(6), /cargo sha256/);
   faulty('the zig size is one more', '| 53733924 |', '| 53733925 |', /zig 0\.15\.2 size/);
+  faulty('the rust-src size is one more', '| 5823939 |', '| 5823940 |', /rust-src size/);
+  faulty('the rust-src file names a triple', '| rust-src-1.95.0.tar.gz |', '| rust-src-1.95.0-x86_64-unknown-linux-gnu.tar.gz |', /rust-src file/);
+  faulty('the rust-analyzer sha256 differs', '| 7809a7f622bd', '| 8809a7f622bd', /rust-analyzer sha256/);
   faulty('the busybox sha256 differs', '| 6e123e7f3202', '| 7e123e7f3202', /busybox 1\.35\.0 sha256/);
   faulty('the oldest rustc size is one more', 'rustc 118068031', 'rustc 118068032', /Rust 1\.85\.0 rustc size/);
   faulty('the oldest cargo sha prefix differs', '`e27ffcaf...c372`', '`e27ffcae...c372`', /Rust 1\.85\.0 cargo sha256/);

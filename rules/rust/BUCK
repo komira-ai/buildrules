@@ -45,6 +45,27 @@ seed_zig_exe(
     visibility = ["PUBLIC"],
 )
 
+# rustc_diag (rustc_diag.zig): a lint unit's run as a diagnostics run (`:flycheck`), a tool of its own so the launcher, and with it the key of
+# every compile, stays as it is. Built behind its unit tests, which run it with programs of the pinned busybox in place of rustc.
+seed_zig_test(
+    name = "rustc_diag_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "rustc_diag_test.zig",
+    imports = ["rustc_diag.zig"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+seed_zig_exe(
+    name = "rustc_diag",
+    exec_compatible_with = LINUX_X86_64,
+    src = "rustc_diag.zig",
+    unit_tests = [":rustc_diag_unit"],
+    busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["PUBLIC"],
+)
+
 # (Zig 0.15, like the launcher itself.) The version test of the launcher's `-C linker-features` rule (Rust 1.90+ only).
 seed_zig_test(
     name = "rustc_launch_unit",
@@ -121,8 +142,8 @@ export_file(
 # The coverage of the sources the tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. crate_patch.zig is
 # built and tested by zig 0.12, which has no block counters, so its report is lines only (coverage_crate_patch).
 zig_coverage(
-    test_targets = [":rustc_launch_unit", ":sync_stage_unit"],
-    expect = ["rules/rust/rustc_launch.zig", "rules/rust/sync_stage.zig"],
+    test_targets = [":rustc_launch_unit", ":sync_stage_unit", ":rustc_diag_unit"],
+    expect = ["rules/rust/rustc_launch.zig", "rules/rust/sync_stage.zig", "rules/rust/rustc_diag.zig"],
 )
 
 zig_coverage(

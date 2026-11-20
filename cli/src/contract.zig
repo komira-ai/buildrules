@@ -20,6 +20,15 @@ pub const sizes_file = "third_party/buildrules/crate_sizes.tsv";
 /// Hand-written, optional: registry crates whose build script a buildrules target replaces (cli/src/buckgen.zig).
 pub const overrides_file = "third_party/buildrules/overrides.json";
 
+/// `buildrules rust-project` (cli/src/rust_project.zig): the target that builds what rust-analyzer needs (rules/rust/rust_analyzer.bzl),
+/// where `develop` downloads it, what it writes, and where `check` downloads a member's diagnostics. The two directories are the command's
+/// own, emptied before each download, and under buck-out/ (as `sync`'s scratch is): neither git nor buck2 looks there, so the daemon does not
+/// watch the downloaded files and no glob of the root package reads them.
+pub const ra_target = "//:rust_analyzer_inputs";
+pub const ra_dir = "buck-out/buildrules/ra";
+pub const project_file = "rust-project.json";
+pub const flycheck_dir = "buck-out/buildrules/flycheck";
+
 /// Hand-written, optional: the Rust versions this repository pins itself (docs/contract.md, section 6). `sync` copies it into
 /// the generated `toolchains/rust_pins.bzl`, which `toolchains/BUCK` loads; `check` fails when either differs from the other.
 pub const pins_file = "buildrules-pins.toml";

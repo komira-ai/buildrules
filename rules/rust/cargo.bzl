@@ -23,11 +23,16 @@ Targets of a member package (all always present; `coverage` refuses until P8):
     :test      every cargo test target: the lib test binary, each tests/*.rs, each bin test; one `.passed` marker each
                Each is also a `buck2 test` target (label `test`): the same pinned binary, environment and working directory.
     :lint      clippy over every unit `cargo clippy -p --all-targets` checks, `[lints]` as flags, `clippy.toml` as an input
+    :flycheck  the same runs as diagnostics: one directory of `<unit>.json` files (rustc's JSON diagnostics, one per line), built
+               even when the code has errors; what `buildrules rust-project check` builds for an editor's check on save
     :coverage  refuses with the reason (P8)
     :<action>  one per action named in [workspace.metadata.buildrules] / [package.metadata.buildrules]: its steps, chained
 
 Actions (policy only, resolved at sync):  `actions = { ci = ["lint", "test"] }`; an action may not take a step's name.
 Doctests are out of v0: `:test` runs what `cargo test` runs minus them (a recorded gap).
+
+The workspace root package also has `:rust_analyzer_inputs` (rules/rust/rust_analyzer.bzl): what rust-analyzer needs that only a build
+makes, which `buildrules rust-project develop` downloads and writes rust-project.json from.
 
 A stale table is red: every `:test`, `:lint`, `:debug` and `:release` carries the workspace's `:check` as a validation, which compares
 the sha256 of Cargo.lock, rust-toolchain.toml and every Cargo.toml with what the table was made from. The compile actions
@@ -36,6 +41,7 @@ never take a Cargo.toml as an input, so editing policy or metadata re-runs the c
 
 load(":cargo_unit.bzl", "cargo_unit", "unit_group")
 load(":pins.bzl", "RUST_VERSIONS")
+load(":rust_analyzer.bzl", "rust_analyzer_inputs")
 
 _STEPS = ["lint", "debug", "test", "release", "coverage"]
 
@@ -197,6 +203,24 @@ _step = rule(
     },
 )
 
+def _flycheck_step_impl(ctx):
+    # One directory, so that `buck2 build --out` can copy it: `<unit>.json` per diagnostics run.
+    out = ctx.actions.copied_dir(ctx.label.name, {d.label.name + ".json": d[DefaultInfo].default_outputs[0] for d in ctx.attrs.deps})
+    info = [DefaultInfo(default_output = out)]
+    if ctx.attrs.check:
+        info.append(ValidationInfo(validations = [
+            ValidationSpec(name = "cargo_table_in_sync", validation_result = ctx.attrs.check[DefaultInfo].default_outputs[0]),
+        ]))
+    return info
+
+_flycheck_step = rule(
+    impl = _flycheck_step_impl,
+    attrs = {
+        "check": attrs.option(attrs.dep(), default = None),
+        "deps": attrs.list(attrs.dep()),
+    },
+)
+
 def _refuse_impl(ctx):
     fail("{}: {}".format(ctx.label, ctx.attrs.why))
 
@@ -338,7 +362,10 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
             kw["deps"] = deps
         kw["rustc"] = rustc
         cargo_unit(name = _tname(uid) + "_lint", **kw)
+        # The same run as diagnostics, for an editor (`:flycheck`).
+        cargo_unit(name = _tname(uid) + "_flycheck", diag = True, **kw)
     _step(name = "lint", deps = [t(r) + "_lint" for r in lint_ids], check = chk, visibility = ["PUBLIC"])
+    _flycheck_step(name = "flycheck", deps = [t(r) + "_flycheck" for r in lint_ids], check = chk, visibility = ["PUBLIC"])
     _refuse(name = "coverage", why = "coverage is P8: not implemented in this prototype", target_compatible_with = ["buildrules//platforms:not_implemented"], visibility = ["PUBLIC"])
 
     # 4. actions: the policy's chains of steps
@@ -369,6 +396,14 @@ def cargo_workspace(path = ".", table = None):
     hashes.append(table["CARGO_LOCK_SHA256"])
     names.append(_join(ws, "Cargo.lock"))
     _check(name = "check", files = files, hashes = hashes, names = names, visibility = ["PUBLIC"])
+    here = native.package_name()
+    third_party = "//" + _join(ws, "third_party/buildrules")
+    rust_analyzer_inputs(
+        name = "rust_analyzer_inputs",
+        table = table,
+        label_of = lambda uid: _label(uid, table["UNITS"], ws, third_party, here),
+        check = ":check",
+    )
     names = sorted(rows)
     for step in ["lint", "debug", "test", "release"]:
         _step(name = step, deps = ["//" + _join(ws, rows[n]["path"]) + ":" + step for n in names], visibility = ["PUBLIC"])

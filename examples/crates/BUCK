@@ -7,7 +7,9 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 #   buck2 build //:sync_check            red unless the generated files are what `buildrules sync` writes now (on the farm, no network)
 #   buck2 build //:sync --show-full-output   regenerate: the directory holds the files to copy back (after a change to a Cargo.toml)
 load("@buildrules//rules/core:pinned_file.bzl", "pinned_file")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/rust:sync.bzl", "cargo_sync")
+load("@buildrules//rules/zig:zig.bzl", "zig_test")
 load("//:buildrules.bzl", "cargo_workspace")
 
 cargo_workspace(path = ".")
@@ -142,5 +144,36 @@ _WORKSPACE = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "BUCK", "buildr
     )
     for name, check in [("sync", False), ("sync_check", True)]
 ]
+
+# ---- code intelligence ----------------------------------------------------------------------------------------------------
+# rust-analyzer on this workspace, from what `buildrules rust-project develop` writes (rust_analyzer_test.zig): its inputs (`:rust_analyzer_inputs`,
+# which cargo_workspace declares) are built by the farm, and the pinned rust-analyzer in them runs on the farm too.
+zig_test(
+    name = "rust_analyzer_test",
+    exec_compatible_with = LINUX_X86_64,
+    src = "rust_analyzer_test.zig",
+    data = {
+        "buildrules.lock.bzl": "buildrules.lock.bzl",
+        "crates/macros": "//crates/macros:sources",
+        "crates/protos": "//crates/protos:sources",
+        "crates/stamped": "//crates/stamped:sources",
+        "crates/zdemo": "//crates/zdemo:sources",
+        "shared/stamp.rs": "//shared:stamp.rs",
+    },
+    env_tools = {"RA_INPUTS": ":rust_analyzer_inputs"},
+    exec_tools = {"BUILDRULES": "buildrules//cli:buildrules"},
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["PUBLIC"],
+)
+
+# A diagnostics run (a member's `:flycheck` is made of them) of code with an error: built, and holding the error (flycheck_test.zig).
+zig_test(
+    name = "flycheck_test",
+    exec_compatible_with = LINUX_X86_64,
+    src = "flycheck_test.zig",
+    data = {"diagnostics.json": "//shared:diag_fixture"},
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["PUBLIC"],
+)
 
 scrub_files()

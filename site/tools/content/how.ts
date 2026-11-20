@@ -167,6 +167,7 @@ export const howConfigure: Page = {
       ['`buildrules.lock.bzl`, `buildrules.bzl`', '`sync`', 'yes', 'the generated table and its binding (Rust and npm, per directory)'],
       ['`third_party/buildrules/`', '`sync`', 'yes', 'registry crates as units'],
       ['`toolchains/rust_pins.bzl`, `mopm_pins.bzl`, `mojo_pins.bzl`', '`sync`, `mojo sync`', 'yes', 'generated pins'],
+      ['`rust-project.json`', '`rust-project develop`', '**no**', 'rust-analyzer\'s view of the workspace, with this machine\'s paths'],
       ['`<pkg>/buildrules.mojo.lock.bzl`, `buildrules.mojo.bzl`', '`mojo sync`', 'yes', 'a Mojo package\'s graph and binding'],
     ),
     p('Generated files say "Do not edit" in their first line, and editing one is detected.'),
@@ -285,10 +286,13 @@ export const howExamples: Page = {
       ].join('\n'),
       'shell',
     ),
-    p('Per member the targets are `:lib`, `:bin` (if it has a binary), `:debug`, `:release`, `:test` (one `.passed` marker per Cargo test target), `:lint`, `:sources`, and one per action named in the policy. A member\'s `BUCK` file is two lines:'),
+    p('Per member the targets are `:lib`, `:bin` (if it has a binary), `:debug`, `:release`, `:test` (one `.passed` marker per Cargo test target), `:lint`, `:flycheck` (the lint as diagnostics, for an editor), `:sources`, and one per action named in the policy. A member\'s `BUCK` file is two lines:'),
     code('load("//:buildrules.bzl", "cargo_package")\n\ncargo_package(path = ".")', 'crates/hello/BUCK'),
     p('For an existing package that already builds with Cargo, `buildrules cargo adopt crates/existing` adopts it (no path means every member).'),
     limit('Not supported: doctests (`cargo test` still runs them; `:test` does not), coverage, git or alternate-registry dependencies, a root `[package]`.'),
+    h3('rust-analyzer'),
+    code('buildrules rust-project develop', 'shell'),
+    p('This builds what rust-analyzer needs that only a build makes (registry sources, build-script output, proc-macros, the pinned standard library and rust-analyzer itself) where actions run, downloads it under `buck-out/buildrules/ra`, and writes `rust-project.json` at the root. Nothing runs a rustc or cargo of your machine. Point the editor\'s rust-analyzer at `buck-out/buildrules/ra/sysroot/bin/rust-analyzer`, the pinned one whose proc-macro server matches the compiler that built the proc-macros; it finds `rust-project.json` at the root. Its check on save is `buildrules rust-project check`, which builds the member\'s `:flycheck`. The file holds this machine\'s absolute paths: add it to `.gitignore`, and run `develop` again after `Cargo.lock` changes or `buck2 clean`. See [the command](/cli/#rust-project).'),
     h2('Node.js'),
     code(
       [
