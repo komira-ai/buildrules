@@ -15,6 +15,7 @@ load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit")
 load("@buildrules//rules/rust:defs.bzl", "rust_library", "rust_test")
 load("@buildrules//rules/rust:fmt.bzl", "rustfmt_check", "rustfmt_config")
 load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "ZIG_CC_TARGET")
+load("@buildrules//rules/rust:test_run.bzl", "test_run")
 load("@buildrules//rules/rust:toolchain.bzl", "rust_toolchain")
 load("@buildrules//rules/pins:pins.bzl", "PINS", "strip_prefix")
 load("@buildrules//rules/zig:zig.bzl", "zig_dist", "zig_exe")
@@ -174,6 +175,14 @@ rust_library(
     crate_root = "fails.rs",
     crate_name = "fails",
     gate_tests = [":fails"],
+)
+
+# The Postgres fixture: the binary of examples/crates' pgdemo row test (tests/row.rs), run as its package would run it but without the fixture: no server is
+# started and PGDEMO_URL is not set, so the test must fail saying so. (Control: the generated run of the same binary, which has the fixture.)
+test_run(
+    name = "pgdemo_row_without_postgres",
+    unit = "crates//crates/pgdemo:pgdemo-0.1.0_9ff37c4d80__bin",
+    exec_compatible_with = test_exec_compatible_with(),
 )
 
 # The run of a Mojo test that fails (the program exits 2), with a stand-in for the compiler. The real runs, which pass, are the tests of //ci:mojo.

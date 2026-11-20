@@ -415,6 +415,8 @@ def _check_extra_srcs(ctx):
                   "Export it with `export_file(name = ..., src = ..., mode = \"reference\")`").format(ctx.label.raw_target(), s.short_path))
 
 def _impl(ctx):
+    if ctx.attrs.postgres_url_env != None:
+        fail("{}: postgres_url_env is for a unit in mode test (the run of a test), not mode {}".format(ctx.label.raw_target(), ctx.attrs.mode))
     _check_extra_srcs(ctx)
     if ctx.attrs.mode == "lint":
         return _lint_impl(ctx)
@@ -455,6 +457,8 @@ _cargo_unit = rule(
         "opt_level": attrs.string(),
         "overflow_checks": attrs.bool(),
         "panic": attrs.string(default = "unwind"),
+        # Set only on a unit that is not a test, which `_impl` refuses (the run of a test takes it, test_run.bzl).
+        "postgres_url_env": attrs.option(attrs.string(), default = None),
         "pkg": attrs.string(),
         "root": attrs.string(),
         "run_data": attrs.list(attrs.source(allow_directory = True), default = []),
@@ -482,6 +486,10 @@ def cargo_unit(name, rustc = None, **kwargs):
             A target platform with the `rust_version` constraint overrides it (select.bzl). The toolchain is an input of
             every action of the unit, so two versions never share a key.
 
+        postgres_url_env: (mode `test` only) the variable the test reads the URL of a private Postgres from; its run starts one for it
+            (test_run.bzl, rules/postgres/README.md). `cargo_package` passes it for every test of a package that declares
+            `postgres = { url-env = "NAME" }` in [*.metadata.buildrules].
+
     The target platform's ISA level (rules/isa.bzl) becomes rustc flags for units that run on the TARGET (`side = "target"`, not a
     proc-macro); build scripts and proc-macros run on the build host and never get them. A unit in mode `test` is two targets: `<name>__bin`
     compiles the binary on the ISA-agnostic platform, and `<name>` (test_run.bzl) runs it on the platform of the target's level.
@@ -490,8 +498,10 @@ def cargo_unit(name, rustc = None, **kwargs):
         kwargs["toolchain"] = toolchain_for(rustc)
     if kwargs.get("side", "target") == "target" and kwargs.get("crate_type") != "proc-macro" and "isa_flags" not in kwargs:
         kwargs["isa_flags"] = rustc_isa_flags()
+    postgres_url_env = kwargs.pop("postgres_url_env", None)
     if kwargs.get("mode") != "test":
-        _cargo_unit(name = name, **kwargs)
+        # Given to the unit itself, which refuses it while the graph is analysed (`_impl`): only the run of a test starts a server.
+        _cargo_unit(name = name, postgres_url_env = postgres_url_env, **kwargs)
         return
     _cargo_unit(name = name + "__bin", **kwargs)
     test_run(
@@ -499,6 +509,7 @@ def cargo_unit(name, rustc = None, **kwargs):
         unit = ":" + name + "__bin",
         required_isa = required_isa(),
         exec_compatible_with = test_exec_compatible_with(),
+        postgres_url_env = postgres_url_env,
         visibility = kwargs.get("visibility", []),
     )
 

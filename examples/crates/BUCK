@@ -136,7 +136,7 @@ _WORKSPACE = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "BUCK", "buildr
         index = glob(["registry/index/**"]),
         registry_root = "registry",
         rustc = "1.95.0",
-        deps = ["//crates/macros:sources", "//crates/protos:sources", "//crates/stamped:sources", "//crates/zdemo:sources", "//third_party/buildrules:files"],
+        deps = ["//crates/macros:sources", "//crates/pgdemo:sources", "//crates/protos:sources", "//crates/stamped:sources", "//crates/zdemo:sources", "//third_party/buildrules:files"],
         srcs = _WORKSPACE,
         visibility = ["PUBLIC"],
     )

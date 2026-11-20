@@ -22,12 +22,14 @@ Targets of a member package (all always present; `coverage` refuses until P8):
     :debug     lib + bins, as `cargo build -p`                  :release   the same under `--release`
     :test      every cargo test target: the lib test binary, each tests/*.rs, each bin test; one `.passed` marker each
                Each is also a `buck2 test` target (label `test`): the same pinned binary, environment and working directory.
+               A package that declares `postgres = { url-env = "NAME" }` runs each with a private Postgres, its URL in NAME.
     :lint      clippy over every unit `cargo clippy -p --all-targets` checks, `[lints]` as flags, `clippy.toml` as an input
     :fmt       the pinned `rustfmt --check` over the files `cargo fmt --check -p` reads, red on any difference (fmt.bzl)
     :coverage  refuses with the reason (P8)
     :<action>  one per action named in [workspace.metadata.buildrules] / [package.metadata.buildrules]: its steps, chained
 
 Actions (policy only, resolved at sync):  `actions = { ci = ["fmt", "lint", "test"] }`; an action may not take a step's name.
+The Postgres fixture (resolved at sync, the package's over the workspace's): `postgres = { url-env = "NAME" }` (rules/postgres/README.md).
 Doctests are out of v0: `:test` runs what `cargo test` runs minus them (a recorded gap).
 
 A stale table is red: every `:test`, `:lint`, `:fmt`, `:debug` and `:release` carries the workspace's `:check` as a validation, which compares
@@ -284,6 +286,10 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
 
     m = table["MEMBERS"][name]
 
+    # `postgres = { url-env = "NAME" }` (resolved by sync, absent from the rows of packages that do not declare it): every test of the package runs with a
+    # private Postgres, its URL in NAME (rules/postgres/README.md).
+    pg = row.get("postgres")
+
     # 1. the member's units, one cargo_unit each (named by content id, as in third_party)
     for uid in sorted(mine):
         u = mine[uid]
@@ -292,6 +298,8 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
             kw["extra_srcs"] = list(extra_srcs)
         if u["mode"] == "test":
             kw["run_data"] = native.glob(["src/**", "tests/**", "build.rs"] + _outside_globs(mine))
+            if pg:
+                kw["postgres_url_env"] = pg["url_env"]
         if u["mode"] == "run-custom-build":
             if stamp_env:
                 kw["stamp_env"] = dict(stamp_env)
