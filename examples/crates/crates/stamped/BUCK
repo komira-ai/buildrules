@@ -1,0 +1,73 @@
+load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit", "stamp_file")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//:buildrules.bzl", "cargo_package")
+
+# The commit, given as a file in place of `git rev-parse`: a build script on a farm finds no `git` (its PATH is an empty directory) and no
+# checkout. A repository's CI writes its own commit here; this example commits a fixed text so its test can name it.
+stamp_file(name = "build_commit", src = "build_commit.txt")
+
+# ../../shared/stamp.rs is read by `#[path]` from the build script and from the library: a declared input of every unit of the package.
+# The stamp reaches the build script's run twice: as the value of the rustc-env it prints from `git`, and as the variable it prefers to `git`.
+cargo_package(
+    path = ".",
+    extra_srcs = ["//shared:stamp.rs"],
+    stamp_env = {"FIXTURE_BUILD_COMMIT_OVERRIDE": ":build_commit"},
+    stamp_rustc_env = {"FIXTURE_BUILD_COMMIT": ":build_commit"},
+)
+
+# ---- The same units with a declared input left out: red by design ----------------------------------------------------------------------------------------
+# Units of this package written by hand after the ones cargo_package makes (the debug profile of the table; the flags of the lint and the test run's data
+# left out, which neither failure depends on), without one input BUCK declares above. They are excluded from the wildcard build (ci/all.bzl);
+# //ci:completeness.bxl:check builds the two red ones, `script_without_its_outside_source` (FAULTY_ON_A_FARM) and `test_without_the_stamps` (FAULTY),
+# requires each failure and its reason, and requires the generated target it stands beside to build (ci/negative.bzl).
+
+_SCRIPT = dict(
+    pkg = "stamped",
+    version = "0.1.0",
+    crate_name = "stamped",
+    build_script_name = "build_script_build",
+    crate_type = "bin",
+    edition = "2024",
+    root = "build.rs",
+    crate_hash = "faulty",
+    opt_level = "0",
+    debuginfo = "2",
+    debug_assertions = True,
+    srcs = glob(["**"], exclude = ["BUCK", "Cargo.toml", "target/**"]),
+)
+
+# The build script compiled without ../../shared/stamp.rs, which its `#[path]` names: rustc cannot read it. Red on a farm only: an action of local mode
+# runs in the checkout, where an undeclared file is there to read (ci/negative.bzl, FAULTY_ON_A_FARM).
+cargo_unit(name = "script_without_its_outside_source", mode = "build", side = "exec", overflow_checks = True, **_SCRIPT)
+
+# The build script compiled with it, and run without the stamps: it finds no `git` and says `unknown`, and the test of the library says so.
+cargo_unit(name = "script", mode = "build", side = "exec", overflow_checks = True, extra_srcs = ["//shared:stamp.rs"], **_SCRIPT)
+
+cargo_unit(
+    name = "script_run_without_the_stamps",
+    mode = "run-custom-build",
+    overflow_checks = False,
+    extra_srcs = ["//shared:stamp.rs"],
+    deps = {"build_script_build": ":script"},
+    **_SCRIPT
+)
+
+cargo_unit(
+    name = "test_without_the_stamps",
+    pkg = "stamped",
+    version = "0.1.0",
+    crate_name = "stamped",
+    mode = "test",
+    edition = "2024",
+    root = "src/lib.rs",
+    crate_hash = "faulty",
+    opt_level = "0",
+    debuginfo = "2",
+    debug_assertions = True,
+    overflow_checks = True,
+    srcs = glob(["src/**"]),
+    extra_srcs = ["//shared:stamp.rs"],
+    deps = {"build_script_build": ":script_run_without_the_stamps"},
+)
+
+scrub_files()

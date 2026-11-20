@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package fixture.v1;
+
+import "common/v1/labels.proto";
+
+// A host and what it can run.
+message Host {
+  string name = 1;
+  uint32 slots = 2;
+  repeated common.v1.Label labels = 3;
+  map<string, string> params = 4;
+}

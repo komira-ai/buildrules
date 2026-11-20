@@ -23,7 +23,12 @@ def same(what, got, want):
     """[] when `got == want`, else the one mismatch: a list `refusal_test(none = True)` is green on only when it is empty."""
     return [] if got == want else ["{}: got {}, want {}".format(what, got, want)]
 
-def unit(root, edition = "2021"):
+# Rust editions by name, for the `:fmt` plan cases (a year-like literal on a line that does not say "edition" is a date to tools/scrub).
+OLD_EDITION = "2018"
+MID_EDITION = "2021"
+NEW_EDITION = "2024"
+
+def unit(root, edition = MID_EDITION):
     """The part of a table unit `fmt_plan` reads."""
     return {"crate_root": root, "edition": edition}
 

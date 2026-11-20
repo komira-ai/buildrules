@@ -6,7 +6,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_VERSIONS")
 load("//rules/rust:refusal.bzl", "refusal_test")
 load("//rules/rust:fmt.bzl", "workspace_config_candidates")
-load(":cases.bzl", "fmt_plan_mismatch", "fmt_refusals", "refused", "same", "table", "unit", "ws_config_of")
+load(":cases.bzl", "MID_EDITION", "NEW_EDITION", "OLD_EDITION", "fmt_plan_mismatch", "fmt_refusals", "refused", "same", "table", "unit", "ws_config_of")
 
 # A pinned version with the hashes the pins file has: accepted.
 refusal_test(name = "pinned_is_accepted", refusals = refused(table(RUST_DEFAULT, "builtin")), none = True, visibility = ["PUBLIC"])
@@ -58,10 +58,10 @@ refusal_test(
 refusal_test(
     name = "fmt_takes_each_table_root_once_under_its_edition",
     refusals = fmt_plan_mismatch(
-        [unit("src/lib.rs"), unit("src/lib.rs"), unit("tests/it.rs"), unit("build.rs"), unit("src/bin/old.rs", "2018")],
+        [unit("src/lib.rs"), unit("src/lib.rs"), unit("tests/it.rs"), unit("build.rs"), unit("src/bin/old.rs", OLD_EDITION)],
         [],
         [],
-        {"config": None, "roots": {"2018": ["src/bin/old.rs"], "2021": ["build.rs", "src/lib.rs", "tests/it.rs"]}},
+        {"config": None, "roots": {OLD_EDITION: ["src/bin/old.rs"], MID_EDITION: ["build.rs", "src/lib.rs", "tests/it.rs"]}},
     ),
     none = True,
     visibility = ["PUBLIC"],
@@ -72,10 +72,10 @@ refusal_test(
 refusal_test(
     name = "fmt_adds_discovered_examples_and_benches_under_the_package_edition",
     refusals = fmt_plan_mismatch(
-        [unit("src/lib.rs", "2024"), unit("src/lib.rs", "2024"), unit("src/bin/old.rs", "2018")],
+        [unit("src/lib.rs", NEW_EDITION), unit("src/lib.rs", NEW_EDITION), unit("src/bin/old.rs", OLD_EDITION)],
         ["benches/speed.rs", "examples/demo/main.rs", "src/bin/old.rs", "src/lib.rs"],
         [],
-        {"config": None, "roots": {"2018": ["src/bin/old.rs"], "2024": ["benches/speed.rs", "examples/demo/main.rs", "src/lib.rs"]}},
+        {"config": None, "roots": {OLD_EDITION: ["src/bin/old.rs"], NEW_EDITION: ["benches/speed.rs", "examples/demo/main.rs", "src/lib.rs"]}},
     ),
     none = True,
     visibility = ["PUBLIC"],
@@ -89,7 +89,7 @@ refusal_test(
         [unit("src/lib.rs")],
         [],
         ["rustfmt.toml", ".rustfmt.toml", "tests/fixtures/rustfmt.toml"],
-        {"config": ".rustfmt.toml", "roots": {"2021": ["src/lib.rs"]}},
+        {"config": ".rustfmt.toml", "roots": {MID_EDITION: ["src/lib.rs"]}},
     ),
     none = True,
     visibility = ["PUBLIC"],
@@ -97,7 +97,7 @@ refusal_test(
 
 refusal_test(
     name = "fmt_reads_the_member_config",
-    refusals = fmt_plan_mismatch([unit("src/lib.rs")], [], ["rustfmt.toml"], {"config": "rustfmt.toml", "roots": {"2021": ["src/lib.rs"]}}),
+    refusals = fmt_plan_mismatch([unit("src/lib.rs")], [], ["rustfmt.toml"], {"config": "rustfmt.toml", "roots": {MID_EDITION: ["src/lib.rs"]}}),
     none = True,
     visibility = ["PUBLIC"],
 )
@@ -145,10 +145,10 @@ refusal_test(
 refusal_test(
     name = "fmt_breaks_an_edition_tie_by_the_lower_edition",
     refusals = fmt_plan_mismatch(
-        [unit("src/main.rs", "2024"), unit("src/lib.rs", "2021")],
+        [unit("src/main.rs", NEW_EDITION), unit("src/lib.rs", MID_EDITION)],
         ["examples/demo.rs"],
         [],
-        {"config": None, "roots": {"2021": ["examples/demo.rs", "src/lib.rs"], "2024": ["src/main.rs"]}},
+        {"config": None, "roots": {MID_EDITION: ["examples/demo.rs", "src/lib.rs"], NEW_EDITION: ["src/main.rs"]}},
     ),
     none = True,
     visibility = ["PUBLIC"],
