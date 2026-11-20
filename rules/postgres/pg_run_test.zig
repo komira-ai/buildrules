@@ -481,7 +481,7 @@ test "the base of the run directory is BUCK_SCRATCH_PATH, else TMPDIR, else /tmp
         c.fake.hex_counter = 0;
         c.environ = environ;
         r = try c.runIo(c.line("/bin/prog"), Small.set);
-        try t.expectEqualStrings("pg_run: the server's socket path /tmp/buildrules_pgs.00000002/.s.PGSQL.5432 is 42 bytes, more than the 10 a Unix socket path holds; give the action a shorter TMPDIR\n", r.err);
+        try t.expectEqualStrings("pg_run: the server's socket path /tmp/buildrules_pgs.00000002/.s.PGSQL.5432 is 42 bytes, and in /tmp it would be 42: both more than the 10 a Unix socket path holds\n", r.err);
         try t.expectEqual(@as(u8, 1), r.status);
     }
 }
@@ -612,30 +612,49 @@ test "a server that ignores SIGINT is killed after 120 s of the clock, and that 
     try c.expectClean();
 }
 
-test "a socket path over the bound is refused before anything is made, and one of exactly the bound is taken" {
+test "a socket path in TMPDIR over the bound moves to the fallback directory; over the bound there too it is refused before anything is made; exactly the bound is taken" {
     var c: Case = undefined;
     try c.init();
     defer c.deinit();
     const sock_len = c.p("{s}/tmp/buildrules_pgs.00000002/.s.PGSQL.5432", .{c.root}).len;
     const Bound = struct {
         var at: usize = 0;
+        var fallback: []const u8 = "";
         fn set(io: *R.Io) void {
             io.sock_path_max = at;
+            io.sock_fallback = fallback;
         }
     };
+    // `<root>/s` is two bytes shorter than `<root>/tmp`
+    Bound.fallback = c.p("{s}/s", .{c.root});
+    // one byte over in TMPDIR: the socket is in the fallback directory, and the URL names it
     Bound.at = sock_len - 1;
     var r = try c.runIo(c.line("/bin/prog"), Bound.set);
-    try t.expectEqualStrings(c.p("pg_run: the server's socket path {s}/tmp/buildrules_pgs.00000002/.s.PGSQL.5432 is {d} bytes, more than the {d} a Unix socket path holds; give the action a shorter TMPDIR\n", .{ c.root, sock_len, sock_len - 1 }), r.err);
+    try t.expectEqualStrings("", r.err);
+    try t.expectEqual(@as(u8, 0), r.status);
+    try t.expectEqualStrings(c.p("{s}/s/buildrules_pgs.00000002", .{c.root}), c.fake.pg_argv[4]);
+    try t.expect(!c.exists("s/buildrules_pgs.00000002"));
+    try c.expectClean();
+    // over the bound in both: refused, naming both lengths, and nothing is started or made
+    c.fake.hex_counter = 0;
+    c.fake.events.clearRetainingCapacity();
+    Bound.at = sock_len - 3;
+    r = try c.runIo(c.line("/bin/prog"), Bound.set);
+    try t.expectEqualStrings(c.p("pg_run: the server's socket path {s}/tmp/buildrules_pgs.00000002/.s.PGSQL.5432 is {d} bytes, and in {s}/s it would be {d}: both more than the {d} a Unix socket path holds\n", .{ c.root, sock_len, c.root, sock_len - 2, sock_len - 3 }), r.err);
     try t.expectEqual(@as(u8, 1), r.status);
     try t.expectEqual(@as(usize, 0), c.fake.events.items.len);
     try c.expectClean();
+    // exactly the bound in TMPDIR: taken there
     c.fake.hex_counter = 0;
     Bound.at = sock_len;
     r = try c.runIo(c.line("/bin/prog"), Bound.set);
     try t.expectEqualStrings("", r.err);
     try t.expectEqual(@as(u8, 0), r.status);
-    // the real bound is the one of sun_path
+    try t.expectEqualStrings(c.p("{s}/tmp/buildrules_pgs.00000002", .{c.root}), c.fake.pg_argv[4]);
+    // the real bound is the one of sun_path, and the real fallback is /tmp
     try t.expectEqual(@as(usize, 107), R.sun_path_max);
+    const io = R.Io{ .err = undefined, .environ = &.{}, .cwd = "/", .plat = c.fake.plat() };
+    try t.expectEqualStrings("/tmp", io.sock_fallback);
 }
 
 test "a scratch path or a TMPDIR that cannot be made is one line, exit 1, nothing left" {
@@ -722,9 +741,19 @@ test "messages go nowhere when stderr is closed, and the status is still right" 
 }
 
 test "every allocation failing in turn is out of memory and exit 1, with both directories removed and no server left" {
+    try oomSweep(false);
+}
+
+test "every allocation failing in turn, with the socket directory in the fallback directory: out of memory and exit 1, nothing left" {
+    try oomSweep(true);
+}
+
+fn oomSweep(fallback: bool) !void {
     var c: Case = undefined;
     try c.init();
     defer c.deinit();
+    // the socket path in `<root>/tmp` one byte over the bound, so the directory is made in `<root>/s`
+    const over = c.p("{s}/tmp/buildrules_pgs.00000002/.s.PGSQL.5432", .{c.root}).len - 1;
     var i: usize = 0;
     while (i < 3000) : (i += 1) {
         c.fake = .{ .a = c.a(), .stages = &.{ready_text} };
@@ -733,7 +762,11 @@ test "every allocation failing in turn is out of memory and exit 1, with both di
         defer inner.deinit();
         var fail = t.FailingAllocator.init(inner.allocator(), .{ .fail_index = i });
         var err = std.Io.Writer.Allocating.init(c.a());
-        const io = R.Io{ .err = &err.writer, .environ = c.environ, .cwd = c.root, .plat = c.fake.plat(), .sock_path_max = 4000 };
+        var io = R.Io{ .err = &err.writer, .environ = c.environ, .cwd = c.root, .plat = c.fake.plat(), .sock_path_max = 4000 };
+        if (fallback) {
+            io.sock_path_max = over;
+            io.sock_fallback = c.p("{s}/s", .{c.root});
+        }
         const status = R.run(fail.allocator(), io, c.line("./prog"));
         try c.expectClean();
         if (!fail.has_induced_failure) {

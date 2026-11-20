@@ -363,7 +363,7 @@ and the file.
 | `postgres` | `{ url-env = "NAME" }`: every test of the package runs with a private Postgres, its URL in `NAME` |
 
 `postgres = { url-env = "NAME" }` starts, for each test run, a server of the pinned Postgres (17, from conda-forge) on a Unix socket in the
-action's `TMPDIR`, sets `NAME=postgresql://postgres@<socket directory, percent-encoded>:5432/postgres` for the test, and stops the server after it
+action's `TMPDIR` (in `/tmp` when that path is too long for a socket), sets `NAME=postgresql://postgres@<socket directory, percent-encoded>:5432/postgres` for the test, and stops the server after it
 (docs/contract.md section 5; rules/postgres/README.md). A package's `postgres` replaces the workspace's.
 
 Steps are `lint`, `debug`, `test`, `release` and `coverage` (`coverage` refuses for Rust: not built).

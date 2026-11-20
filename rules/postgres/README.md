@@ -35,7 +35,9 @@ pg_run --prefix DIR --url-env NAME -- PROGRAM [ARG]...
 
 1. The run directory `<base>/buildrules_pg.<8 hex>`, `<base>` being BUCK_SCRATCH_PATH (made absolute), else TMPDIR, else `/tmp`; and a socket
    directory `<TMPDIR or /tmp>/buildrules_pgs.<8 hex>` of its own. A Unix socket path holds 107 bytes at most and a scratch path may be longer than that,
-   so the socket is in TMPDIR; a path that does not fit is refused before anything is made.
+   so the socket is in TMPDIR (21 bytes on the farm). A local action's TMPDIR is its scratch directory under buck-out, which can be too long (151 bytes
+   on a hosted runner): then the socket directory is made in `/tmp`, the same fresh directory of its own. A path that fits in neither is refused, naming
+   both lengths, before anything is made.
 2. `<run>/pg/bin/{postgres,initdb}` are copies of the tree's with the placeholder replaced by `<run>/pg`, the way conda does it for a binary file:
    each C string that holds the placeholder has it replaced and is padded with NULs to its old length, so offsets and size do not change. (The server finds
    its timezone files through that compiled-in path.) `<run>/pg/lib` and `<run>/pg/share` are links to the tree's.

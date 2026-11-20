@@ -4,8 +4,8 @@
 //!
 //! DIR is the tree `pg_prefix` made. pg_run makes a run directory (in BUCK_SCRATCH_PATH, else TMPDIR, else /tmp) holding a copy of `bin/postgres` and
 //! `bin/initdb` whose conda prefix placeholder is replaced by the run directory, and links to the tree's `lib` and `share`; runs `initdb` on a data
-//! directory of its own; starts the server on a Unix socket in a directory of its own (in TMPDIR, which is short: a socket path holds 107 bytes at
-//! most), no TCP, no fsync; waits until `postmaster.pid` says `ready`; runs PROGRAM (a path, never looked for in PATH) with NAME set to the server's URL,
+//! directory of its own; starts the server on a Unix socket in a directory of its own (in TMPDIR, or in /tmp when that would make the path longer than
+//! the 107 bytes a socket path holds, as a local action's scratch TMPDIR does), no TCP, no fsync; waits until `postmaster.pid` says `ready`; runs PROGRAM (a path, never looked for in PATH) with NAME set to the server's URL,
 //! `postgresql://postgres@<socket directory, percent-encoded>:5432/postgres`; stops the server (SIGINT, the fast shutdown; SIGKILL after 120 s); removes
 //! both directories; and exits with PROGRAM's status. A fixture failure (initdb or the server failing, the server not ready within 300 s, the server
 //! gone while the test ran or failing when stopped) is said on stderr, one line `pg_run: ...`, and is exit 1 whatever PROGRAM did. The status of a
@@ -28,6 +28,9 @@ pub const sigkill: u8 = 9;
 pub const ready_ms: u64 = 300_000;
 pub const stop_ms: u64 = 120_000;
 pub const poll_ms: u64 = 20;
+
+/// The name of the server's socket in its directory (the port is 5432).
+const socket_name = "/.s.PGSQL.5432";
 
 /// The longest path a Unix socket takes (sun_path is 108 bytes with its NUL).
 pub const sun_path_max: usize = 107;
@@ -56,6 +59,8 @@ pub const Io = struct {
     plat: Plat,
     /// The longest socket path accepted (the tests move it to hit the bound exactly).
     sock_path_max: usize = sun_path_max,
+    /// Where the socket directory is made when the one in TMPDIR would make too long a path (the tests give a directory of their own).
+    sock_fallback: []const u8 = "/tmp",
 };
 
 const usage = "usage: pg_run --prefix DIR --url-env NAME -- PROGRAM [ARG]...";
@@ -227,11 +232,17 @@ fn exec(a: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     io.plat.randomHex(io.plat.ctx, &hex);
     const run_dir = try std.fmt.allocPrint(a, "{s}/buildrules_pg.{s}", .{ base, &hex });
     io.plat.randomHex(io.plat.ctx, &hex);
-    const sock_dir = try std.fmt.allocPrint(a, "{s}/buildrules_pgs.{s}", .{ tmp, &hex });
-    const sock_len = sock_dir.len + "/.s.PGSQL.5432".len;
+    // A socket path holds 107 bytes. The farm's TMPDIR is short; a local action's TMPDIR is its scratch directory under buck-out, which is not: then the
+    // directory of the socket is made in /tmp (a fresh one of its own, removed after the run, as in TMPDIR).
+    var sock_dir = try std.fmt.allocPrint(a, "{s}/buildrules_pgs.{s}", .{ tmp, &hex });
+    const sock_len = sock_dir.len + socket_name.len;
     if (sock_len > io.sock_path_max) {
-        say(io, "the server's socket path {s}/.s.PGSQL.5432 is {d} bytes, more than the {d} a Unix socket path holds; give the action a shorter TMPDIR", .{ sock_dir, sock_len, io.sock_path_max });
-        return 1;
+        const short = try std.fmt.allocPrint(a, "{s}/buildrules_pgs.{s}", .{ io.sock_fallback, &hex });
+        if (short.len + socket_name.len > io.sock_path_max) {
+            say(io, "the server's socket path {s}{s} is {d} bytes, and in {s} it would be {d}: both more than the {d} a Unix socket path holds", .{ sock_dir, socket_name, sock_len, io.sock_fallback, short.len + socket_name.len, io.sock_path_max });
+            return 1;
+        }
+        sock_dir = short;
     }
     const url = try std.fmt.allocPrint(a, "postgresql://postgres@{s}:5432/postgres", .{try percentEncode(a, sock_dir)});
     const test_env = try envMap(a, io.environ, &.{.{ o.url_env, url }});

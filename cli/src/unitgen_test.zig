@@ -1125,6 +1125,17 @@ test "policy postgres: refusals, each with its exact text" {
     try refusedWith(&d, "(known: ['actions', 'default-action', 'lint', 'postgres'])");
 }
 
+test "generate: with postgres declared at the workspace and the package, a run that fails an allocation is an error, never a table (at every allocation)" {
+    // Catches: an allocation failure while the postgres rows are baked that leaves a table without them instead of failing the sync.
+    var e = Env.init();
+    defer e.deinit();
+    var repo = try Repo.create(&e, lock_with_itoa);
+    defer repo.tmp.cleanup();
+    try repo.tmp.dir.writeFile(.{ .sub_path = "Cargo.toml", .data = ws_manifest ++ "[workspace.metadata.buildrules.postgres]\nurl-env = \"PGDEMO_URL\"\n" });
+    try repo.tmp.dir.writeFile(.{ .sub_path = "crates/app/Cargo.toml", .data = app_manifest ++ "[package.metadata.buildrules.postgres]\nurl-env = \"OTHER_URL\"\n" });
+    try kit.sweepOom(GenerateCall{ .repo = repo, .lock = lock_with_itoa, .json = try repo.graph(&e, graph_app), .expect_units = 2 }, true);
+}
+
 test "generate: postgres is baked into the member's row and the workspace row only when declared; a table without it has no such key" {
     // Catches: a row that grows a key nobody declared; a workspace declaration that a member does not inherit; a member's own that is lost.
     var e = Env.init();

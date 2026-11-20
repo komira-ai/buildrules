@@ -33,6 +33,7 @@ CASES = [
     ("//ci/negative:cxx_library_gated_by_the_wrong_kind", PLATFORM, "Attribute requires a dep that provides `ValidationInfo`"),
     ("//ci/negative:npm_tarball_with_a_dep_of_the_wrong_kind", PLATFORM, "Attribute requires a dep that provides `NpmPackageInfo`"),
     ("//ci/negative:zig_coverage_of_no_test", PLATFORM, "test_targets is empty: a package with no test has no coverage to measure"),
+    ("//ci/negative:postgres_on_a_library_unit", PLATFORM, ":postgres_on_a_library_unit: postgres_url_env is for a unit in mode test (the run of a test), not mode build"),
     ("//ci/negative:cross_exe_with_other_tests", PLATFORM, "waits for the unit tests"),
     ("//ci/negative:mojo_instrumented_link_without_a_native_the_unit_links", PLATFORM, "the unit links the native library libbase_sys.a and the instrumented link of its branch coverage is not given it"),
     ("//ci/negative:mojo_instrumented_link_with_a_needed_archive_before_its_user", PLATFORM, "libbase_sys.a is linked before libprobe_sys.a, which needs it"),

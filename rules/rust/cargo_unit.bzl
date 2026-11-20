@@ -406,6 +406,8 @@ def _lint_impl(ctx):
     return [DefaultInfo(default_output = out)]
 
 def _impl(ctx):
+    if ctx.attrs.postgres_url_env != None:
+        fail("{}: postgres_url_env is for a unit in mode test (the run of a test), not mode {}".format(ctx.label.raw_target(), ctx.attrs.mode))
     if ctx.attrs.mode == "lint":
         return _lint_impl(ctx)
     if ctx.attrs.mode == "build":
@@ -445,6 +447,8 @@ _cargo_unit = rule(
         "opt_level": attrs.string(),
         "overflow_checks": attrs.bool(),
         "panic": attrs.string(default = "unwind"),
+        # Set only on a unit that is not a test, which `_impl` refuses (the run of a test takes it, test_run.bzl).
+        "postgres_url_env": attrs.option(attrs.string(), default = None),
         "pkg": attrs.string(),
         "root": attrs.string(),
         "run_data": attrs.list(attrs.source(allow_directory = True), default = []),
@@ -486,9 +490,8 @@ def cargo_unit(name, rustc = None, **kwargs):
         kwargs["isa_flags"] = rustc_isa_flags()
     postgres_url_env = kwargs.pop("postgres_url_env", None)
     if kwargs.get("mode") != "test":
-        if postgres_url_env != None:
-            fail("{}: postgres_url_env is for a unit in mode test (the run of a test), not mode {}".format(name, kwargs.get("mode")))
-        _cargo_unit(name = name, **kwargs)
+        # Given to the unit itself, which refuses it while the graph is analysed (`_impl`): only the run of a test starts a server.
+        _cargo_unit(name = name, postgres_url_env = postgres_url_env, **kwargs)
         return
     _cargo_unit(name = name + "__bin", **kwargs)
     test_run(

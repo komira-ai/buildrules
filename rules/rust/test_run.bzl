@@ -7,7 +7,7 @@ that the platform it was given reports at least the level the test was built for
 `exec_compatible_with` fails here with the fix, instead of running on whatever worker is free and dying with SIGILL.
 
 A run given `postgres_url_env` (a cargo package that declares `postgres = { url-env = "NAME" }`, rules/postgres/README.md) runs under `pg_run`: it starts
-a private Postgres from the pinned tree (`buildrules//rules/postgres:prefix`), listening only on a Unix socket in the action's TMPDIR, runs the `check`
+a private Postgres from the pinned tree (`buildrules//rules/postgres:prefix`), listening only on a Unix socket in the action's TMPDIR (or /tmp, for a TMPDIR too long for a socket path), runs the `check`
 command below with NAME set to the server's URL, and stops the server after it. A run without it is the command it always was.
 """
 

@@ -248,7 +248,7 @@ export const howConfigure: Page = {
       ['`default-action`', 'recorded in the table (no target derives from it yet)'],
       ['`postgres`', '`{ url-env = "NAME" }`: every test of the package runs with a private Postgres, its URL in `NAME`'],
     ),
-    p('`postgres = { url-env = "NAME" }` starts, for each test run, a server of the pinned Postgres (17, from conda-forge) on a Unix socket in the action\'s `TMPDIR`, sets `NAME` to its URL (`postgresql://postgres@<socket directory, percent-encoded>:5432/postgres`) for the test, and stops the server after it. A package\'s `postgres` replaces the workspace\'s.'),
+    p('`postgres = { url-env = "NAME" }` starts, for each test run, a server of the pinned Postgres (17, from conda-forge) on a Unix socket in the action\'s `TMPDIR` (in `/tmp` when that path is too long for a socket), sets `NAME` to its URL (`postgresql://postgres@<socket directory, percent-encoded>:5432/postgres`) for the test, and stops the server after it. A package\'s `postgres` replaces the workspace\'s.'),
     p('Steps are `lint`, `debug`, `test`, `release` and `coverage`; `coverage` refuses for Rust, because it is not built. `init` writes a virtual workspace with `resolver = "3"` and `incremental = false` under the dev profile. Incremental builds cannot be hermetic, and `sync` refuses an incremental profile with this fix. Link-time optimization, a custom codegen backend, rpath and split-debuginfo profile fields are refused too.'),
     h2('npm policy'),
     p('The `"buildrules"` key of `package.json` is ignored by npm.'),

@@ -155,7 +155,8 @@ Steps: `lint`, `debug`, `test`, `release`, `coverage` (`coverage` refuses until 
 **The Postgres fixture.** `postgres = { url-env = "NAME" }` makes every test target of the package (`:test`, and the same `buck2 test` targets) run
 under `pg_run` (rules/postgres/README.md): before the test it starts a private server of the pinned Postgres (`rules/postgres/pins.bzl`, conda-forge,
 by version, sha256 and size) with a fresh database cluster in the action's scratch directory, listening only on a Unix socket in a directory of its own
-in the action's `TMPDIR` (no TCP listener: `listen_addresses` is empty); the test gets `NAME=postgresql://postgres@<socket directory, percent-encoded>:5432/postgres`
+in the action's `TMPDIR`, or in `/tmp` when that path would not fit the 107 bytes of a socket path (a local action's `TMPDIR` is its scratch directory)
+(no TCP listener: `listen_addresses` is empty); the test gets `NAME=postgresql://postgres@<socket directory, percent-encoded>:5432/postgres`
 (user `postgres`, trust authentication, the form the `postgres` and `sqlx` crates read as a socket directory); after the test the server is stopped
 and both directories are removed. The run's status is the test's; a server that does not start, is not ready within 300 s, or exits during the
 test fails the run with a `pg_run:` line that says so. `sync` refuses: a `postgres` that is not a table, a key other than `url-env`, a missing or
