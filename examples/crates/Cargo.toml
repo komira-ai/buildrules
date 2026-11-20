@@ -1,9 +1,9 @@
 # A virtual workspace, as `buildrules init` writes it. zdemo links a C library (zstd) built by a crates.io build script; macros uses the
 # proc-macro crates serde_derive, clap_derive and tokio-macros; protos compiles protobuf in its build script (protox, tonic-prost-build);
-# stamped embeds a commit given as an input and reads a source outside its directory (shared/).
+# stamped embeds a commit given as an input and reads a source outside its directory (shared/); the tests of pgdemo run with the Postgres fixture.
 [workspace]
 resolver = "3"
-members = ["crates/macros", "crates/protos", "crates/stamped", "crates/zdemo"]
+members = ["crates/macros", "crates/pgdemo", "crates/protos", "crates/stamped", "crates/zdemo"]
 
 # Every external dependency's version, declared once; a member names it with `workspace = true` and adds the features it uses.
 [workspace.dependencies]

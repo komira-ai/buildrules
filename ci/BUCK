@@ -463,6 +463,10 @@ group(name = "crates", deps = [
     "crates//crates/stamped:lib",
     "crates//crates/stamped:debug",
     "crates//crates/stamped:release",
+    # The Postgres fixture (rules/postgres): every test of pgdemo runs with a private server; the row test writes a row and reads it back.
+    "crates//crates/pgdemo:test",
+    "crates//crates/pgdemo:lint",
+    "crates//crates/pgdemo:lib",
 ])
 
 # A workspace whose dependency is a git repository pinned by commit (examples/gitcrates, its own cell): lint and test it. Its two git packages
@@ -677,6 +681,7 @@ zig_test(
         "rules/coverage/pins.bzl": "//rules/coverage:pins.bzl",
         "rules/mopm/pins.bzl": "//rules/mopm:pins.bzl",
         "rules/mopm/hosts.bzl": "//rules/mopm:hosts.bzl",
+        "rules/postgres/pins.bzl": "//rules/postgres:pins.bzl",
         "tools/held/mirror-busybox.sh": "//tools/held:mirror-busybox.sh",
         # the tests of workflow_check.zig, which this file imports, run here too
         ".github/workflows/ci.yml": "//:ci.yml",
@@ -808,6 +813,7 @@ _PACKAGES = [
     "//rules/node/tests:scrub_files",
     "//rules/node:scrub_files",
     "//rules/pins:scrub_files",
+    "//rules/postgres:scrub_files",
     "//rules/probe:scrub_files",
     "//rules/rust/tests:scrub_files",
     "//rules/rust:scrub_files",
@@ -831,6 +837,7 @@ _PACKAGES = [
     "crates//crates/macros:scrub_files",
     "crates//crates/protos:scrub_files",
     "crates//crates/stamped:scrub_files",
+    "crates//crates/pgdemo:scrub_files",
     "crates//crates/zdemo:scrub_files",
     "crates//shared:scrub_files",
     "gitcrates//:scrub_files",
@@ -928,6 +935,7 @@ group(name = "floors", deps = [
     "//rules/mojo:coverage_floor",
     "//rules/mojo:coverage_mojo_sync_floor",
     "//rules/node:coverage_floor",
+    "//rules/postgres:coverage_floor",
     "//rules/rust:coverage_floor",
     "//rules/rust:coverage_crate_patch_floor",
     "//rules/toolbox:coverage_floor",
@@ -1079,6 +1087,9 @@ group(name = "all", deps = [
     "//rules/check:check_exe_test",
     "//rules/check:linux_aarch64_is_aarch64_linux_musl",
     "//rules/check:macos_arm64_is_aarch64_macos",
+    "//rules/postgres:pg_prefix",
+    "//rules/postgres:pg_run",
+    "//rules/postgres:pg_exe_test",
     "//rules/toolbox:toolbox",
     "//rules/toolbox:toolbox_exe_test",
     "//rules/toolbox:linux_aarch64_is_aarch64_linux_musl",

@@ -1058,3 +1058,111 @@ test "generate: a graph without a version, a root manifest without [workspace], 
     try t.expect(std.mem.indexOf(u8, no_package.text, "\"clippy\": []") != null);
     try t.expect(std.mem.indexOf(u8, no_package.text, "\"clippy_conf\": None") != null);
 }
+
+// ---- the `postgres` policy key ---------------------------------------------------------------------------------------
+
+fn postgresRefusal(e: *Env, toml_text: []const u8, expect: []const u8) !void {
+    const doc = try tomlOf(e.a(), toml_text);
+    var d = Diag.init(e.a());
+    try t.expectError(error.Refused, unitgen.policyOf(e.a(), &d, doc, "w"));
+    try t.expectEqual(@as(usize, 1), d.msgs.items.len);
+    try t.expectEqualStrings(expect, d.msgs.items[0]);
+    try kit.sweepRefusal(unitgen.policyOf, .{ doc, "w" });
+}
+
+test "policy postgres: a table with url-env alone is accepted at the package and the workspace; the package's replaces the workspace's; absent leaves the row alone" {
+    // Catches: a key refused as unknown, a workspace value not inherited, a package value merged with the workspace's, a key emitted when not declared.
+    var e = Env.init();
+    defer e.deinit();
+    var d = Diag.init(e.a());
+    const none = val.newObject(e.a());
+    const ws = try unitgen.policyOf(e.a(), &d, try tomlOf(e.a(), "[buildrules.postgres]\nurl-env = \"WS_URL\"\n"), "w");
+    const pkg = try unitgen.policyOf(e.a(), &d, try tomlOf(e.a(), "[buildrules.postgres]\nurl-env = \"PGDEMO_URL\"\n"), "p");
+    const own = try unitgen.resolvePolicy(e.a(), &d, none, pkg, "p");
+    try t.expectEqualStrings("{\"url_env\": \"PGDEMO_URL\"}", try val.litString(e.a(), val.get(own, "postgres").?, 0));
+    const inherited = try unitgen.resolvePolicy(e.a(), &d, ws, none, "p");
+    try t.expectEqualStrings("{\"url_env\": \"WS_URL\"}", try val.litString(e.a(), val.get(inherited, "postgres").?, 0));
+    const replaced = try unitgen.resolvePolicy(e.a(), &d, ws, pkg, "p");
+    try t.expectEqualStrings("{\"url_env\": \"PGDEMO_URL\"}", try val.litString(e.a(), val.get(replaced, "postgres").?, 0));
+    const absent = try unitgen.resolvePolicy(e.a(), &d, none, none, "p");
+    try t.expect(val.get(absent, "postgres") == null);
+    try t.expectEqual(@as(usize, 3), absent.object.count());
+    try kit.sweepOom(struct {
+        pol: val.Value,
+        pub fn call(self: @This(), alloc: std.mem.Allocator) !bool {
+            var dd = Diag.init(alloc);
+            _ = unitgen.resolvePolicy(alloc, &dd, self.pol, self.pol, "p") catch return false;
+            return true;
+        }
+    }{ .pol = ws }, false);
+    for ([_][]const u8{ "A", "_x", "PGDEMO_URL_2", "Database_url", "CARGOX", "BUILDRULESX", "PATHS", "MY_HOME" }) |name| {
+        const text = try std.fmt.allocPrint(e.a(), "[buildrules.postgres]\nurl-env = \"{s}\"\n", .{name});
+        _ = try unitgen.policyOf(e.a(), &d, try tomlOf(e.a(), text), "w");
+    }
+}
+
+test "policy postgres: refusals, each with its exact text" {
+    // Catches: a value that is not a table, a second key, a missing or non-string url-env, a name that is no variable name, a name the test run sets itself.
+    var e = Env.init();
+    defer e.deinit();
+    try postgresRefusal(&e, "[buildrules]\npostgres = \"PGDEMO_URL\"\n", "unitgen: w: postgres must be a table { url-env = \"<NAME>\" }");
+    try postgresRefusal(&e, "[buildrules.postgres]\nurl-env = \"X\"\nzeta = 1\nalpha = 2\n", "unitgen: w: unknown postgres key(s) ['alpha', 'zeta'] (known: ['url-env'])");
+    try postgresRefusal(&e, "[buildrules.postgres]\n", "unitgen: w: postgres needs url-env, the name of the variable the test reads the server's URL from");
+    try postgresRefusal(&e, "[buildrules.postgres]\nurl-env = 3\n", "unitgen: w: postgres needs url-env, the name of the variable the test reads the server's URL from");
+    for ([_][]const u8{ "", "1A", "A-B", "A B" }) |bad| {
+        const text = try std.fmt.allocPrint(e.a(), "[buildrules.postgres]\nurl-env = \"{s}\"\n", .{bad});
+        const want = try std.fmt.allocPrint(e.a(), "unitgen: w: postgres url-env '{s}' is not an environment variable name", .{bad});
+        try postgresRefusal(&e, text, want);
+    }
+    for ([_][]const u8{ "PATH", "HOME", "TMPDIR", "TEST_TMPDIR", "LD_LIBRARY_PATH", "CARGO_HOME", "BUILDRULES_X" }) |bad| {
+        const text = try std.fmt.allocPrint(e.a(), "[buildrules.postgres]\nurl-env = \"{s}\"\n", .{bad});
+        const want = try std.fmt.allocPrint(e.a(), "unitgen: w: postgres url-env '{s}' is a variable the test run sets itself; name another", .{bad});
+        try postgresRefusal(&e, text, want);
+    }
+    // The unknown-key refusal lists the key.
+    var d = Diag.init(e.a());
+    try t.expectError(error.Refused, unitgen.policyOf(e.a(), &d, try tomlOf(e.a(), "[buildrules]\nzzz = 1\n"), "w"));
+    try refusedWith(&d, "(known: ['actions', 'default-action', 'lint', 'postgres'])");
+}
+
+test "generate: with postgres declared at the workspace and the package, a run that fails an allocation is an error, never a table (at every allocation)" {
+    // Catches: an allocation failure while the postgres rows are baked that leaves a table without them instead of failing the sync.
+    var e = Env.init();
+    defer e.deinit();
+    var repo = try Repo.create(&e, lock_with_itoa);
+    defer repo.tmp.cleanup();
+    try repo.tmp.dir.writeFile(.{ .sub_path = "Cargo.toml", .data = ws_manifest ++ "[workspace.metadata.buildrules.postgres]\nurl-env = \"PGDEMO_URL\"\n" });
+    try repo.tmp.dir.writeFile(.{ .sub_path = "crates/app/Cargo.toml", .data = app_manifest ++ "[package.metadata.buildrules.postgres]\nurl-env = \"OTHER_URL\"\n" });
+    try kit.sweepOom(GenerateCall{ .repo = repo, .lock = lock_with_itoa, .json = try repo.graph(&e, graph_app), .expect_units = 2 }, true);
+}
+
+test "generate: postgres is baked into the member's row and the workspace row only when declared; a table without it has no such key" {
+    // Catches: a row that grows a key nobody declared; a workspace declaration that a member does not inherit; a member's own that is lost.
+    var e = Env.init();
+    defer e.deinit();
+    var repo = try Repo.create(&e, lock_with_itoa);
+    defer repo.tmp.cleanup();
+    const json = try repo.graph(&e, graph_app);
+    const base = try GenerateOk.run(&e, repo, lock_with_itoa, json);
+    try t.expect(std.mem.indexOf(u8, base.text, "postgres") == null);
+    const baked = "\"postgres\": {\"url_env\": \"PGDEMO_URL\"}";
+    try repo.tmp.dir.writeFile(.{ .sub_path = "crates/app/Cargo.toml", .data = app_manifest ++ "[package.metadata.buildrules.postgres]\nurl-env = \"PGDEMO_URL\"\n" });
+    const pkg_only = try GenerateOk.run(&e, repo, lock_with_itoa, json);
+    try t.expectEqual(@as(usize, 1), std.mem.count(u8, pkg_only.text, baked));
+    // Removing the declaration gives back exactly the table without it.
+    try repo.tmp.dir.writeFile(.{ .sub_path = "crates/app/Cargo.toml", .data = app_manifest });
+    const again = try GenerateOk.run(&e, repo, lock_with_itoa, json);
+    try t.expectEqualStrings(base.text, again.text);
+    // Declared at the workspace: the workspace row and the member inherit it.
+    try repo.tmp.dir.writeFile(.{ .sub_path = "Cargo.toml", .data = ws_manifest ++ "[workspace.metadata.buildrules.postgres]\nurl-env = \"PGDEMO_URL\"\n" });
+    const ws_decl = try GenerateOk.run(&e, repo, lock_with_itoa, json);
+    try t.expectEqual(@as(usize, 2), std.mem.count(u8, ws_decl.text, baked));
+    // The package's own replaces it in the member's row; the workspace row keeps its.
+    try repo.tmp.dir.writeFile(.{ .sub_path = "crates/app/Cargo.toml", .data = app_manifest ++ "[package.metadata.buildrules.postgres]\nurl-env = \"OTHER_URL\"\n" });
+    const replaced = try GenerateOk.run(&e, repo, lock_with_itoa, json);
+    try t.expectEqual(@as(usize, 1), std.mem.count(u8, replaced.text, baked));
+    try t.expectEqual(@as(usize, 1), std.mem.count(u8, replaced.text, "\"postgres\": {\"url_env\": \"OTHER_URL\"}"));
+    // A refusal from the manifest is a refusal of the sync.
+    try repo.tmp.dir.writeFile(.{ .sub_path = "crates/app/Cargo.toml", .data = app_manifest ++ "[package.metadata.buildrules.postgres]\nurl-env = \"PATH\"\n" });
+    try generateRefused(&e, repo, lock_with_itoa, json, "postgres url-env 'PATH' is a variable the test run sets itself; name another");
+}
