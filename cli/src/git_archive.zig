@@ -87,8 +87,13 @@ pub var fetcher: Fetch = &httpBody;
 
 fn httpBody(a: std.mem.Allocator, url: []const u8) anyerror![]const u8 {
     var http = fetch.HttpFetcher{ .allocator = a };
-    var body = fetch.Collect{ .a = a, .max = max_bytes };
-    try http.fetcher().get(url, body.sink());
+    return bodyOf(a, http.fetcher(), url, max_bytes);
+}
+
+/// The body `f` answers for `url`, at most `max` bytes.
+pub fn bodyOf(a: std.mem.Allocator, f: fetch.Fetcher, url: []const u8, max: usize) anyerror![]const u8 {
+    var body = fetch.Collect{ .a = a, .max = max };
+    try f.get(url, body.sink());
     return body.buf.items;
 }
 

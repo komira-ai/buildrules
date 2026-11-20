@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const buckgen = @import("buckgen.zig");
+const fetch = @import("fetch.zig");
 const git_archive = @import("git_archive.zig");
 const git_source = @import("git_source.zig");
 const kit = @import("testkit.zig");
@@ -657,6 +658,27 @@ fn cutTar(e: *Env, gz: []const u8) ![]u8 {
     return kit.gzipStored(e.a(), tar[0 .. 512 * 5 + 7]);
 }
 
+/// A fetcher that answers every URL with `bytes`, in two writes.
+const Canned = struct {
+    bytes: []const u8,
+    fn get(ctx: *anyopaque, _: []const u8, sink: fetch.Sink) anyerror!void {
+        const self: *Canned = @ptrCast(@alignCast(ctx));
+        try sink.write(self.bytes[0 .. self.bytes.len / 2]);
+        try sink.write(self.bytes[self.bytes.len / 2 ..]);
+    }
+    fn fetcher(self: *Canned) fetch.Fetcher {
+        return .{ .ctx = self, .getFn = get };
+    }
+};
+
+test "archive: a download is the whole body the fetcher answers, and a body over the limit is refused" {
+    var e = Env.init();
+    defer e.deinit();
+    var c = Canned{ .bytes = "the bytes of an archive" };
+    try t.expectEqualStrings("the bytes of an archive", try git_archive.bodyOf(e.a(), c.fetcher(), "https://github.com/o/r/archive/x.tar.gz", 64));
+    try t.expectError(error.ResponseTooLarge, git_archive.bodyOf(e.a(), c.fetcher(), "https://github.com/o/r/archive/x.tar.gz", 5));
+}
+
 test "archive: the fetcher the program starts with reaches only https" {
     var e = Env.init();
     defer e.deinit();
@@ -702,6 +724,12 @@ test "check: a git package no unit uses (another platform's) needs no archive, a
     r = try checked(h, lock_git, tableWith("github.com/o/r", REV), "github.com/o/r " ++ REV ++ " " ++ H ++ " 1 r-" ++ REV ++ "\ngithub.com/o/r " ++ REV2 ++ " " ++ H ++ " 1 r-" ++ REV2 ++ "\n");
     try t.expect(kit.contains(r.err, "STALE: third_party/buildrules/git_archives.tsv records github.com/o/r at " ++ REV2 ++ ", which no unit of buildrules.lock.bzl comes from: run `buildrules sync` and commit the result"));
     try t.expect(!kit.contains(r.err, "at " ++ REV ++ ", which"));
+    // beside a recorded one, a pinned git package no unit uses and nothing records is not reported either
+    const two = lock_git ++ "\n[[package]]\nname = \"q\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/o/q?rev=" ++ REV2 ++ "#" ++ REV2 ++ "\"\n";
+    try h.tmp.dir.deleteFile("third_party/buildrules/git_archives.tsv");
+    r = try checked(h, two, tableWith("github.com/o/r", REV), "github.com/o/r " ++ REV ++ " " ++ H ++ " 1 r-" ++ REV ++ "\n");
+    try t.expect(!kit.contains(r.err, "git_archives.tsv"));
+    try t.expect(!kit.contains(r.err, "q 1.0.0"));
 }
 
 test "check: an unpinned git source, a missing or left-over record, an unrecorded commit and a bad record are each reported" {
@@ -734,7 +762,7 @@ test "check: an unpinned git source, a missing or left-over record, an unrecorde
 test "table commits: the repo and rev lines of each git unit, and nothing from a line between them" {
     var e = Env.init();
     defer e.deinit();
-    const text = comptime tableWith("github.com/o/r", REV) ++ "    \"repo\": \"github.com/a/b\",\n    \"crate\": \"x\",\n    \"rev\": \"" ++ REV2 ++ "\",\n    \"rev\": \"" ++ REV2 ++ "\",\n    \"repo\": bad\n";
+    const text = comptime tableWith("github.com/o/r", REV) ++ "    \"repo\": \"github.com/a/b\",\n    \"crate\": \"x\",\n    \"rev\": \"" ++ REV2 ++ "\",\n    \"rev\": \"" ++ REV2 ++ "\",\n    \"repo\": bad\n    \"repo\": x\n    \"rev\": \"\n";
     const c = try git_archive.tableCommits(e.a(), text);
     try t.expectEqual(@as(usize, 1), c.count());
     try t.expect(c.contains("github.com/o/r@" ++ REV));
