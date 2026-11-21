@@ -829,7 +829,7 @@ test "the real tables pin mopm 0.0.135, the release of the Mojo 1.1.0 and 1.2.0 
         for (merged.rows) |r| {
             if (!std.mem.eql(u8, r.version, wv[0])) continue;
             found = true;
-            try t.expectEqualStrings(url_prefix ++ wv[1], r.url);
+            try t.expectEqualStrings(try std.mem.concat(a, u8, &.{ url_prefix, wv[1] }), r.url);
             try t.expect(isHex64(r.sha256));
             try t.expect(r.size > 0);
         }
