@@ -76,6 +76,7 @@ _TESTS = [
     "contract",
     "ctx",
     "fetch",
+    "git",
     "growth",
     "init",
     "lockreaders",

@@ -4,11 +4,16 @@
 //!
 //! It reads: rust-toolchain.toml (an exact release, no `path`), buildrules.lock.bzl (schema 2),
 //! Cargo.lock, the root Cargo.toml and every member's Cargo.toml (each against MANIFEST_SHA256, a new
-//! or a removed member too), buildrules.bzl (what sync writes), and the BUCK files (cargo_workspace
-//! at the root, cargo_package in each member). It runs neither cargo nor any other program.
+//! or a removed member too), the git sources of Cargo.lock against third_party/buildrules/git_archives.tsv
+//! (each pinned by commit and recorded, a moved commit named), buildrules.bzl (what sync writes), and the
+//! BUCK files (cargo_workspace at the root, cargo_package in each member). It runs neither cargo nor any
+//! other program.
 
 const std = @import("std");
+const cargo_lock = @import("cargo_lock.zig");
 const contract = @import("contract.zig");
+const git_archive = @import("git_archive.zig");
+const git_source = @import("git_source.zig");
 const ctxm = @import("ctx.zig");
 const lockfile = @import("lockfile.zig");
 const toolchain = @import("toolchain.zig");
@@ -79,6 +84,8 @@ fn check(ctx: *Ctx) !u8 {
     if (lock == null) {
         _ = ctx.fail("Cargo.lock is missing: run cargo to resolve (or `buildrules sync`)", .{});
         bad += 1;
+    } else {
+        bad += try checkGit(ctx, lock.?, (try ctx.readOpt(contract.lock_file)) orelse "");
     }
 
     // The workspace and its members.
@@ -203,4 +210,74 @@ fn check(ctx: *Ctx) !u8 {
         return ctxm.exit_ok;
     }
     return ctxm.exit_fail;
+}
+
+/// The git sources: every one of Cargo.lock pinned by commit (git_source.zig), as `sync` requires; and git_archives.tsv holding
+/// exactly the commits the table's units come from (a git package no unit uses, such as one for another platform, needs no
+/// archive). A commit Cargo.lock moved since the sync is named with the commit it moved from. Returns the number of problems,
+/// each printed.
+fn checkGit(ctx: *Ctx, lock_text: []const u8, table_text: []const u8) !usize {
+    const a = ctx.a;
+    var d = Diag.init(a);
+    const entries = cargo_lock.parse(a, "Cargo.lock", lock_text, &d) catch {
+        for (d.msgs.items) |m| _ = ctx.fail("{s}", .{m});
+        if (d.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
+        return @max(1, d.count());
+    };
+    var bad: usize = 0;
+    var names = std.ArrayList(cargo_lock.Entry).empty;
+    var gits = std.ArrayList(git_source.Git).empty;
+    for (entries) |e| {
+        if (!git_source.isGit(e.source)) continue;
+        switch (try git_source.judge(a, e.source)) {
+            .bad => |why| {
+                _ = ctx.fail("{s} {s}: {s}", .{ e.name, e.version, why });
+                bad += 1;
+            },
+            .ok => |g| {
+                try names.append(a, e);
+                try gits.append(a, g);
+            },
+        }
+    }
+    const used = try git_archive.tableCommits(a, table_text);
+    const text = try ctx.readOpt(contract.git_archives_file);
+    if (used.count() == 0) {
+        if (text != null) {
+            _ = ctx.fail("STALE: {s} is left from git sources the table no longer has: {s}", .{ contract.git_archives_file, fix });
+            bad += 1;
+        }
+        return bad;
+    }
+    const t = text orelse {
+        _ = ctx.fail("STALE: {s} has git units and {s} is missing: {s}", .{ contract.lock_file, contract.git_archives_file, fix });
+        return bad + 1;
+    };
+    var rd = Diag.init(a);
+    const rec = git_archive.parse(a, &rd, t) catch {
+        for (rd.msgs.items) |m| _ = ctx.fail("{s}", .{m});
+        if (rd.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
+        return bad + @max(1, rd.count());
+    };
+    for (names.items, gits.items) |e, g| {
+        const k = try git_source.key(a, g.repo, g.rev);
+        if (rec.contains(k)) continue;
+        var from: ?[]const u8 = null;
+        for (rec.values()) |r| {
+            if (std.mem.eql(u8, r.repo, g.repo)) from = r.rev;
+        }
+        if (from) |f| {
+            _ = ctx.fail("STALE: {s} {s}: Cargo.lock moved {s} from commit {s} to {s} since `buildrules sync`, and {s} records no archive of {s}: {s}", .{ e.name, e.version, g.repo, f, g.rev, contract.git_archives_file, g.rev, fix });
+            bad += 1;
+        } else if (used.contains(k)) {
+            _ = ctx.fail("STALE: {s} {s}: {s} records no archive of {s} at {s}: {s}", .{ e.name, e.version, contract.git_archives_file, g.repo, g.rev, fix });
+            bad += 1;
+        }
+    }
+    for (rec.keys(), rec.values()) |k, r| {
+        if (used.contains(k)) continue;
+        _ = ctx.fail("STALE: {s} records {s} at {s}, which no unit of {s} comes from: {s}", .{ contract.git_archives_file, r.repo, r.rev, contract.lock_file, fix });
+        bad += 1;
+    }
+    return bad;
 }

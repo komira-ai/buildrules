@@ -1,0 +1,15 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# A workspace whose one member depends on a git repository pinned by its full commit (thiserror, a root package with a build script and a
+# proc-macro package in a subdirectory), as a repository of its own: this directory is the cell `gitcrates` (the root .buckconfig), so the
+# generated glue (`//:buildrules.bzl`, `//third_party/buildrules`) is what `buildrules sync` wrote, as in any repository; `:check` (a validation of
+# every step) holds the table to Cargo.lock and the manifests.
+#
+#   buck2 build //:ci                    lint and test the member; both git packages build from GitHub's archive of the commit
+#
+# There is no `cargo_sync` here: a farm action has no network, and cargo resolves a git source by cloning it (the local registry that
+# examples/crates syncs against serves crates.io packages only). Regenerate with `buildrules sync` on a machine with a network.
+load("//:buildrules.bzl", "cargo_workspace")
+
+cargo_workspace(path = ".")
+
+scrub_files()

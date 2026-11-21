@@ -467,8 +467,8 @@ cargo_package(path = ".")
 An existing package that already builds with Cargo: `buildrules cargo adopt crates/existing` (no path
 means every member).
 
-Not supported: doctests (`cargo test` still runs them; `:test` does not), coverage, git or
-alternate-registry dependencies, a root `[package]`.
+Not supported: doctests (`cargo test` still runs them; `:test` does not), coverage,
+alternate-registry dependencies, git dependencies not pinned by commit or not on github.com, a root `[package]`.
 
 #### rust-analyzer
 

@@ -327,20 +327,24 @@ fn crateRow(ctx: *Ctx, table: Table, index: Index, uid: []const u8, row_of: *std
     const version = val.getStr(u, "version") orelse "";
     const target_name = val.getStr(u, "target_name") orelse crate;
     const crate_root = val.getStr(u, "crate_root") orelse return refuse(ctx, "{s}: {s} has no `crate_root`", .{ contract.lock_file, uid });
-    const registry = std.mem.eql(u8, val.getStr(u, "source") orelse "", "registry");
+    // A registry or git crate is built from sources the inputs hold; anything else is a member. An override applies to registry crates only.
+    const source = val.getStr(u, "source") orelse "";
+    const registry = std.mem.eql(u8, source, "registry");
+    const external = registry or std.mem.eql(u8, source, "git");
     const custom = try isCustomBuild(a, u);
     const kinds = try strings(a, val.get(u, "target_kind"));
     const crate_types = try strings(a, val.get(u, "crate_types"));
     const test_mode = std.mem.eql(u8, val.getStr(u, "mode") orelse "", "test");
     const proc_macro = !test_mode and has(crate_types, "proc-macro");
 
-    // Where the crate's files are: a member's directory in the checkout, a registry crate's in the inputs.
+    // Where the crate's files are: a member's directory in the checkout, a registry crate's in the inputs, a git crate's at its `subdir` in the
+    // archive of its commit there.
     var manifest_dir: []const u8 = undefined;
     var member_path: []const u8 = "";
-    if (registry) {
+    if (external) {
         const key = try std.fmt.allocPrint(a, "{s}-{s}", .{ crate, version });
         const rel = val.getStr(index.crates, key) orelse return refuse(ctx, "the inputs have no sources of {s} {s}: build the inputs again", .{ crate, version });
-        manifest_dir = try std.fs.path.join(a, &.{ inputs_abs, rel });
+        manifest_dir = try std.fs.path.join(a, &.{ inputs_abs, rel, val.getStr(u, "subdir") orelse "" });
     } else {
         const pkg = val.get(table.packages, crate) orelse return refuse(ctx, "{s}: {s} is not a member in PACKAGES", .{ contract.lock_file, crate });
         member_path = val.getStr(pkg, "path") orelse return refuse(ctx, "{s}: member {s} has no `path`", .{ contract.lock_file, crate });
@@ -349,7 +353,7 @@ fn crateRow(ctx: *Ctx, table: Table, index: Index, uid: []const u8, row_of: *std
     var include = std.ArrayList([]const u8).empty;
     try include.append(a, manifest_dir);
     // A member's files outside its package (a `#[path]` module): rust-analyzer resolves a module only in the crate's own source root.
-    if (!registry) for (try strings(a, val.get(index.extra_dirs, crate))) |d| try include.append(a, try std.fs.path.join(a, &.{ root_abs, d }));
+    if (!external) for (try strings(a, val.get(index.extra_dirs, crate))) |d| try include.append(a, try std.fs.path.join(a, &.{ root_abs, d }));
     const crate_name = try a.dupe(u8, if (custom) crate else target_name);
     std.mem.replaceScalar(u8, crate_name, '-', '_');
 
@@ -407,14 +411,14 @@ fn crateRow(ctx: *Ctx, table: Table, index: Index, uid: []const u8, row_of: *std
         .{ "deps", deps },
         .{ "cfg", try val.strList(a, cfgs.items) },
         .{ "env", env },
-        .{ "is_workspace_member", val.boolean(!registry) },
+        .{ "is_workspace_member", val.boolean(!external) },
         .{ "source", try obj(a, &.{ .{ "include_dirs", try val.strList(a, include.items) }, .{ "exclude_dirs", val.newArray(a) } }) },
     });
     if (proc_macro) {
         const rel = val.getStr(index.proc_macros, uid) orelse return refuse(ctx, "the inputs have no shared object of the proc-macro {s}: build the inputs again", .{uid});
         try fields.appendSlice(a, &.{ .{ "is_proc_macro", val.boolean(true) }, .{ "proc_macro_dylib_path", val.str(try std.fs.path.join(a, &.{ inputs_abs, rel })) } });
     }
-    if (!registry) {
+    if (!external) {
         // The member's check on save: its `:flycheck` (rust-project check builds it).
         const kind: []const u8 = if (test_mode or has(kinds, "test")) "test" else if (has(kinds, "bin") or custom) "bin" else "lib";
         try fields.append(a, .{ "build", try obj(a, &.{

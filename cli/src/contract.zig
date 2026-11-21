@@ -19,6 +19,8 @@ pub const third_party = "third_party/buildrules";
 pub const sizes_file = "third_party/buildrules/crate_sizes.tsv";
 /// Hand-written, optional: registry crates whose build script a buildrules target replaces (cli/src/buckgen.zig).
 pub const overrides_file = "third_party/buildrules/overrides.json";
+/// The archive of every git source (repository and commit): its sha256, size and top directory, measured by `sync` (git_archive.zig).
+pub const git_archives_file = "third_party/buildrules/git_archives.tsv";
 
 /// `buildrules rust-project` (cli/src/rust_project.zig): the target that builds what rust-analyzer needs (rules/rust/rust_analyzer.bzl),
 /// where `develop` downloads it, what it writes, and where `check` downloads a member's diagnostics. The two directories are the command's

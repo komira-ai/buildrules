@@ -1,6 +1,6 @@
 """Code intelligence as a build product: `rust_analyzer_inputs`, the files rust-analyzer needs that only a build makes.
 
-rust-analyzer reads a workspace's sources itself; what it cannot make without a build is (1) the sources of registry crates,
+rust-analyzer reads a workspace's sources itself; what it cannot make without a build is (1) the sources of registry and git crates,
 (2) what build scripts write (OUT_DIR, and the `--cfg` and `rustc-env` they print), (3) proc-macros compiled to shared objects
 it can load, and (4) the standard library: a sysroot whose proc-macro server is the release that compiled those shared objects,
 and its sources. This target builds all of them on the farm and gathers them into one directory; `buildrules rust-project develop`
@@ -15,12 +15,13 @@ The directory, relative to its root:
     sysroot/                        the pinned sysroot: bin/rustc, lib/, libexec/rust-analyzer-proc-macro-srv, and the pinned
                                     rust-analyzer as bin/rust-analyzer (it loads rustc's libraries from ../lib)
     rust-src/library/               the pinned standard library sources (rust-src)
-    crates/<name>-<version>/        each registry crate's sources, as its units compile them (patched, for a `crate_src` patch)
+    crates/<name>-<version>/        each registry crate's sources, as its units compile them (patched, for a `crate_src` patch); for a
+                                    git crate, the archive of its commit (the package is the unit's `subdir` in it)
     build/<unit>/                   each build-script run: OUT_DIR/, rustc_args, rustc_env (rules/rust/bs_runner.zig)
     proc-macro/<unit>/lib<n>.so     each proc-macro, compiled by the pinned rustc
 
 `<unit>` is a unit id with `_` for `:` (the unit's target name). The rows are the units `cargo build` and `cargo test` of the
-members reach, except what only a registry crate's build script uses: the IDE never opens it, and an override in
+members reach, except what only a registry or git crate's build script uses: the IDE never opens it, and an override in
 third_party/buildrules/overrides.json may drop that script, and with it every target only it needed.
 """
 
@@ -74,7 +75,7 @@ def _impl(ctx):
         info = dep[RustCrateInfo]
         key = uid.split(":")[0]
         if info.src == None:
-            fail("{}: {} is not a registry crate (it has no sources)".format(ctx.label, uid))
+            fail("{}: {} is not a registry or git crate (it has no sources)".format(ctx.label, uid))
         files["crates/" + key] = info.src
         index["crates"][key] = "crates/" + key
         if info.is_proc_macro:
@@ -112,7 +113,7 @@ _rust_analyzer_inputs = rule(
         "members": attrs.dict(attrs.string(), attrs.dep(providers = [RustCrateInfo]), default = {}),
         # unit id -> the workspace's own proc-macro unit
         "proc_macros": attrs.dict(attrs.string(), attrs.dep(providers = [RustCrateInfo]), default = {}),
-        # unit id -> a registry library or proc-macro unit
+        # unit id -> a registry or git library or proc-macro unit
         "registry": attrs.dict(attrs.string(), attrs.dep(providers = [RustCrateInfo]), default = {}),
         "runs": attrs.dict(attrs.string(), attrs.dep(providers = [BuildScriptInfo]), default = {}),
         "rust_analyzer": attrs.dep(),
@@ -124,7 +125,7 @@ _rust_analyzer_inputs = rule(
 )
 
 def _walk(table):
-    """The unit ids of the rows: every unit the members' build and test roots reach, not descending into a registry crate's build-script run."""
+    """The unit ids of the rows: every unit the members' build and test roots reach, not descending into a registry or git crate's build-script run."""
     units = table["UNITS"]
     roots = []
     for m in table["MEMBERS"].values():
@@ -138,7 +139,7 @@ def _walk(table):
         if k in seen:
             continue
         u = units[k]
-        if u["mode"] == "run-custom-build" and u["source"] == "registry":
+        if u["mode"] == "run-custom-build" and u["source"] != "path":
             continue
         seen[k] = True
         for _ext, d in u["deps"]:
@@ -174,9 +175,9 @@ def rust_analyzer_inputs(name, table, label_of, check):
     registry, runs, proc_macros, members = {}, {}, {}, {}
     for uid in rows:
         u = units[uid]
-        if u["source"] != "registry" and u["mode"] == "build" and u["crate"] not in members:
+        if u["source"] == "path" and u["mode"] == "build" and u["crate"] not in members:
             members[u["crate"]] = label_of(uid)
-        if u["source"] == "registry":
+        if u["source"] != "path":
             if u["mode"] == "build" and u["target_kind"] != ["custom-build"]:
                 registry[uid] = label_of(uid)
         elif u["mode"] == "run-custom-build":

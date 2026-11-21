@@ -1,7 +1,7 @@
 """`cargo_unit`: one cargo unit (a row of the generated table) as one Buck2 target, and `crate_src`.
 
 The table (`buildrules sync` writes it) holds one entry per distinct unit: package, target, mode, exec or target side, features,
-profile fields and the units it depends on. `sync` writes one `cargo_unit` call per registry entry (the member macros make theirs), named
+profile fields and the units it depends on. `sync` writes one `cargo_unit` call per registry or git entry (the member macros make theirs), named
 by the entry's content id. Two builds that share an entry share its target, and so share its action key: that is
 the per-crate cache. Nothing in a key names the workspace member being edited.
 
@@ -23,7 +23,8 @@ The build-script contract (decision.md 6.1) is implemented by `bs_runner.zig`; t
   refused   rustc-link-arg*, rustc-cdylib-link-arg and any other rustc-* key (the run fails), so nothing is dropped.
   links     `links` on the run unit sets CARGO_MANIFEST_LINKS; `link_deps` are the run units of dependencies that have it.
   stamp     `stamp_env` / `stamp_rustc_env`: a file's text fed to the script's environment, or into a rustc-env value.
-  inputs    a registry script: the unpacked crate. A first-party script: the whole package directory but BUCK, Cargo.toml and target/ (generated
+  inputs    a registry script: the unpacked crate. A git script: the whole unpacked repository (`src_dir` is the package in it).
+            A first-party script: the whole package directory but BUCK, Cargo.toml and target/ (generated
             `srcs`), compiled and run, and the package's `extra_srcs` (files outside it, which must be files of the tree).
   not yet   `rerun-if-*` narrowing of the input set.
 """
@@ -43,12 +44,17 @@ def _file(dep):
 
 def _crate_src_impl(ctx):
     tc = ctx.attrs._toolchain[RustToolchainInfo]
-    tgz = ctx.actions.declare_output(ctx.attrs.pkg + "-" + ctx.attrs.version + ".crate", has_content_based_path = False)
+    base = ctx.attrs.pkg + "-" + ctx.attrs.version
+    tgz = ctx.actions.declare_output(base + (".tar.gz" if ctx.attrs.top else ".crate"), has_content_based_path = False)
     ctx.actions.download_file(tgz.as_output(), ctx.attrs.url, sha256 = ctx.attrs.sha256, size_bytes = ctx.attrs.size_bytes)
 
-    # The tarball's one top directory is `<name>-<version>`; an output declared with that name is
-    # the directory busybox tar extracts it into, under the output's parent.
-    out = ctx.actions.declare_output(ctx.attrs.pkg + "-" + ctx.attrs.version, dir = True)
+    # The tarball's one top directory is `<name>-<version>` for a `.crate`, and `top` (what sync read in it) for the GitHub
+    # archive of a git commit; an output declared with that name is the directory busybox tar extracts it into, under the
+    # output's parent.
+    top = ctx.attrs.top or base
+    if "/" in top or top.startswith("."):
+        fail("{}: top `{}` is not a plain directory name".format(ctx.label.raw_target(), top))
+    out = ctx.actions.declare_output(top, dir = True)
     ctx.actions.run(
         cmd_args(tc.busybox, "tar", "-xzf", tgz, "-C", cmd_args(out.as_output(), parent = 1)),
         category = "crate_unpack",
@@ -91,6 +97,8 @@ crate_src = rule(
         "pkg": attrs.string(),
         "sha256": attrs.string(),
         "size_bytes": attrs.int(),
+        # The archive's one top directory when it is not `<pkg>-<version>`: a GitHub archive of a commit (git_archives.tsv).
+        "top": attrs.option(attrs.string(), default = None),
         "url": attrs.string(),
         "version": attrs.string(),
         "_patch_tool": attrs.exec_dep(default = "buildrules//rules/rust:crate_patch"),
@@ -127,6 +135,9 @@ def _manifest_dir(ctx):
     """The package directory: the unpacked crate, or the member's own package directory (from the crate root source: the path from the project root,
     which is the package's path only when the package's cell is the root cell)."""
     if ctx.attrs.src:
+        if ctx.attrs.src_dir:
+            # A git package: its directory in the unpacked repository (the whole repository is the input, as in cargo's checkout).
+            return cmd_args(_file(ctx.attrs.src), "/", ctx.attrs.src_dir, delimiter = "")
         return _file(ctx.attrs.src)
     # The crate root is one of the sources: its path from the project root, less the root's own path in the package.
     for s in ctx.attrs.srcs:
@@ -480,6 +491,8 @@ _cargo_unit = rule(
         "rustc_flags": attrs.list(attrs.string(), default = []),
         "side": attrs.string(default = "target"),
         "src": attrs.option(attrs.dep(), default = None),
+        # The package's directory inside `src` ("" = its top): a git package of a repository that holds several.
+        "src_dir": attrs.string(default = ""),
         "srcs": attrs.list(attrs.source(), default = []),
         "stamp_env": attrs.dict(attrs.string(), attrs.dep(), default = {}),
         "stamp_rustc_env": attrs.dict(attrs.string(), attrs.dep(), default = {}),

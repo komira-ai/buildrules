@@ -43,21 +43,22 @@ const table =
     unit("rpm-1.0.0:pm00000000", "\"crate\": \"rpm\", \"version\": \"1.0.0\", \"source\": \"registry\", \"target_kind\": [\"proc-macro\"], \"crate_types\": [\"proc-macro\"], \"target_name\": \"rpm\", \"mode\": \"build\", \"edition\": \"2021\", \"crate_root\": \"src/lib.rs\", \"cfgs\": [], " ++ profile_release ++ ", \"deps\": []") ++
     unit("drp-2.0.0:lib0000000", "\"crate\": \"drp\", \"version\": \"2.0.0\", \"source\": \"registry\", \"target_kind\": [\"lib\"], \"crate_types\": [\"lib\"], \"target_name\": \"drp\", \"mode\": \"build\", \"edition\": \"2021\", \"crate_root\": \"src/lib.rs\", \"cfgs\": [], " ++ profile_release ++ ", \"deps\": [[\"build_script_build\", \"drp-2.0.0:run0000000\"]]") ++
     unit("drp-2.0.0:run0000000", "\"crate\": \"drp\", \"version\": \"2.0.0\", \"source\": \"registry\", \"target_kind\": [\"custom-build\"], \"crate_types\": [\"bin\"], \"target_name\": \"build-script-build\", \"mode\": \"run-custom-build\", \"edition\": \"2021\", \"crate_root\": \"build.rs\", \"cfgs\": [], " ++ profile_release ++ ", \"deps\": []") ++
+    unit("gitc-0.3.0:lib0000000", "\"crate\": \"gitc\", \"version\": \"0.3.0\", \"source\": \"git\", \"repo\": \"https://github.com/example/gitc\", \"rev\": \"" ++ "a" ** 40 ++ "\", \"subdir\": \"impl\", \"target_kind\": [\"lib\"], \"crate_types\": [\"lib\"], \"target_name\": \"gitc\", \"mode\": \"build\", \"edition\": \"2021\", \"crate_root\": \"src/lib.rs\", \"cfgs\": [], " ++ profile_release ++ ", \"deps\": []") ++
     "}\n";
 
 /// What `//:rust_analyzer_inputs` writes for the table: every unit but the registry crates' build-script runs (and what only they use).
-const index_units = "[\"app-0.1.0:bin0000000\", \"app-0.1.0:bs00000000\", \"app-0.1.0:itest00000\", \"app-0.1.0:lib0000000\", \"app-0.1.0:run0000000\", \"app-0.1.0:test000000\", \"drp-2.0.0:lib0000000\", \"mac-0.1.0:pm00000000\", \"reg-1.0.0:lib0000000\", \"rpm-1.0.0:pm00000000\"]";
+const index_units = "[\"app-0.1.0:bin0000000\", \"app-0.1.0:bs00000000\", \"app-0.1.0:itest00000\", \"app-0.1.0:lib0000000\", \"app-0.1.0:run0000000\", \"app-0.1.0:test000000\", \"drp-2.0.0:lib0000000\", \"gitc-0.3.0:lib0000000\", \"mac-0.1.0:pm00000000\", \"reg-1.0.0:lib0000000\", \"rpm-1.0.0:pm00000000\"]";
 
 fn index(comptime units: []const u8, comptime runs: []const u8, comptime proc_macros: []const u8) []const u8 {
     return "{\"version\": 1, \"rustc\": \"1.95.0\", \"sysroot\": \"sysroot\", \"sysroot_src\": \"rust-src/library\", \"rust_analyzer\": \"rust-analyzer\", \"units\": " ++ units ++
-        ", \"crates\": {\"reg-1.0.0-rc.1+meta\": \"crates/reg-1.0.0-rc.1+meta\", \"rpm-1.0.0\": \"crates/rpm-1.0.0\", \"drp-2.0.0\": \"crates/drp-2.0.0\"}, \"runs\": " ++ runs ++ ", \"proc_macros\": " ++ proc_macros ++ ", \"extra_dirs\": {\"app\": [\"shared\", \"shared/more\"], \"mac\": []}}";
+        ", \"crates\": {\"reg-1.0.0-rc.1+meta\": \"crates/reg-1.0.0-rc.1+meta\", \"rpm-1.0.0\": \"crates/rpm-1.0.0\", \"drp-2.0.0\": \"crates/drp-2.0.0\", \"gitc-0.3.0\": \"crates/gitc-0.3.0\"}, \"runs\": " ++ runs ++ ", \"proc_macros\": " ++ proc_macros ++ ", \"extra_dirs\": {\"app\": [\"shared\", \"shared/more\"], \"mac\": []}}";
 }
 
 const runs_all = "{\"app-0.1.0_run0000000\": \"build/app-0.1.0_run0000000\", \"reg-1.0.0_run0000000\": \"build/reg-1.0.0_run0000000\"}";
 const pms_all = "{\"mac-0.1.0:pm00000000\": \"proc-macro/mac-0.1.0_pm00000000/libmac.so\", \"rpm-1.0.0:pm00000000\": \"proc-macro/rpm-1.0.0_pm00000000/librpm.so\"}";
 const index_all = index(index_units, runs_all, pms_all);
 
-const overrides = "{\"crates\": {\"drp 2.0.0\": {\"why\": \"a buildrules target builds its C code\", \"drop_build_script\": true, \"cfgs\": [\"drp_native\"]}}}";
+const overrides = "{\"crates\": {\"drp 2.0.0\": {\"why\": \"a buildrules target builds its C code\", \"drop_build_script\": true, \"cfgs\": [\"drp_native\"]}, \"gitc 0.3.0\": {\"why\": \"a key that names a git crate\", \"cfgs\": [\"gitc_native\"]}}}";
 
 /// The inputs directory at `dir`.
 fn putInputs(h: *kit.Harness, comptime dir: []const u8, idx: []const u8) !void {
@@ -71,6 +72,7 @@ fn putInputs(h: *kit.Harness, comptime dir: []const u8, idx: []const u8) !void {
     try h.put(dir ++ "/crates/reg-1.0.0-rc.1+meta/src/lib.rs", "");
     try h.put(dir ++ "/crates/rpm-1.0.0/src/lib.rs", "");
     try h.put(dir ++ "/crates/drp-2.0.0/src/lib.rs", "");
+    try h.put(dir ++ "/crates/gitc-0.3.0/impl/src/lib.rs", "");
     try h.put(dir ++ "/proc-macro/mac-0.1.0_pm00000000/libmac.so", "");
     try h.put(dir ++ "/proc-macro/rpm-1.0.0_pm00000000/librpm.so", "");
     try h.put(dir ++ "/sysroot/bin/rustc", "");
@@ -182,8 +184,8 @@ test "one crate per compiled unit the index names: a build-script run is not a c
     const h = try fresh();
     defer h.destroy();
     const p = try developed(h);
-    // 10 units in the index, one of them a run; the script the run runs is a crate (its build.rs), and it is there once.
-    try t.expectEqual(@as(usize, 9), val.items(val.get(p, "crates")).len);
+    // 11 units in the index, one of them a run; the script the run runs is a crate (its build.rs), and it is there once.
+    try t.expectEqual(@as(usize, 10), val.items(val.get(p, "crates")).len);
     var scripts: usize = 0;
     for (val.items(val.get(p, "crates"))) |c| {
         if (std.mem.endsWith(u8, val.getStr(c, "root_module").?, "build.rs")) scripts += 1;
@@ -374,7 +376,7 @@ test "--project writes the file elsewhere, and says where and how many crates" {
     const r = h.run(&.{ "rust-project", "develop", "--inputs", "ra", "--project", "ide/rust-project.json" });
     try t.expectEqual(@as(u8, 0), r.code);
     try t.expect(h.has("ide/rust-project.json") and !h.has("rust-project.json"));
-    try t.expect(kit.contains(r.out, "wrote   ide/rust-project.json (9 crates, inputs in ra)"));
+    try t.expect(kit.contains(r.out, "wrote   ide/rust-project.json (10 crates, inputs in ra)"));
     try t.expectEqual(@as(usize, 0), n_calls);
 }
 
@@ -413,6 +415,21 @@ test "a unit with no mode is not a row, and a crate that depends on it is refuse
     try putInputs(h, "ra", index_all);
     try h.put("buildrules.lock.bzl", try std.mem.replaceOwned(u8, h.a(), table, "\"target_name\": \"rpm\", \"mode\": \"build\", ", "\"target_name\": \"rpm\", "));
     try refusedWith(h, &develop_ra, "reg-1.0.0:lib0000000 depends on rpm-1.0.0:pm00000000, which the inputs' index does not name");
+}
+
+test "a git crate is the archive of its commit in the inputs, at its subdir; it is not a member, and an override does not reach it" {
+    const h = try fresh();
+    defer h.destroy();
+    const p = try developed(h);
+    const a = h.a();
+    const g = row(p, "crates/gitc-0.3.0/impl/src/lib.rs", "");
+    const dir = try std.fs.path.join(a, &.{ root(h), "ra/crates/gitc-0.3.0/impl" });
+    try t.expectEqualStrings(try std.fs.path.join(a, &.{ dir, "src/lib.rs" }), val.getStr(g, "root_module").?);
+    try t.expectEqualStrings(dir, val.getStr(val.get(g, "env").?, "CARGO_MANIFEST_DIR").?);
+    try t.expect(hasStr(val.get(val.get(g, "source").?, "include_dirs"), dir));
+    try t.expect(!val.get(g, "is_workspace_member").?.bool);
+    try t.expect(val.get(g, "build") == null);
+    try t.expect(!hasStr(val.get(g, "cfg"), "gitc_native"));
 }
 
 // ---- develop: the build ----------------------------------------------------------------------------------------------

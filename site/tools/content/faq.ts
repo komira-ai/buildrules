@@ -51,7 +51,7 @@ export const faq: Page = {
     ),
     ...q(
       'Which Rust projects does it support?',
-      'Workspaces whose root `Cargo.toml` is virtual (no `[package]`) and sits at the repository root, with crates from crates.io. Git dependencies and alternate registries are refused. Build scripts run as actions; a few that compile C code need an override. See [the Rust rules](/rules/rust/).',
+      'Workspaces whose root `Cargo.toml` is virtual (no `[package]`) and sits at the repository root, with crates from crates.io, or from a git repository on github.com pinned by its full commit (a branch or tag is refused, and so are alternate registries; a sync with a git dependency downloads its GitHub archive to check it). Build scripts run as actions; a few that compile C code need an override. See [the Rust rules](/rules/rust/).',
     ),
     ...q(
       'Are doctests and coverage supported?',

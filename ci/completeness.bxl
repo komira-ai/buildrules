@@ -24,7 +24,7 @@ def _pkg(label):
 def _package_problems(q):
     problems = []
     packages = {}
-    for t in q.eval("//... + crates//... + toolchains//... + rootcell//..."):
+    for t in q.eval("//... + crates//... + gitcrates//... + toolchains//... + rootcell//..."):
         packages[_pkg(t.label)] = True
     both = {}
     for name, owner in [("//ci:no_shell", "ci/BUCK"), ("//tools/scrub:scrub", "tools/scrub/BUCK")]:
@@ -45,7 +45,7 @@ def _package_problems(q):
 
 def _impl(ctx):
     q = ctx.uquery()
-    tree = "(//... + crates//...)"
+    tree = "(//... + crates//... + gitcrates//...)"
     problems = _package_problems(q)
 
     for pattern in EXCLUDED:

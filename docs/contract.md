@@ -75,7 +75,7 @@ file's trimmed text, `stamp_rustc_env` replaces the value the script prints for 
 of `git rev-parse`, which a build script cannot run here (its `PATH` is an empty directory). `refuse` is what a refused table calls with the reason (default `fail`, which stops the load; the tests of the refusal pass a recorder,
 `rules/rust/refusal.bzl`). Through `//:buildrules.bzl` the table and the third-party package are bound and the call is `cargo_package(path = ".")`. Every
 member package also has `:sources`, a `filegroup` of its files (a glob of the root package cannot cross into a member's package), and the generated
-`third_party/buildrules` has `:files` (its `BUCK`, `crate_sizes.tsv` and `overrides.json` when there is one); `cargo_sync` (`rules/rust/sync.bzl`) stages a
+`third_party/buildrules` has `:files` (its `BUCK`, `crate_sizes.tsv`, and `git_archives.tsv` and `overrides.json` when there is one); `cargo_sync` (`rules/rust/sync.bzl`) stages a
 workspace from them.
 
 Targets of a member **[p7]**: `:lib`, `:bin` (only when the member has a binary), `:debug`, `:release`,
@@ -131,6 +131,7 @@ root (v0). "Committed" means the file belongs in git.
 | `BUCK` (root) | `sync`, only if absent | once; yours after that, but it must keep the `cargo_workspace` call | yes | Buck2 |
 | `third_party/buildrules/BUCK` | `sync` (the generator, `buckgen.zig`) | every sync | yes | member packages (registry units) |
 | `third_party/buildrules/crate_sizes.tsv` | `sync` (`buckgen.zig`, sizes) | every sync | yes | the generator; each row's sha256 was checked against `Cargo.lock` |
+| `third_party/buildrules/git_archives.tsv` | `sync` (`git_archive.zig`), only when the table has a git unit; removed with the last one | every sync; a row is never rewritten | yes | the generator, `check`; see "Git sources" below |
 | `buck-out/buildrules/` | `sync` | scratch: cargo home, unit graphs, the `--check` output | no (under `buck-out/`) | `sync` |
 | `buck-out/buildrules/ra/`, `buck-out/buildrules/flycheck/` | `rust-project develop`, `rust-project check` | emptied and downloaded again (`buck2 build --out`) on every run | no (under `buck-out/`) | `rust-project`, rust-analyzer |
 | `rust-project.json` | `rust-project develop` | when you run it | no: absolute paths of this machine; add it to `.gitignore` | rust-analyzer |
@@ -161,10 +162,31 @@ policy, `clippy_conf`), `PACKAGES` (one row per member: `path`, `version`, `chec
 `lints.clippy`, `actions`, `deny_warnings`, `default_action`, and `postgres` = `{"url_env": NAME}` only in the row of a member that has
 the fixture, section 5; `WORKSPACE` has it only when the workspace declares it), `GRAPHS` (whole-workspace graphs; empty from
 the CLI), `MEMBERS` (per member and verb `build|test|release`: `roots`, `units`, `graph_units`) and
-`UNITS` (one entry per distinct unit: `crate`, `version`, `source` = `path|registry`, `target_kind`,
+`UNITS` (one entry per distinct unit: `crate`, `version`, `source` = `path|registry|git`, `target_kind`,
 `crate_types`, `target_name`, `mode`, `side`, `edition`, `crate_root`, `features`, `cfgs`, `profile`,
-`deps` = `[extern name, unit id]`, `path` or `sha256`, `test_flags`). A unit id is
+`deps` = `[extern name, unit id]`, `path` (a member), `sha256` (a registry crate) or `repo`, `rev` and `subdir`
+(a git package), `test_flags`). A unit id is
 `<crate>-<version>:<10 hex>`, the hash of the unit's body (profile name excluded: rustc never sees it).
+
+**Git sources.** A git dependency is accepted when `Cargo.lock` pins it as
+`git+https://github.com/<owner>/<repository>[.git]?rev=<40 lower-case hex>#<the same 40 hex>`, that is, Cargo.toml names the
+commit itself (`rev = "<full commit>"`). A branch, a tag, the default branch (no reference), a short or upper-case rev, another
+host and any scheme but https are refused by `sync` and by `check`, with the package's name and version and the fix. Its units
+are `source = "git"` with `repo` (`github.com/<owner>/<repository>`, no `.git`), `rev` and `subdir` (the package's directory in
+the repository, `""` at its top; the nearest directory above the target whose `Cargo.toml` names the package). `Cargo.lock`
+records no hash of a git package, so `sync` measures one: for each repository and commit it downloads GitHub's archive
+`https://github.com/<owner>/<repository>/archive/<rev>.tar.gz`, compares it file by file (contents and symbolic-link targets)
+with cargo's own checkout of the commit under `buck-out/buildrules/cargo-home/git/checkouts` (cargo's `.git` and `.cargo-ok`
+aside), and writes `third_party/buildrules/git_archives.tsv`, one line per commit the units come from (a git package of
+`Cargo.lock` that no unit uses, such as a dependency of another platform, is not downloaded): `repository commit sha256 bytes
+top-directory`. An archive that differs from the checkout (a submodule, an `export-ignore` or `export-subst` attribute) is
+refused with the paths that differ. A line, once written, is the trust anchor: when the archive of a recorded commit no longer
+has the recorded sha256 and size, `sync` refuses it by name and leaves the file as it was (delete the line only after finding
+out why). The generated `third_party/buildrules/BUCK` has one `crate_src` per repository and commit (`git-<owner>_<repository>-<rev>`,
+with `top`, the archive's one directory), and each git unit names it as `src` and its `subdir` as `src_dir`; the whole unpacked
+repository is the unit's input, as cargo's checkout is, so a build script or `include_str!` that reads a file of the repository
+outside the package works. `sync --check` reads the record and downloads nothing. `cargo_sync` (a sync as a farm action) cannot
+resolve a git source: cargo clones it, and a farm action has no network.
 
 A reader refuses a table whose `SCHEMA` is not the one it understands (`2`). `sync` first lets cargo resolve: `cargo fetch` creates
 `Cargo.lock` if there is none and changes it only as far as the manifests require (a new dependency adds its crates; nothing else is
@@ -355,7 +377,11 @@ table is out of date): `rust-toolchain.toml` missing / floating / has `path`; th
 another `SCHEMA`; `Cargo.lock` missing or its sha256 differs from `CARGO_LOCK_SHA256`; the channel differs
 from `RUSTC`; `toolchains/rust_pins.bzl` differs from what `buildrules-pins.toml` generates, or that file is invalid; the root or any member `Cargo.toml` differs from `MANIFEST_SHA256`, a member exists that the
 table does not know, or the table lists one that is gone; `buildrules.bzl` differs from what `sync` writes;
-the root `BUCK` has no `cargo_workspace` call; a member has no `cargo_package` call. It does not compare
+the root `BUCK` has no `cargo_workspace` call; a member has no `cargo_package` call; a git source of `Cargo.lock` is not
+pinned by commit; a commit the table's git units come from has no line in `git_archives.tsv`, or a `Cargo.lock` git source
+has none while the file holds its repository at another commit (the message names both commits: Cargo.lock moved it); a line
+names a commit no unit of the table comes from; the file is missing while the table has git units, or left while it has none.
+A git package of `Cargo.lock` that no unit uses (a dependency of another platform) needs no line. It does not compare
 the compiler with `pins.bzl` (that needs the cell; the rules do it at load).
 
 `sync --check` is the heavier gate: it regenerates into `buck-out/` and exits 1 unless every generated
@@ -389,11 +415,11 @@ diagnostic. Neither verb runs a rustc, cargo or rust-analyzer of the machine.
 - The generator is Zig, in the command line (`unitgen.zig`: graphs, Cargo.lock and the manifests to the table; `buckgen.zig`: the table to the
   registry package and the sizes; `toml.zig` and `val.zig`: the readers and writers). Its output is byte for byte what the Python generator
   it replaced wrote: the content ids are the hashes of the same canonical JSON. No interpreter is needed anywhere.
-- Limits: Linux x86_64 only; crates.io registry only (git and alternate registries refused); a root
+- Limits: Linux x86_64 only; crates.io and git repositories on github.com pinned by commit (alternate registries refused); a root
   `[package]` refused; `members` globs other than `dir/*` refused by `adopt`/`check`/`sync`; every
   workspace package must be listed in `members`; doctests and coverage out; lto / rpath / incremental refused;
   `sync` needs the network the first time a registry crate is fetched (cargo's own cache under
-  `buck-out/buildrules/cargo-home`).
+  `buck-out/buildrules/cargo-home`), and on every sync that has a git source (its archive is downloaded and compared).
 - Code intelligence (`rust-project`): the pinned rust-analyzer is Linux x86_64 only; `buildrules-pins.toml` cannot pin `rust_src` or
   `rust_analyzer`, so a version of your own has no `:rust_analyzer_inputs`; an `extra_srcs` entry adds its parent directory to the
   member's source directories, so a directory given there adds the directory above it as well.
