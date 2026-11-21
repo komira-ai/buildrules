@@ -481,8 +481,8 @@ test "generate: refusals, each the defect it names" {
     try generateRefused(&e, repo, lock_with_itoa, try std.mem.replaceOwned(u8, e.a(), ok, "\"incremental\":false", "\"incremental\":true"), "incremental compilation on");
     // unstable public/noprelude edges
     try generateRefused(&e, repo, lock_with_itoa, try std.mem.replaceOwned(u8, e.a(), ok, "\"public\":false", "\"public\":true"), "public/noprelude");
-    // a git dependency
-    try generateRefused(&e, repo, lock_with_itoa, try std.mem.replaceOwned(u8, e.a(), ok, "registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.15", "git+https://example.invalid/x?rev=1#abcdef"), "source kind not supported");
+    // an alternate (sparse) registry: git sources are accepted (git_test.zig), other registries are not
+    try generateRefused(&e, repo, lock_with_itoa, try std.mem.replaceOwned(u8, e.a(), ok, "registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.15", "sparse+https://example.invalid/index/#itoa@1.0.15"), "source kind not supported");
     // a unit graph of another version
     try generateRefused(&e, repo, lock_with_itoa, try std.mem.replaceOwned(u8, e.a(), ok, "{\"version\":1,", "{\"version\":2,"), "version is not 1");
     // a path package outside the workspace

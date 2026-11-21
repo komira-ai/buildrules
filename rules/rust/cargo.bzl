@@ -88,7 +88,8 @@ def _member_of(table, path):
 
 def _label(did, units, ws, third_party, here):
     d = units[did]
-    if d["source"] == "registry":
+    if d["source"] != "path":
+        # registry and git units are generated in the third-party package
         return third_party + ":" + _tname(did)
     pkg = _join(ws, d["path"])
     return (":" if pkg == here else "//" + pkg + ":") + _tname(did)
@@ -250,7 +251,7 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
     Args:
         path: the member directory, relative to the BUCK file calling this (`.` in the member's own package).
         table: the generated table as a dict (`UNITS`, `MEMBERS`, `PACKAGES`, `WORKSPACE`, `RUSTC`, ...).
-        third_party: the package holding the registry units, e.g. `//third_party/buildrules`.
+        third_party: the package holding the registry and git units, e.g. `//third_party/buildrules`.
         check: the workspace's `:check` target (a label string) carried as a validation; default `//<workspace package>:check`.
         extra_srcs: files or directories of the source tree outside this package that the sources read at compile time
             (`include_str!("../../../api/golden.json")`), as labels (`//service/api:golden.json`, `//:tests/corpus`): inputs of

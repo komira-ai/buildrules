@@ -6,6 +6,7 @@ const std = @import("std");
 const buckgen = @import("buckgen.zig");
 const contract = @import("contract.zig");
 const ctxm = @import("ctx.zig");
+const git_archive = @import("git_archive.zig");
 const kit = @import("testkit.zig");
 const pins_toml = @import("pins_toml.zig");
 const t = std.testing;
@@ -837,4 +838,168 @@ test "sync: a registry crate of a compiler that is not the default names that co
     try h.put("rust-toolchain.toml", "[toolchain]\nchannel = \"1.85.0\"\n");
     try t.expectEqual(@as(u8, 0), h.run(&.{ "sync", "--buck2", "./buck2" }).code);
     try t.expect(kit.contains(h.read("third_party/buildrules/BUCK"), "    rustc = \"1.85.0\","));
+}
+
+// ---- git sources -----------------------------------------------------------------------------------------------------
+
+const git_rev = "0123456789abcdef0123456789abcdef01234567";
+const git_checkout = "cargo/git/checkouts/r-0123456789abcdef/0123456";
+const git_record = "third_party/buildrules/git_archives.tsv";
+const r_manifest = "[package]\nname = \"r\"\nversion = \"0.1.0\"\n";
+const r_lib = "pub fn r() {}\n";
+
+/// `hello` depending on `r`, the one package of the git repository github.com/o/r at `git_rev`.
+const graph_with_git =
+    "{\"version\":1,\"units\":[" ++
+    "{\"pkg_id\":\"git+https://github.com/o/r?rev=" ++ git_rev ++ "#0.1.0\",\"target\":{\"kind\":[\"lib\"],\"crate_types\":[\"lib\"],\"name\":\"r\"," ++
+    "\"src_path\":\"@ROOT@/" ++ git_checkout ++ "/src/lib.rs\",\"edition\":\"2021\",\"doctest\":true,\"test\":true}," ++
+    "\"profile\":" ++ profile_dev_text ++ ",\"platform\":\"x86_64-unknown-linux-gnu\",\"mode\":\"build\",\"features\":[],\"dependencies\":[]}," ++
+    "{\"pkg_id\":\"path+file://@ROOT@/crates/hello#0.1.0\",\"target\":{\"kind\":[\"lib\"],\"crate_types\":[\"lib\"],\"name\":\"hello\"," ++
+    "\"src_path\":\"@ROOT@/crates/hello/src/lib.rs\",\"edition\":\"2021\",\"doctest\":true,\"test\":true}," ++
+    "\"profile\":" ++ profile_dev_text ++ ",\"platform\":\"x86_64-unknown-linux-gnu\",\"mode\":\"build\",\"features\":[]," ++
+    "\"dependencies\":[{\"index\":0,\"extern_crate_name\":\"r\",\"public\":false,\"noprelude\":false}]}" ++
+    "],\"roots\":[1]}";
+
+fn gitLock(comptime source: []const u8) []const u8 {
+    return "version = 4\n\n[[package]]\nname = \"hello\"\nversion = \"0.1.0\"\ndependencies = [\n \"r\",\n]\n\n" ++
+        "[[package]]\nname = \"r\"\nversion = \"0.1.0\"\nsource = \"" ++ source ++ "\"\n";
+}
+
+var git_served: []const u8 = "";
+var git_downloads: usize = 0;
+
+fn gitFetch(_: std.mem.Allocator, _: []const u8) anyerror![]const u8 {
+    if (!kit.replaying) git_downloads += 1;
+    return git_served;
+}
+
+/// GitHub's archive of the commit: the checkout's files under `r-<rev>/`, archived at `mtime` (another time is other bytes).
+fn gitArchive(h: *kit.Harness, mtime: u64, with_lib: bool) ![]u8 {
+    const top = "r-" ++ git_rev;
+    const all = [_]kit.TarEntry{
+        .{ .path = top ++ "/" },
+        .{ .path = top ++ "/Cargo.toml", .data = r_manifest },
+        .{ .path = top ++ "/src/" },
+        .{ .path = top ++ "/src/lib.rs", .data = r_lib },
+    };
+    return kit.tarGz(h.a(), if (with_lib) &all else all[0..3], mtime);
+}
+
+/// A repository whose member depends on a git package pinned by commit: cargo's checkout of it, and the archive the network serves.
+fn withGit(h: *kit.Harness) !void {
+    withExec(h);
+    graph_text = graph_with_git;
+    try h.put("Cargo.lock", gitLock("git+https://github.com/o/r?rev=" ++ git_rev ++ "#" ++ git_rev));
+    try h.put(git_checkout ++ "/Cargo.toml", r_manifest);
+    try h.put(git_checkout ++ "/src/lib.rs", r_lib);
+    try h.put(git_checkout ++ "/.cargo-ok", "{\"v\":1}");
+    git_served = try gitArchive(h, 0, true);
+    git_archive.fetcher = &gitFetch;
+    git_downloads = 0;
+}
+
+test "sync: a git dependency pinned by commit becomes a unit built from GitHub's archive of the commit, recorded with its sha256 and size; check and --check read the record" {
+    const saved = git_archive.fetcher;
+    defer git_archive.fetcher = saved;
+    const h = try fresh();
+    defer h.destroy();
+    try withGit(h);
+    const r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 0), r.code);
+    const sum = try ctxm.sha256Hex(h.a(), git_served);
+    try t.expectEqualStrings(try std.fmt.allocPrint(h.a(), git_archive.header ++ "github.com/o/r " ++ git_rev ++ " {s} {d} r-" ++ git_rev ++ "\n", .{ sum, git_served.len }), h.read(git_record));
+    const buck = h.read("third_party/buildrules/BUCK");
+    try t.expect(kit.contains(buck, try std.fmt.allocPrint(h.a(), "crate_src(\n    name = \"git-o_r-" ++ git_rev ++ "\",\n    pkg = \"r\",\n    version = \"" ++ git_rev ++ "\",\n" ++
+        "    url = \"https://github.com/o/r/archive/" ++ git_rev ++ ".tar.gz\",\n    sha256 = \"{s}\",\n    size_bytes = {d},\n    top = \"r-" ++ git_rev ++ "\",\n)\n", .{ sum, git_served.len })));
+    try t.expect(kit.contains(buck, "    src = \":git-o_r-" ++ git_rev ++ "\",\n"));
+    try t.expect(kit.contains(buck, "\"git_archives.tsv\""));
+    try t.expect(kit.contains(h.read("buildrules.lock.bzl"), "\"rev\": \"" ++ git_rev ++ "\""));
+    try t.expectEqual(@as(usize, 1), git_downloads);
+    try t.expectEqual(@as(u8, 0), h.run(&.{"check"}).code);
+    // --check reads the record: it downloads nothing
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "sync", "--check", "--buck2", "./buck2" }).code);
+    try t.expectEqual(@as(usize, 1), git_downloads);
+}
+
+test "sync: the archive of a recorded commit that changed is refused by name and the record is kept; an archive that is not the checkout is never recorded" {
+    const saved = git_archive.fetcher;
+    defer git_archive.fetcher = saved;
+    const h = try fresh();
+    defer h.destroy();
+    try withGit(h);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "sync", "--buck2", "./buck2" }).code);
+    const before = h.read(git_record);
+    // the same files archived again: other bytes under the same commit
+    git_served = try gitArchive(h, 7, true);
+    var r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "git: github.com/o/r at " ++ git_rev ++ ": the archive https://github.com/o/r/archive/" ++ git_rev ++ ".tar.gz now has sha256 "));
+    try t.expect(kit.contains(r.err, "but third_party/buildrules/git_archives.tsv records sha256 "));
+    try t.expectEqualStrings(before, h.read(git_record));
+    // with no record, an archive missing a file of the commit is refused, and nothing is written
+    try h.tmp.dir.deleteFile(git_record);
+    git_served = try gitArchive(h, 0, false);
+    r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "src/lib.rs is in the checkout and not in the archive"));
+    try t.expect(!h.has(git_record));
+}
+
+test "sync: a git package no unit uses (a dependency of another platform) needs no archive: nothing is downloaded or recorded, and check passes" {
+    const saved = git_archive.fetcher;
+    defer git_archive.fetcher = saved;
+    const h = try fresh();
+    defer h.destroy();
+    try withGit(h);
+    graph_text = null; // cargo's graphs for linux do not reach r
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "sync", "--buck2", "./buck2" }).code);
+    try t.expect(!h.has(git_record));
+    try t.expectEqual(@as(usize, 0), git_downloads);
+    try t.expectEqual(@as(u8, 0), h.run(&.{"check"}).code);
+}
+
+test "sync: a git dependency on a branch is refused by name before cargo makes a unit graph, and nothing is downloaded" {
+    const saved = git_archive.fetcher;
+    defer git_archive.fetcher = saved;
+    const h = try fresh();
+    defer h.destroy();
+    try withGit(h);
+    try h.put("Cargo.lock", gitLock("git+https://github.com/o/r?branch=main#" ++ git_rev));
+    const r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "r 0.1.0: the git source git+https://github.com/o/r?branch=main follows branch `main`, which can move: pin it by commit"));
+    try t.expectEqual(@as(usize, 0), called("--unit-graph"));
+    try t.expectEqual(@as(usize, 0), git_downloads);
+    try t.expect(!h.has("buildrules.lock.bzl"));
+}
+
+test "sync: the record follows Cargo.lock: removed with the last git source, required by --check while there is one, and read strictly" {
+    const saved = git_archive.fetcher;
+    defer git_archive.fetcher = saved;
+    const h = try fresh();
+    defer h.destroy();
+    try withGit(h);
+    try t.expectEqual(@as(u8, 0), h.run(&.{ "sync", "--buck2", "./buck2" }).code);
+    const rec = h.read(git_record);
+    // the git dependency is gone
+    graph_text = null;
+    try h.put("Cargo.lock", fx.cargo_lock);
+    var r = h.run(&.{ "sync", "--check", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "third_party/buildrules/git_archives.tsv is left from git sources the table no longer has: run `buildrules sync` and commit the result"));
+    r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 0), r.code);
+    try t.expect(kit.contains(r.out, "removed third_party/buildrules/git_archives.tsv"));
+    try t.expect(!h.has(git_record));
+    try t.expect(!kit.contains(h.read("third_party/buildrules/BUCK"), "git_archives.tsv"));
+    // back again, with the record missing or unreadable
+    try withGit(h);
+    r = h.run(&.{ "sync", "--check", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "third_party/buildrules/git_archives.tsv is missing: run `buildrules sync` and commit it"));
+    try t.expect(kit.contains(rec, "github.com/o/r " ++ git_rev ++ " "));
+    try h.put(git_record, git_archive.header ++ "github.com/o/r " ++ git_rev ++ " nothex 1 top\n");
+    r = h.run(&.{ "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "git: third_party/buildrules/git_archives.tsv:2: `nothex` is not a sha256"));
 }

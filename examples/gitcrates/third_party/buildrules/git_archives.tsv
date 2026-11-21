@@ -1,0 +1,2 @@
+# repository commit sha256 bytes top-directory; each archive was compared with cargo's checkout of the commit by `buildrules sync`
+github.com/dtolnay/thiserror 95a512669395f30cf9ae10343149726c0563ed76 5ee508c05307067f105be08305f58958268f7a51f0b5c259db33a07febfdbfe9 43994 thiserror-95a512669395f30cf9ae10343149726c0563ed76
