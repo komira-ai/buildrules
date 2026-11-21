@@ -103,3 +103,129 @@ test "a build that ran nothing is idle; one that ran something without a summary
     try t.expect(!idleBuild("BUILD FAILED\n"));
     try t.expect(!idleBuild(""));
 }
+
+/// What buck2 writes when the connection to the farm is cut under a remote action: its remote-execution error names the stream (`Remote Execution
+/// Error on <action> for ReSession <id>`), and the line after it is `Error: (Error was returned on the stream by RE: RE channel error: code: ...)`.
+pub const cut_marker = "RE channel error: code:";
+
+/// One line of buck2's output as it reads with no timestamp (`[2026-11-21T07:48:10.059-05:00] `) and no indent before it.
+fn bare(raw: []const u8) []const u8 {
+    var l = std.mem.trim(u8, raw, " \t\r");
+    if (l.len > 0 and l[0] == '[') {
+        if (std.mem.indexOf(u8, l, "] ")) |end| l = std.mem.trimLeft(u8, l[end + 2 ..], " \t");
+    }
+    return l;
+}
+
+/// A cut: buck2's own `Error:` line holding `RE channel error: code:`. The phrase anywhere else (in a test's output, after another word) is not one.
+fn isCutLine(l: []const u8) bool {
+    return std.mem.startsWith(u8, l, "Error:") and std.mem.indexOf(u8, l, cut_marker) != null;
+}
+
+/// Whether every failure in the output of a failed farm build is a cut connection to the farm, so that the same build may run once more. At least
+/// one cut is required, and any sign of another failure makes the answer no:
+///
+/// - an `Action failed:` report that is not a cut: a cut report's reason is `Internal error (stage: ...): Remote Execution Error on ...` and the
+///   line right after it is the cut line. Any other reason (a compile error or a failing test is `... command returned non-zero exit code N`, a timeout `Command timed out after ...`,
+///   a cancelled command, an internal error with no cut line under it) is a real failure, and a cut line printed later does not count for it;
+/// - a line saying a command returned non-zero, that something timed out, or a panic, anywhere;
+/// - another error of buck2's (a line starting `Error` that is not a cut: an analysis or load error, a download that failed) or of a compiler
+///   (`error:` or `error[`).
+///
+/// So a log that mixes a real failure with cuts is final, and a retry never passes over a real failure.
+pub fn onlyCuts(text: []const u8) bool {
+    const Report = enum { none, reason, cut_next };
+    var cuts: usize = 0;
+    var report: Report = .none;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const l = bare(raw);
+        if (std.mem.startsWith(u8, l, "Action failed:")) {
+            // a report whose reason or cut line never came is not a cut
+            if (report != .none) return false;
+            report = .reason;
+            continue;
+        }
+        if (report == .reason) {
+            if (!std.mem.startsWith(u8, l, "Internal error (stage:") or std.mem.indexOf(u8, l, "Remote Execution Error on ") == null) return false;
+            report = .cut_next;
+            continue;
+        }
+        if (report == .cut_next and !isCutLine(l)) return false;
+        report = .none;
+        if (isCutLine(l)) {
+            cuts += 1;
+        } else if (std.mem.startsWith(u8, l, "Error") or std.mem.startsWith(u8, l, "error:") or std.mem.startsWith(u8, l, "error[") or
+            std.ascii.indexOfIgnoreCase(l, "non-zero exit code") != null or std.ascii.indexOfIgnoreCase(l, "timed out") != null or
+            std.ascii.indexOfIgnoreCase(l, "panic") != null)
+        {
+            return false;
+        }
+    }
+    return report == .none and cuts > 0;
+}
+
+/// A cut as buck2 reports it under an action (`display.rs`, an internal error of the remote-execution stage, then the error of re/error.rs).
+pub const sample_cut =
+    \\[2026-11-21T07:48:10.059-05:00] Action failed: root//app:bin (cxx_link_executable)
+    \\[2026-11-21T07:48:10.059-05:00] Internal error (stage: remote_execute): Remote Execution Error on Execute for ReSession 1
+    \\Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed" }) }))
+    \\BUILD FAILED
+    \\Failed to build 'root//app:bin (prelude//platforms:default)'
+    \\
+;
+
+/// A compile error of a remote action.
+pub const sample_compile_error =
+    \\Action failed: root//app:bin (cxx_compile main.c)
+    \\Remote command returned non-zero exit code 1
+    \\Remote action digest: 'ab:12'
+    \\stdout: <empty>
+    \\stderr:
+    \\main.c:1:1: error: expected ';' after statement
+    \\BUILD FAILED
+    \\
+;
+
+test "a cut connection is buck2's own Error: line with the RE channel error, and nothing else failed" {
+    try t.expect(onlyCuts(sample_cut));
+    // two actions cut at once, and the error printed again at the end as the command's own
+    try t.expect(onlyCuts(sample_cut ++ sample_cut ++ "Command failed: \n  Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error')\n"));
+    // with no action report around it (a cut while uploading inputs)
+    try t.expect(onlyCuts("Error: (RE channel error: code: 'Unknown error', message: \"h2 protocol error\")\nBUILD FAILED\n"));
+}
+
+test "the phrase elsewhere is not a cut, and nothing at all is not one" {
+    try t.expect(!onlyCuts(""));
+    try t.expect(!onlyCuts("BUILD FAILED\n"));
+    // in a line that is not buck2's Error: line
+    try t.expect(!onlyCuts("warning: RE channel error: code: 'Unknown error'\nBUILD FAILED\n"));
+    try t.expect(!onlyCuts("Internal error (stage: remote_execute): RE channel error: code: 'Unknown error'\nBUILD FAILED\n"));
+    // an Error: line of another remote-execution error
+    try t.expect(!onlyCuts("Error: (Error was returned on the stream by RE: code: 'Not found')\nBUILD FAILED\n"));
+}
+
+test "a real failure beside a cut is final: compile error, failing test, timeout, another error of buck2's" {
+    try t.expect(!onlyCuts(sample_compile_error));
+    try t.expect(!onlyCuts(sample_cut ++ sample_compile_error));
+    try t.expect(!onlyCuts(sample_compile_error ++ sample_cut));
+    // a test that fails prints the cut line itself in its own output: its report is not a cut
+    try t.expect(!onlyCuts("Action failed: root//t:test (run_test)\nRemote command returned non-zero exit code 101\nstderr:\nError: (RE channel error: code: 'Unknown error')\nBUILD FAILED\n"));
+    // a timeout of an action, and one in a report that also holds a cut
+    try t.expect(!onlyCuts(sample_cut ++ "Action failed: root//t:slow (run_test)\nCommand timed out after 600.000s\n"));
+    try t.expect(!onlyCuts("Action failed: root//t:slow (run_test)\nCommand timed out after 600.000s\nError: (RE channel error: code: 'Unknown error')\n"));
+    // an action that failed for an internal reason with no cut under it
+    try t.expect(!onlyCuts("Action failed: root//a:b (genrule)\nInternal error (stage: materialize_inputs): no space left on device\n" ++ sample_cut));
+    // an analysis error, a download that failed, a compiler's own line
+    try t.expect(!onlyCuts(sample_cut ++ "Error running analysis for `root//a:b`\n"));
+    try t.expect(!onlyCuts(sample_cut ++ "Error materializing HTTP resource declared by target toolchains//:zig_pin\n"));
+    try t.expect(!onlyCuts(sample_cut ++ "error[E0308]: mismatched types\n"));
+    try t.expect(!onlyCuts(sample_cut ++ "  error: expected ';'\n"));
+    // a real report, then a cut line on its own after it: the cut does not count for the report
+    try t.expect(!onlyCuts("Action failed: root//a:b (genrule)\nInternal error (stage: materialize_inputs): no space left on device\nError: (RE channel error: code: 'Unknown error')\n"));
+    try t.expect(!onlyCuts("Action failed: root//a:b (genrule)\nCommand was cancelled\n" ++ sample_cut));
+    // a report cut off before its reason or its cut line, and a panic beside a cut
+    try t.expect(!onlyCuts(sample_cut ++ "Action failed: root//a:b (genrule)\n"));
+    try t.expect(!onlyCuts(sample_cut ++ "Action failed: root//a:b (genrule)\nInternal error (stage: remote_execute): Remote Execution Error on Execute for ReSession 2\n"));
+    try t.expect(!onlyCuts(sample_cut ++ "thread 1 panic: index out of bounds\n"));
+}
