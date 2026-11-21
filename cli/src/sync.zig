@@ -13,6 +13,8 @@ const buckgen = @import("buckgen.zig");
 const cargo_lock = @import("cargo_lock.zig");
 const contract = @import("contract.zig");
 const ctxm = @import("ctx.zig");
+const git_archive = @import("git_archive.zig");
+const git_source = @import("git_source.zig");
 const lockfile = @import("lockfile.zig");
 const toolchain = @import("toolchain.zig");
 const unitgen = @import("unitgen.zig");
@@ -229,6 +231,20 @@ fn sync(ctx: *Ctx, o: Opts) !u8 {
         if (diag.lost > 0) ctx.err.print("buildrules: {s}\n", .{Diag.lost_text}) catch {};
         return ctxm.exit_fail;
     };
+    // A git dependency is built from GitHub's archive of its commit, so it must name the commit: every one that does not is
+    // reported, by name, before cargo runs again.
+    var unpinned: usize = 0;
+    for (entries) |e| {
+        if (!git_source.isGit(e.source)) continue;
+        switch (try git_source.judge(a, e.source)) {
+            .ok => {},
+            .bad => |why| {
+                _ = ctx.fail("{s} {s}: {s}", .{ e.name, e.version, why });
+                unpinned += 1;
+            },
+        }
+    }
+    if (unpinned != 0) return ctxm.exit_fail;
 
     // 3. The unit graphs: every workspace package, build / test / release.
     var graphs = std.ArrayList(unitgen.GraphIn).empty;
@@ -302,8 +318,38 @@ fn sync(ctx: *Ctx, o: Opts) !u8 {
             else => return e,
         };
     }
+    // The archives of the git sources (git_archive.zig): measured and compared with cargo's checkouts by a sync, read back by --check.
+    var git_rows: ?git_archive.Record = null;
+    {
+        var old: ?git_archive.Record = null;
+        if (try ctx.readOpt(contract.git_archives_file)) |text| {
+            old = git_archive.parse(a, &gdiag, text) catch |e| switch (e) {
+                error.Refused => return reportAll(ctx, &gdiag),
+                else => return e,
+            };
+        }
+        if (generated.checkouts.count() == 0) {
+            if (old != null) {
+                if (o.check) return ctx.fail("{s} is left from git sources the table no longer has: run `buildrules sync` and commit the result", .{contract.git_archives_file});
+                try ctx.dir.deleteFile(contract.git_archives_file);
+                ctx.say("removed {s}", .{contract.git_archives_file});
+            }
+        } else if (o.check) {
+            git_rows = old orelse return ctx.fail("{s} is missing: run `buildrules sync` and commit it", .{contract.git_archives_file});
+        } else {
+            const rec = git_archive.recordFile(a, &gdiag, &generated.checkouts, old) catch |e| switch (e) {
+                error.Refused => return reportAll(ctx, &gdiag),
+                else => return e,
+            };
+            try ctx.write(contract.git_archives_file, rec.text);
+            git_rows = rec.rows;
+        }
+    }
     const tc_default = isDefaultToolchain(generated.toolchain);
-    const third_party_buck = buckgen.generate(a, &gdiag, generated.units, sizes, overrides, .{ .non_default_rustc = if (tc_default) null else rustc_version }) catch |e| switch (e) {
+    const third_party_buck = buckgen.generate(a, &gdiag, generated.units, sizes, overrides, .{
+        .non_default_rustc = if (tc_default) null else rustc_version,
+        .git_archives = if (git_rows) |*r| r else null,
+    }) catch |e| switch (e) {
         error.Refused => return reportAll(ctx, &gdiag),
         else => return e,
     };

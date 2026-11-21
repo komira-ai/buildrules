@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const cargo_lock = @import("cargo_lock.zig");
+const git_source = @import("git_source.zig");
 const toml = @import("toml.zig");
 const val = @import("val.zig");
 const Diag = @import("diag.zig").Diag;
@@ -50,7 +51,12 @@ pub const Result = struct {
     /// UNITS: an object, uid -> body.
     units: Value,
     toolchain: Value,
+    /// One per git repository and commit the units come from (`repo@rev`): where cargo checked it out (absolute; never in the table).
+    checkouts: std.StringArrayHashMap(Checkout),
 };
+
+/// A git source of the table: the repository and commit, and cargo's checkout of it (the archive is compared with it at sync).
+pub const Checkout = struct { git: git_source.Git, dir: []const u8 };
 
 fn die(d: *Diag, comptime fmt: []const u8, args: anytype) error{Refused} {
     d.add("unitgen: " ++ fmt, args);
@@ -141,7 +147,13 @@ pub fn resolveToolchain(a: std.mem.Allocator, d: *Diag, version: []const u8, pin
 
 // ---- the graphs --------------------------------------------------------------------------------------------------
 
-const Pkg = struct { name: []const u8, ver: []const u8, registry: bool, rel: ?[]const u8, root_file: []const u8, dir: []const u8 };
+const Kind = enum { registry, path, git };
+
+/// Where a git package is: cargo's checkout of the commit (absolute, with a trailing slash), the package's directory in the
+/// repository ("" at its root) and the source as the pkg_id names it (up to `#`).
+const GitPkg = struct { checkout: []const u8, subdir: []const u8, id: []const u8 };
+
+const Pkg = struct { name: []const u8, ver: []const u8, kind: Kind, rel: ?[]const u8, root_file: []const u8, dir: []const u8, git: ?GitPkg = null };
 
 const Gen = struct {
     a: std.mem.Allocator,
@@ -149,6 +161,57 @@ const Gen = struct {
     root: []const u8, // with a trailing slash
     lock: std.StringHashMap(cargo_lock.Entry),
     links: std.StringHashMap(?[]const u8),
+    checkouts: std.StringArrayHashMap(Checkout),
+
+    /// Whether `<checkout><sub>/Cargo.toml` is the manifest of package `name`.
+    fn isPackageDir(g: *Gen, checkout: []const u8, sub: []const u8, name: []const u8) Error!bool {
+        const path = if (sub.len == 0) try std.fmt.allocPrint(g.a, "{s}Cargo.toml", .{checkout}) else try std.fmt.allocPrint(g.a, "{s}{s}/Cargo.toml", .{ checkout, sub });
+        const text = std.fs.cwd().readFileAlloc(g.a, path, 8 << 20) catch |e| switch (e) {
+            error.OutOfMemory => return e,
+            else => return false,
+        };
+        const doc = toml.parse(g.a, text);
+        if (doc.msg.len != 0) return false;
+        const n = val.asStr(toml.at(doc.value, &.{ "package", "name" })) orelse return false;
+        return std.mem.eql(u8, n, name);
+    }
+
+    /// A git package: `git+<url>?<ref>#<name>@<version>` (or `#<version>` when the URL's last segment is the name), its target
+    /// under cargo's checkout `<CARGO_HOME>/git/checkouts/<dir>/<short rev>/`. The package's directory is the nearest one above
+    /// the target whose Cargo.toml names the package (a repository may hold a workspace of several).
+    fn gitPkg(g: *Gen, pid: []const u8, src: []const u8) Error!Pkg {
+        const hash = std.mem.indexOfScalar(u8, pid, '#') orelse return die(g.d, "{s}: no #version in the package id", .{pid});
+        const id = pid[0..hash];
+        const frag = pid[hash + 1 ..];
+        var name: []const u8 = undefined;
+        var ver: []const u8 = undefined;
+        if (std.mem.lastIndexOfScalar(u8, frag, '@')) |at| {
+            name = frag[0..at];
+            ver = frag[at + 1 ..];
+        } else {
+            const url = id[0 .. std.mem.indexOfScalar(u8, id, '?') orelse id.len];
+            const slash = std.mem.lastIndexOfScalar(u8, url, '/') orelse return die(g.d, "{s}: no repository name in the package id", .{pid});
+            name = url[slash + 1 ..];
+            ver = frag;
+        }
+        const marker = "/git/checkouts/";
+        const m = std.mem.indexOf(u8, src, marker) orelse return die(g.d, "{s}: source path {s} is not in cargo's git checkouts", .{ pid, src });
+        const d1 = std.mem.indexOfScalarPos(u8, src, m + marker.len, '/') orelse return die(g.d, "{s}: source path {s} is not in cargo's git checkouts", .{ pid, src });
+        const d2 = std.mem.indexOfScalarPos(u8, src, d1 + 1, '/') orelse return die(g.d, "{s}: source path {s} is not in cargo's git checkouts", .{ pid, src });
+        const checkout = src[0 .. d2 + 1];
+        const in_repo = src[d2 + 1 ..];
+        var sub: []const u8 = std.fs.path.dirname(in_repo) orelse "";
+        while (true) {
+            if (try g.isPackageDir(checkout, sub, name)) {
+                const root_file = if (sub.len == 0) in_repo else in_repo[sub.len + 1 ..];
+                const dir = if (sub.len == 0) checkout else try std.fmt.allocPrint(g.a, "{s}{s}/", .{ checkout, sub });
+                return .{ .name = name, .ver = ver, .kind = .git, .rel = null, .root_file = root_file, .dir = dir, .git = .{ .checkout = checkout, .subdir = sub, .id = id } };
+            }
+            if (sub.len == 0) break;
+            sub = std.fs.path.dirname(sub) orelse "";
+        }
+        return die(g.d, "{s}: no Cargo.toml of package {s} above {s} in cargo's checkout {s}", .{ pid, name, in_repo, checkout });
+    }
 
     fn packageLinks(g: *Gen, dir: []const u8) Error!?[]const u8 {
         if (g.links.get(dir)) |l| return l;
@@ -180,7 +243,7 @@ const Gen = struct {
                 const pkg_end = std.mem.indexOfScalarPos(u8, src, idx_end + 1, '/') orelse break;
                 if (idx_end > idx_start and pkg_end > idx_end + 1) {
                     if (!std.mem.eql(u8, src[idx_end + 1 .. pkg_end], want)) break;
-                    return .{ .name = name, .ver = ver, .registry = true, .rel = null, .root_file = src[pkg_end + 1 ..], .dir = src[0 .. pkg_end + 1] };
+                    return .{ .name = name, .ver = ver, .kind = .registry, .rel = null, .root_file = src[pkg_end + 1 ..], .dir = src[0 .. pkg_end + 1] };
                 }
                 from = m + 1;
             }
@@ -202,9 +265,10 @@ const Gen = struct {
                 ver = frag;
             }
             if (!(std.mem.startsWith(u8, src, dir) and src.len > dir.len and src[dir.len] == '/')) return die(g.d, "{s}: target {s} outside its package directory", .{ pid, src });
-            return .{ .name = name, .ver = ver, .registry = false, .rel = rel, .root_file = src[dir.len + 1 ..], .dir = dir };
+            return .{ .name = name, .ver = ver, .kind = .path, .rel = rel, .root_file = src[dir.len + 1 ..], .dir = dir };
         }
-        return die(g.d, "{s}: source kind not supported in v0 (git and alternate registries are refused)", .{pid});
+        if (git_source.isGit(pid)) return g.gitPkg(pid, src);
+        return die(g.d, "{s}: source kind not supported in v0 (alternate registries are refused)", .{pid});
     }
 };
 
@@ -223,15 +287,27 @@ const Graph = struct {
         const a = g.a;
         const u = gr.raw[i];
         const pkg = try g.pkgOf(u);
-        const lk = g.lock.get(try std.fmt.allocPrint(a, "{s} {s}", .{ pkg.name, pkg.ver })) orelse
+        const lk = g.lock.get(try lockKey(a, pkg.name, pkg.ver, if (pkg.git) |gp| gp.id else null)) orelse
             return die(g.d, "{s} {s} is in the unit graph and not in Cargo.lock", .{ pkg.name, pkg.ver });
         var sha: ?[]const u8 = null;
-        if (pkg.registry) {
-            if (!isSha(lk.checksum)) return die(g.d, "{s} {s}: Cargo.lock has no sha256 checksum", .{ pkg.name, pkg.ver });
-            sha = lk.checksum;
-            if (!std.mem.startsWith(u8, lk.source, "registry+https://github.com/rust-lang/crates.io-index")) return die(g.d, "{s} {s}: only crates.io is supported in v0", .{ pkg.name, pkg.ver });
-        } else if (lk.source.len != 0) {
-            return die(g.d, "{s} {s}: path package has a source in Cargo.lock", .{ pkg.name, pkg.ver });
+        var git: ?git_source.Git = null;
+        switch (pkg.kind) {
+            .registry => {
+                if (!isSha(lk.checksum)) return die(g.d, "{s} {s}: Cargo.lock has no sha256 checksum", .{ pkg.name, pkg.ver });
+                sha = lk.checksum;
+                if (!std.mem.startsWith(u8, lk.source, "registry+https://github.com/rust-lang/crates.io-index")) return die(g.d, "{s} {s}: only crates.io is supported in v0", .{ pkg.name, pkg.ver });
+            },
+            .path => if (lk.source.len != 0) {
+                return die(g.d, "{s} {s}: path package has a source in Cargo.lock", .{ pkg.name, pkg.ver });
+            },
+            .git => switch (try git_source.judge(a, lk.source)) {
+                .bad => |why| return die(g.d, "{s} {s}: {s}", .{ pkg.name, pkg.ver, why }),
+                .ok => |gs| {
+                    git = gs;
+                    const k = try git_source.key(a, gs.repo, gs.rev);
+                    if (!g.checkouts.contains(k)) try g.checkouts.put(k, .{ .git = gs, .dir = pkg.git.?.checkout });
+                },
+            },
         }
         const t = val.get(u, "target").?;
         const prof = val.get(u, "profile") orelse return die(g.d, "{s} {s}: a unit has no profile", .{ pkg.name, pkg.ver });
@@ -269,7 +345,7 @@ const Graph = struct {
         var body = val.newObject(a);
         try val.put(&body, "crate", val.str(pkg.name));
         try val.put(&body, "version", val.str(pkg.ver));
-        try val.put(&body, "source", val.str(if (pkg.registry) "registry" else "path"));
+        try val.put(&body, "source", val.str(@tagName(pkg.kind)));
         try val.put(&body, "target_kind", try sortedStrings(gr, val.get(t, "kind"), pkg, "kind"));
         try val.put(&body, "crate_types", try sortedStrings(gr, val.get(t, "crate_types"), pkg, "crate_types"));
         try val.put(&body, "target_name", val.str(val.getStr(t, "name") orelse return die(g.d, "{s} {s}: the target has no name", .{ pkg.name, pkg.ver })));
@@ -287,6 +363,12 @@ const Graph = struct {
         }
         if (pkg.rel) |r| try val.put(&body, "path", val.str(r));
         if (sha) |s| try val.put(&body, "sha256", val.str(s));
+        if (git) |gs| {
+            // The archive's own sha256 and size are not here: Cargo.lock has none, and sync records them (git_archives.tsv).
+            try val.put(&body, "repo", val.str(gs.repo));
+            try val.put(&body, "rev", val.str(gs.rev));
+            try val.put(&body, "subdir", val.str(pkg.git.?.subdir));
+        }
         // `test` / `doctest` flags of the target change what a test action does.
         var flags = val.newObject(a);
         try val.put(&flags, "test", val.boolean(val.truthy(val.get(t, "test"))));
@@ -308,6 +390,13 @@ fn sortedStrings(gr: *Graph, v: ?Value, pkg: Pkg, what: []const u8) Error!Value 
     for (val.items(v)) |x| try l.append(gr.g.a, val.asStr(x) orelse return die(gr.g.d, "{s} {s}: target {s} holds a non-string", .{ pkg.name, pkg.ver, what }));
     std.mem.sort([]const u8, l.items, {}, lessStr);
     return val.strList(gr.g.a, l.items);
+}
+
+/// The key of a Cargo.lock entry: `name version`, and for a git package also its source up to `#` (a git fork may carry the
+/// name and version of a crates.io crate).
+fn lockKey(a: std.mem.Allocator, name: []const u8, ver: []const u8, git_id: ?[]const u8) ![]const u8 {
+    if (git_id) |id| return std.fmt.allocPrint(a, "{s} {s} {s}", .{ name, ver, id });
+    return std.fmt.allocPrint(a, "{s} {s}", .{ name, ver });
 }
 
 fn lessPair(_: void, x: [2][]const u8, y: [2][]const u8) bool {
@@ -633,6 +722,7 @@ pub fn generate(a: std.mem.Allocator, d: *Diag, in: Input) Error!Result {
         .root = try std.fmt.allocPrint(a, "{s}/", .{std.mem.trimRight(u8, in.root, "/")}),
         .lock = std.StringHashMap(cargo_lock.Entry).init(a),
         .links = std.StringHashMap(?[]const u8).init(a),
+        .checkouts = std.StringArrayHashMap(Checkout).init(a),
     };
     var ldiag = Diag.init(a);
     const entries = cargo_lock.parse(a, "Cargo.lock", in.cargo_lock, &ldiag) catch {
@@ -640,7 +730,10 @@ pub fn generate(a: std.mem.Allocator, d: *Diag, in: Input) Error!Result {
         d.lost += ldiag.lost;
         return error.Refused;
     };
-    for (entries) |e| try gen.lock.put(try std.fmt.allocPrint(a, "{s} {s}", .{ e.name, e.version }), e);
+    for (entries) |e| {
+        const id: ?[]const u8 = if (git_source.isGit(e.source)) e.source[0 .. std.mem.indexOfScalar(u8, e.source, '#') orelse e.source.len] else null;
+        try gen.lock.put(try lockKey(a, e.name, e.version, id), e);
+    }
 
     var graphs = std.ArrayList(*Graph).empty;
     for (in.graphs) |spec| {
@@ -744,5 +837,5 @@ pub fn generate(a: std.mem.Allocator, d: *Diag, in: Input) Error!Result {
         try w.writeAll(",\n");
     }
     try w.writeAll("}\n");
-    return .{ .text = aw.written(), .units = units_v, .toolchain = toolchain };
+    return .{ .text = aw.written(), .units = units_v, .toolchain = toolchain, .checkouts = gen.checkouts };
 }

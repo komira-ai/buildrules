@@ -6,6 +6,8 @@
   buildrules = .
   # A workspace with crates.io dependencies, as a repository of its own: its generated glue is exactly what `buildrules sync` writes.
   crates = examples/crates
+  # A workspace whose dependency is a git repository pinned by commit, built from GitHub's archive of the commit.
+  gitcrates = examples/gitcrates
   # A cell inside the repository whose own configuration has no [buildrules_re] keys (ci/root_keys.bxl).
   rootcell = ci/rootcell
   prelude = prelude
@@ -29,7 +31,7 @@
   name = BUCK
 
 [parser]
-  target_platform_detector_spec = target:buildrules//...->buildrules//platforms:linux_x86_64 target:toolchains//...->buildrules//platforms:linux_x86_64 target:crates//...->buildrules//platforms:linux_x86_64
+  target_platform_detector_spec = target:buildrules//...->buildrules//platforms:linux_x86_64 target:toolchains//...->buildrules//platforms:linux_x86_64 target:crates//...->buildrules//platforms:linux_x86_64 target:gitcrates//...->buildrules//platforms:linux_x86_64
 
 [build]
   execution_platforms = buildrules//platforms/exec:exec
