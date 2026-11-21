@@ -1,0 +1,28 @@
+# A package built for several Mojo versions is built at each with that version's graph and toolchain, and the default build is what it was (ci/mojo_versions.bzl).
+# The public CI runs the check as a part of `buck2 bxl //ci:completeness.bxl:check` (ci/negative.bxl); run alone:
+#
+#   buck2 bxl //ci:mojo_versions.bxl:check
+#   buck2 bxl //ci:mojo_versions.bxl:golden     # prints ci/mojo_versions_golden.bzl as the tree builds it now (for a change that means to move an output)
+
+load("@buildrules//ci:mojo_versions.bzl", "golden_listing", "versions_problems")
+load("@buildrules//ci:mojo_versions_golden.bzl", "GOLDEN")
+
+def _check(ctx):
+    problems = versions_problems(ctx)
+    if problems:
+        fail("ci/mojo_versions: {} problem(s):\n  ".format(len(problems)) + "\n  ".join(problems))
+    ctx.output.print("ok: examples/mojo/versions is built at each Mojo version with its graph and toolchain, and so is the package it imports; {} packages of one version build as before".format(len(GOLDEN)))
+
+check = bxl_main(impl = _check, cli_args = {})
+
+def _golden(ctx):
+    got = golden_listing(ctx)
+    lines = []
+    for pkg in sorted(got.keys()):
+        lines.append("    \"{}\": {{".format(pkg))
+        for t in sorted(got[pkg].keys()):
+            lines.append("        \"{}\": {},".format(t, json.encode(got[pkg][t]).replace("\",\"", "\", \"")))
+        lines.append("    },")
+    ctx.output.print("\n".join(lines))
+
+golden = bxl_main(impl = _golden, cli_args = {})

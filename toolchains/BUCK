@@ -4,6 +4,7 @@ load("@buildrules//rules/cxx:toolchain.bzl", "cxx_toolchains")
 load("@buildrules//rules/mojo:toolchain.bzl", "mojo_toolchains")
 load("@buildrules//rules/mopm:toolchain.bzl", "mopm_toolchains")
 load("@buildrules//rules/rust:toolchain.bzl", "rust_toolchains")
+load(":mojo_fixture_pins.bzl", "FIXTURE_MOJO_TOOLCHAINS")
 load(":mojo_pins.bzl", "MOJO_TOOLCHAINS")
 load(":mopm_pins.bzl", "EXTRA_MOPM_VERSIONS")
 load(":rust_pins.bzl", "EXTRA_RUST_VERSIONS")
@@ -20,6 +21,10 @@ cxx_toolchains(target_cpu = zig_cpu())
 # toolchains mopm's unit graphs name (mojo_pins.bzl, written by `buildrules mojo sync`): buildrules pins no Mojo itself.
 mopm_toolchains(extra = EXTRA_MOPM_VERSIONS)
 
-mojo_toolchains(MOJO_TOOLCHAINS)
+# This repository's own: with the toolchains of the fixture versions of examples/mojo/versions (mojo_fixture_pins.bzl), which no sync writes. A consumer's is
+# `mojo_toolchains(MOJO_TOOLCHAINS)`.
+[fail("toolchains/mojo_fixture_pins.bzl has a row for {}, which toolchains/mojo_pins.bzl has too: a sync now pins it, so remove the fixture's".format(k)) for k in FIXTURE_MOJO_TOOLCHAINS if k in MOJO_TOOLCHAINS]
+
+mojo_toolchains(dict(MOJO_TOOLCHAINS, **FIXTURE_MOJO_TOOLCHAINS))
 
 scrub_files()

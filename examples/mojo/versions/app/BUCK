@@ -1,0 +1,8 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", fixture_package = "mojo_package")
+
+# Imports the sibling ../util (examples/mojo/versions, README.md). Built on a platform that asks for a Mojo version (`buildrules//platforms:mojo_<v>`), this package
+# and ../util are both built from their graphs for that version; ci/mojo_versions.bzl holds it. Called by another name for the reason ../util/BUCK gives.
+fixture_package(path = ".", conda = True)
+
+scrub_files()

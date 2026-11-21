@@ -1,0 +1,11 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules:matrix.bzl", "mojo_at")
+
+# The matrix cells of the fixture (README.md): `app` and the `util` it imports, built from their graphs for Mojo 1.1.0 and for 1.2.0 in the same build as the default.
+# Each is the same as `buck2 build --target-platforms buildrules//platforms:linux_x86_64_mojo_1_2_0 //examples/mojo/versions/app:lib`. ci/mojo_versions.bzl analyses
+# them; nothing builds them (ci/all.bzl, EXCLUDED).
+mojo_at(name = "app_at_mojo_1_1_0", version = "1.1.0", deps = ["//examples/mojo/versions/app:lib", "//examples/mojo/versions/app:conda"], visibility = ["//ci:"])
+
+mojo_at(name = "app_at_mojo_1_2_0", version = "1.2.0", deps = ["//examples/mojo/versions/app:lib", "//examples/mojo/versions/app:conda"], visibility = ["//ci:"])
+
+scrub_files()
