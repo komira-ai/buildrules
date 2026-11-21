@@ -23,6 +23,8 @@ mopm_toolchains(extra = EXTRA_MOPM_VERSIONS)
 
 # This repository's own: with the toolchains of the fixture versions of examples/mojo/versions (mojo_fixture_pins.bzl), which no sync writes. A consumer's is
 # `mojo_toolchains(MOJO_TOOLCHAINS)`.
+[fail("toolchains/mojo_fixture_pins.bzl has a row for {}, which toolchains/mojo_pins.bzl has too: a sync now pins it, so remove the fixture's".format(k)) for k in FIXTURE_MOJO_TOOLCHAINS if k in MOJO_TOOLCHAINS]
+
 mojo_toolchains(dict(MOJO_TOOLCHAINS, **FIXTURE_MOJO_TOOLCHAINS))
 
 scrub_files()

@@ -651,11 +651,11 @@ MOJOS = {
 that has it at its default, as before. `buildrules.mojo.bzl` loads and passes `MOJOS` only for such a table, and `toolchains/mojo_pins.bzl` gets the rows of every version. A manifest
 that lists one version gets the table, the glue and the pins it always had.
 
-The analysis of the table (`_check_table` in rules/mojo/defs.bzl, then `check_mojos` in rules/mojo/versions.bzl; `mojo check` holds the same offline) holds, besides what is above for
+The analysis of the table (`_check_table` in rules/mojo/defs.bzl, then `check_mojos` in rules/mojo/versions.bzl) holds, besides what is above for
 each graph of each version: `MOJO` is one of `MOJOS` and its entry is `CLOSURE_SHA256` and the default's graphs; each block is for its version and its subdir; each version's
 `CLOSURE_SHA256` is its linux-64 graph's; every version has graphs for the same subdirs and the same units (compared by the unit id without the package's version and the Mojo version:
 a registry package may resolve to another version for each Mojo), with the same sources, outputs, native libraries, links and dependencies, and the same system libraries; and a
-version other than the default is one a platform can ask for. Each is refused naming what differs and `buildrules mojo sync`.
+version other than the default is one a platform can ask for. Each is refused naming what differs and `buildrules mojo sync`. `mojo check` holds, offline, the part it can read without the rules: the versions of `MOJOS` are those of the manifest, each once and each digits and dots, `MOJO` is among them, and each block is for its version and subdir with its entry's closure; the comparison of units, subdirs and system libraries across versions is the analysis's.
 
 The version is chosen by the **target platform**: the constraint `buildrules//platforms:mojo_version`, one value `mojo_<v>` for each version of `MOJO_VERSIONS`
 (rules/mojo/version_names.bzl: 1.0.0, 1.1.0 and 1.2.0; names, not pins), with the config settings `mojo_is_<v>`. The graph, the toolchain (`toolchains//:mojo_<v>`, with `_<subdir>` as
@@ -663,7 +663,7 @@ above, and the version's coverage toolchains `_cov_link` and `_cov_branch`), the
 name of `:conda` (`-mojo<v>_0.conda`) of every target follow it, through a `select` by version around the `select` by subdir. A platform with no Mojo constraint builds the default,
 so a repository whose packages list one Mojo and whose platforms set none builds the same targets with the same actions and outputs as before (ci/mojo_versions.bzl holds eight
 examples to the paths of their outputs). A package's dependencies are configured with the same platform, so each is built from its own graph for that version with that version's
-toolchain, and the closure check of 12.4 refuses a library built for another. A platform that asks for a version a package's table has no graph for fails the analysis of its `:check`:
+toolchain, and the closure check of 12.4 refuses a library built for another. A platform that asks for a version a package's table has no graph for fails the analysis of its `:check`, and so of every target that carries it (the units, the tests, `:lib`, `:conda`, `:coverage`, the groups):
 
 ```
 <pkg>:check: the target platform asks for Mojo 1.2.0 and buildrules.mojo.lock.bzl holds unit graphs for Mojo 1.0.0 only. List 1.2.0 in `mojo = [...]` of the package's mopm.toml,

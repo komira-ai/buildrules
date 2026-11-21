@@ -14,7 +14,7 @@ version of `MOJO_VERSIONS`). The graph a unit is built from, the toolchain (`too
 name of `:conda` follow it, through a `select` on the config setting `buildrules//platforms:mojo_is_<v>` whose branches are the `select`s by subdir of
 rules/mojo/subdirs.bzl. A platform with no Mojo constraint is built at the default version. The dependencies of a package are configured for the same platform,
 so each is built at the same version with its own toolchain, and the analysis refuses a dependency built for another (rules/mojo/unit.bzl, `check_closure_ids`).
-A platform that asks for a version the table has no graph for is refused by the package's `:check`, which every target waits for, naming the package, the
+A platform that asks for a version the table has no graph for is refused by the package's `:check`, which every unit, test, group and `:conda` carries, naming the package, the
 version and `buildrules mojo sync`. rules/matrix.bzl (`mojo_at`) builds targets at a version in the same build as the default.
 
 A table without `MOJOS` has one version, the default: on a platform without the constraint its targets, their attributes and their outputs are what they were.
