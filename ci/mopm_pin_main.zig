@@ -46,7 +46,7 @@ pub fn main() !u8 {
     const hosts_path = hosts orelse try std.fs.path.join(a, &.{ std.fs.path.dirname(pins_path) orelse ".", "hosts.bzl" });
     const hosts_text = std.fs.cwd().readFileAlloc(a, hosts_path, 1 << 20) catch |e| return die("cannot read {s}: {s}", .{ hosts_path, @errorName(e) });
     const host_rows = pin.parseHosts(a, hosts_text) catch |e| return die("{s} is not a table this can read: {s}", .{ hosts_path, @errorName(e) });
-    const table = pin.withHosts(a, base_table, host_rows) catch |e| return die("{s}: {s}", .{ hosts_path, @errorName(e) });
+    const table = pin.withHosts(a, base_table, host_rows, &pin.linux_x86_64_only) catch |e| return die("{s}: {s}", .{ hosts_path, @errorName(e) });
     var io = pin.RealIo{ .curl = curl };
     const failures = try pin.verifyAll(pin.RealIo, &io, a, table, work_dir, cosign);
     for (failures) |f| std.debug.print("mopm_pin: {s}\n", .{f});
