@@ -1,0 +1,16 @@
+[package]
+name = "gdemo"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# thiserror from its git repository, pinned by commit in [workspace.dependencies] of the root Cargo.toml. The one commit holds two
+# packages: thiserror at the top of the repository, whose build script reads a file outside its src/, and the
+# proc-macro thiserror-impl in impl/, which takes proc-macro2, quote and syn from crates.io. Both are built from GitHub's archive of
+# the commit, pinned by the sha256 and size in third_party/buildrules/git_archives.tsv.
+[dependencies]
+thiserror.workspace = true
+
+[package.metadata.buildrules]
+# Policy only: `actions = { name = ["lint", "test"] }`, `default-action`, `[package.metadata.buildrules.lint]`.
+# Absent keys inherit [workspace.metadata.buildrules]. See docs/contract.md.

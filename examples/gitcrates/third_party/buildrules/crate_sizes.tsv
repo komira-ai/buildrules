@@ -1,0 +1,5 @@
+# name version bytes; every sha256 was checked against the table by `buildrules sync`
+proc-macro2 1.0.107 59588
+quote 1.0.47 31622
+syn 2.0.119 307407
+unicode-ident 1.0.27 48807

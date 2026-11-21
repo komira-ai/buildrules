@@ -290,7 +290,7 @@ export const howExamples: Page = {
     p('Per member the targets are `:lib`, `:bin` (if it has a binary), `:debug`, `:release`, `:test` (one `.passed` marker per Cargo test target), `:lint`, `:typecheck` (the pinned rustc to metadata only, as `cargo check`; no clippy), `:fmt` (the pinned `rustfmt --check`), `:sources`, and one per action named in the policy. A member\'s `BUCK` file is two lines:'),
     code('load("//:buildrules.bzl", "cargo_package")\n\ncargo_package(path = ".")', 'crates/hello/BUCK'),
     p('For an existing package that already builds with Cargo, `buildrules cargo adopt crates/existing` adopts it (no path means every member).'),
-    limit('Not supported: doctests (`cargo test` still runs them; `:test` does not), coverage, git or alternate-registry dependencies, a root `[package]`.'),
+    limit('Not supported: doctests (`cargo test` still runs them; `:test` does not), coverage, alternate-registry dependencies, git dependencies not pinned by commit or not on github.com, a root `[package]`.'),
     h2('Node.js'),
     code(
       [

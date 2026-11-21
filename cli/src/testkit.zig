@@ -352,3 +352,55 @@ pub fn contains(hay: []const u8, needle: []const u8) bool {
 pub fn count(hay: []const u8, needle: []const u8) usize {
     return std.mem.count(u8, hay, needle);
 }
+
+// ---- archives ------------------------------------------------------------------------------------------
+
+/// An entry of `tarGz`: a file (`data`), a symbolic link (`link`) or, with neither, a directory. `path` is the whole name in the archive.
+pub const TarEntry = struct { path: []const u8, data: ?[]const u8 = null, link: ?[]const u8 = null };
+
+/// A gzip tar holding `entries` in order, as GitHub's archive of a commit is shaped (a pax global header first, carrying the commit, which a
+/// reader skips). The deflate stream is stored blocks: a reader inflates it like any other, and a test needs no compressor.
+pub fn tarGz(a: std.mem.Allocator, entries: []const TarEntry, mtime: u64) ![]u8 {
+    var tar_out = std.Io.Writer.Allocating.init(a);
+    var w: std.tar.Writer = .{ .underlying_writer = &tar_out.writer };
+    // A pax global header (type `g`): 52 bytes of `comment=<40 hex>`.
+    var g: std.tar.Writer.Header = .init(.regular);
+    const comment = "52 comment=0123456789abcdef0123456789abcdef01234567\n";
+    try g.setSize(comment.len);
+    std.mem.asBytes(&g)[156] = 'g'; // the writer has no name for the type
+    try g.updateChecksum();
+    try tar_out.writer.writeAll(std.mem.asBytes(&g));
+    try tar_out.writer.writeAll(comment);
+    try tar_out.writer.splatByteAll(0, 512 - comment.len);
+    for (entries) |e| {
+        if (e.data) |d| {
+            try w.writeFileBytes(e.path, d, .{ .mtime = mtime });
+        } else if (e.link) |l| {
+            try w.writeLink(e.path, l, .{ .mtime = mtime });
+        } else {
+            try w.writeDir(e.path, .{ .mtime = mtime });
+        }
+    }
+    try w.finishPedantically();
+    return gzipStored(a, tar_out.written());
+}
+
+/// `data` as a gzip member of stored (uncompressed) deflate blocks.
+pub fn gzipStored(a: std.mem.Allocator, data: []const u8) ![]u8 {
+    var out = std.ArrayList(u8).empty;
+    try out.appendSlice(a, &.{ 0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff });
+    var rest = data;
+    while (true) {
+        const n: u16 = @intCast(@min(rest.len, 0xffff));
+        const last = n == rest.len;
+        try out.append(a, if (last) 1 else 0);
+        try out.appendSlice(a, &std.mem.toBytes(std.mem.nativeToLittle(u16, n)));
+        try out.appendSlice(a, &std.mem.toBytes(std.mem.nativeToLittle(u16, ~n)));
+        try out.appendSlice(a, rest[0..n]);
+        rest = rest[n..];
+        if (last) break;
+    }
+    try out.appendSlice(a, &std.mem.toBytes(std.mem.nativeToLittle(u32, std.hash.Crc32.hash(data))));
+    try out.appendSlice(a, &std.mem.toBytes(std.mem.nativeToLittle(u32, @as(u32, @truncate(data.len)))));
+    return out.toOwnedSlice(a);
+}
