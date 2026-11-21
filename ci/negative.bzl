@@ -60,7 +60,9 @@ CASES = [
     # A platform that asks for a Mojo version the table of a package has no graph for: refused by the package's :check, naming the package, the version and the fix
     # (rules/mojo/versions.bzl, `unsupported_mojo`). The package has the graph of 1.0.0 alone; on the platform without the constraint it builds as before (//ci:all).
     ("//examples/mojo/subdirs:lib_ungated", "buildrules//platforms:linux_x86_64_mojo_1_2_0", "examples/mojo/subdirs:check: the target platform asks for Mojo 1.2.0 and buildrules.mojo.lock.bzl holds unit graphs for Mojo 1.0.0 only. List 1.2.0 in `mojo = [...]` of the package's mopm.toml, run `mopm lock`, then `buildrules mojo sync`"),
-    ("//examples/mojo/sibfake/chain/a:lib", "buildrules//platforms:linux_x86_64_mojo_1_1_0", "examples/mojo/sibfake/chain/a:check: the target platform asks for Mojo 1.1.0 and buildrules.mojo.lock.bzl holds unit graphs for Mojo 1.0.0 only"),
+    # A chain a -> b -> c of one version at 1.1.0: refused by the :check of whichever package of the chain is analysed first (a's, or b's or c's through a's
+    # dependencies), so the text held is the part every one of them says.
+    ("//examples/mojo/sibfake/chain/a:lib", "buildrules//platforms:linux_x86_64_mojo_1_1_0", ":check: the target platform asks for Mojo 1.1.0 and buildrules.mojo.lock.bzl holds unit graphs for Mojo 1.0.0 only"),
     # A sibling whose table names another version of the library than the one next to it is (rules/mojo/unit.bzl, `check_closure_ids`).
     ("//examples/mojo/sibfake/stale:lib_ungated", "buildrules//platforms:linux_x86_64", "the graph imports chain_c as chain_c@0.2.0#mojo1.0.0/lib but the dependency target provides chain_c@0.1.0#mojo1.0.0/lib"),
     # A package with a graph per subdir, built for a platform that matches none of them (macOS on Intel): refused at analysis, and the message names the graphs it has
