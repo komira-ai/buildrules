@@ -486,9 +486,12 @@ group(name = "crates", deps = [
     "crates//crates/stamped:release",
     # A dev-dependency on the package itself that turns on a feature (selfdev: cargo lists the edge twice), and a build script that reads the metadata of
     # two dependencies with `links`, a member's and a crates.io crate's (linkuser, linked).
+    "crates//crates/selfdev:lib",
     "crates//crates/selfdev:debug",
     "crates//crates/selfdev:release",
+    "crates//crates/linked:lib",
     "crates//crates/linked:debug",
+    "crates//crates/linkuser:lib",
     "crates//crates/linkuser:debug",
     "crates//crates/linkuser:release",
     # The Postgres fixture (rules/postgres): every test of pgdemo runs with a private server; the row test writes a row and reads it back.
@@ -513,6 +516,7 @@ group(name = "crates", deps = [
     "crates//crates/pgdemo:flycheck",
     "crates//crates/selfdev:flycheck",
     "crates//crates/linkuser:flycheck",
+    "crates//crates/linked:flycheck",
 ])
 
 # A workspace whose dependency is a git repository pinned by commit (examples/gitcrates, its own cell): lint and test it. Its two git packages
