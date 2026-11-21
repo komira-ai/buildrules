@@ -204,7 +204,7 @@ pub fn parse(a: std.mem.Allocator, name: []const u8, text: []const u8, diag: *Di
                 diag.add("{s}: cannot read the MOJOS line {s}", .{ name, row });
                 continue;
             };
-            if (!std.mem.startsWith(u8, row, "    \"")) {
+            if (key_end < 5 or !std.mem.startsWith(u8, row, "    \"")) {
                 diag.add("{s}: cannot read the MOJOS line {s}", .{ name, row });
                 continue;
             }

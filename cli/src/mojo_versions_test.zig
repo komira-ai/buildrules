@@ -448,3 +448,58 @@ test "check: a MOJOS entry whose closure is cut short or missing is a closure th
     try h.put(base.lock_path, try std.mem.replaceOwned(u8, h.a(), good, row, "    \"1.1.0\": {\"CLOSURE_SHA256\": \n"));
     try expectStale(h, "the MOJOS entry of 1.1.0 has CLOSURE_SHA256 , not the closure its unit graph pins");
 }
+
+// ---- names, duplicates and unreadable rows ---------------------------------------------------------------
+
+test "sync: a listed version that is not digits and dots is refused by name, because the block is named after it, and nothing is written" {
+    for ([_][]const u8{ "1.2.0-rc1", "", ".1", "1.", "1..2", "v1" }) |bad_version| {
+        const list = try std.fmt.allocPrint(t.allocator, "\"1.0.0\", \"{s}\"", .{bad_version});
+        defer t.allocator.free(list);
+        const h = try several(list, rows_plain);
+        defer h.destroy();
+        const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+        try t.expectEqual(@as(u8, 1), r.code);
+        const want = try std.fmt.allocPrint(h.a(), "pkgs/base: mopm.toml lists Mojo {s}, which is not a version of digits and dots (1.2.0): buildrules names its graph block after it\n", .{bad_version});
+        try t.expect(kit.contains(r.err, want));
+        try t.expect(!h.has(base.lock_path));
+        try t.expectEqual(@as(usize, 0), base.called("plan --unit-graph"));
+    }
+}
+
+test "sync: a version listed twice is refused by name and nothing is written" {
+    const h = try several("\"1.0.0\", \"1.1.0\", \"1.1.0\"", rows_plain);
+    defer h.destroy();
+    const r = h.run(&.{ "mojo", "sync", "--buck2", "./buck2" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "pkgs/base: mopm.toml lists Mojo 1.1.0 more than once\n"));
+    try t.expect(!h.has(base.lock_path));
+    try t.expectEqual(@as(usize, 0), base.called("plan --unit-graph"));
+}
+
+test "check: a MOJOS key that is not digits and dots is stale" {
+    const h = try synced3();
+    defer h.destroy();
+    try edit(h, "    \"1.1.0\": {\"CLOSURE_SHA256\"", "    \"1.1.0-rc1\": {\"CLOSURE_SHA256\"");
+    try expectStale(h, "STALE: pkgs/base/buildrules.mojo.lock.bzl: MOJOS names Mojo 1.1.0-rc1, which is not a version of digits and dots: run `buildrules mojo sync` and commit the result\n");
+}
+
+test "check: a MOJOS key that is there twice is stale" {
+    const h = try synced3();
+    defer h.destroy();
+    try edit(h, "    \"1.2.0\": {\"CLOSURE_SHA256\"", "    \"1.1.0\": {\"CLOSURE_SHA256\": \"zz\", \"GRAPHS\": {}},\n    \"1.2.0\": {\"CLOSURE_SHA256\"");
+    try expectStale(h, "STALE: pkgs/base/buildrules.mojo.lock.bzl: MOJOS names Mojo 1.1.0 twice: run `buildrules mojo sync` and commit the result\n");
+}
+
+test "check: a version block that is there twice is stale" {
+    const h = try synced3();
+    defer h.destroy();
+    try edit(h, "\nGRAPH_JSON_MOJO_1_2_0 = r'''{", "\nGRAPH_JSON_MOJO_1_1_0 = r'''{");
+    try expectStale(h, "STALE: pkgs/base/buildrules.mojo.lock.bzl: the GRAPH_JSON_MOJO_1_1_0 block is there twice: run `buildrules mojo sync` and commit the result\n");
+}
+
+test "check: a MOJOS line whose key is empty is a table that cannot be read, not a crash" {
+    const h = try synced3();
+    defer h.destroy();
+    try edit(h, "    \"1.1.0\": {\"CLOSURE_SHA256\"", "    \": {\"CLOSURE_SHA256\"");
+    try expectStale(h, "cannot read the MOJOS line     \": {\"CLOSURE_SHA256\"");
+}
