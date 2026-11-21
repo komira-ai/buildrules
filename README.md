@@ -35,6 +35,7 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     examples/hello    rust_binary + rust_library + rust_test (welded) + run_check
     examples/isa      Rust and C built at an ISA level; isa_audit reads the machine code for ymm
     examples/crates   a workspace of its own (the cell `crates`) with crates.io dependencies: a build script (cc) that compiles zstd and a crate that links it;
+                      a member with a dev-dependency on itself, and a member build script reading the metadata of dependencies with `links`;
                       `buck2 build //ci:crates` lints and tests it and proves its generated files are what `buildrules sync` writes (no network: a local registry)
     examples/gitcrates a workspace of its own (the cell `gitcrates`) whose dependency is a git repository pinned by commit (thiserror: a build script and a proc-macro);
                       `buck2 build //ci:gitcrates` lints and tests it

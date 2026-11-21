@@ -1,6 +1,7 @@
-"""Tables and the recorder the toolchain-refusal targets of BUCK are made from, and the inputs of the `:fmt` plan cases (a BUCK file may not define functions)."""
+"""Tables and the recorder the toolchain-refusal targets of BUCK are made from, the inputs of the `:fmt` plan cases and of the dependency-edge cases
+(a BUCK file may not define functions)."""
 
-load("//rules/rust:cargo.bzl", "check_toolchain")
+load("//rules/rust:cargo.bzl", "check_toolchain", "unit_deps")
 load("//rules/rust:fmt.bzl", "fmt_plan", "workspace_fmt_config")
 load("//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_VERSIONS")
 load("//rules/rust:refusal.bzl", "recording")
@@ -51,3 +52,26 @@ def ws_config_of(members, configs):
     got, refuse = recording()
     conf = workspace_fmt_config(members, configs, refuse = refuse)
     return conf, got
+
+# ---- the dependency edges of a unit (cargo.bzl, `unit_deps`) ----------------------------------------------------------------------------------------------
+
+def edge_unit(mode, deps = [], kind = "lib", name = "pkg", links = None):
+    """The part of a table unit `unit_deps` reads: `deps` as [extern name, unit id], in the table's order."""
+    u = {"crate": "pkg", "mode": mode, "target_kind": [kind], "target_name": name, "deps": deps}
+    if links:
+        u["links"] = links
+    return u
+
+def edges_of(u, units):
+    """(edges, refusals): what `unit_deps` makes of `u`, a unit's label being ":" and its id."""
+    got, refuse = recording()
+    e = unit_deps(u, units, lambda did: ":" + did, refuse = refuse)
+    return e, got
+
+def edges_mismatch(u, units, want):
+    """[] when `unit_deps` accepts `u` and makes `want`, else what differs (a refusal counts as a difference)."""
+    e, got = edges_of(u, units)
+    return got + same("unit_deps", e, want)
+
+def edge_refusals(u, units):
+    return edges_of(u, units)[1]

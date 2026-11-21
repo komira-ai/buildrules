@@ -5,7 +5,8 @@
 //!
 //! The members it reads: `macros` derives serde's and clap's traits and calls `#[tokio::main]` functions (proc-macros, as shared objects the
 //! farm compiled); `protos` includes the modules its build script generated from `proto/` (OUT_DIR); `stamped` reads `env!` values its build
-//! script printed; `zdemo` calls a registry crate whose build script compiled C. So a clean run is the proof that each resolves, and the same
+//! script printed, and so does `linkuser`, whose script read them from two dependencies with `links`; `selfdev`'s tests call a function only its
+//! dev-dependency on itself turns on; `zdemo` calls a registry crate whose build script compiled C. So a clean run is the proof that each resolves, and the same
 //! run with one input taken out of rust-project.json is red where that input is needed.
 
 const std = @import("std");

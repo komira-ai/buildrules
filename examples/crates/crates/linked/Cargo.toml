@@ -1,0 +1,10 @@
+[package]
+name = "linked"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# A member with `links`: its build script's metadata reaches the build scripts of the packages that depend on it as DEP_FIXTURE_LINKED_<KEY>
+# (crates/linkuser), the way a `-sys` crate hands its dependents the directory of its C headers.
+links = "fixture_linked"
+build = "build.rs"

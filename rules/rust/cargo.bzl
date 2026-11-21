@@ -102,16 +102,43 @@ def _label(did, units, ws, third_party, here):
     pkg = _join(ws, d["path"])
     return (":" if pkg == here else "//" + pkg + ":") + _tname(did)
 
-def _deps_of(u, units, ws, third_party, here):
-    """extern name -> label. A binary of the package is keyed `bin:<name>` (it becomes CARGO_BIN_EXE_<name>, not `--extern`)."""
-    deps = {}
+def unit_deps(u, units, label_of, refuse = fail):
+    """The dependency edges of table unit `u` as cargo_unit takes them: `{"deps": {extern name: label}, "link_deps": [label]}`.
+
+    A binary of the package is keyed `bin:<name>` (it becomes CARGO_BIN_EXE_<name>, not `--extern`). A build-script run's dependencies on the
+    runs of dependencies with `links` are its `link_deps` (their metadata reaches the script as DEP_<LINKS>_<KEY>), as cli/src/buckgen.zig
+    makes them for registry units; its `deps` is then its own compiled script alone. The same edge listed twice is taken once: cargo lists a
+    package's own library twice in a test's dependencies when a dev-dependency on the package itself turns on a feature.
+
+    `label_of(id)` is the label of a unit. `refuse` is called with the reason when two different units have one name, or a run depends on
+    the run of a package without `links`; the default, `fail`, stops the load. Returns None after a refusal that did not stop.
+    """
+    deps, ids, link_deps = {}, {}, []
     for ext, did in u["deps"]:
         d = units[did]
+        if u["mode"] == "run-custom-build" and d["mode"] == "run-custom-build":
+            if not d.get("links"):
+                refuse("{}: depends on the run of {}, which has no links".format(u["crate"], did))
+                return None
+            link_deps.append(label_of(did))
+            continue
         key = ("bin:" + d["target_name"]) if d["target_kind"] == ["bin"] and d["mode"] == "build" else ext
         if key in deps:
-            fail("{}: two dependencies named {}".format(u["crate"], key))
-        deps[key] = _label(did, units, ws, third_party, here)
-    return deps
+            if ids[key] == did:
+                continue
+            refuse("{}: two dependencies named {}".format(u["crate"], key))
+            return None
+        deps[key] = label_of(did)
+        ids[key] = did
+    return {"deps": deps, "link_deps": link_deps}
+
+def _edges_of(kw, u, units, ws, third_party, here):
+    """Sets the `deps` and `link_deps` of cargo_unit arguments `kw` from unit `u` (unit_deps; a refusal stops the load)."""
+    e = unit_deps(u, units, lambda did: _label(did, units, ws, third_party, here))
+    if e["deps"]:
+        kw["deps"] = e["deps"]
+    if e["link_deps"]:
+        kw["link_deps"] = e["link_deps"]
 
 def _unit_args(uid, u, row, kind_globs):
     p = u["profile"]
@@ -148,6 +175,9 @@ def _unit_args(uid, u, row, kind_globs):
     )
     if custom:
         kw["build_script_name"] = u["target_name"].replace("-", "_")
+    if u["mode"] == "run-custom-build" and u.get("links"):
+        # The package's `links`: CARGO_MANIFEST_LINKS of its script, and the name its metadata reaches dependents' scripts under (DEP_<LINKS>_<KEY>).
+        kw["links"] = u["links"]
     if p["panic"] != "unwind":
         kw["panic"] = p["panic"]
     if _strip_of(p):
@@ -332,9 +362,7 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
                 kw["stamp_env"] = dict(stamp_env)
             if stamp_rustc_env:
                 kw["stamp_rustc_env"] = dict(stamp_rustc_env)
-        deps = _deps_of(u, units, ws, third_party, here)
-        if deps:
-            kw["deps"] = deps
+        _edges_of(kw, u, units, ws, third_party, here)
         kw["rustc"] = rustc
         cargo_unit(name = _tname(uid), **kw)
 
@@ -374,9 +402,7 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
                 kw["deny_warnings"] = row["deny_warnings"]
                 if conf:
                     kw["conf_dir"] = conf
-            deps = _deps_of(u, units, ws, third_party, here)
-            if deps:
-                kw["deps"] = deps
+            _edges_of(kw, u, units, ws, third_party, here)
             kw["rustc"] = rustc
             cargo_unit(name = _tname(uid) + "_" + mode, **kw)
             if mode == "lint":
