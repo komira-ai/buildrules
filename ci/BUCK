@@ -1226,6 +1226,9 @@ group(name = "all", deps = [
     "//examples/node:modules",
     "//examples/p4ws/crates/links_b:links_b-0.1.0_9f2ed89200",
     "//examples/p4ws/crates/probe_ok:probe_ok-0.1.0_35cff8487e",
+    # The mopm of the Mojo 1.1.0 and 1.2.0 toolchains (docs/pins.md "mopm 0.0.135"), which no example names yet: its tarball downloaded at the pinned
+    # sha256 and size and unpacked into its pinned `dir`.
+    "toolchains//:mopm_0_0_135",
 ])
 
 # Read by //ci/negative:negative_check, which holds the known defect's files to each other.

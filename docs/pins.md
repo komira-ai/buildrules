@@ -37,7 +37,7 @@ mopm 0.0.48 is the published release, https://github.com/komira-ai/mopm/releases
 `SHA256SUMS` (downloaded and compared, 2026-10-25; the sigstore bundle of the tarball carries the same digest); it unpacks into `mopm-0.0.48-linux-x86_64/` holding `mopm` and `LICENSE`.
 
 The digest is also checked against its signer on every pull request, and not by hand: the workflow `.github/workflows/mopm-pin.yml` (the check `mopm-pin / verify`) builds `//ci:mopm_pin`,
-which reads every row of `MOPM_VERSIONS` in `rules/mopm/pins.bzl` and every host tarball of `rules/mopm/hosts.bzl` (a row must be the file of its own version and host, and its version must be pinned in `pins.bzl`), downloads the row's tarball and its `.sigstore.json` bundle, requires the pinned size and sha256, and runs
+which reads every row of `MOPM_VERSIONS` in `rules/mopm/pins.bzl` and every host tarball of `rules/mopm/hosts.bzl` (a row must be the file of its own version and host, its version must be pinned in `pins.bzl`, and every pinned version but 0.0.48, which `ci/exec_select.bzl` keeps linux-x86_64 only, must have a row for both hosts), downloads the row's tarball and its `.sigstore.json` bundle, requires the pinned size and sha256, and runs
 `cosign verify-blob` with the identity of mopm's `release.yml` on `refs/heads/main` and the GitHub Actions issuer (cosign v3.0.6 and its installer, pinned as `release.yml` pins them).
 A pin whose digest was changed to a build mopm's release did not sign, or whose release was never signed by that workflow, fails the job. `ci/mopm_pin_workflow_check.zig` holds the
 workflow to being a check that cannot be removed or softened. The branch-protection rule that requires `mopm-pin / verify` is the repository owner's setting; the workflow is the part this tree can hold.
@@ -95,6 +95,14 @@ It is the first release with namespaces: a package's name is its full name, `<na
 prints unit graph format 6 (unit ids and `package` carry the full name, and each unit has `import`, the import name) and its `mopm lock` writes `lock_version` 3. `rules/mojo` and
 `buildrules mojo sync` read formats 1 to 6 (docs/contract.md, section 12.13); `examples/mojo/namespaced` and its member `nsshim` name 0.0.113 in their `mopm-toolchain.toml` and are the
 committed graphs of format 6.
+
+## mopm 0.0.135
+
+mopm 0.0.135 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.135, pinned for all three hosts beside 0.0.113 in the same two tables, with the sizes and digests of its assets
+as in the release's `SHA256SUMS` (downloaded and `sha256sum -c` checked, 2026-11-21). It is the first release that pins the Mojo 1.1.0 and 1.2.0 toolchains beside 1.0.0 on linux-64,
+linux-aarch64 and osx-arm64: `[package] mojo` may list them, `mopm lock` records a toolchain closure for each, and `mopm plan --unit-graph` prints that version's `toolchain` section. Its
+unit graph format, `lock_version` and `mopm stage` are those of 0.0.113, so `rules/mojo` and `buildrules mojo sync` read it unchanged. Its standard library list adds `hash`, `net` and `simd`,
+which mopm refuses as import names; buildrules keeps no such list of its own. No example names it yet.
 
 ## Postgres 17.12 (the fixture of the Rust tests)
 
