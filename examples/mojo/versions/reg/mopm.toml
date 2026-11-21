@@ -1,0 +1,11 @@
+[package]
+name = "example/versions_reg"
+version = "0.1.0"
+mojo = ["1.0.0", "1.1.0", "1.2.0"]
+
+[dependencies]
+"example/nsshim" = "0.1"
+
+[targets]
+lib = { path = "src/versions_reg" }
+tests = ["tests"]

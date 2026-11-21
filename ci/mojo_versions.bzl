@@ -6,6 +6,9 @@
     `-mojo<v>_0.conda`, and its outputs are in a directory of their own (another configuration: other action keys and cache entries);
   - a chain app -> util at a version: the library app imports is util's `:lib` configured for the same platform, built with util's `<v>` toolchain as
     util's `<v>` unit, and app's closure names that unit;
+  - a package over a registry package (examples/mojo/versions/reg), at each version: its `:prebuilt_nsshim` unpacks that version's `.conda` (the pinned file
+    `prebuilt_nsshim.conda` for the default, `..._mojo_<v>` for another, with the url, sha256 and size of that version's graph, a version of the registry package
+    of its own for 1.2.0), says that version's unit id and native sha256, and the library's closure names that unit and analyses against it;
   - the same through `mojo_at` (rules/matrix.bzl, examples/mojo/versions/BUCK): every library unit of the cell is built at its version, none at another;
   - eight examples of one version on the default platform: the same targets and the same paths of their default outputs as before versions existed
     (ci/mojo_versions_golden.bzl).
@@ -15,10 +18,12 @@ A platform that asks for a version a table has no graph for is refused, naming t
 """
 
 load("//examples/mojo/versions/app:buildrules.mojo.lock.bzl", "MOJOS")
+load("//examples/mojo/versions/reg:buildrules.mojo.lock.bzl", REG_MOJOS = "MOJOS")
 load(":mojo_versions_golden.bzl", "GOLDEN")
 
 APP = "//examples/mojo/versions/app"
 UTIL = "//examples/mojo/versions/util"
+REG = "//examples/mojo/versions/reg"
 DEFAULT_PLATFORM = "buildrules//platforms:linux_x86_64"
 
 # (target platform, Mojo version it builds). The first is the platform with no Mojo constraint: the default version, 1.0.0.
@@ -109,6 +114,41 @@ def _matrix_problems(ctx):
             problems.append("{}: builds the library units {} (count per package), not app's and util's once each".format(cell, units))
     return problems
 
+def _registry_problems(ctx):
+    """The registry package of `reg` at each version is the one of that version's graph: the archive target and its pin, the unit id, the natives, and the closure of the
+    library that imports it."""
+    problems = []
+    seen = {}
+    for platform, version in CELLS:
+        who = "{}:prebuilt_nsshim on {}".format(REG, platform)
+        unit = [u for u in REG_MOJOS[version]["GRAPHS"]["linux-64"]["units"] if u["kind"] == "prebuilt"][0]
+        node = ctx.configured_targets(REG + ":prebuilt_nsshim", target_platform = platform)
+        attrs = node.attrs_eager()
+        archive = attrs.archive.value()
+        want = "prebuilt_nsshim.conda" + ("" if version == "1.0.0" else "_mojo_" + version.replace(".", "_"))
+        if archive.name != want:
+            problems.append("{}: unpacks {}, not {}".format(who, archive.name, want))
+        if archive.name in seen:
+            problems.append("{}: unpacks {}, the archive of Mojo {}".format(who, archive.name, seen[archive.name]))
+        seen[archive.name] = version
+        pin = ctx.configured_targets(str(archive.raw_target()), target_platform = platform).attrs_eager()
+        art = unit["artifact"]
+        if pin.sha256.value() != art["sha256"] or pin.size_bytes.value() != art["size"] or not pin.url.value().endswith(art["url"].rpartition("/")[2]):
+            problems.append("{}: {} pins {} ({} bytes, {}), not the .conda of the graph for Mojo {}: {} ({} bytes, {})".format(
+                who, archive.name, pin.sha256.value(), pin.size_bytes.value(), pin.url.value(), version, art["sha256"], art["size"], art["url"]))
+        if attrs.unit_id.value() != unit["id"]:
+            problems.append("{}: says it is {}, not {}".format(who, attrs.unit_id.value(), unit["id"]))
+        natives = {n["soname"]: n["sha256"] for n in unit["natives"]}
+        if attrs.natives.value() != natives:
+            problems.append("{}: takes the natives {} out of the archive, not {}".format(who, attrs.natives.value(), natives))
+        lib = ctx.configured_targets(REG + ":lib_ungated", target_platform = platform)
+        if lib.attrs_eager().closure_ids.value().get("nsshim") != unit["id"]:
+            problems.append("{} on {}:lib_ungated: its closure names nsshim as {}, not {}".format(REG, platform, lib.attrs_eager().closure_ids.value().get("nsshim"), unit["id"]))
+        _, err = _outputs(ctx, lib)
+        if err:
+            problems.append("{} on {}:lib_ungated: does not analyse against the registry package it imports: {}".format(REG, platform, err))
+    return problems
+
 def golden_listing(ctx):
     """`{package: {target: [paths of its default outputs]}}` of the packages of GOLDEN on the default platform (`["<analysis fails>"]` for a target that does not analyse)."""
     out = {}
@@ -137,4 +177,4 @@ def _golden_problems(ctx):
 
 def versions_problems(ctx):
     """Every way the build of a package at a Mojo version is not that version's, or the default build is not what it was: a list of strings, empty when all holds."""
-    return _cell_problems(ctx) + _matrix_problems(ctx) + _golden_problems(ctx)
+    return _cell_problems(ctx) + _registry_problems(ctx) + _matrix_problems(ctx) + _golden_problems(ctx)
