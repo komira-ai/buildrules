@@ -787,8 +787,8 @@ test "every pinned version has a tarball for each host, except the versions kept
     // one host of the two is not enough, for either host
     try t.expectError(error.VersionWithoutHostRow, everyHostIsPinned(table, both[0..1], &.{"0.0.1"}));
     try t.expectError(error.VersionWithoutHostRow, everyHostIsPinned(table, both[1..2], &.{"0.0.1"}));
-    // a row of 1.2.3 does not stand in for a host row of another pinned version
-    try t.expectError(error.VersionWithoutHostRow, everyHostIsPinned(table, &both, &.{"1.2.3"}));
+    // naming as an exception a version that has both host rows is stale too
+    try t.expectError(error.LinuxOnlyVersionHasHostRow, everyHostIsPinned(table, &both, &.{ "0.0.1", "1.2.3" }));
     // an exception that has a host row, or names a version that is not pinned, is stale
     const mixed = [_]Row{ both[0], both[1], hostRow("0.0.1 macos-aarch64") };
     try t.expectError(error.LinuxOnlyVersionHasHostRow, everyHostIsPinned(table, &mixed, &.{"0.0.1"}));
