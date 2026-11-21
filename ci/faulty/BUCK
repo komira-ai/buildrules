@@ -168,6 +168,83 @@ rustfmt_check(
 
 rustfmt_config(name = "fmt_config_refused_with_its_reason", why = "crates/rustfmt.toml is the rustfmt config of the member crates/a under `cargo fmt`")
 
+# `:typecheck` (rules/rust/cargo_unit.bzl, mode typecheck): the pinned rustc to metadata only, with no clippy. Each is a crate unit as cargo_package makes them, over
+# one file of typecheck/. The control is the type check of a well-typed file that carries a clippy warning (built by //ci:all): green, while clippy under
+# `-D warnings` over the same file (`lint_of_a_clippy_warning`) is red, so the file does carry the warning the type check passes. The macro's own
+# `:typecheck` over the members is crates//:typecheck, also built by //ci:all.
+_TYPECHECK = dict(
+    pkg = "typecheck",
+    version = "0.1.0",
+    crate_name = "typecheck",
+    edition = "2021",
+    crate_hash = "0",
+    opt_level = "0",
+    debuginfo = "0",
+    debug_assertions = True,
+    overflow_checks = True,
+)
+
+cargo_unit(
+    name = "typecheck_of_a_clippy_warning",
+    mode = "typecheck",
+    root = "typecheck/clippy_warning.rs",
+    srcs = ["typecheck/clippy_warning.rs"],
+    visibility = ["//ci:"],
+    **_TYPECHECK
+)
+
+# The same file under clippy, with `-D warnings`: red with clippy's warning.
+cargo_unit(
+    name = "lint_of_a_clippy_warning",
+    mode = "lint",
+    deny_warnings = True,
+    root = "typecheck/clippy_warning.rs",
+    srcs = ["typecheck/clippy_warning.rs"],
+    **_TYPECHECK
+)
+
+# A type error: red with rustc's error.
+cargo_unit(
+    name = "typecheck_of_a_type_error",
+    mode = "typecheck",
+    root = "typecheck/type_error.rs",
+    srcs = ["typecheck/type_error.rs"],
+    **_TYPECHECK
+)
+
+# A type error inside `#[cfg(test)]`: the type check of the test target (`unit_mode = "test"`, compiled with `--test`, as `cargo check --all-targets` checks
+# it) is red; the type check of the library over the same file is green (its control, built by //ci:all).
+cargo_unit(
+    name = "typecheck_of_a_type_error_in_its_tests",
+    mode = "typecheck",
+    unit_mode = "test",
+    root = "typecheck/type_error_in_tests.rs",
+    srcs = ["typecheck/type_error_in_tests.rs"],
+    **_TYPECHECK
+)
+
+cargo_unit(
+    name = "typecheck_of_the_library_beside_a_type_error_in_its_tests",
+    mode = "typecheck",
+    root = "typecheck/type_error_in_tests.rs",
+    srcs = ["typecheck/type_error_in_tests.rs"],
+    visibility = ["//ci:"],
+    **_TYPECHECK
+)
+
+# Refused at analysis, by name (ci/negative.bzl, CASES): a type check given clippy's settings (its flags, `-D warnings` and a clippy.toml directory), which it
+# would drop.
+cargo_unit(
+    name = "typecheck_given_clippy_settings",
+    mode = "typecheck",
+    deny_warnings = True,
+    lint_flags = ["-W", "clippy::pedantic"],
+    conf_dir = "typecheck/clippy_warning.rs",
+    root = "typecheck/clippy_warning.rs",
+    srcs = ["typecheck/clippy_warning.rs"],
+    **_TYPECHECK
+)
+
 # A library welded to that test: the copy that is the published library is made by an action that reads the test's marker. (Control: //examples/hello:hello_lib.)
 rust_library(
     name = "lib_behind_a_failing_test",

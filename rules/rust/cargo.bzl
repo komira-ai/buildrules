@@ -24,20 +24,22 @@ Targets of a member package (all always present; `coverage` refuses until P8):
                Each is also a `buck2 test` target (label `test`): the same pinned binary, environment and working directory.
                A package that declares `postgres = { url-env = "NAME" }` runs each with a private Postgres, its URL in NAME.
     :lint      clippy over every unit `cargo clippy -p --all-targets` checks, `[lints]` as flags, `clippy.toml` as an input
+    :typecheck the pinned rustc over the same units to metadata only, as `cargo check -p --all-targets`: no clippy and no `-D warnings`,
+               so a type error is red and a clippy warning is not (the member's `[lints.rust]` levels apply, as under cargo)
     :fmt       the pinned `rustfmt --check` over the files `cargo fmt --check -p` reads, red on any difference (fmt.bzl)
     :flycheck  the same runs as diagnostics: one directory of `<unit>.json` files (rustc's JSON diagnostics, one per line), built
                even when the code has errors; what `buildrules rust-project check` builds for an editor's check on save
     :coverage  refuses with the reason (P8)
     :<action>  one per action named in [workspace.metadata.buildrules] / [package.metadata.buildrules]: its steps, chained
 
-Actions (policy only, resolved at sync):  `actions = { ci = ["fmt", "lint", "test"] }`; an action may not take a step's name.
+Actions (policy only, resolved at sync):  `actions = { ci = ["fmt", "typecheck", "test"] }`; an action may not take a step's name.
 The Postgres fixture (resolved at sync, the package's over the workspace's): `postgres = { url-env = "NAME" }` (rules/postgres/README.md).
 Doctests are out of v0: `:test` runs what `cargo test` runs minus them (a recorded gap).
 
 The workspace root package also has `:rust_analyzer_inputs` (rules/rust/rust_analyzer.bzl): what rust-analyzer needs that only a build
 makes, which `buildrules rust-project develop` downloads and writes rust-project.json from.
 
-A stale table is red: every `:test`, `:lint`, `:fmt`, `:debug` and `:release` carries the workspace's `:check` as a validation, which compares
+A stale table is red: every `:test`, `:lint`, `:typecheck`, `:fmt`, `:debug` and `:release` carries the workspace's `:check` as a validation, which compares
 the sha256 of Cargo.lock, rust-toolchain.toml and every Cargo.toml with what the table was made from. The compile actions
 never take a Cargo.toml as an input, so editing policy or metadata re-runs the check and nothing else.
 """
@@ -354,28 +356,33 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
     _step(name = "release", deps = [t(r) for r in release], check = chk, visibility = ["PUBLIC"])
     _step(name = "test", deps = [t(r) for r in tests], check = chk, visibility = ["PUBLIC"])
 
-    # 3. lint: every unit of this package that `cargo clippy -p <pkg> --all-targets` checks (lib, bins, test targets), not build scripts
+    # 3. lint and typecheck: every unit of this package that `cargo clippy -p <pkg> --all-targets` (and `cargo check -p <pkg> --all-targets`) checks (lib,
+    # bins, test targets), not build scripts. `:lint` is clippy-driver with the clippy flags, clippy.toml and the policy's `-D warnings`; `:typecheck` is the
+    # pinned rustc with none of them (cargo_unit.bzl, mode typecheck). Both depend on the dependency units `:debug` builds, so a dependency is compiled once for all three.
     reach = _closure_ids(build + test_roots, units)
     lint_ids = sorted([k for k in reach if k in mine and mine[k]["target_kind"] != ["custom-build"] and mine[k]["mode"] in ("build", "test")])
-    for uid in lint_ids:
-        u = mine[uid]
-        kw = _unit_args(uid, u, row, _globs_for(u))
-        if extra_srcs:
-            kw["extra_srcs"] = list(extra_srcs)
-        kw["mode"] = "lint"
-        kw["unit_mode"] = u["mode"]
-        kw["lint_flags"] = list(row["lints"]["clippy"])
-        kw["deny_warnings"] = row["deny_warnings"]
-        if conf:
-            kw["conf_dir"] = conf
-        deps = _deps_of(u, units, ws, third_party, here)
-        if deps:
-            kw["deps"] = deps
-        kw["rustc"] = rustc
-        cargo_unit(name = _tname(uid) + "_lint", **kw)
-        # The same run as diagnostics, for an editor (`:flycheck`).
-        cargo_unit(name = _tname(uid) + "_flycheck", diag = True, **kw)
-    _step(name = "lint", deps = [t(r) + "_lint" for r in lint_ids], check = chk, visibility = ["PUBLIC"])
+    for mode in ["lint", "typecheck"]:
+        for uid in lint_ids:
+            u = mine[uid]
+            kw = _unit_args(uid, u, row, _globs_for(u))
+            if extra_srcs:
+                kw["extra_srcs"] = list(extra_srcs)
+            kw["mode"] = mode
+            kw["unit_mode"] = u["mode"]
+            if mode == "lint":
+                kw["lint_flags"] = list(row["lints"]["clippy"])
+                kw["deny_warnings"] = row["deny_warnings"]
+                if conf:
+                    kw["conf_dir"] = conf
+            deps = _deps_of(u, units, ws, third_party, here)
+            if deps:
+                kw["deps"] = deps
+            kw["rustc"] = rustc
+            cargo_unit(name = _tname(uid) + "_" + mode, **kw)
+            if mode == "lint":
+                # The same run as diagnostics, for an editor (`:flycheck`).
+                cargo_unit(name = _tname(uid) + "_flycheck", diag = True, **kw)
+        _step(name = mode, deps = [t(r) + "_" + mode for r in lint_ids], check = chk, visibility = ["PUBLIC"])
     _flycheck_step(name = "flycheck", deps = [t(r) + "_flycheck" for r in lint_ids], check = chk, visibility = ["PUBLIC"])
     _refuse(name = "coverage", why = "coverage is P8: not implemented in this prototype", target_compatible_with = ["buildrules//platforms:not_implemented"], visibility = ["PUBLIC"])
 
@@ -449,7 +456,7 @@ def cargo_workspace(path = ".", table = None):
         visibility = ["PUBLIC"],
     )
     names = sorted(rows)
-    for step in ["fmt", "lint", "debug", "test", "release"]:
+    for step in ["fmt", "lint", "typecheck", "debug", "test", "release"]:
         _step(name = step, deps = ["//" + _join(ws, rows[n]["path"]) + ":" + step for n in names], visibility = ["PUBLIC"])
     acts = {}
     for n in names:

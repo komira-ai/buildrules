@@ -184,7 +184,7 @@ Staleness has three layers, from cheap to thorough:
 
 1. `buildrules check` is offline and read-only. It compares hashes and the presence of files and
    exits 1 on any difference, printing the fix. It is meant for pull requests.
-2. `:check`, a Buck2 *validation* attached to every `:debug`, `:release`, `:test` and `:lint`
+2. `:check`, a Buck2 *validation* attached to every `:debug`, `:release`, `:test`, `:lint` and `:typecheck`
    target, compares the same hashes at build time. A stale table cannot be built.
 3. `buildrules sync --check` regenerates into `buck-out/` and exits 1 unless every generated file
    is byte-identical to the committed one.
