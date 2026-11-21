@@ -9,19 +9,25 @@ that the platform it was given reports at least the level the test was built for
 A run given `postgres_url_env` (a cargo package that declares `postgres = { url-env = "NAME" }`, rules/postgres/README.md) runs under `pg_run`: it starts
 a private Postgres from the pinned tree (`buildrules//rules/postgres:prefix`), listening only on a Unix socket in the action's TMPDIR (or /tmp, for a TMPDIR too long for a socket path), runs the `check`
 command below with NAME set to the server's URL, and stops the server after it. A run without it is the command it always was.
+
+`cov_run` is the run of a test built with coverage counters (cargo_unit.bzl, `coverage = True`; a member's `:coverage`, coverage.bzl): the same
+command, the fixture included, with the profiles it writes kept as a second output.
 """
 
 load("//rules:isa.bzl", "isa_satisfies")
-load(":providers.bzl", "ExecIsaInfo", "RustTestInfo", "TestUnitInfo")
+load(":providers.bzl", "ExecIsaInfo", "RustCovRunInfo", "RustTestInfo", "TestUnitInfo")
 
-def _impl(ctx):
-    info = ctx.attrs.unit[TestUnitInfo]
+def _check_isa(ctx):
     have = ctx.attrs._exec_isa[ExecIsaInfo].level
     want = ctx.attrs.required_isa
     if not isa_satisfies(have, want):
         fail(("{}: built for ISA {} but its execution platform reports ISA={}. A test at an ISA level must run on a platform " +
               "that has it: set exec_compatible_with = test_exec_compatible_with() (rules/isa.bzl), which the cargo_unit and rust_test " +
               "macros do, so the farm schedules the run on a worker of at least that level.").format(ctx.label, want, have))
+
+def _impl(ctx):
+    info = ctx.attrs.unit[TestUnitInfo]
+    _check_isa(ctx)
     marker = ctx.actions.declare_output(ctx.label.name + ".passed")
     check = ctx.attrs._check_exe[RunInfo]
 
@@ -53,16 +59,63 @@ def _fixture(ctx):
         return []
     return [ctx.attrs._pg_run[RunInfo], "--prefix", ctx.attrs._pg_prefix[DefaultInfo].default_outputs[0], "--url-env", name, "--"]
 
+_ATTRS = {
+    # The variable the test reads the URL of its private Postgres from (rules/postgres/README.md); None: no server.
+    "postgres_url_env": attrs.option(attrs.string(), default = None),
+    "required_isa": attrs.string(default = ""),
+    "unit": attrs.dep(providers = [TestUnitInfo]),
+    "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
+    "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
+    "_pg_prefix": attrs.exec_dep(default = "buildrules//rules/postgres:prefix"),
+    "_pg_run": attrs.exec_dep(default = "buildrules//rules/postgres:pg_run", providers = [RunInfo]),
+}
+
 test_run = rule(
     impl = _impl,
-    attrs = {
-        # The variable the test reads the URL of its private Postgres from (rules/postgres/README.md); None: no server.
-        "postgres_url_env": attrs.option(attrs.string(), default = None),
-        "required_isa": attrs.string(default = ""),
-        "unit": attrs.dep(providers = [TestUnitInfo]),
-        "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
-        "_exec_isa": attrs.exec_dep(default = "buildrules//rules/rust:exec_isa", providers = [ExecIsaInfo]),
-        "_pg_prefix": attrs.exec_dep(default = "buildrules//rules/postgres:prefix"),
-        "_pg_run": attrs.exec_dep(default = "buildrules//rules/postgres:pg_run", providers = [RunInfo]),
-    },
+    attrs = _ATTRS,
+)
+
+def _cov_impl(ctx):
+    """The run of an instrumented test (cargo_unit.bzl, `coverage = True`): the same `check marker` command as `test_run`'s, with
+    LLVM_PROFILE_FILE naming a directory that is an output of the action. Every instrumented program of the run writes its profile there, one file
+    per process (`%p`, merged into one per program by `%m` when a pid is reused): the test binary, and a binary of the package it starts."""
+    info = ctx.attrs.unit[TestUnitInfo]
+    _check_isa(ctx)
+    marker = ctx.actions.declare_output(ctx.label.name + ".passed")
+    profiles = ctx.actions.declare_output(ctx.label.name + ".profiles", dir = True)
+    check = ctx.attrs._check_exe[RunInfo]
+
+    # The directory is made before the test starts (`--mkdir-env`), so a run whose programs wrote nothing leaves it empty and `:coverage` says so.
+    cmd = cmd_args(
+        _fixture(ctx),
+        check,
+        "marker",
+        "--out",
+        marker.as_output(),
+        info.marker,
+        info.start,
+        "--env",
+        cmd_args("BR_PROFILE_DIR=", profiles.as_output(), delimiter = ""),
+        "--abs",
+        "BR_PROFILE_DIR",
+        "--mkdir-env",
+        "BR_PROFILE_DIR",
+        "--env",
+        cmd_args("LLVM_PROFILE_FILE=", profiles.as_output(), "/%p-%m.profraw", delimiter = ""),
+        "--abs",
+        "LLVM_PROFILE_FILE",
+        "--",
+        info.exe,
+        hidden = info.hidden,
+    )
+    ctx.actions.run(cmd, category = "rust_cov_test", identifier = ctx.label.name, env = info.env)
+    return [
+        DefaultInfo(default_output = marker, other_outputs = [profiles], sub_targets = {"bin": [DefaultInfo(default_output = info.exe)], "profiles": [DefaultInfo(default_output = profiles)]}),
+        RustCovRunInfo(profiles = profiles, objects = [info.exe] + list(info.bins), marker = marker),
+    ]
+
+# The run of a test built with coverage counters: its marker (written only when the test passed, as `test_run`'s) and its profiles.
+cov_run = rule(
+    impl = _cov_impl,
+    attrs = _ATTRS,
 )

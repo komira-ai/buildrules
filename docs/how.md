@@ -367,7 +367,7 @@ and the file.
 action's `TMPDIR` (in `/tmp` when that path is too long for a socket), sets `NAME=postgresql://postgres@<socket directory, percent-encoded>:5432/postgres` for the test, and stops the server after it
 (docs/contract.md section 5; rules/postgres/README.md). A package's `postgres` replaces the workspace's.
 
-Steps are `fmt`, `lint`, `typecheck`, `debug`, `test`, `release` and `coverage` (`coverage` refuses for Rust: not built).
+Steps are `fmt`, `lint`, `typecheck`, `debug`, `test`, `release` and `coverage` (for Rust, a member's line and branch figures under llvm-cov; a `coverage_floor.txt` beside the member's BUCK file gives it `:coverage_floor`, which holds them to it).
 `init` writes a virtual workspace with `resolver = "3"` and `[profile.dev] incremental = false`.
 Incremental builds cannot be hermetic, and `sync` refuses an incremental profile with this fix.
 Link-time optimization, a custom codegen backend, rpath and split-debuginfo profile fields are
@@ -468,7 +468,7 @@ cargo_package(path = ".")
 An existing package that already builds with Cargo: `buildrules cargo adopt crates/existing` (no path
 means every member).
 
-Not supported: doctests (`cargo test` still runs them; `:test` does not), coverage,
+Not supported: doctests (`cargo test` still runs them; `:test` and `:coverage` do not),
 alternate-registry dependencies, git dependencies not pinned by commit or not on github.com, a root `[package]`.
 
 #### rust-analyzer

@@ -64,6 +64,25 @@ seed_zig_exe(
     visibility = ["PUBLIC"],
 )
 
+# rust_cov (rust_cov.zig): a member's `:coverage` (coverage.bzl), the profiles of its instrumented tests merged and read with the pinned llvm-cov into
+# the text cov_floor holds to the member's floor. Built behind its unit tests, which run it with programs of the test's PATH in place of the llvm tools.
+seed_zig_test(
+    name = "rust_cov_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "rust_cov_test.zig",
+    imports = ["rust_cov.zig"],
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+seed_zig_exe(
+    name = "rust_cov",
+    exec_compatible_with = LINUX_X86_64,
+    src = "rust_cov.zig",
+    unit_tests = [":rust_cov_unit"],
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["PUBLIC"],
+)
+
 # (Zig 0.15, like the launcher itself.) The version test of the launcher's `-C linker-features` rule (Rust 1.90+ only).
 seed_zig_test(
     name = "rustc_launch_unit",
@@ -140,8 +159,8 @@ export_file(
 # The coverage of the sources the tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to. crate_patch.zig is
 # built and tested by zig 0.12, which has no block counters, so its report is lines only (coverage_crate_patch).
 zig_coverage(
-    test_targets = [":rustc_launch_unit", ":sync_stage_unit", ":rustc_diag_unit"],
-    expect = ["rules/rust/rustc_launch.zig", "rules/rust/sync_stage.zig", "rules/rust/rustc_diag.zig"],
+    test_targets = [":rustc_launch_unit", ":sync_stage_unit", ":rustc_diag_unit", ":rust_cov_unit"],
+    expect = ["rules/rust/rustc_launch.zig", "rules/rust/sync_stage.zig", "rules/rust/rustc_diag.zig", "rules/rust/rust_cov.zig"],
 )
 
 zig_coverage(

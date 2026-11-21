@@ -3,9 +3,12 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("//:buildrules.bzl", "cargo_package")
 
 # The build script imports protos from ../../shared/proto, a directory outside this package: declared here, so it is an input of the script's run.
+# `:coverage` is lines only: with branch counters (`-Z coverage-options=branch`, unstable in rustc 1.95.0) the integration test binary of this
+# member makes the pinned llvm-cov 22 crash (SIGSEGV in CoverageMapping::getInstantiationGroups) on `llvm-cov export`, while its lines export.
 cargo_package(
     path = ".",
     extra_srcs = ["//shared:proto"],
+    coverage_branches = False,
 )
 
 # ---- The build script's run with the declared directory left out: red by design, on a farm ----------------------------------------------------------------

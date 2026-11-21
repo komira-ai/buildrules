@@ -16,6 +16,13 @@ the per-crate cache. Nothing in a key names the workspace member being edited.
                           `-D warnings`. The output is the metadata file; a type or borrow error fails the action, a clippy
                           warning does not (a rustc lint fails it only if the unit's `rustc_flags`, the member's `[lints.rust]`, deny it).
 
+`coverage = True` (modes build and test, a unit that runs on the target: not a build script or a proc-macro) compiles the unit with
+LLVM's coverage counters, `-C instrument-coverage -Z coverage-options=branch`, a member's `:coverage` (rules/rust/coverage.bzl);
+`coverage_branches = False` leaves out the branch counters (`-C instrument-coverage` alone).
+Branch counters are an unstable option of the pinned stable rustc, so a compile with them is given `RUSTC_BOOTSTRAP=1`; the unit's
+other flags, and every unit it depends on that is not instrumented, are those of the plain build. A test unit with it is run by
+`cov_run` (test_run.bzl), which keeps the profiles the run writes, instead of `test_run`.
+
 The build-script contract (decision.md 6.1) is implemented by `bs_runner.zig`; this file builds its command line:
   env       built from nothing: CARGO_MANIFEST_DIR, CARGO_MANIFEST_LINKS, CARGO_PKG_*, CARGO_FEATURE_*, CARGO_CFG_* (from
             `rustc --print=cfg`), CARGO_ENCODED_RUSTFLAGS, TARGET, HOST, OPT_LEVEL, DEBUG, PROFILE, NUM_JOBS, OUT_DIR,
@@ -35,7 +42,7 @@ The build-script contract (decision.md 6.1) is implemented by `bs_runner.zig`; t
 load("//rules:isa.bzl", "required_isa", "rustc_isa_flags", "test_exec_compatible_with")
 load(":providers.bzl", "BuildScriptInfo", "RustCrateInfo", "RustToolchainInfo", "TestUnitInfo")
 load(":select.bzl", "toolchain_for")
-load(":test_run.bzl", "test_run")
+load(":test_run.bzl", "cov_run", "test_run")
 
 _TOOLCHAIN = "toolchains//:rust"
 _NONCE = read_config("buildrules", "unit_nonce", "")
@@ -203,6 +210,10 @@ def _flags(ctx, crate_type, test):
         f += ["-C", "codegen-units=" + a.codegen_units]
     if test:
         f.append("--test")
+    if a.coverage:
+        f += ["-C", "instrument-coverage"]
+        if a.coverage_branches:
+            f += ["-Z", "coverage-options=branch"]
     if a.cap_lints:
         f += ["--cap-lints", "allow"]
     for c in a.cfgs:
@@ -267,6 +278,10 @@ def _rustc(ctx, crate_type, out, test = False, lint = False, typecheck = False, 
     env = _pkg_env(ctx)
     env["CARGO_MANIFEST_DIR"] = _manifest_dir(ctx)
     env["BUILDRULES_NONCE"] = _NONCE
+    if ctx.attrs.coverage and ctx.attrs.coverage_branches:
+        # `-Z coverage-options=branch` on the pinned stable rustc: the launcher passes RUSTC_BOOTSTRAP to rustc only because it is named here.
+        env["RUSTC_BOOTSTRAP"] = "1"
+        env["BR_PASSTHROUGH"] = "RUSTC_BOOTSTRAP"
     if lint:
         env["BR_DRIVER"] = cmd_args(tc.clippy, "/bin/clippy-driver", delimiter = "")
         if ctx.attrs.conf_dir:
@@ -355,6 +370,7 @@ def _test_impl(ctx):
         TestUnitInfo(
             exe = exe,
             hidden = _inputs(ctx) + list(ctx.attrs.run_data) + bins,
+            bins = list(bins),
             env = env,
             start = _START + (_START_TARGET_TMPDIR if "CARGO_TARGET_TMPDIR" in env else []),
             marker = _MARKER,
@@ -452,9 +468,22 @@ def _check_extra_srcs(ctx):
             fail(("{}: extra_srcs names {}, a copy made by a rule and not a file of the tree: a source or a build script reads it at its own path. " +
                   "Export it with `export_file(name = ..., src = ..., mode = \"reference\")`").format(ctx.label.raw_target(), s.short_path))
 
+def _check_coverage(ctx):
+    """Coverage counters are for the code a test runs on the target: a unit of a mode that runs no test code, a build script and a proc-macro
+    (both run on the build host, inside the compile) are refused by name. The test target of a proc-macro crate is a test binary on the target,
+    as any other, and is instrumented."""
+    a = ctx.attrs
+    if not a.coverage:
+        return
+    if a.mode not in ("build", "test"):
+        fail("{}: coverage is for a unit in mode build or test, not mode {}".format(ctx.label.raw_target(), a.mode))
+    if (a.crate_type == "proc-macro" and a.mode == "build") or a.build_script_name or a.side != "target":
+        fail("{}: coverage is for a unit that runs on the target; a build script or a proc-macro runs on the build host".format(ctx.label.raw_target()))
+
 def _impl(ctx):
     if ctx.attrs.postgres_url_env != None:
         fail("{}: postgres_url_env is for a unit in mode test (the run of a test), not mode {}".format(ctx.label.raw_target(), ctx.attrs.mode))
+    _check_coverage(ctx)
     _check_extra_srcs(ctx)
     if ctx.attrs.mode == "lint":
         return _metadata_impl(ctx, lint = True)
@@ -484,6 +513,10 @@ _cargo_unit = rule(
         "edition": attrs.string(),
         "crate_hash": attrs.string(),
         "conf_dir": attrs.option(attrs.source(), default = None),
+        # Compile with coverage counters (see the module comment); modes build and test only.
+        "coverage": attrs.bool(default = False),
+        # With `coverage`: branch counters too (`-Z coverage-options=branch`); False is lines only (cargo.bzl `coverage_branches`).
+        "coverage_branches": attrs.bool(default = True),
         # Files (or directories) of the source tree outside this package that `include_str!` and friends read: inputs only.
         "extra_srcs": attrs.list(attrs.source(allow_directory = True), default = []),
         # Targets whose default output is a static archive a binary or test links (a buildrules C library replacing a build script).
@@ -538,7 +571,8 @@ def cargo_unit(name, rustc = None, **kwargs):
 
     The target platform's ISA level (rules/isa.bzl) becomes rustc flags for units that run on the TARGET (`side = "target"`, not a
     proc-macro); build scripts and proc-macros run on the build host and never get them. A unit in mode `test` is two targets: `<name>__bin`
-    compiles the binary on the ISA-agnostic platform, and `<name>` (test_run.bzl) runs it on the platform of the target's level.
+    compiles the binary on the ISA-agnostic platform, and `<name>` (test_run.bzl) runs it on the platform of the target's level: `test_run`,
+    or `cov_run` for a unit with `coverage = True`.
     """
     if "toolchain" not in kwargs:
         kwargs["toolchain"] = toolchain_for(rustc)
@@ -550,7 +584,8 @@ def cargo_unit(name, rustc = None, **kwargs):
         _cargo_unit(name = name, postgres_url_env = postgres_url_env, **kwargs)
         return
     _cargo_unit(name = name + "__bin", **kwargs)
-    test_run(
+    run = cov_run if kwargs.get("coverage") else test_run
+    run(
         name = name,
         unit = ":" + name + "__bin",
         required_isa = required_isa(),

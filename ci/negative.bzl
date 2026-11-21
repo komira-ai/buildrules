@@ -74,6 +74,9 @@ CASES = [
     ("//ci/faulty:fmt_config_refused_with_its_reason", "buildrules//platforms:linux_x86_64", "fmt_config_refused_with_its_reason: crates/rustfmt.toml is the rustfmt config of the member crates/a"),
     # A crate unit in mode typecheck runs no clippy (rules/rust/cargo_unit.bzl): clippy's flags and `-D warnings` given to one are refused by name, not dropped.
     ("//ci/faulty:typecheck_given_clippy_settings", "buildrules//platforms:linux_x86_64", "typecheck_given_clippy_settings: lint_flags, deny_warnings, conf_dir configure clippy, which mode typecheck does not run; they are for mode lint"),
+    # Coverage counters (rules/rust/cargo_unit.bzl, `coverage = True`) are for code a test runs on the target: a lint unit and a proc-macro given them are refused by name.
+    ("//ci/faulty:coverage_of_a_lint", "buildrules//platforms:linux_x86_64", "coverage_of_a_lint: coverage is for a unit in mode build or test, not mode lint"),
+    ("//ci/faulty:coverage_of_a_proc_macro", "buildrules//platforms:linux_x86_64", "coverage_of_a_proc_macro: coverage is for a unit that runs on the target; a build script or a proc-macro runs on the build host"),
 ] + [
     ("//examples/mojo/subdirs:lib", platform, "has no unit graph for this target platform. It holds graphs for linux-64, linux-aarch64, osx-arm64")
     for platform in UNSUPPORTED_SUBDIR_PLATFORMS
@@ -116,6 +119,12 @@ COVERAGE_REDS = [
     ("//examples/mojo/coverage_floors:branches_floor_above_the_coverage", "branch coverage is 50.00% (1/2), below its floor 60.00%: coverage fell"),
     ("//examples/mojo/coverage_floors:floor_without_branches", "the tests record branches (1/2) and the floor file has no `branches` figure: add `branches 50.00`"),
     ("//examples/mojo/coverage_floors:branches_floor_on_no_decisions", "the floor file has a `branches` figure and the coverage has no branches to hold"),
+    # A cargo member's coverage (rules/rust/coverage.bzl) under floors above it. The figures are what llvm-cov reads of covdemo's tests: lines 18/21 and
+    # branch arms 4/6 only when the integration test links the instrumented library and the binary it runs writes its profile; its own :coverage_floor
+    # (those figures exactly) is the green control, in //ci:crates.
+    ("crates//crates/covdemo:coverage_under_its_line_floor", "line coverage is 85.71% (18/21), below its floor 85.72%: coverage fell"),
+    ("crates//crates/covdemo:coverage_under_its_branch_floor", "branch coverage is 66.66% (4/6), below its floor 66.67%: coverage fell"),
+    ("crates//crates/covdemo:coverage_floor_without_branches", "the tests record branches (4/6) and the floor file has no `branches` figure: add `branches 66.66`"),
 ]
 
 def coverage_red_problems(ctx):
@@ -144,6 +153,17 @@ COVERAGE_FLOOR_PACKAGES = [
     ("//examples/mojo/ws", False),
     ("//examples/mojo/ws/util", False),
     ("//examples/mojo/ws/util/base", False),
+    # The cargo members (rules/rust/cargo.bzl): a floor file gives `:coverage_floor`, its absence none.
+    ("crates//crates/covdemo", True),
+    ("crates//crates/linked", True),
+    ("crates//crates/linkuser", True),
+    ("crates//crates/macros", True),
+    ("crates//crates/pgdemo", True),
+    ("crates//crates/selfdev", True),
+    ("crates//crates/stamped", True),
+    ("crates//crates/zdemo", True),
+    ("crates//crates/protos", False),
+    ("gitcrates//crates/gdemo", True),
 ]
 
 def coverage_floor_wiring_problems(ctx):

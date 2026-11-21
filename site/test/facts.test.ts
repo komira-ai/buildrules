@@ -128,10 +128,10 @@ describe('rule pages against the rule sources', () => {
 
   test('the rust macros take the arguments the page lists', () => {
     const src = sources['/rules/rust/'];
-    expect(src).toMatch(/def cargo_package\(path = "\.", table = None, third_party = None, check = None, extra_srcs = \[\], refuse = fail, stamp_env = \{\}, stamp_rustc_env = \{\}\)/);
+    expect(src).toMatch(/def cargo_package\(path = "\.", table = None, third_party = None, check = None, extra_srcs = \[\], refuse = fail, stamp_env = \{\}, stamp_rustc_env = \{\}, coverage_branches = True\)/);
     expect(src).toMatch(/def cargo_workspace\(path = "\.", table = None\)/);
     const t = pageText(page('/rules/rust/'));
-    expect(t).toContain('cargo_package(path = ".", table, third_party, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {})');
+    expect(t).toContain('cargo_package(path = ".", table, third_party, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {}, coverage_branches = True)');
     expect(t).toContain('cargo_workspace(path = ".", table)');
   });
 

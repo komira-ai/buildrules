@@ -1,0 +1,8 @@
+[package]
+name = "covdemo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The fixture of a member's `:coverage` (rules/rust/coverage.bzl): a library whose figures under its tests are known, a binary that an
+# integration test runs, and no dependency. Its coverage_floor.txt holds today's figures; ci/negative.bzl holds the floors above them red.
