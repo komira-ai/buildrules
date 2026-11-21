@@ -134,7 +134,7 @@ test "the program: the same graph writes the result; every refusal is a message 
     try t.expect(std.mem.indexOf(u8, (try drive(a, tmp.dir, good, failSpawn, 6)).?, "exit 4): no graph from this lock") != null);
     try t.expect(std.mem.indexOf(u8, (try drive(a, tmp.dir, good, killedSpawn, 6)).?, "did not succeed") != null);
     try t.expect(std.mem.indexOf(u8, (try drive(a, tmp.dir, good, missingSpawn, 6)).?, "FileNotFound") != null);
-    try t.expectEqualStrings("usage: table_check [--workspace-root] [--subdir <subdir>]... <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>", (try drive(a, tmp.dir, good, okSpawn, 5)).?);
+    try t.expectEqualStrings("usage: table_check [--workspace-root] [--subdir <subdir>]... [--also <mojo-version>[@<subdir>]]... <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>", (try drive(a, tmp.dir, good, okSpawn, 5)).?);
     try t.expect(absent(tmp.dir, "out"));
 
     var msg: []const u8 = "";
@@ -420,4 +420,194 @@ test "a --subdir given to a run that has no way to plan another subdir stops the
     try t.expect(std.mem.indexOf(u8, msg, "NoSpawnForSubdirs") != null);
     // The same table without the flag is the linux-64 check, and passes.
     try T.run(a, tmp.dir, &.{ "mopm", "ws", ".", "1.0.0", "table.bzl", "out" }, baseSpawn, &msg);
+}
+
+// ---- one graph per other Mojo version (--also) ------------------------------------------------------------
+
+const graph_v2 = "{\n  \"unit_graph\": 1,\n  \"mojo\": \"1.2.0\"\n}\n";
+const graph_v2_arm = "{\n  \"unit_graph\": 1,\n  \"mojo\": \"1.2.0\",\n  \"subdir\": \"osx-arm64\"\n}\n";
+
+/// A table of the default graph and the given `GRAPH_JSON_MOJO_1_2_0` (null: none) and `GRAPH_JSON_MOJO_1_2_0_OSX_ARM64` (null: none) blocks.
+fn mojoTable(a: std.mem.Allocator, v2: ?[]const u8, v2_arm: ?[]const u8) ![]u8 {
+    const b1 = if (v2) |g| try std.fmt.allocPrint(a, "GRAPH_JSON_MOJO_1_2_0 = r'''{s}'''\n", .{g}) else "";
+    const b2 = if (v2_arm) |g| try std.fmt.allocPrint(a, "GRAPH_JSON_MOJO_1_2_0_OSX_ARM64 = r'''{s}'''\n", .{g}) else "";
+    return std.fmt.allocPrint(a, "{s}GRAPH_JSON = r'''{s}'''\n{s}{s}{s}", .{ head, graph, tail, b1, b2 });
+}
+
+var asked: [8][]const u8 = undefined;
+var n_also: usize = 0;
+
+fn mojoSpawn(_: std.mem.Allocator, _: []const u8, _: []const u8, mojo: []const u8, _: ?[]const u8) anyerror!T.Ran {
+    asked[n_also % asked.len] = mojo;
+    n_also += 1;
+    return .{ .exited = true, .stdout = if (std.mem.eql(u8, mojo, "1.0.0")) graph else graph_v2 };
+}
+
+fn mojoSubdirSpawn(_: std.mem.Allocator, _: []const u8, _: []const u8, mojo: []const u8, _: ?[]const u8, subdir: []const u8) anyerror!T.Ran {
+    asked[n_also % asked.len] = mojo;
+    n_also += 1;
+    try t.expectEqualStrings("osx-arm64", subdir);
+    return .{ .exited = true, .stdout = graph_v2_arm };
+}
+
+fn emptyMojoSpawn(_: std.mem.Allocator, _: []const u8, _: []const u8, mojo: []const u8, _: ?[]const u8) anyerror!T.Ran {
+    return .{ .exited = true, .stdout = if (std.mem.eql(u8, mojo, "1.0.0")) graph else "" };
+}
+
+/// The program with `extra` options before the positional arguments, over a table; its refusal, or null when it wrote the result.
+fn driveAlso(a: std.mem.Allocator, dir: std.fs.Dir, table_text: []const u8, extra: []const []const u8, spawn: T.Spawn) !?[]const u8 {
+    try dir.writeFile(.{ .sub_path = "table.bzl", .data = table_text });
+    try dir.writeFile(.{ .sub_path = "mopm", .data = "" });
+    try dir.makePath("ws");
+    n_also = 0;
+    var all = std.ArrayList([]const u8).empty;
+    try all.appendSlice(a, extra);
+    try all.appendSlice(a, &.{ "mopm", "ws", ".", "1.0.0", "table.bzl", "out" });
+    var msg: []const u8 = "";
+    T.runWith(a, dir, all.items, spawn, mojoSubdirSpawn, &msg) catch |e| {
+        try t.expectEqual(error.Refused, e);
+        return msg;
+    };
+    return null;
+}
+
+test "the block of a Mojo version is named by the version and the subdir, and found by that name" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings("GRAPH_JSON_MOJO_1_2_0", try T.mojoBlockName(a, "1.2.0", null));
+    try t.expectEqualStrings("GRAPH_JSON_MOJO_1_2_0_OSX_ARM64", try T.mojoBlockName(a, "1.2.0", "osx-arm64"));
+    try t.expectEqualStrings("GRAPH_JSON_MOJO_1_3_0_BETA_1", try T.mojoBlockName(a, "1.3.0-beta.1", null));
+    const text = try mojoTable(a, graph_v2, graph_v2_arm);
+    try t.expectEqualStrings(graph_v2, try T.graphOfMojo(a, text, "1.2.0", null));
+    try t.expectEqualStrings(graph_v2_arm, try T.graphOfMojo(a, text, "1.2.0", "osx-arm64"));
+    try t.expectEqualStrings(graph, try T.graphOf(text));
+    try t.expectError(error.NoGraph, T.graphOfMojo(a, text, "1.1.0", null));
+    try t.expectError(error.NoGraph, T.graphOfMojo(a, try mojoTable(a, graph_v2, null), "1.2.0", "osx-arm64"));
+    var why: []const u8 = "";
+    try t.expectError(error.EmptyOutput, T.checkMojo(a, text, "1.2.0", null, "", &why));
+    try t.expectError(error.NoGraph, T.checkMojo(a, text, "1.1.0", null, graph_v2, &why));
+    try T.checkMojo(a, text, "1.2.0", null, graph_v2[0 .. graph_v2.len - 1], &why);
+}
+
+test "--also: a table whose block for the other version is what mopm says writes the result, asking mopm for that version" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try t.expect((try driveAlso(a, tmp.dir, try mojoTable(a, graph_v2, null), &.{ "--also", "1.2.0" }, mojoSpawn)) == null);
+    try t.expectEqual(@as(usize, 2), n_also);
+    try t.expectEqualStrings("1.0.0", asked[0]);
+    try t.expectEqualStrings("1.2.0", asked[1]);
+    // the subdir form, next to the plain one
+    try t.expect((try driveAlso(a, tmp.dir, try mojoTable(a, graph_v2, graph_v2_arm), &.{ "--also", "1.2.0", "--also", "1.2.0@osx-arm64" }, mojoSpawn)) == null);
+    try t.expectEqual(@as(usize, 3), n_also);
+    try t.expectEqualStrings("1.2.0", asked[2]);
+}
+
+test "--also: a block that differs from mopm's output is refused, naming the block and the version" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const m = (try driveAlso(a, tmp.dir, try mojoTable(a, "{}\n", null), &.{ "--also", "1.2.0" }, mojoSpawn)).?;
+    try t.expectEqualStrings("table.bzl: the GRAPH_JSON_MOJO_1_2_0 graph (Mojo 1.2.0): the committed graph is not what mopm says: first difference at line 1\n  table: {}\n  mopm:  {\nrun `buildrules mojo sync` and commit the result", m);
+    // the subdir block of the version
+    const s = (try driveAlso(a, tmp.dir, try mojoTable(a, graph_v2, graph_v2), &.{ "--also", "1.2.0@osx-arm64" }, mojoSpawn)).?;
+    try t.expect(std.mem.startsWith(u8, s, "table.bzl: the GRAPH_JSON_MOJO_1_2_0_OSX_ARM64 graph (Mojo 1.2.0): the committed graph is not what mopm says: first difference at line 3\n"));
+}
+
+test "--also: a missing block is refused, naming the block and the version" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const m = (try driveAlso(a, tmp.dir, try mojoTable(a, null, null), &.{ "--also", "1.2.0" }, mojoSpawn)).?;
+    try t.expectEqualStrings("table.bzl has no GRAPH_JSON_MOJO_1_2_0 block: the pinned mopm prints a graph for Mojo 1.2.0 and the table holds none; run `buildrules mojo sync`", m);
+    const s = (try driveAlso(a, tmp.dir, try mojoTable(a, graph_v2, null), &.{ "--also", "1.2.0@osx-arm64" }, mojoSpawn)).?;
+    try t.expectEqualStrings("table.bzl has no GRAPH_JSON_MOJO_1_2_0_OSX_ARM64 block: the pinned mopm prints a graph for Mojo 1.2.0 --subdir osx-arm64 and the table holds none; run `buildrules mojo sync`", s);
+}
+
+test "--also: mopm printing nothing or failing is refused with the version, and the default graph is checked first" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const text = try mojoTable(a, graph_v2, null);
+    const e = (try driveAlso(a, tmp.dir, text, &.{ "--also", "1.2.0" }, emptyMojoSpawn)).?;
+    try t.expectEqualStrings("`mopm plan --unit-graph --locked --mojo 1.2.0` printed nothing", e);
+    const f = (try driveAlso(a, tmp.dir, text, &.{ "--also", "1.2.0" }, failSpawn)).?;
+    try t.expectEqualStrings("`mopm plan --unit-graph --locked --mojo 1.0.0` did not succeed (exit 4): no graph from this lock", f);
+    const d = (try driveAlso(a, tmp.dir, text, &.{ "--also", "1.2.0" }, otherSpawn)).?;
+    try t.expect(std.mem.startsWith(u8, d, "table.bzl: the committed graph is not what mopm says: first difference at line 1\n"));
+}
+
+test "--also: the option needs a value, and its @ splits the version from the subdir" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    const text = try mojoTable(a, graph_v2, graph_v2_arm);
+    // no value: the option is not one, and what is left is the wrong number of arguments
+    var msg: []const u8 = "";
+    try t.expectError(error.Refused, T.run(a, tmp.dir, &.{"--also"}, okSpawn, &msg));
+    try t.expect(std.mem.startsWith(u8, msg, "usage: table_check "));
+    try t.expect(std.mem.indexOf(u8, msg, "[--also <mojo-version>[@<subdir>]]...") != null);
+    // an empty version or subdir
+    try t.expectEqualStrings("--also @osx-arm64: expected <mojo-version> or <mojo-version>@<subdir>", (try driveAlso(a, tmp.dir, text, &.{ "--also", "@osx-arm64" }, mojoSpawn)).?);
+    try t.expectEqualStrings("--also 1.2.0@: expected <mojo-version> or <mojo-version>@<subdir>", (try driveAlso(a, tmp.dir, text, &.{ "--also", "1.2.0@" }, mojoSpawn)).?);
+    // the subdir is planned with --subdir (the version it was asked for is 1.2.0), the plain form without
+    try t.expect((try driveAlso(a, tmp.dir, text, &.{ "--also", "1.2.0@osx-arm64" }, mojoSpawn)) == null);
+    try t.expectEqual(@as(usize, 2), n_also);
+    try t.expectEqualStrings("1.2.0", asked[1]);
+}
+
+/// `runWith` over `--also` options, every allocation failing in turn until it ends for `want` (null: it wrote the result) with none having failed.
+fn sweepAlso(dir: std.fs.Dir, extra: []const []const u8, spawn: T.Spawn, want: ?anyerror) !void {
+    var all: [12][]const u8 = undefined;
+    @memcpy(all[0..extra.len], extra);
+    const rest = [_][]const u8{ "mopm", "ws", ".", "1.0.0", "table.bzl", "out" };
+    @memcpy(all[extra.len .. extra.len + rest.len], &rest);
+    var i: usize = 0;
+    while (i < 300) : (i += 1) {
+        var inner = std.heap.ArenaAllocator.init(t.allocator);
+        defer inner.deinit();
+        var fa = t.FailingAllocator.init(inner.allocator(), .{ .fail_index = i });
+        var msg: []const u8 = "";
+        if (T.runWith(fa.allocator(), dir, all[0 .. extra.len + rest.len], spawn, mojoSubdirSpawn, &msg)) |_| {
+            try t.expect(want == null and !fa.has_induced_failure);
+            return;
+        } else |e| {
+            if (!fa.has_induced_failure) {
+                try t.expectEqual(want.?, e);
+                return;
+            }
+            try t.expectEqual(error.OutOfMemory, e);
+        }
+    }
+    return error.SweepDidNotEnd;
+}
+
+test "--also: every refusal and the result are still what they are when the allocation that words them fails" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "mopm", .data = "" });
+    try tmp.dir.makePath("ws");
+    try tmp.dir.writeFile(.{ .sub_path = "table.bzl", .data = try mojoTable(a, graph_v2, graph_v2_arm) });
+    try sweepAlso(tmp.dir, &.{ "--also", "1.2.0", "--also", "1.2.0@osx-arm64" }, mojoSpawn, null);
+    try sweepAlso(tmp.dir, &.{ "--also", "@osx-arm64" }, mojoSpawn, error.Refused);
+    try sweepAlso(tmp.dir, &.{ "--also", "1.2.0" }, emptyMojoSpawn, error.Refused);
+    try sweepAlso(tmp.dir, &.{ "--also", "1.2.0" }, failSpawn, error.Refused);
+    try tmp.dir.writeFile(.{ .sub_path = "table.bzl", .data = try mojoTable(a, "{}\n", null) });
+    try sweepAlso(tmp.dir, &.{ "--also", "1.2.0" }, mojoSpawn, error.Refused);
+    try tmp.dir.writeFile(.{ .sub_path = "table.bzl", .data = try mojoTable(a, null, null) });
+    try sweepAlso(tmp.dir, &.{ "--also", "1.2.0" }, mojoSpawn, error.Refused);
 }

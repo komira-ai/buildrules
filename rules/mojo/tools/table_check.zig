@@ -1,6 +1,6 @@
 //! table_check: is the committed table what the pinned mopm says now?
 //!
-//! usage: table_check [--workspace-root] [--subdir <subdir>]... <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>
+//! usage: table_check [--workspace-root] [--subdir <subdir>]... [--also <mojo-version>[@<subdir>]]... <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>
 //!
 //! `buildrules mojo sync` commits mopm's `plan --unit-graph --locked` output between `GRAPH_JSON = r'''` and `'''` in
 //! buildrules.mojo.lock.bzl, with the path dependencies reduced to their identity (graph_norm.zig). This is the build's copy of that
@@ -12,6 +12,11 @@
 //! and dependencies, the `needs` of a native, the sha256 of every source and archive of the package itself) is in that text, so a table edited
 //! by hand, or left behind by a change to a source, a lock or the pinned mopm, is red. The one difference from the committed text that is
 //! allowed is the newline `sync` adds when mopm's output does not end with one.
+//!
+//! A package whose mopm.toml lists several Mojo versions has one block per other version: `GRAPH_JSON_MOJO_<V>` (`.` and `-` of the version
+//! become `_`) for linux-64 and `GRAPH_JSON_MOJO_<V>_<SUBDIR>` for another subdir. `--also <v>` runs the same command with `--mojo <v>`, and
+//! `--also <v>@<subdir>` with `--subdir <subdir>` as well, and compares the output, normalised the same way, with that block, byte for byte
+//! with the same newline allowance; a refusal names the block and the version. Without `--also` the check is the one above.
 
 const std = @import("std");
 const norm = @import("mojo_graph_norm");
@@ -44,6 +49,25 @@ pub fn graphOfSubdir(a: std.mem.Allocator, table: []const u8, subdir: []const u8
     return graphAfter(table, open);
 }
 
+/// The name of the block of Mojo version `version` for `subdir` (null: linux-64): `1.2.0` -> `GRAPH_JSON_MOJO_1_2_0`, with `osx-arm64`
+/// `GRAPH_JSON_MOJO_1_2_0_OSX_ARM64`.
+pub fn mojoBlockName(a: std.mem.Allocator, version: []const u8, subdir: ?[]const u8) std.mem.Allocator.Error![]const u8 {
+    var name = std.ArrayList(u8).empty;
+    try name.appendSlice(a, "GRAPH_JSON_MOJO_");
+    for (version) |c| try name.append(a, if (c == '.' or c == '-') '_' else std.ascii.toUpper(c));
+    if (subdir) |s| {
+        try name.append(a, '_');
+        for (s) |c| try name.append(a, if (c == '-') '_' else std.ascii.toUpper(c));
+    }
+    return name.items;
+}
+
+/// The text of the graph of another Mojo version in a table: the block named by `mojoBlockName`.
+pub fn graphOfMojo(a: std.mem.Allocator, table: []const u8, version: []const u8, subdir: ?[]const u8) (error{NoGraph} || std.mem.Allocator.Error)![]const u8 {
+    const open = try std.fmt.allocPrint(a, "\n{s} = r'''", .{try mojoBlockName(a, version, subdir)});
+    return graphAfter(table, open);
+}
+
 /// The offset of the first byte at which the table's graph and mopm's output differ, or null when they are the same text.
 pub fn firstDifference(table_graph: []const u8, mopm_out: []const u8) ?usize {
     const added = mopm_out.len == 0 or mopm_out[mopm_out.len - 1] != '\n';
@@ -73,6 +97,16 @@ pub fn checkIn(a: std.mem.Allocator, table: []const u8, subdir: ?[]const u8, mop
     // mopm printed nothing: there is no graph to be the same as, whatever the table holds (a blank block would pass the newline allowance).
     if (mopm_out.len == 0) return error.EmptyOutput;
     const graph = if (subdir) |s| try graphOfSubdir(a, table, s) else try graphOf(table);
+    return differ(a, graph, mopm_out, why);
+}
+
+/// `check` for the block of Mojo version `version` (`graphOfMojo`).
+pub fn checkMojo(a: std.mem.Allocator, table: []const u8, version: []const u8, subdir: ?[]const u8, mopm_out: []const u8, why: *[]const u8) (Error || std.mem.Allocator.Error)!void {
+    if (mopm_out.len == 0) return error.EmptyOutput;
+    return differ(a, try graphOfMojo(a, table, version, subdir), mopm_out, why);
+}
+
+fn differ(a: std.mem.Allocator, graph: []const u8, mopm_out: []const u8, why: *[]const u8) (Error || std.mem.Allocator.Error)!void {
     const at = firstDifference(graph, mopm_out) orelse return;
     const t = lineAt(graph, at);
     const m = lineAt(mopm_out, at);
@@ -80,7 +114,7 @@ pub fn checkIn(a: std.mem.Allocator, table: []const u8, subdir: ?[]const u8, mop
     return error.Differs;
 }
 
-const usage = "usage: table_check [--workspace-root] [--subdir <subdir>]... <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>";
+const usage = "usage: table_check [--workspace-root] [--subdir <subdir>]... [--also <mojo-version>[@<subdir>]]... <mopm> <workspace> <package-dir> <mojo-version> <buildrules.mojo.lock.bzl> <out>";
 
 /// What running mopm gave: how it ended, and what it printed.
 pub const Ran = struct { exited: bool, code: u8 = 0, stdout: []const u8 = "", stderr: []const u8 = "" };
@@ -132,6 +166,7 @@ pub fn run(a: std.mem.Allocator, cwd: std.fs.Dir, all_args: []const []const u8, 
 pub fn runWith(a: std.mem.Allocator, cwd: std.fs.Dir, all_args: []const []const u8, spawn: Spawn, spawn_subdir: SpawnSubdir, msg: *[]const u8) !void {
     var with_root = false;
     var subdirs = std.ArrayList([]const u8).empty;
+    var alsos = std.ArrayList(Also).empty;
     var at: usize = 0;
     while (at < all_args.len) {
         if (std.mem.eql(u8, all_args[at], "--workspace-root")) {
@@ -139,6 +174,17 @@ pub fn runWith(a: std.mem.Allocator, cwd: std.fs.Dir, all_args: []const []const 
             at += 1;
         } else if (std.mem.eql(u8, all_args[at], "--subdir") and at + 1 < all_args.len) {
             try subdirs.append(a, all_args[at + 1]);
+            at += 2;
+        } else if (std.mem.eql(u8, all_args[at], "--also") and at + 1 < all_args.len) {
+            const v = all_args[at + 1];
+            const sep = std.mem.indexOfScalar(u8, v, '@');
+            const version = if (sep) |i| v[0..i] else v;
+            const sub: ?[]const u8 = if (sep) |i| v[i + 1 ..] else null;
+            if (version.len == 0 or (sub != null and sub.?.len == 0)) {
+                msg.* = try std.fmt.allocPrint(a, "--also {s}: expected <mojo-version> or <mojo-version>@<subdir>", .{v});
+                return error.Refused;
+            }
+            try alsos.append(a, .{ .version = version, .subdir = sub });
             at += 2;
         } else break;
     }
@@ -158,21 +204,29 @@ pub fn runWith(a: std.mem.Allocator, cwd: std.fs.Dir, all_args: []const []const 
         return error.Refused;
     };
     const root: ?[]const u8 = if (with_root) workspace else null;
-    try compareOne(a, table, args, mopm, project, root, null, spawn, spawn_subdir, msg);
-    for (subdirs.items) |s| try compareOne(a, table, args, mopm, project, root, s, spawn, spawn_subdir, msg);
+    try compareOne(a, table, args, mopm, project, root, .{ .mojo = args[3] }, spawn, spawn_subdir, msg);
+    for (subdirs.items) |s| try compareOne(a, table, args, mopm, project, root, .{ .mojo = args[3], .subdir = s }, spawn, spawn_subdir, msg);
+    for (alsos.items) |al| try compareOne(a, table, args, mopm, project, root, .{ .mojo = al.version, .subdir = al.subdir, .also = true }, spawn, spawn_subdir, msg);
     // A validation result is JSON (Buck2 rejects any other content).
     try cwd.writeFile(.{ .sub_path = args[5], .data = "{\"version\": 1, \"data\": {\"status\": \"success\", \"message\": \"the committed graph is what the pinned mopm says\"}}\n" });
 }
 
-/// One graph of the table against what mopm prints for it now (`subdir` null: the linux-64 graph, `GRAPH_JSON`).
-fn compareOne(a: std.mem.Allocator, table: []const u8, args: []const []const u8, mopm: []const u8, project: []const u8, root: ?[]const u8, subdir: ?[]const u8, spawn: Spawn, spawn_subdir: SpawnSubdir, msg: *[]const u8) !void {
+/// One `--also <version>[@<subdir>]`.
+const Also = struct { version: []const u8, subdir: ?[]const u8 };
+
+/// One graph to compare: the Mojo version asked of mopm, the subdir (null: linux-64), and whether it is the block of another version (`--also`).
+const Graph = struct { mojo: []const u8, subdir: ?[]const u8 = null, also: bool = false };
+
+/// One graph of the table against what mopm prints for it now (`subdir` null: the linux-64 graph, `GRAPH_JSON`; `also`: the block of that Mojo version).
+fn compareOne(a: std.mem.Allocator, table: []const u8, args: []const []const u8, mopm: []const u8, project: []const u8, root: ?[]const u8, g: Graph, spawn: Spawn, spawn_subdir: SpawnSubdir, msg: *[]const u8) !void {
+    const subdir = g.subdir;
     const what: []const u8 = if (subdir) |s| try std.fmt.allocPrint(a, " --subdir {s}", .{s}) else "";
-    const r = (if (subdir) |s| spawn_subdir(a, mopm, project, args[3], root, s) else spawn(a, mopm, project, args[3], root)) catch |e| {
+    const r = (if (subdir) |s| spawn_subdir(a, mopm, project, g.mojo, root, s) else spawn(a, mopm, project, g.mojo, root)) catch |e| {
         msg.* = try std.fmt.allocPrint(a, "cannot run {s}: {s}", .{ mopm, @errorName(e) });
         return error.Refused;
     };
     if (!r.exited or r.code != 0) {
-        msg.* = try std.fmt.allocPrint(a, "`mopm plan --unit-graph --locked --mojo {s}{s}` did not succeed (exit {d}): {s}", .{ args[3], what, r.code, r.stderr });
+        msg.* = try std.fmt.allocPrint(a, "`mopm plan --unit-graph --locked --mojo {s}{s}` did not succeed (exit {d}): {s}", .{ g.mojo, what, r.code, r.stderr });
         return error.Refused;
     }
     // The committed form: the path dependencies by identity only (graph_norm.zig).
@@ -184,20 +238,28 @@ fn compareOne(a: std.mem.Allocator, table: []const u8, args: []const []const u8,
         },
     };
     var why: []const u8 = "";
-    checkIn(a, table, subdir, printed, &why) catch |e| switch (e) {
+    const checked = if (g.also) checkMojo(a, table, g.mojo, subdir, printed, &why) else checkIn(a, table, subdir, printed, &why);
+    checked catch |e| switch (e) {
         error.NoGraph => {
-            msg.* = if (subdir) |s|
+            msg.* = if (g.also)
+                try std.fmt.allocPrint(a, "{s} has no {s} block: the pinned mopm prints a graph for Mojo {s}{s} and the table holds none; run `buildrules mojo sync`", .{ args[4], try mojoBlockName(a, g.mojo, subdir), g.mojo, what })
+            else if (subdir) |s|
                 try std.fmt.allocPrint(a, "{s} has no GRAPH_JSON_ block for {s}: the pinned mopm prints a graph for it and the table holds none; run `buildrules mojo sync`", .{ args[4], s })
             else
                 try std.fmt.allocPrint(a, "{s} has no GRAPH_JSON = r'''...''' block", .{args[4]});
             return error.Refused;
         },
         error.EmptyOutput => {
-            msg.* = try std.fmt.allocPrint(a, "`mopm plan --unit-graph --locked{s}` printed nothing", .{what});
+            msg.* = if (g.also)
+                try std.fmt.allocPrint(a, "`mopm plan --unit-graph --locked --mojo {s}{s}` printed nothing", .{ g.mojo, what })
+            else
+                try std.fmt.allocPrint(a, "`mopm plan --unit-graph --locked{s}` printed nothing", .{what});
             return error.Refused;
         },
         error.Differs => {
-            msg.* = if (subdir) |s| try std.fmt.allocPrint(a, "{s}: the {s} graph: {s}", .{ args[4], s, why }) else try std.fmt.allocPrint(a, "{s}: {s}", .{ args[4], why });
+            msg.* = if (g.also)
+                try std.fmt.allocPrint(a, "{s}: the {s} graph (Mojo {s}): {s}", .{ args[4], try mojoBlockName(a, g.mojo, subdir), g.mojo, why })
+            else if (subdir) |s| try std.fmt.allocPrint(a, "{s}: the {s} graph: {s}", .{ args[4], s, why }) else try std.fmt.allocPrint(a, "{s}: {s}", .{ args[4], why });
             return error.Refused;
         },
         error.OutOfMemory => return e,
