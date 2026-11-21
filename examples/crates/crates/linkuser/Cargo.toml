@@ -1,0 +1,14 @@
+[package]
+name = "linkuser"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# A member whose build script reads the metadata of two dependencies with `links`: a member (crates/linked) and a crates.io package
+# (zstd-sys, `links = "zstd"`, whose script compiles zstd's C sources and publishes their include directory). cargo's unit graph gives
+# the run of this script three dependencies named `build_script_build`: its own compiled script and the runs of the two scripts.
+build = "build.rs"
+
+[dependencies]
+linked = { path = "../linked" }
+zstd-sys = { workspace = true, features = ["std"] }

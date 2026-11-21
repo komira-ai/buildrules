@@ -1,0 +1,14 @@
+[package]
+name = "selfdev"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# A dev-dependency on the package itself that turns on a feature: the usual way to give a crate's own tests helpers its users never
+# see. cargo's unit graph then names the library twice in each integration test's dependencies (as the package's own library and as
+# the dev-dependency, the same unit both times), and the library's own test binary depends on the library with the feature on.
+[features]
+test-support = []
+
+[dev-dependencies]
+selfdev = { path = ".", features = ["test-support"] }

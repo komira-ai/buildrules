@@ -6,7 +6,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_VERSIONS")
 load("//rules/rust:refusal.bzl", "refusal_test")
 load("//rules/rust:fmt.bzl", "workspace_config_candidates")
-load(":cases.bzl", "MID_EDITION", "NEW_EDITION", "OLD_EDITION", "fmt_plan_mismatch", "fmt_refusals", "refused", "same", "table", "unit", "ws_config_of")
+load(":cases.bzl", "MID_EDITION", "NEW_EDITION", "OLD_EDITION", "edge_refusals", "edge_unit", "edges_mismatch", "fmt_plan_mismatch", "fmt_refusals", "refused", "same", "table", "unit", "ws_config_of")
 
 # A pinned version with the hashes the pins file has: accepted.
 refusal_test(name = "pinned_is_accepted", refusals = refused(table(RUST_DEFAULT, "builtin")), none = True, visibility = ["PUBLIC"])
@@ -50,6 +50,78 @@ refusal_test(
 )
 
 # The same refusal through the front door and the consumer's own table is in //examples/unpinned/crates/app.
+
+# ---- the dependency edges of a member's unit (rules/rust/cargo.bzl, `unit_deps`) -----------------------------------------------------------------------
+# The units are the shapes cargo's unit graph has (`cargo test --unit-graph`); the ids are made up. examples/crates builds both shapes through the front door:
+# crates/selfdev (a dev-dependency on the package itself) and crates/linkuser (a build script reading two dependencies with `links`).
+
+# A dev-dependency on the package itself that turns on a feature: an integration test lists the same edge to the library twice. One dependency.
+refusal_test(
+    name = "edges_take_the_same_edge_listed_twice_once",
+    refusals = edges_mismatch(
+        edge_unit("test", [["pkg", "pkg:lib"], ["pkg", "pkg:lib"]], kind = "test", name = "it"),
+        {"pkg:lib": edge_unit("build")},
+        {"deps": {"pkg": ":pkg:lib"}, "link_deps": []},
+    ),
+    none = True,
+    visibility = ["PUBLIC"],
+)
+
+# Two different units under one name are still refused, by the package and the name: the dependency rustc would get is not decided.
+refusal_test(
+    name = "edges_refuse_two_units_under_one_name",
+    refusals = edge_refusals(
+        edge_unit("build", [["dep", "dep:a"], ["dep", "dep:b"]]),
+        {"dep:a": edge_unit("build"), "dep:b": edge_unit("build")},
+    ),
+    contains = ["pkg: two dependencies named dep"],
+    visibility = ["PUBLIC"],
+)
+
+# A build script's run that depends on the runs of dependencies with `links` (a member's and a registry crate's): those are its link_deps, in the table's
+# order, and its one dependency is its own compiled script.
+refusal_test(
+    name = "edges_make_the_runs_of_links_dependencies_link_deps",
+    refusals = edges_mismatch(
+        edge_unit("run-custom-build", [["build_script_build", "pkg:script"], ["build_script_build", "member:run"], ["build_script_build", "zstd:run"]], kind = "custom-build"),
+        {
+            "member:run": edge_unit("run-custom-build", kind = "custom-build", links = "member"),
+            "pkg:script": edge_unit("build", kind = "custom-build"),
+            "zstd:run": edge_unit("run-custom-build", kind = "custom-build", links = "zstd"),
+        },
+        {"deps": {"build_script_build": ":pkg:script"}, "link_deps": [":member:run", ":zstd:run"]},
+    ),
+    none = True,
+    visibility = ["PUBLIC"],
+)
+
+# A run that depends on the run of a package without `links` has no metadata to read from it: refused, naming the run.
+refusal_test(
+    name = "edges_refuse_the_run_of_a_package_without_links",
+    refusals = edge_refusals(
+        edge_unit("run-custom-build", [["build_script_build", "pkg:script"], ["build_script_build", "plain:run"]], kind = "custom-build"),
+        {"pkg:script": edge_unit("build", kind = "custom-build"), "plain:run": edge_unit("run-custom-build", kind = "custom-build")},
+    ),
+    contains = ["pkg: depends on the run of plain:run, which has no links"],
+    visibility = ["PUBLIC"],
+)
+
+# Only a run's dependencies on runs are link_deps: a compile that depends on its package's script run keeps it as a dependency, by extern name, even when
+# the package has `links`; a binary of the package is keyed `bin:<name>`.
+refusal_test(
+    name = "edges_keep_a_compiles_script_run_and_binaries_as_deps",
+    refusals = edges_mismatch(
+        edge_unit("test", [["build_script_build", "pkg:run"], ["dep", "dep:lib"], ["tool", "pkg:bin"]], kind = "test", name = "it"),
+        {
+            "dep:lib": edge_unit("build"),
+            "pkg:bin": edge_unit("build", kind = "bin", name = "tool"),
+            "pkg:run": edge_unit("run-custom-build", kind = "custom-build", links = "pkg"),
+        },
+        {"deps": {"bin:tool": ":pkg:bin", "build_script_build": ":pkg:run", "dep": ":dep:lib"}, "link_deps": []},
+    ),
+    none = True,
+    visibility = ["PUBLIC"],
+)
 
 # ---- :fmt (rules/rust/fmt.bzl): which roots, editions and config rustfmt is given, and what is refused ------------------------------------------------
 
