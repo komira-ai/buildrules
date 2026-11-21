@@ -16,7 +16,7 @@ hand-written rules:
 Starlark cannot read TOML and a `load` cannot name a computed path, so the table is passed in as a value. Nothing here parses a
 manifest: lints, policy, features, profiles and dependency edges were baked into the table by `buildrules sync`.
 
-Targets of a member package (all always present; `coverage` refuses until P8):
+Targets of a member package (all always present but `:coverage_floor`):
 
     :lib       the library units (debug profile)                :bin       the binaries (only if the member has some)
     :debug     lib + bins, as `cargo build -p`                  :release   the same under `--release`
@@ -29,7 +29,9 @@ Targets of a member package (all always present; `coverage` refuses until P8):
     :fmt       the pinned `rustfmt --check` over the files `cargo fmt --check -p` reads, red on any difference (fmt.bzl)
     :flycheck  the same runs as diagnostics: one directory of `<unit>.json` files (rustc's JSON diagnostics, one per line), built
                even when the code has errors; what `buildrules rust-project check` builds for an editor's check on save
-    :coverage  refuses with the reason (P8)
+    :coverage  llvm-cov's line and branch figures of the member's sources under its own tests, built again with coverage counters
+               (coverage.bzl): `coverage.txt`, the text of every package's coverage (rules/coverage/README.md); `[lcov]` llvm-cov's report
+    :coverage_floor  only with a `coverage_floor.txt` beside the BUCK file: `cov_floor` holds `:coverage` to it, red when a figure fell below
     :<action>  one per action named in [workspace.metadata.buildrules] / [package.metadata.buildrules]: its steps, chained
 
 Actions (policy only, resolved at sync):  `actions = { ci = ["fmt", "typecheck", "test"] }`; an action may not take a step's name.
@@ -39,17 +41,20 @@ Doctests are out of v0: `:test` runs what `cargo test` runs minus them (a record
 The workspace root package also has `:rust_analyzer_inputs` (rules/rust/rust_analyzer.bzl): what rust-analyzer needs that only a build
 makes, which `buildrules rust-project develop` downloads and writes rust-project.json from.
 
-A stale table is red: every `:test`, `:lint`, `:typecheck`, `:fmt`, `:debug` and `:release` carries the workspace's `:check` as a validation, which compares
+A stale table is red: every `:test`, `:lint`, `:typecheck`, `:fmt`, `:coverage`, `:debug` and `:release` carries the workspace's `:check` as a validation, which compares
 the sha256 of Cargo.lock, rust-toolchain.toml and every Cargo.toml with what the table was made from. The compile actions
 never take a Cargo.toml as an input, so editing policy or metadata re-runs the check and nothing else.
 """
 
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
+load("//rules/core:platform.bzl", "LINUX_X86_64")
 load(":cargo_unit.bzl", "cargo_unit", "unit_group")
+load(":coverage.bzl", "rust_coverage")
 load(":fmt.bzl", "AUTO_ROOTS", "CONFIG_NAMES", "fmt_plan", "rustfmt_check", "rustfmt_config", "workspace_config_candidates", "workspace_fmt_config")
 load(":pins.bzl", "RUST_VERSIONS")
 load(":refusal.bzl", "recording")
 load(":rust_analyzer.bzl", "rust_analyzer_inputs")
-load(":select.bzl", "toolchain_for")
+load(":select.bzl", "has_llvm_tools", "llvm_tools_for", "toolchain_for")
 
 def _tname(uid):
     return uid.replace(":", "_")
@@ -191,7 +196,7 @@ def _unit_args(uid, u, row, kind_globs):
 
 # Files of a package that no unit reads: the BUCK file, the manifest (the table holds what the compile needs from it, and `:check` its hash) and
 # cargo's own output directory.
-_NOT_SOURCES = ["BUCK", "Cargo.toml", "target/**"]
+_NOT_SOURCES = ["BUCK", "Cargo.toml", "coverage_floor.txt", "target/**"]
 
 def _globs_for(u):
     kind = u["target_kind"][0]
@@ -279,6 +284,80 @@ def _closure_ids(roots, units):
             todo.append(d)
     return seen
 
+def instrumented(u):
+    """True for a unit that a member's `:coverage` builds with coverage counters (`<unit>_cov`): a library or binary of a workspace member compiled
+    for the target. Registry and git crates, build scripts and proc-macros (which run on the build host) stay the plain build's."""
+    return (u["source"] == "path" and u["mode"] == "build" and u["side"] == "target" and
+            u["target_kind"] != ["custom-build"] and "proc-macro" not in u["crate_types"])
+
+def _coverage(name, row, mine, tests, units, ws, third_party, here, table, rustc, extra_srcs, pg, chk, branches):
+    """The `_cov` units of a member, its `:coverage` and, with a `coverage_floor.txt` beside the BUCK file, its `:coverage_floor`."""
+    floor = native.glob(["coverage_floor.txt"])
+    if not has_llvm_tools(rustc):
+        _refuse(name = "coverage", why = "coverage needs the llvm-tools component of rustc {}, which rules/rust/pins.bzl does not pin".format(rustc), target_compatible_with = ["buildrules//platforms:not_implemented"], visibility = ["PUBLIC"])
+    else:
+        def cov_label(did):
+            lab = _label(did, units, ws, third_party, here)
+            return lab + "_cov" if instrumented(units[did]) else lab
+
+        # Only the units some member's test target links or runs: a unit of the release profile, or one only a doctest links (`:coverage` runs no
+        # doctest, as `:test` runs none), has no twin, so no target here is built by nothing.
+        linked = _closure_ids([r for m in table["MEMBERS"].values() for r in m["test"]["roots"] if units[r]["mode"] == "test"], units)
+        for uid in sorted(mine):
+            u = mine[uid]
+            if not ((instrumented(u) and uid in linked) or uid in tests):
+                continue
+            kw = _unit_args(uid, u, row, _globs_for(u))
+            if extra_srcs:
+                kw["extra_srcs"] = list(extra_srcs)
+            if u["mode"] == "test":
+                kw["run_data"] = native.glob(["src/**", "tests/**", "build.rs"] + _outside_globs(mine))
+                if pg:
+                    kw["postgres_url_env"] = pg["url_env"]
+            e = unit_deps(u, units, cov_label)
+            if e["deps"]:
+                kw["deps"] = e["deps"]
+            if e["link_deps"]:
+                kw["link_deps"] = e["link_deps"]
+            kw["rustc"] = rustc
+            kw["coverage"] = True
+            if not branches:
+                kw["coverage_branches"] = False
+            cargo_unit(name = _tname(uid) + "_cov", **kw)
+
+        # Members whose directory is inside this one's (the workspace root as a member holds the others): their sources are theirs.
+        mine_path = row["path"]
+        nested = []
+        for other, orow in table["PACKAGES"].items():
+            p = orow["path"]
+            if other == name or p == mine_path:
+                continue
+            if mine_path in ("", "."):
+                nested.append(p)
+            elif p.startswith(mine_path + "/"):
+                nested.append(p[len(mine_path) + 1:])
+        rust_coverage(
+            name = "coverage",
+            anchor = "Cargo.toml",
+            runs = [":" + _tname(r) + "_cov" for r in tests],
+            exclude = sorted(nested),
+            extra = list(extra_srcs),
+            llvm_tools = llvm_tools_for(rustc),
+            rustc = rustc,
+            branches = branches,
+            check = chk,
+            visibility = ["PUBLIC"],
+        )
+    if floor:
+        # The floor mechanism of every package (rules/coverage/README.md): no file, no target.
+        zig_coverage_floor_rule(
+            name = "coverage_floor",
+            coverage = ":coverage",
+            floor = floor[0],
+            exec_compatible_with = LINUX_X86_64,
+            visibility = ["PUBLIC"],
+        )
+
 def check_toolchain(table, refuse = fail):
     """The table's Rust version, refused unless buildrules knows how to fetch it, with the hashes the table recorded.
 
@@ -301,7 +380,7 @@ def check_toolchain(table, refuse = fail):
         return None
     return v
 
-def cargo_package(path = ".", table = None, third_party = None, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {}):
+def cargo_package(path = ".", table = None, third_party = None, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {}, coverage_branches = True):
     """Declares the targets of one cargo package (see the module comment).
 
     Args:
@@ -318,6 +397,9 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
         stamp_rustc_env: rustc-env name -> label of a text file: the value the build script prints for that name (from `git rev-parse`,
             which it cannot run here) is replaced by the file's text, trimmed (and set, if the script printed none). The stamp is an input of the run only, so a new commit
             re-runs the script and rebuilds what reads the value, and nothing else.
+        coverage_branches: build the member's `:coverage` with branch counters (`-Z coverage-options=branch`, unstable in the pinned rustc).
+            False is lines only, for a member whose branch records llvm-cov cannot read (its floor is then `lines NN.NN` alone): say why
+            beside it. It applies to the member's own tests and to the instrumented twins of its library and binaries.
         refuse: what a refused table calls with the reason; `fail` (the default) stops the load. Only the tests of the refusal
             pass anything else (rules/rust/refusal.bzl): a package that was refused declares nothing.
     """
@@ -410,7 +492,11 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
                 cargo_unit(name = _tname(uid) + "_flycheck", diag = True, **kw)
         _step(name = mode, deps = [t(r) + "_" + mode for r in lint_ids], check = chk, visibility = ["PUBLIC"])
     _flycheck_step(name = "flycheck", deps = [t(r) + "_flycheck" for r in lint_ids], check = chk, visibility = ["PUBLIC"])
-    _refuse(name = "coverage", why = "coverage is P8: not implemented in this prototype", target_compatible_with = ["buildrules//platforms:not_implemented"], visibility = ["PUBLIC"])
+
+    # 3a. coverage (coverage.bzl): every test of the member again, built with coverage counters and linked against the instrumented libraries and
+    # binaries of the workspace's members (`<unit>_cov`), run by cov_run; `:coverage` reads their profiles. Every unit of this member that another
+    # member's instrumented test may link or run gets its `_cov` twin here, as `_label` names it.
+    _coverage(name, row, mine, tests, units, ws, third_party, here, table, rustc, extra_srcs, pg, chk, coverage_branches)
 
     # 3b. fmt: rustfmt over the roots `cargo fmt -p <pkg>` hands it (fmt.bzl). A member that `:fmt` cannot check as cargo fmt would is refused when built, by name.
     why, refuse_fmt = recording()
@@ -437,7 +523,8 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
         _step(name = act, deps = [":" + s for s in steps], visibility = ["PUBLIC"])
 
 def cargo_workspace(path = ".", table = None):
-    """The workspace root package: `:check`, the clippy.toml export, `:rustfmt_config`, and one aggregate target per step and per action.
+    """The workspace root package: `:check`, the clippy.toml export, `:rustfmt_config`, and one aggregate target per step (`:coverage`: every
+    member's measurement; a member's floor is its own `:coverage_floor`) and per action.
 
     Every member listed in the table must have its own package (`<root>/<member path>/BUCK` calling `cargo_package`).
     """
@@ -482,7 +569,7 @@ def cargo_workspace(path = ".", table = None):
         visibility = ["PUBLIC"],
     )
     names = sorted(rows)
-    for step in ["fmt", "lint", "typecheck", "debug", "test", "release"]:
+    for step in ["fmt", "lint", "typecheck", "debug", "test", "release", "coverage"]:
         _step(name = step, deps = ["//" + _join(ws, rows[n]["path"]) + ":" + step for n in names], visibility = ["PUBLIC"])
     acts = {}
     for n in names:

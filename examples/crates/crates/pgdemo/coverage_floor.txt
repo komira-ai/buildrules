@@ -1,0 +1,3 @@
+# The figures of :coverage today (rules/rust/coverage.bzl): 153/165 lines and 11/14 branch arms under the tests and the Postgres fixture.
+lines 92.72
+branches 78.57

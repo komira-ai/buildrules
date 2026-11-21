@@ -206,7 +206,7 @@ export const why: Page = {
     h2('Limits today'),
     ul(
       'Linux x86_64 only, for clients and workers.',
-      'Rust: crates.io, and git repositories on github.com pinned by commit; the workspace root is the repository root and must be a virtual workspace; every package is listed in `members` (a glob other than `dir/*` is refused); doctests not run; `:coverage` refuses; `sync` needs the network the first time a registry crate is fetched.',
+      'Rust: crates.io, and git repositories on github.com pinned by commit; the workspace root is the repository root and must be a virtual workspace; every package is listed in `members` (a glob other than `dir/*` is refused); doctests not run; `:coverage` counts a member\'s own tests over its own sources; `sync` needs the network the first time a registry crate is fetched.',
       'Node: lockfile version 3 only; no workspaces; registry tarballs over https only; install scripts do not run; scripts must fit the shell-free subset; one `dist` directory.',
       'Mojo: one Mojo version (the one mopm pins); a workspace member\'s native libraries are not in mopm\'s graph yet; line coverage only.',
       'The host still supplies a Linux kernel, glibc 2.34 or newer, and `libgcc_s.so.1` and `libz.so.1` (the Rust compiler needs them; they are not pinned yet), plus Buck2 itself.',

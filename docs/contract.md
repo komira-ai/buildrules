@@ -64,7 +64,7 @@ uses, an override may drop: section 2.11 of `docs/how.md`); a registry crate's s
 dropped run is simply absent. It carries `:check` as a validation. For a table whose Rust version does not pin both components it is
 a target that fails naming why when built, and that a wildcard skips. `buildrules rust-project develop` (section 8) builds it.
 
-### `cargo_package(path = ".", table, third_party, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {})` **[p7]**
+### `cargo_package(path = ".", table, third_party, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {}, coverage_branches = True)` **[p7]**
 Called once per member, in the member's own package. `path` is the member directory relative to the BUCK
 file (`.`). `table` is the generated table as a dict; `third_party` is the package holding registry
 units; `check` overrides the label of the workspace `:check` (default `//:check`); `extra_srcs` are files or directories outside the package that its sources (`#[path]`,
@@ -72,7 +72,9 @@ units; `check` overrides the label of the workspace `:check` (default `//:check`
 `export_file(mode = "reference")`, and a copy made by a rule is refused at analysis naming that fix. `stamp_env` and `stamp_rustc_env` map a name
 to the label of a text file (`stamp_file`), an input of the runs of the package's build script only: `stamp_env` sets the variable to the
 file's trimmed text, `stamp_rustc_env` replaces the value the script prints for that `rustc-env` name (or sets it). They give a commit in place
-of `git rev-parse`, which a build script cannot run here (its `PATH` is an empty directory). `refuse` is what a refused table calls with the reason (default `fail`, which stops the load; the tests of the refusal pass a recorder,
+of `git rev-parse`, which a build script cannot run here (its `PATH` is an empty directory). `coverage_branches = False` builds the member's
+`:coverage` without branch counters (lines only; its floor is then `lines NN.NN` alone), for a member whose branch records the pinned llvm-cov
+cannot read: `examples/crates/crates/protos` is one, and its BUCK file says why. `refuse` is what a refused table calls with the reason (default `fail`, which stops the load; the tests of the refusal pass a recorder,
 `rules/rust/refusal.bzl`). Through `//:buildrules.bzl` the table and the third-party package are bound and the call is `cargo_package(path = ".")`. Every
 member package also has `:sources`, a `filegroup` of its files (a glob of the root package cannot cross into a member's package), and the generated
 `third_party/buildrules` has `:files` (its `BUCK`, `crate_sizes.tsv`, and `git_archives.tsv` and `overrides.json` when there is one); `cargo_sync` (`rules/rust/sync.bzl`) stages a
@@ -85,8 +87,8 @@ the member's `[lints]` as flags, `clippy.toml` as an input, `-D warnings` when t
 `:flycheck` (the same clippy runs as `:lint` as diagnostics runs: `rules/rust/rustc_diag.zig` writes rustc's diagnostics as JSON
 lines to the unit's output and succeeds when rustc's status is `1`, an error in the code; one directory of `<unit>.json` files,
 built even when the code has errors; what `buildrules rust-project check` builds),
-`:coverage` (refuses until P8), and one target per action in the policy. Every `:debug :release :test
-:lint :typecheck :fmt :flycheck` carries the workspace `:check` as a validation. No compile action takes a `Cargo.toml` as an
+`:coverage` (below), `:coverage_floor` (only with a `coverage_floor.txt` beside the member's BUCK file), and one target per action in the policy. Every `:debug :release :test
+:lint :typecheck :fmt :flycheck :coverage` carries the workspace `:check` as a validation. No compile action takes a `Cargo.toml` as an
 input, so a policy edit re-runs the check and nothing else. A build script, compiled and run, has every file of its package but
 `BUCK`, `Cargo.toml` and `target/`, as under cargo, where it runs in the package directory (`rerun-if-changed` is recorded, not
 used to narrow this, so any edit in the package re-runs the script, and a script that reads its own `Cargo.toml` fails); the other
@@ -210,7 +212,22 @@ them from there. Allowed in `[workspace.metadata.buildrules]` and, overriding it
 | `lint.deny-warnings` | bool | clippy `-D warnings` for `:lint` |
 | `postgres` | table `{ url-env = "NAME" }` | every test of the package runs with a private Postgres, its URL in `NAME` (below); a package's replaces the workspace's as a whole |
 
-Steps: `fmt`, `lint`, `typecheck`, `debug`, `test`, `release`, `coverage` (`coverage` refuses until P8).
+Steps: `fmt`, `lint`, `typecheck`, `debug`, `test`, `release`, `coverage` (`coverage` is the measurement; the floor is `:coverage_floor`, which a step does not name).
+
+**Coverage of a member** (`rules/rust/coverage.bzl`). `:coverage` builds each of the member's test targets again with LLVM's coverage counters
+(`-C instrument-coverage -Z coverage-options=branch`; branch counters are unstable, so those compiles alone get `RUSTC_BOOTSTRAP=1` from the pinned
+stable rustc, and nothing else of the build changes), and with them the libraries and binaries of the workspace's members the tests link or run;
+registry and git crates, build scripts and proc-macros are the plain build's units, shared with it. Each test runs as under `:test` (the Postgres
+fixture included) with `LLVM_PROFILE_FILE` naming an output directory, so a binary of the package that a test runs writes its profile too. The pinned
+`llvm-profdata` and `llvm-cov` (the `llvm-tools` component of the same release; a version that pins none has no `:coverage`) merge and read them in one
+action (`rules/rust/rust_cov.zig`). The output, `coverage.txt`, is the text of every package's coverage (`rules/coverage/README.md`): a row
+`<path> <hit>/<total> <n>%` per source file of the member (paths from the project root; the files under `tests/`, `benches/` and `examples/` are
+shown with `(not counted)`), `total`, and the same rows of branch arms prefixed `branches `. A line is one llvm-cov line record, hit when its count is not
+0; a branch is one arm of a decision llvm-cov records, hit when taken. A member's figures are its own tests over its own sources (and its `extra_srcs`):
+code only another member's tests run counts as not run, a member nested in another's directory is not counted in it, and generated code under
+`OUT_DIR` is not counted. `:coverage[lcov]` is llvm-cov's report of the same files. `:coverage_floor` holds the figures to `coverage_floor.txt`
+(`lines NN.NN`, and `branches NN.NN` when the code has a decision) with `cov_floor`, the check of the Zig, Node and Mojo packages: a figure below its
+floor is red. The workspace's `//:coverage` builds every member's `:coverage`.
 
 **The Postgres fixture.** `postgres = { url-env = "NAME" }` makes every test target of the package (`:test`, and the same `buck2 test` targets) run
 under `pg_run` (rules/postgres/README.md): before the test it starts a private server of the pinned Postgres (`rules/postgres/pins.bzl`, conda-forge,
@@ -417,7 +434,7 @@ diagnostic. Neither verb runs a rustc, cargo or rust-analyzer of the machine.
   it replaced wrote: the content ids are the hashes of the same canonical JSON. No interpreter is needed anywhere.
 - Limits: Linux x86_64 only; crates.io and git repositories on github.com pinned by commit (alternate registries refused); a root
   `[package]` refused; `members` globs other than `dir/*` refused by `adopt`/`check`/`sync`; every
-  workspace package must be listed in `members`; doctests and coverage out; lto / rpath / incremental refused;
+  workspace package must be listed in `members`; doctests out (`:coverage` does not run them either); lto / rpath / incremental refused;
   `sync` needs the network the first time a registry crate is fetched (cargo's own cache under
   `buck-out/buildrules/cargo-home`), and on every sync that has a git source (its archive is downloaded and compared).
 - Code intelligence (`rust-project`): the pinned rust-analyzer is Linux x86_64 only; `buildrules-pins.toml` cannot pin `rust_src` or

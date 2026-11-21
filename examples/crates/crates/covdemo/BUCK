@@ -1,0 +1,27 @@
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//:buildrules.bzl", "cargo_package")
+
+cargo_package(path = ".")
+
+# The known defects of `:coverage_floor`, written by hand after the targets cargo_package makes: the same check as `:coverage_floor` (the
+# rule cargo_package declares it with) over the same `:coverage`, held to floors the tests do not reach. They are excluded from the wildcard
+# build (ci/all.bzl), and //ci:completeness.bxl:check builds each and requires its reason (ci/negative.bzl, COVERAGE_REDS); `:coverage_floor`,
+# at today's figures, is their control in //ci:crates.
+[
+    zig_coverage_floor_rule(
+        name = name,
+        coverage = ":coverage",
+        floor = floor,
+        exec_compatible_with = LINUX_X86_64,
+        visibility = ["//ci:"],
+    )
+    for name, floor in [
+        ("coverage_under_its_line_floor", "floor_lines_above.txt"),
+        ("coverage_under_its_branch_floor", "floor_branches_above.txt"),
+        ("coverage_floor_without_branches", "floor_without_branches.txt"),
+    ]
+]
+
+scrub_files()

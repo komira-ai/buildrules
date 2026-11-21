@@ -1,0 +1,3 @@
+# The figures of :coverage today (18/21 lines, 4/6 branch arms: `untested` is run by nothing).
+lines 85.71
+branches 66.66

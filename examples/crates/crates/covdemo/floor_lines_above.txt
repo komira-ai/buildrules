@@ -1,0 +1,3 @@
+# A line floor one hundredth above the figure: ci/negative.bzl requires `:coverage_under_its_line_floor` red, "coverage fell".
+lines 85.72
+branches 66.66

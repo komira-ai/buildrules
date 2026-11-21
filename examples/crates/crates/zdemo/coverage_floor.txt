@@ -1,0 +1,2 @@
+# The figures of :coverage today (rules/rust/coverage.bzl); the code has no decision, so there is no `branches` figure.
+lines 100.00
