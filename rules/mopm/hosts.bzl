@@ -6,7 +6,9 @@ A Mojo package built for linux aarch64 or macOS arm64 is planned, packed and com
 `mopm-<version>-<platform>/{mopm,LICENSE}`. The spelling of the key is the one of `host_name()` (rules/platforms.bzl) and rules/pins/hosts.bzl.
 
 A version with no row here has no pin for that host: a Mojo package that needs its mopm there fails analysis and says which version and host (rules/mopm/toolchain.bzl),
-and a version the user pins in `buildrules-pins.toml` has linux x86_64 only. Never copy a hash from another release.
+and a version the user pins in `buildrules-pins.toml` has linux x86_64 only. Every version of `MOPM_VERSIONS` has a row here for both hosts except 0.0.48, which is kept
+linux x86_64 only as the subject of that refusal's check (ci/exec_select.bzl); `mopm-pin / verify` (ci/mopm_pin.zig, `linux_x86_64_only`) fails on any other version
+without both. Never copy a hash from another release.
 """
 
 MOPM_HOST_ASSETS = {
