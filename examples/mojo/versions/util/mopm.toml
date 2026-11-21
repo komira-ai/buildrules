@@ -1,0 +1,8 @@
+[package]
+name = "versions_util"
+version = "0.1.0"
+mojo = ["1.0.0", "1.1.0", "1.2.0"]
+
+[targets]
+lib = { path = "src/versions_util" }
+tests = ["tests"]

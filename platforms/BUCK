@@ -1,5 +1,6 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("//rules:isa.bzl", "ISA_LEVELS", "exec_levels")
+load("//rules/mojo:version_names.bzl", "MOJO_VERSIONS", "mojo_vname")
 load("//rules/rust:pins.bzl", "RUST_VERSIONS", "vname")
 
 # One platform, linux x86_64, per ISA level and per Rust version (below).
@@ -155,6 +156,25 @@ constraint_setting(name = "rust_version", visibility = ["PUBLIC"])
         ),
     ]
     for v in RUST_VERSIONS
+]
+
+# ---- Mojo versions (rules/mojo/version_names.bzl) ----------------------------------------------------
+# `buck2 build --target-platforms buildrules//platforms:linux_x86_64_mojo_1_2_0 //pkg:lib` builds a Mojo package, and every package it imports, from the unit graph of
+# that version with that version's toolchain (`toolchains//:mojo_1_2_0`); a platform without the constraint builds the default version of each package (its `MOJO`).
+# rules/matrix.bzl (`mojo_at`) sets it on any platform.
+constraint_setting(name = "mojo_version", visibility = ["PUBLIC"])
+
+[
+    [
+        constraint_value(name = "mojo_" + mojo_vname(v), constraint_setting = ":mojo_version", visibility = ["PUBLIC"]),
+        config_setting(name = "mojo_is_" + mojo_vname(v), constraint_values = [":mojo_" + mojo_vname(v)], visibility = ["PUBLIC"]),
+        platform(
+            name = "linux_x86_64_mojo_" + mojo_vname(v),
+            constraint_values = [":linux", ":x86_64", ":mojo_" + mojo_vname(v)],
+            visibility = ["PUBLIC"],
+        ),
+    ]
+    for v in MOJO_VERSIONS
 ]
 
 scrub_files()

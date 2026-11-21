@@ -1,0 +1,11 @@
+[package]
+name = "versions_app"
+version = "0.1.0"
+mojo = ["1.0.0", "1.1.0", "1.2.0"]
+
+[dependencies]
+versions_util = { path = "../util", version = "0.1" }
+
+[targets]
+lib = { path = "src/versions_app" }
+tests = ["tests"]

@@ -11,7 +11,7 @@ toolchains/mojo_pins.bzl. A change to any of them without a sync leaves a table 
                   table's graph to be that output, byte for byte (the order of units, natives and dependencies, every sha256 of the package's own
                   sources), so a table that was edited, or left behind by a change, is red. A path dependency is held by identity only (id, version,
                   root, dependencies, outputs): its sources and keys are proved by its own `:table`, so editing one does not turn this one red
-    the pins      at analysis: the toolchain the package builds with (`toolchains//:mojo_<v>`, declared from mojo_pins.bzl) must hold exactly
+    the pins      at analysis: the toolchain the package builds with (`toolchains//:mojo_<v>` of the target platform's Mojo version, declared from mojo_pins.bzl) must hold exactly
                   the toolchain section of the table's graph (version, cc_target, the zig, every component) and the graph's closure hash among its
                   `closures` (packages of two releases of mopm that pin the same compiler may hash their solve differently, and share the row)
 
@@ -33,6 +33,8 @@ def _impl(ctx):
         fail(ctx.attrs.exec_missing)
     if ctx.attrs.unsupported:
         fail(ctx.attrs.unsupported)
+    if ctx.attrs.unsupported_mojo:
+        fail(ctx.attrs.unsupported_mojo)
     tc = ctx.attrs.toolchain[MojoToolchainInfo]
     who = str(ctx.label.raw_target())
     if tc.version != ctx.attrs.mojo:
@@ -69,6 +71,8 @@ mojo_check_rule = rule(
         "toolchain": attrs.exec_dep(providers = [MojoToolchainInfo]),
         # Empty on a target platform the table has a unit graph for; else the refusal (rules/mojo/subdirs.bzl).
         "unsupported": attrs.string(default = ""),
+        # Empty on a target platform that asks for no Mojo version or for one the table has graphs for; else the refusal (rules/mojo/versions.bzl).
+        "unsupported_mojo": attrs.string(default = ""),
         "_tool": attrs.exec_dep(default = "buildrules//rules/mojo:files_check", providers = [RunInfo]),
     },
 )
@@ -123,6 +127,8 @@ def _table_impl(ctx):
         cmd.add("--workspace-root")
     for s in ctx.attrs.subdirs:
         cmd.add("--subdir", s)
+    for a in ctx.attrs.also:
+        cmd.add("--also", a)
     cmd.add(
         ctx.attrs.mopm[RunInfo],
         ctx.attrs.workspace[DefaultInfo].default_outputs[0],
@@ -138,6 +144,10 @@ mojo_table_rule = rule(
     impl = _table_impl,
     doc = "Fails unless the committed graph (buildrules.mojo.lock.bzl) is, byte for byte, what the pinned mopm's `plan --unit-graph --locked` prints for the package and its path dependencies now (they are held by identity only: graph_norm.zig).",
     attrs = {
+        # The graphs of the other Mojo versions of the table (`MOJOS`, rules/mojo/versions.bzl), `<version>` for linux-64 and `<version>@<subdir>` for the others:
+        # the check asks mopm for each with `plan --mojo <version>` and compares it with the table's `GRAPH_JSON_MOJO_<v>` block.
+        "also": attrs.list(attrs.string(), default = []),
+        # The default Mojo version (the table's `MOJO`).
         "mojo": attrs.string(),
         "mopm": attrs.exec_dep(providers = [RunInfo]),
         # The package's directory from the repository root: where mopm runs inside the staged workspace.
