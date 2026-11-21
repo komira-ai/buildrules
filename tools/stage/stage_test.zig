@@ -27,7 +27,7 @@ const built = beta.okOut("root//app:bin " ++ beta.out_path ++ "\n", beta.farm_st
 const built_files = &[_]beta.Fake.File{.{ .path = beta.out_path, .bytes = "ELF" }};
 const cut = beta.failOut(farm.sample_cut);
 const compile_error = beta.failOut(farm.sample_compile_error);
-const flake = beta.failOut("Error materializing HTTP resource declared by target toolchains//:busybox_pin\n\nCaused by:\n    Timed out while making request\nBUILD FAILED\n");
+const flake = beta.failOut("Error materializing HTTP resource declared by target toolchains//:zig_pin\n\nCaused by:\n    Timed out while making request\nBUILD FAILED\n");
 
 /// `stage beta --exec farm` of the leg in `env`, with the farm's config and the summary written in `env`'s directory. Returns the summary.
 fn betaFarm(a: std.mem.Allocator, env: beta.Env, fake: *beta.Fake, err: ?anyerror) ![]const u8 {
