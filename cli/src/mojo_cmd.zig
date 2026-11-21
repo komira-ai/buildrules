@@ -603,6 +603,12 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
             code |= ctx.fail("{s}", .{why});
             continue;
         };
+        // `[package] mojo = [...]` of mopm.toml: with several versions the default must be one of them, and the table holds a graph of each.
+        const listed = try plan.listedMojos(a, (try ctx.readOpt(try inDir(a, pkg, "mopm.toml"))) orelse "");
+        if (listed.len > 1 and !mojoListed(listed, tc.mojo)) {
+            code |= ctx.fail("{s}: mopm-toolchain.toml names Mojo {s}, which mopm.toml's mojo = [...] does not list ({s}): add it, or name one of those", .{ pkg, tc.mojo, try std.mem.join(a, ", ", listed) });
+            continue;
+        }
         const gop = try mopm_cache.getOrPut(tc.mopm);
         if (!gop.found_existing) gop.value_ptr.* = try mopmFor(ctx, buck2, tc.mopm, mopm_path);
         const mopm = gop.value_ptr.* orelse return ctxm.exit_fail;
@@ -675,6 +681,26 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
         var extras = std.ArrayList(lockm.SubGraph).empty;
         var extra_tcs = std.ArrayList(lockm.Tc).empty;
         if (!(try plan.committedExtras(ctx, pkg, tc.mojo, tc.mopm, extra_runs, &extras, &extra_tcs, &code))) continue;
+        var entries = std.ArrayList(lockm.MojoEntry).empty;
+        var blocks = std.ArrayList(lockm.MojoBlock).empty;
+        var other_tcs = std.ArrayList(lockm.Tc).empty;
+        if (listed.len > 1) {
+            var failed = false;
+            for (listed) |v| {
+                if (std.mem.eql(u8, v, tc.mojo)) {
+                    try entries.append(a, .{ .mojo = v, .closure_sha256 = g.closure_sha256 });
+                    continue;
+                }
+                const o = (try plan.planOther(ctx, &sub, pkg, mopm, tc.mopm, v, rooted, &code)) orelse {
+                    failed = true;
+                    continue;
+                };
+                try entries.append(a, .{ .mojo = v, .closure_sha256 = o.closure_sha256 });
+                try blocks.appendSlice(a, o.blocks);
+                try other_tcs.appendSlice(a, o.tcs);
+            }
+            if (failed) continue;
+        }
         const text = try lockm.render(a, .{
             .schema = contract.mojo_schema,
             .mopm_version = tc.mopm,
@@ -685,18 +711,21 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
             .manifests = ms.items,
             .graph_json = committed,
             .extra = extras.items,
+            .mojos = entries.items,
+            .mojo_blocks = blocks.items,
         });
         try tcs.append(a, .{ .mojo = g.mojo, .toolchain = g.toolchain });
         try tcs.appendSlice(a, extra_tcs.items);
+        try tcs.appendSlice(a, other_tcs.items);
         code |= try ensureExport(ctx, tc, check_only, &pend);
         const lock_path = try inDir(a, pkg, contract.mojo_lock_file);
         const bzl_path = try inDir(a, pkg, contract.mojo_bzl_file);
         if (check_only) {
             code |= compareOne(ctx, lock_path, text);
-            code |= compareOne(ctx, bzl_path, contract.mojoBzlFor(extras.items.len > 0));
+            code |= compareOne(ctx, bzl_path, contract.mojoBzlForMojos(extras.items.len > 0, entries.items.len > 0));
         } else {
             try queue(a, &pend, .{ .path = lock_path, .text = text });
-            try queue(a, &pend, .{ .path = bzl_path, .text = contract.mojoBzlFor(extras.items.len > 0) });
+            try queue(a, &pend, .{ .path = bzl_path, .text = contract.mojoBzlForMojos(extras.items.len > 0, entries.items.len > 0) });
         }
     }
 
@@ -726,6 +755,11 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
         if (check_only) ctx.say("mojo sync --check: every generated file is up to date", .{}) else ctx.say("synced: {d} Mojo package(s)", .{pkgs.len});
     }
     return code;
+}
+
+fn mojoListed(listed: []const []const u8, mojo: []const u8) bool {
+    for (listed) |v| if (std.mem.eql(u8, v, mojo)) return true;
+    return false;
 }
 
 fn compareOne(ctx: *Ctx, path: []const u8, fresh: []const u8) u8 {
@@ -882,6 +916,10 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
         try tcs.append(a, .{ .mojo = xg.mojo, .toolchain = xg.toolchain, .subdir = x.subdir });
     }
 
+    // The Mojo versions of mopm.toml's `[package] mojo = [...]`: the table holds one graph for each when it lists several, and no more.
+    const listed = try plan.listedMojos(a, (try ctx.readOpt(try inDir(a, pkg, "mopm.toml"))) orelse "");
+    try checkMojos(ctx, lock_path, l, listed, bad, tcs);
+
     // Every file the table was made from.
     for (l.manifests) |m| {
         const p = try inDir(a, pkg, m.path);
@@ -919,12 +957,61 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
     // The glue and the BUCK file.
     const bzl_path = try inDir(a, pkg, contract.mojo_bzl_file);
     if (try ctx.readOpt(bzl_path)) |b| {
-        const want_bzl = contract.mojoBzlFor(l.extra.len > 0);
+        const want_bzl = contract.mojoBzlForMojos(l.extra.len > 0, l.mojos.len > 0);
         if (!std.mem.eql(u8, b, want_bzl)) stale(ctx, bad, "{s} is not what sync writes (first difference at line {d}): {s}", .{ bzl_path, firstDifference(b, want_bzl), fix });
     } else {
         _ = ctx.fail("{s} is missing: {s}", .{ bzl_path, fix });
         bad.* += 1;
     }
+}
+
+/// The `MOJOS` table and the `GRAPH_JSON_MOJO_*` blocks against mopm.toml's list of versions and against each other; the toolchains of the blocks go to `tcs`.
+fn checkMojos(ctx: *Ctx, lock_path: []const u8, l: lockm.Lock, listed: []const []const u8, bad: *usize, tcs: *std.ArrayList(lockm.Tc)) !void {
+    const a = ctx.a;
+    if (listed.len > 1) {
+        var in_table = std.ArrayList([]const u8).empty;
+        if (l.mojos.len == 0) try in_table.append(a, l.mojo);
+        for (l.mojos) |e| try in_table.append(a, e.mojo);
+        const same = in_table.items.len == listed.len and for (listed, in_table.items) |x, y| {
+            if (!std.mem.eql(u8, x, y)) break false;
+        } else true;
+        if (!same) stale(ctx, bad, "{s}: the table is for Mojo {s} but mopm.toml's mojo = [...] lists {s}: {s}", .{ lock_path, try std.mem.join(a, ", ", in_table.items), try std.mem.join(a, ", ", listed), fix });
+    } else if (l.mojos.len > 0) {
+        stale(ctx, bad, "{s}: has a MOJOS table but mopm.toml lists one Mojo version: {s}", .{ lock_path, fix });
+    }
+    if (l.mojos.len > 0 and !mojoNamed(l.mojos, l.mojo)) stale(ctx, bad, "{s}: MOJOS does not name MOJO {s}: {s}", .{ lock_path, l.mojo, fix });
+    for (l.mojo_blocks) |b| {
+        const var_name = try lockm.graphVarMojo(a, b.mojo, b.subdir);
+        if (!mojoNamed(l.mojos, b.mojo)) stale(ctx, bad, "{s}: the {s} block is for Mojo {s}, which MOJOS does not name: {s}", .{ lock_path, var_name, b.mojo, fix });
+        var bd = Diag.init(a);
+        const bg = lockm.parseGraph(a, lock_path, b.graph_json, &bd) catch {
+            for (bd.msgs.items) |m| _ = ctx.fail("{s}", .{m});
+            bad.* += @max(1, bd.count());
+            continue;
+        };
+        const got_sub = lockm.toolchainSubdir(bg.toolchain);
+        if (!std.mem.eql(u8, bg.mojo, b.mojo)) stale(ctx, bad, "{s}: the {s} block is the graph for Mojo {s}: {s}", .{ lock_path, var_name, bg.mojo, fix });
+        if (!std.mem.eql(u8, got_sub, b.subdir)) stale(ctx, bad, "{s}: the {s} block is the graph of \"{s}\", not of {s}: {s}", .{ lock_path, var_name, got_sub, b.subdir, fix });
+        try tcs.append(a, .{ .mojo = bg.mojo, .toolchain = bg.toolchain, .subdir = b.subdir });
+        if (std.mem.eql(u8, b.subdir, lockm.base_subdir)) {
+            for (l.mojos) |e| {
+                if (std.mem.eql(u8, e.mojo, b.mojo) and !std.mem.eql(u8, e.closure_sha256, bg.closure_sha256)) {
+                    stale(ctx, bad, "{s}: the MOJOS entry of {s} has CLOSURE_SHA256 {s}, not the closure its unit graph pins ({s}): the file was edited by hand; {s}", .{ lock_path, e.mojo, e.closure_sha256, bg.closure_sha256, fix });
+                }
+            }
+        }
+    }
+    for (l.mojos) |e| {
+        if (std.mem.eql(u8, e.mojo, l.mojo)) continue;
+        var has = false;
+        for (l.mojo_blocks) |b| has = has or (std.mem.eql(u8, b.mojo, e.mojo) and std.mem.eql(u8, b.subdir, lockm.base_subdir));
+        if (!has) stale(ctx, bad, "{s}: MOJOS names Mojo {s} but the table has no {s} block: {s}", .{ lock_path, e.mojo, try lockm.graphVarMojo(a, e.mojo, lockm.base_subdir), fix });
+    }
+}
+
+fn mojoNamed(entries: []const lockm.MojoEntry, mojo: []const u8) bool {
+    for (entries) |e| if (std.mem.eql(u8, e.mojo, mojo)) return true;
+    return false;
 }
 
 fn listMojo(ctx: *Ctx, dir_rel: []const u8, out: *std.ArrayList([]const u8)) !void {
