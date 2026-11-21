@@ -250,7 +250,23 @@ test "policy: `fmt` is a step: an action chains it, a default may name it, and a
     var d2 = Diag.init(e.a());
     try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d2, try tomlOf(e.a(), "[actions]\nfmt = [\"lint\"]\n"), none, "w"));
     try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[actions]\nfmt = [\"lint\"]\n"), none, "w" });
-    try refusedWith(&d2, "w: action 'fmt' has the name of a step (['fmt', 'lint', 'debug', 'test', 'release', 'coverage']); name it differently");
+    try refusedWith(&d2, "w: action 'fmt' has the name of a step (['fmt', 'lint', 'typecheck', 'debug', 'test', 'release', 'coverage']); name it differently");
+}
+
+test "policy: `typecheck` is a step: an action chains it, a default may name it, and an action named `typecheck` is refused" {
+    // Defects: a chain with `typecheck` refused as "not a step" (no repository could put `:typecheck` in an action); an action called `typecheck`
+    // accepted, which would declare a second target of that name beside the member's own `:typecheck`.
+    var e = Env.init();
+    defer e.deinit();
+    const none = val.newObject(e.a());
+    var d = Diag.init(e.a());
+    const r = try unitgen.resolvePolicy(e.a(), &d, try tomlOf(e.a(), "default-action = \"typecheck\"\n[actions]\nquick = [\"fmt\", \"typecheck\"]\n"), none, "w");
+    try t.expectEqualStrings("{\n    \"quick\": [\"fmt\", \"typecheck\"],\n}", try val.litString(e.a(), val.get(r, "actions").?, 0));
+    try t.expectEqualStrings("typecheck", val.getStr(r, "default_action").?);
+    var d2 = Diag.init(e.a());
+    try t.expectError(error.Refused, unitgen.resolvePolicy(e.a(), &d2, try tomlOf(e.a(), "[actions]\ntypecheck = [\"lint\"]\n"), none, "w"));
+    try kit.sweepRefusal(unitgen.resolvePolicy, .{ try tomlOf(e.a(), "[actions]\ntypecheck = [\"lint\"]\n"), none, "w" });
+    try refusedWith(&d2, "w: action 'typecheck' has the name of a step (['fmt', 'lint', 'typecheck', 'debug', 'test', 'release', 'coverage']); name it differently");
 }
 
 test "policy: refusals (a typo'd key, an action that shadows a step, a step that is not one, a default that is nothing)" {
@@ -844,6 +860,24 @@ test "generate: member policy is read from the manifests: workspace lints, a pac
     try repo.tmp.dir.writeFile(.{ .sub_path = "crates/app/Cargo.toml", .data = app_manifest });
     try repo.tmp.dir.writeFile(.{ .sub_path = "Cargo.toml", .data = ws_manifest ++ "[workspace.metadata.buildrules]\nbogus = 1\n" });
     try generateRefused(&e, repo, lock_with_itoa, json, "unknown key(s) ['bogus']");
+}
+
+test "generate: `typecheck` from the manifests: a workspace action chains it, a package default names it, and an action named `typecheck` refuses the sync" {
+    // Defects: a manifest whose action chains `typecheck` refused by sync (no repository could reach `:typecheck` through an action), or its chain or
+    // default left out of the table; a manifest that names an action `typecheck`, beside the member's own `:typecheck`, written into the table.
+    var e = Env.init();
+    defer e.deinit();
+    var repo = try Repo.create(&e, lock_with_itoa);
+    defer repo.tmp.cleanup();
+    const json = try repo.graph(&e, graph_app);
+    try repo.tmp.dir.writeFile(.{ .sub_path = "Cargo.toml", .data = ws_manifest ++ "quick = [\"fmt\", \"typecheck\"]\n" });
+    try repo.tmp.dir.writeFile(.{ .sub_path = "crates/app/Cargo.toml", .data = app_manifest ++ "[package.metadata.buildrules]\ndefault-action = \"typecheck\"\n" });
+    const ok = try GenerateOk.run(&e, repo, lock_with_itoa, json);
+    try t.expect(std.mem.indexOf(u8, ok.text, "\"quick\": [\"fmt\", \"typecheck\"]") != null);
+    try t.expect(std.mem.indexOf(u8, ok.text, "\"ci\": [\"lint\", \"test\"]") != null);
+    try t.expect(std.mem.indexOf(u8, ok.text, "\"default_action\": \"typecheck\"") != null);
+    try repo.tmp.dir.writeFile(.{ .sub_path = "crates/app/Cargo.toml", .data = app_manifest ++ "[package.metadata.buildrules.actions]\ntypecheck = [\"lint\"]\n" });
+    try generateRefused(&e, repo, lock_with_itoa, json, "action 'typecheck' has the name of a step (['fmt', 'lint', 'typecheck', 'debug', 'test', 'release', 'coverage']); name it differently");
 }
 
 test "generate: the output of a run that fails an allocation is an error, never a table (at every allocation)" {

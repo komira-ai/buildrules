@@ -47,7 +47,7 @@ export const faq: Page = {
     ),
     ...q(
       'What happens when I forget to run sync?',
-      '`buildrules check` fails in CI, and `:check` fails the Buck2 build of `:debug`, `:release`, `:test`, `:lint` and `:fmt`. Both print `buildrules sync` as the fix.',
+      '`buildrules check` fails in CI, and `:check` fails the Buck2 build of `:debug`, `:release`, `:test`, `:lint`, `:typecheck` and `:fmt`. Both print `buildrules sync` as the fix.',
     ),
     ...q(
       'Which Rust projects does it support?',

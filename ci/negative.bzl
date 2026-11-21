@@ -72,6 +72,8 @@ CASES = [
     ("//ci/faulty:fmt_with_a_toolchain_without_rustfmt", "buildrules//platforms:linux_x86_64", "has no pinned rustfmt (a version pinned in buildrules-pins.toml pins none)"),
     ("//ci/faulty:fmt_refused_with_its_reason", "buildrules//platforms:linux_x86_64", "fmt_refused_with_its_reason: src/bin/rustfmt.toml is the rustfmt config of src/bin/tool.rs"),
     ("//ci/faulty:fmt_config_refused_with_its_reason", "buildrules//platforms:linux_x86_64", "fmt_config_refused_with_its_reason: crates/rustfmt.toml is the rustfmt config of the member crates/a"),
+    # A crate unit in mode typecheck runs no clippy (rules/rust/cargo_unit.bzl): clippy's flags and `-D warnings` given to one are refused by name, not dropped.
+    ("//ci/faulty:typecheck_given_clippy_settings", "buildrules//platforms:linux_x86_64", "typecheck_given_clippy_settings: lint_flags, deny_warnings, conf_dir configure clippy, which mode typecheck does not run; they are for mode lint"),
 ] + [
     ("//examples/mojo/subdirs:lib", platform, "has no unit graph for this target platform. It holds graphs for linux-64, linux-aarch64, osx-arm64")
     for platform in UNSUPPORTED_SUBDIR_PLATFORMS
@@ -515,6 +517,11 @@ FAULTY = [
     ("//ci/faulty:fmt_of_a_badly_formatted_file", "//ci/faulty:fmt_of_a_well_formatted_file", "ci/faulty/fmt/bad.rs:1:"),
     ("//ci/faulty:fmt_of_a_badly_formatted_module", "//ci/faulty:fmt_of_a_well_formatted_file", "ci/faulty/fmt/module/inner.rs:1:"),
     ("//ci/faulty:fmt_against_its_config", "//ci/faulty:fmt_of_a_well_formatted_file", "ci/faulty/fmt/good.rs:2:"),
+    # `:typecheck` (rules/rust/cargo_unit.bzl, mode typecheck): the pinned rustc is red on a type error, in a library and in code only its test target
+    # compiles, with rustc's own error. Clippy under `-D warnings` is red on the file whose type check is the control: the type check passes a clippy warning.
+    ("//ci/faulty:typecheck_of_a_type_error", "//ci/faulty:typecheck_of_a_clippy_warning", "error[E0308]: mismatched types"),
+    ("//ci/faulty:typecheck_of_a_type_error_in_its_tests", "//ci/faulty:typecheck_of_the_library_beside_a_type_error_in_its_tests", "cannot add `&str` to `u32`"),
+    ("//ci/faulty:lint_of_a_clippy_warning", "//ci/faulty:typecheck_of_a_clippy_warning", "unneeded `return` statement"),
 ]
 
 # Defects only a farm shows. An action of local mode runs in the checkout (docs/contract.md, section 14), where a file a unit does not declare is there to

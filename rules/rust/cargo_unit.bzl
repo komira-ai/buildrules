@@ -10,6 +10,9 @@ the per-crate cache. Nothing in a key names the workspace member being edited.
   mode "run-custom-build" run a build script (built by the unit it depends on) and capture its directives.
   mode "lint"             run clippy-driver (`--emit=metadata`) on the unit named by `unit_mode`/`crate_type`, with the member's
                           `[lints]` flags; the output is the metadata file, and a lint that fires under `-D warnings` fails the action.
+  mode "typecheck"        run the pinned rustc (`--emit=metadata`) on the same unit, as `cargo check` does: no clippy, no clippy flags and no
+                          `-D warnings`. The output is the metadata file; a type or borrow error fails the action, a clippy
+                          warning does not (a rustc lint fails it only if the unit's `rustc_flags`, the member's `[lints.rust]`, deny it).
 
 The build-script contract (decision.md 6.1) is implemented by `bs_runner.zig`; this file builds its command line:
   env       built from nothing: CARGO_MANIFEST_DIR, CARGO_MANIFEST_LINKS, CARGO_PKG_*, CARGO_FEATURE_*, CARGO_CFG_* (from
@@ -207,8 +210,8 @@ def _flags(ctx, crate_type, test):
     f += list(a.rustc_flags)
     return f
 
-def _rustc(ctx, crate_type, out, test = False, lint = False):
-    """Runs the pinned rustc on this unit. Returns (closure dict, run_dep or None)."""
+def _rustc(ctx, crate_type, out, test = False, lint = False, typecheck = False):
+    """Runs the pinned rustc on this unit (clippy-driver when `lint`; metadata only when `lint` or `typecheck`). Returns (closure dict, run_dep or None)."""
     tc = ctx.attrs.toolchain[RustToolchainInfo]
     closure = {}
     externs = []
@@ -234,8 +237,10 @@ def _rustc(ctx, crate_type, out, test = False, lint = False):
         # The launcher reads the script's rustc_args and rustc_env and sets OUT_DIR (see rustc_launch.zig).
         cmd.add("--br-run", bs.dir)
     cmd.add(_flags(ctx, crate_type, test))
-    if lint:
+    metadata_only = lint or typecheck
+    if metadata_only:
         cmd.add("--emit=metadata")
+    if lint:
         cmd.add(list(ctx.attrs.lint_flags))
         if ctx.attrs.deny_warnings:
             cmd.add("-D", "warnings")
@@ -244,7 +249,7 @@ def _rustc(ctx, crate_type, out, test = False, lint = False):
     cmd.add(externs)
     for lib in closure.values():
         cmd.add(cmd_args(lib, format = "-Ldependency={}", parent = 1))
-    natives = _natives(ctx) if crate_type == "bin" and not lint else []
+    natives = _natives(ctx) if crate_type == "bin" and not metadata_only else []
     for n in natives:
         # Linked after the rlibs (a static archive resolves what the rlibs before it left undefined).
         cmd.add(cmd_args(n, format = "-Clink-arg={}"))
@@ -410,12 +415,19 @@ def _run_impl(ctx):
         BuildScriptInfo(dir = out, links = a.links or "", manifest = _manifest_dir(ctx), files = _inputs(ctx)),
     ]
 
-# ---- mode lint -------------------------------------------------------------------
+# ---- modes lint and typecheck ----------------------------------------------------
 
-def _lint_impl(ctx):
+def _metadata_impl(ctx, lint):
+    """The metadata file of the unit `unit_mode`/`crate_type` name: clippy-driver's (`lint`) or the pinned rustc's (`typecheck`)."""
     out = ctx.actions.declare_output(ctx.label.name + "/" + ctx.attrs.crate_name + ".rmeta")
-    _rustc(ctx, ctx.attrs.crate_type, out, test = (ctx.attrs.unit_mode == "test"), lint = True)
+    _rustc(ctx, ctx.attrs.crate_type, out, test = (ctx.attrs.unit_mode == "test"), lint = lint, typecheck = not lint)
     return [DefaultInfo(default_output = out)]
+
+def _check_typecheck_attrs(ctx):
+    """A type check runs no clippy: clippy's flags, `-D warnings` and clippy.toml given to one would be dropped, so they are refused by name."""
+    given = [n for n, v in [("lint_flags", ctx.attrs.lint_flags), ("deny_warnings", ctx.attrs.deny_warnings), ("conf_dir", ctx.attrs.conf_dir)] if v]
+    if given:
+        fail("{}: {} configure clippy, which mode typecheck does not run; they are for mode lint".format(ctx.label.raw_target(), ", ".join(given)))
 
 def _check_extra_srcs(ctx):
     """An extra source is read at its path in the tree (`#[path]`, `include_str!`, a build script's relative path), so it must be that file and
@@ -430,7 +442,10 @@ def _impl(ctx):
         fail("{}: postgres_url_env is for a unit in mode test (the run of a test), not mode {}".format(ctx.label.raw_target(), ctx.attrs.mode))
     _check_extra_srcs(ctx)
     if ctx.attrs.mode == "lint":
-        return _lint_impl(ctx)
+        return _metadata_impl(ctx, lint = True)
+    if ctx.attrs.mode == "typecheck":
+        _check_typecheck_attrs(ctx)
+        return _metadata_impl(ctx, lint = False)
     if ctx.attrs.mode == "build":
         return _build_impl(ctx)
     if ctx.attrs.mode == "test":
