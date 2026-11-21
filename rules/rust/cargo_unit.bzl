@@ -10,6 +10,8 @@ the per-crate cache. Nothing in a key names the workspace member being edited.
   mode "run-custom-build" run a build script (built by the unit it depends on) and capture its directives.
   mode "lint"             run clippy-driver (`--emit=metadata`) on the unit named by `unit_mode`/`crate_type`, with the member's
                           `[lints]` flags; the output is the metadata file, and a lint that fires under `-D warnings` fails the action.
+                          With `diag = True` it is the same run as a diagnostics run (rules/rust/rustc_diag.zig): the output is rustc's
+                          diagnostics as JSON lines, and an error in the code is a finding written there, not a failed action.
   mode "typecheck"        run the pinned rustc (`--emit=metadata`) on the same unit, as `cargo check` does: no clippy, no clippy flags and no
                           `-D warnings`. The output is the metadata file; a type or borrow error fails the action, a clippy
                           warning does not (a rustc lint fails it only if the unit's `rustc_flags`, the member's `[lints.rust]`, deny it).
@@ -210,8 +212,9 @@ def _flags(ctx, crate_type, test):
     f += list(a.rustc_flags)
     return f
 
-def _rustc(ctx, crate_type, out, test = False, lint = False, typecheck = False):
-    """Runs the pinned rustc on this unit (clippy-driver when `lint`; metadata only when `lint` or `typecheck`). Returns (closure dict, run_dep or None)."""
+def _rustc(ctx, crate_type, out, test = False, lint = False, typecheck = False, diag = False):
+    """Runs the pinned rustc on this unit (clippy-driver when `lint`; metadata only when `lint` or `typecheck`; a diagnostics run, `out` being the
+    diagnostics file, when `diag`). Returns (closure dict, run_dep or None)."""
     tc = ctx.attrs.toolchain[RustToolchainInfo]
     closure = {}
     externs = []
@@ -233,6 +236,10 @@ def _rustc(ctx, crate_type, out, test = False, lint = False, typecheck = False):
             # with it records it and rustc must find its `.so` through -L (cargo's deps/ directory).
             closure.update(info.closure)
     cmd = cmd_args(tc.launcher, tc.sysroot, tc.zig, tc.cc_target, "--")
+    if diag:
+        # `out` is the diagnostics file, and rustc's own output goes to the action's scratch directory (rules/rust/rustc_diag.zig): the
+        # launcher's arguments are a lint's, without `-o`.
+        cmd = cmd_args(ctx.attrs._rustc_diag[RunInfo], out.as_output(), "--", cmd)
     if bs:
         # The launcher reads the script's rustc_args and rustc_env and sets OUT_DIR (see rustc_launch.zig).
         cmd.add("--br-run", bs.dir)
@@ -253,7 +260,9 @@ def _rustc(ctx, crate_type, out, test = False, lint = False, typecheck = False):
     for n in natives:
         # Linked after the rlibs (a static archive resolves what the rlibs before it left undefined).
         cmd.add(cmd_args(n, format = "-Clink-arg={}"))
-    cmd.add("-o", out.as_output(), _root(ctx))
+    if not diag:
+        cmd.add("-o", out.as_output())
+    cmd.add(_root(ctx))
     cmd.add(cmd_args(hidden = [tc.version_ok, _inputs(ctx), closure.values(), natives] + ([bs.dir] if bs else []) + ([tc.clippy] if lint else []) + bin_exes.values()))
     env = _pkg_env(ctx)
     env["CARGO_MANIFEST_DIR"] = _manifest_dir(ctx)
@@ -310,9 +319,13 @@ def _build_impl(ctx):
     else:
         out = ctx.actions.declare_output(ctx.label.name + "/lib" + name + ".rlib")
     closure, _bins = _rustc(ctx, crate_type, out)
+    bs = None
+    for dep in ctx.attrs.deps.values():
+        if BuildScriptInfo in dep:
+            bs = dep[BuildScriptInfo]
     return [
         DefaultInfo(default_output = out),
-        RustCrateInfo(crate_name = name, lib = out, closure = closure, is_proc_macro = (crate_type == "proc-macro"), natives = _natives(ctx)),
+        RustCrateInfo(crate_name = name, lib = out, closure = closure, is_proc_macro = (crate_type == "proc-macro"), natives = _natives(ctx), build_script = bs, src = _file(ctx.attrs.src) if ctx.attrs.src else None, extra_srcs = [x.short_path for x in ctx.attrs.extra_srcs]),
     ]
 
 # ---- mode test -------------------------------------------------------------------
@@ -412,15 +425,17 @@ def _run_impl(ctx):
     ctx.actions.run(cmd, category = "build_script", identifier = ctx.label.name, env = {"BUILDRULES_NONCE": _NONCE})
     return [
         DefaultInfo(default_output = out),
-        BuildScriptInfo(dir = out, links = a.links or "", manifest = _manifest_dir(ctx), files = _inputs(ctx)),
+        BuildScriptInfo(dir = out, links = a.links or "", manifest = _manifest_dir(ctx), files = _inputs(ctx), unit = ctx.label.name),
     ]
 
 # ---- modes lint and typecheck ----------------------------------------------------
 
 def _metadata_impl(ctx, lint):
-    """The metadata file of the unit `unit_mode`/`crate_type` name: clippy-driver's (`lint`) or the pinned rustc's (`typecheck`)."""
-    out = ctx.actions.declare_output(ctx.label.name + "/" + ctx.attrs.crate_name + ".rmeta")
-    _rustc(ctx, ctx.attrs.crate_type, out, test = (ctx.attrs.unit_mode == "test"), lint = lint, typecheck = not lint)
+    """The metadata file of the unit `unit_mode`/`crate_type` name: clippy-driver's (`lint`) or the pinned rustc's (`typecheck`); for a lint with
+    `diag`, rustc's diagnostics instead (a diagnostics run)."""
+    ext = ".diagnostics.json" if ctx.attrs.diag else ".rmeta"
+    out = ctx.actions.declare_output(ctx.label.name + "/" + ctx.attrs.crate_name + ext)
+    _rustc(ctx, ctx.attrs.crate_type, out, test = (ctx.attrs.unit_mode == "test"), lint = lint, typecheck = not lint, diag = ctx.attrs.diag)
     return [DefaultInfo(default_output = out)]
 
 def _check_typecheck_attrs(ctx):
@@ -474,6 +489,8 @@ _cargo_unit = rule(
         # Targets whose default output is a static archive a binary or test links (a buildrules C library replacing a build script).
         "native_deps": attrs.list(attrs.dep(), default = []),
         "deny_warnings": attrs.bool(default = False),
+        # mode "lint" only: a diagnostics run (see the module comment).
+        "diag": attrs.bool(default = False),
         "lint_flags": attrs.list(attrs.string(), default = []),
         "link_deps": attrs.list(attrs.dep(), default = []),
         "isa_flags": attrs.list(attrs.string(), default = []),
@@ -503,6 +520,7 @@ _cargo_unit = rule(
         "triple": attrs.string(default = "x86_64-unknown-linux-gnu"),
         "version": attrs.string(),
         "toolchain": attrs.exec_dep(default = _TOOLCHAIN, providers = [RustToolchainInfo]),
+        "_rustc_diag": attrs.exec_dep(default = "buildrules//rules/rust:rustc_diag", providers = [RunInfo]),
     },
 )
 

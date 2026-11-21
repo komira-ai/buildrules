@@ -4,7 +4,8 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
 
     rules/core        pinned_file (sha256 + size download), run_check
     rules/rust        pins.bzl (the Rust version table: RUST_VERSIONS, RUST_DEFAULT, RUST_OLDEST), toolchain.bzl (one toolchain per version), rust.bzl, cargo.bzl
-                      (cargo_workspace, cargo_package), cargo_unit.bzl, test_run.bzl, isa_audit.bzl, rustc_launch.zig, bs_runner.zig, sync.bzl (`buildrules sync` on a farm)
+                      (cargo_workspace, cargo_package), cargo_unit.bzl, test_run.bzl, isa_audit.bzl, rustc_launch.zig, bs_runner.zig, sync.bzl (`buildrules sync` on a farm),
+                      rust_analyzer.bzl (`:rust_analyzer_inputs`, what `buildrules rust-project develop` downloads for rust-analyzer)
     rules/isa.bzl     ISA_LEVELS: one table of -march flags (rustc, zig cc, Mojo) and the selects that use it; rules/matrix.bzl: CI matrix transitions
     rules/zig, rules/gate, rules/kpin, rules/node, rules/pins
                       generic rules; kpin is pins.toml / npm only
@@ -15,7 +16,7 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     rules/postgres    the Postgres fixture of the Rust tests: pins.bzl (Postgres 17 and its conda-forge closure), pg_prefix (one tree of them), pg_run (a private
                       server for one test run, on a Unix socket in the action's TMPDIR, or /tmp when that is too long)
     rules/coverage    kcov v42 built from source and the coverage path tools, cov_run, cov_summary; branch/: the branch coverage of Mojo tests (cov_branch, the IR classifier, the LLVM pieces)
-    cli/              the `buildrules` command line (Zig): init, cargo new/init/adopt, sync, check, npm sync/check, mojo sync/check. The unit-graph generator is part of it
+    cli/              the `buildrules` command line (Zig): init, cargo new/init/adopt, sync, check, npm sync/check, mojo sync/check, rust-project develop/check. The unit-graph generator is part of it
     rules/platforms.bzl   the execution platforms: remote by default (properties come from .buckconfig.local), local on request (`-c buildrules_re.mode=local`, docs/contract.md section 14)
     toolchains/       the `toolchains` cell: rust_toolchains(), cxx_toolchains(), mopm_toolchains(), mojo_toolchains() (the last from mopm's graphs)
     platforms/        linux_x86_64, linux_aarch64 and macos_aarch64 (the other hosts: pins only, docs/pins.md), linux_x86_64_v1..v4 and linux_armv8_*, linux_x86_64_rust_<v>; platforms/exec (the execution platforms: agnostic + one per ISA level)
@@ -89,7 +90,7 @@ a `#[path]` outside the crate.
 
 ## The front door (`cargo_workspace`, `cargo_package`)
 
-    BUCK                      cargo_workspace(path = ".")      :check, :lint :typecheck :debug :test :release, one target per action
+    BUCK                      cargo_workspace(path = ".")      :check, :lint :typecheck :debug :test :release, one target per action, :rust_analyzer_inputs
     crates/<m>/BUCK           cargo_package(path = ".")
     buildrules.bzl            written by `buildrules sync`: binds the table to the two macros
     buildrules.lock.bzl       the generated table: units, lints, policy, manifest hashes; pure data
@@ -97,7 +98,7 @@ a `#[path]` outside the crate.
     rules/rust/cargo.bzl      the macros; rules/rust/cargo_unit.bzl the one rule behind every unit
 
 Per member: `:lib`, `:bin` (if any), `:debug`, `:release`, `:test` (one `.passed` marker per cargo test target), `:lint` (clippy-driver, the
-member's `[lints]`, `clippy.toml`, `-D warnings` by policy), `:typecheck` (the pinned rustc to metadata only, as `cargo check`: no clippy), `:coverage` (refuses: not built for Rust yet), `:sources` (the package's files) and one target per action named in
+member's `[lints]`, `clippy.toml`, `-D warnings` by policy), `:typecheck` (the pinned rustc to metadata only, as `cargo check`: no clippy), `:flycheck` (the same runs as rustc's JSON diagnostics, for an editor's check on save), `:coverage` (refuses: not built for Rust yet), `:sources` (the package's files) and one target per action named in
 `[workspace.metadata.buildrules]` / `[package.metadata.buildrules]` (`actions = { ci = ["lint", "test"] }`). Every step carries the workspace's `:check`
 as a validation: a Cargo.toml, Cargo.lock or rust-toolchain.toml that differs from what the table was made from is red, and no compile
 action takes a Cargo.toml as an input. Doctests are out of v0. A package that declares `postgres = { url-env = "NAME" }` in the same tables runs

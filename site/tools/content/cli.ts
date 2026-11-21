@@ -4,7 +4,7 @@ export const cli: Page = {
   path: '/cli/',
   title: 'CLI reference',
   nav: 'CLI',
-  description: 'The buildrules command line: init, cargo new, cargo init, cargo adopt, sync, check, npm, mojo and autopin, with every flag and exit code.',
+  description: 'The buildrules command line: init, cargo new, cargo init, cargo adopt, sync, check, npm, mojo, autopin and rust-project, with every flag and exit code.',
   lead: 'The `buildrules` program writes and reads the files the Rust, Node and Mojo rules need. It is written in Zig. `buildrules --version` prints the release it was built as (`0.0.N`), or the `VERSION` file\'s `MAJOR.MINOR` with `-dev` when it was built from a checkout.',
   blocks: [
     code('buildrules <command> [flags]\nbuildrules <command> --help\nbuildrules --version', 'usage'),
@@ -119,6 +119,18 @@ export const cli: Page = {
     p('`commit-check` exits 0 when it checked or skipped (a pull request that is closed, moved on, edited by someone else, or that changes a file outside `--set`; `has_change` says which) and 1 when what it was given is not what it claims to be. `commit-push` exits 0 when it committed or when the branch had moved (GitHub\'s non-fast-forward answer is the only failure that is a skip) and 1 for any other failure.'),
     code('buildrules autopin verify-pins --set DIR=KIND [--set DIR=KIND ...] [--dir DIR]', 'usage'),
     p('`verify-pins` is the check a pull request gets without any secret. `compute` downloads only the tarballs a table lacks, so a wrong sha256 or size in a row that did not change is never looked at; `verify-pins` downloads every row of each table from `registry.npmjs.org` (the same download path: https only, no redirect, 64 MiB each; 4 GiB in all) and compares the sha512 with the lock, the sha256 and the size with the row. The lock is read as strictly as `compute` reads it, with one addition: a package that the lock marks `inBundle` ships inside the tarball of the package that bundles it, so it needs no row, provided its parent chain reaches a package with a tarball of its own. It exits 0 when every row is as the registry\'s bytes say, 1 when one differs or a download failed, 2 on a usage error.'),
+    h2('rust-project'),
+    code('buildrules rust-project develop [--dir DIR] [--buck2 BUCK2] [--inputs DIR] [--project FILE]\nbuildrules rust-project check [--dir DIR] [--buck2 BUCK2] TARGET', 'usage'),
+    p('Code intelligence for a Cargo workspace that buildrules builds. `develop` builds the workspace\'s `//:rust_analyzer_inputs` with `buck2` (everything only a build makes: the sources of registry crates, what build scripts write, proc-macros compiled to shared objects, the pinned sysroot, the standard library\'s sources and rust-analyzer itself), downloads it to `buck-out/buildrules/ra` (emptied first), and writes `rust-project.json`, the file rust-analyzer reads for a project that cargo does not build. It has one crate per unit of `buildrules.lock.bzl` that `cargo build` and `cargo test` of the members compile, with the unit\'s dependencies, cfgs and package variables, and a build script\'s `OUT_DIR`, cfgs and `rustc-env` values. The standard library is described in the file itself, so rust-analyzer runs no cargo to find it; nothing runs a host rustc, cargo or rust-analyzer.'),
+    p('`check TARGET` is what `rust-project.json` names as rust-analyzer\'s check on save: it builds `TARGET`, a member\'s `:flycheck`, into `buck-out/buildrules/flycheck` and prints rustc\'s diagnostics, one JSON object per line, with every file name made absolute. A diagnostic of the code is output, not a failure: the command exits 1 when the build fails or its output cannot be read, never for a diagnostic.'),
+    table(
+      ['Flag', 'Meaning'],
+      ['`--dir DIR`', 'the repository root; default `.`'],
+      ['`--buck2 BUCK2`', 'the `buck2` binary; default `buck2`. `check` is run with the same one.'],
+      ['`--inputs DIR`', '`develop`: inputs already downloaded (`buck2 build //:rust_analyzer_inputs --out DIR`); nothing is built'],
+      ['`--project FILE`', '`develop`: where the file is written; default `rust-project.json` in `DIR`'],
+    ),
+    p('`rust-project.json` holds absolute paths of this machine, so it is not committed: add it to `.gitignore`. `buck2 clean` removes the inputs it points at; run `develop` again. Use the downloaded `buck-out/buildrules/ra/sysroot/bin/rust-analyzer` as the editor\'s server: its proc-macro server is the pinned compiler\'s, the one that built the proc-macros.'),
     h2('Not yet in the command line'),
     ul(
       'Commands for Zig and C/C++: those rules are used with hand-written `BUCK` files today.',

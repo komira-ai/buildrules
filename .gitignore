@@ -7,3 +7,5 @@ __pycache__/
 # The caches of the zig actions that run in local mode: they write to their working directory, which is the checkout (rules/zig/zig.bzl, zig_bootstrap_exe). On the farm they are
 # in the worker's own directory. publish_unpack refuses a tree with an untracked file, so this one is listed on purpose.
 .zig-cache/
+# What `buildrules rust-project develop` writes for rust-analyzer (its downloaded inputs are under buck-out/).
+rust-project.json

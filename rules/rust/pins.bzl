@@ -30,6 +30,12 @@ RUST_VERSIONS = {
         # Optional (the `rustfmt-preview` component): `rustfmt --check` for a member's `:fmt` (rules/rust/fmt.bzl), linked against the sysroot's libraries.
         # A version without it has no `:rustfmt_<v>`, and a `:fmt` built with it is refused by name.
         "rustfmt": {"sha256": "6d3e64adc505ad4bef6935f6e6f5e4c6956d9782607fb8394df3a5d2b30d2733", "size": 3028435},
+        # Optional, for code intelligence (rules/rust/rust_analyzer.bzl): the standard library's sources (`rust-src`, one tarball for every
+        # triple, so its file name carries none) and the `rust-analyzer-preview` component. rust-analyzer's proc-macro server is part of rustc
+        # (libexec/rust-analyzer-proc-macro-srv in the sysroot), so it is the same release as the compiler that built the proc-macros it loads.
+        # A version without these has no `:rust_src_<v>` / `:rust_analyzer_<v>`.
+        "rust_src": {"sha256": "98548815569318eb60afe7189ace6bca4ba6e4ae59a54f111d276ab78d6ddd10", "size": 5823939},
+        "rust_analyzer": {"sha256": "7809a7f622bda16abe6e18cbaf94bd98d5c496ec25b8c5ec93e4bdfb80ca5f54", "size": 14476394},
     },
     # The oldest supported: edition 2024 needs 1.85.
     "1.85.0": {
@@ -41,7 +47,19 @@ RUST_VERSIONS = {
     },
 }
 
-_COMPONENT_DIR = {"rustc": "rustc", "rust_std": "rust-std", "cargo": "cargo", "clippy": "clippy", "llvm_tools": "llvm-tools", "rustfmt": "rustfmt"}
+_COMPONENT_DIR = {
+    "rustc": "rustc",
+    "rust_std": "rust-std",
+    "cargo": "cargo",
+    "clippy": "clippy",
+    "llvm_tools": "llvm-tools",
+    "rustfmt": "rustfmt",
+    "rust_src": "rust-src",
+    "rust_analyzer": "rust-analyzer",
+}
+
+# The components whose tarball is the same for every triple: the file is `<component>-<version>.tar.gz`.
+_NO_TRIPLE = ["rust_src"]
 
 def vname(version):
     """The suffix of a version's targets: `1.85.0` -> `1_85_0`."""
@@ -49,7 +67,10 @@ def vname(version):
 
 def component(version, row, role):
     """One component of a version row as the `pinned_file` arguments: name, url, sha256, size."""
-    f = "{}-{}-{}.tar.gz".format(_COMPONENT_DIR[role], version, RUST_TRIPLE)
+    if role in _NO_TRIPLE:
+        f = "{}-{}.tar.gz".format(_COMPONENT_DIR[role], version)
+    else:
+        f = "{}-{}-{}.tar.gz".format(_COMPONENT_DIR[role], version, RUST_TRIPLE)
     return {
         "name": f,
         "url": "https://static.rust-lang.org/dist/{}".format(f),

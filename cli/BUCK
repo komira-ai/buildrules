@@ -89,6 +89,7 @@ _TESTS = [
     "mopm_pins",
     "pins_toml",
     "npm_cmd",
+    "rust_project",
     "sync_check",
     "toml",
     "unitgen",
@@ -246,6 +247,13 @@ export_file(
 export_file(
     name = "mojo_cmd.zig",
     src = "src/mojo_cmd.zig",
+    visibility = ["//site:"],
+)
+
+# Read by the buildrules.dev site's tests (site/BUCK), which check the CLI page against its flags.
+export_file(
+    name = "rust_project.zig",
+    src = "src/rust_project.zig",
     visibility = ["//site:"],
 )
 

@@ -36,6 +36,13 @@ RustCrateInfo = provider(fields = {
     # Native archives (`native_deps` of this crate and of everything it depends on, each once): a binary or a test links them
     # after its rlibs. A list of artifacts, never a tset (see the header).
     "natives": provider_field(list, default = []),
+    # The BuildScriptInfo of the build-script run this unit was compiled with (its OUT_DIR, rustc_args, rustc_env), or None. For a registry crate
+    # it is the only way to know the run exists: an override that drops a crate's build script drops the run's target with it.
+    "build_script": provider_field(typing.Any, default = None),
+    # A registry crate's unpacked (and patched) sources, its `crate_src` (whose target the generated package does not make visible), or None.
+    "src": provider_field(typing.Any, default = None),
+    # The paths (from the cell root) of the files outside the package its sources read (`extra_srcs`: a `#[path]` module, an `include_str!`).
+    "extra_srcs": provider_field(list, default = []),
 })
 
 # A run of a build script: one directory holding OUT_DIR/, rustc_args (an argument file, one
@@ -48,6 +55,8 @@ BuildScriptInfo = provider(fields = {
     "manifest": provider_field(typing.Any, default = None),
     # The package files the run read (a dependent's DEP_* paths may point into them).
     "files": provider_field(list, default = []),
+    # The run's own target name (the unit id with `_` for `:`), which names its directory among the code-intelligence inputs.
+    "unit": provider_field(str, default = ""),
 })
 
 # A rust_test: the `.passed` marker its run writes. Only a passing run writes it.

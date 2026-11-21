@@ -27,12 +27,17 @@ Targets of a member package (all always present; `coverage` refuses until P8):
     :typecheck the pinned rustc over the same units to metadata only, as `cargo check -p --all-targets`: no clippy and no `-D warnings`,
                so a type error is red and a clippy warning is not (the member's `[lints.rust]` levels apply, as under cargo)
     :fmt       the pinned `rustfmt --check` over the files `cargo fmt --check -p` reads, red on any difference (fmt.bzl)
+    :flycheck  the same runs as diagnostics: one directory of `<unit>.json` files (rustc's JSON diagnostics, one per line), built
+               even when the code has errors; what `buildrules rust-project check` builds for an editor's check on save
     :coverage  refuses with the reason (P8)
     :<action>  one per action named in [workspace.metadata.buildrules] / [package.metadata.buildrules]: its steps, chained
 
 Actions (policy only, resolved at sync):  `actions = { ci = ["fmt", "typecheck", "test"] }`; an action may not take a step's name.
 The Postgres fixture (resolved at sync, the package's over the workspace's): `postgres = { url-env = "NAME" }` (rules/postgres/README.md).
 Doctests are out of v0: `:test` runs what `cargo test` runs minus them (a recorded gap).
+
+The workspace root package also has `:rust_analyzer_inputs` (rules/rust/rust_analyzer.bzl): what rust-analyzer needs that only a build
+makes, which `buildrules rust-project develop` downloads and writes rust-project.json from.
 
 A stale table is red: every `:test`, `:lint`, `:typecheck`, `:fmt`, `:debug` and `:release` carries the workspace's `:check` as a validation, which compares
 the sha256 of Cargo.lock, rust-toolchain.toml and every Cargo.toml with what the table was made from. The compile actions
@@ -43,6 +48,7 @@ load(":cargo_unit.bzl", "cargo_unit", "unit_group")
 load(":fmt.bzl", "AUTO_ROOTS", "CONFIG_NAMES", "fmt_plan", "rustfmt_check", "rustfmt_config", "workspace_config_candidates", "workspace_fmt_config")
 load(":pins.bzl", "RUST_VERSIONS")
 load(":refusal.bzl", "recording")
+load(":rust_analyzer.bzl", "rust_analyzer_inputs")
 load(":select.bzl", "toolchain_for")
 
 def _tname(uid):
@@ -204,6 +210,24 @@ _step = rule(
     },
 )
 
+def _flycheck_step_impl(ctx):
+    # One directory, so that `buck2 build --out` can copy it: `<unit>.json` per diagnostics run.
+    out = ctx.actions.copied_dir(ctx.label.name, {d.label.name + ".json": d[DefaultInfo].default_outputs[0] for d in ctx.attrs.deps})
+    info = [DefaultInfo(default_output = out)]
+    if ctx.attrs.check:
+        info.append(ValidationInfo(validations = [
+            ValidationSpec(name = "cargo_table_in_sync", validation_result = ctx.attrs.check[DefaultInfo].default_outputs[0]),
+        ]))
+    return info
+
+_flycheck_step = rule(
+    impl = _flycheck_step_impl,
+    attrs = {
+        "check": attrs.option(attrs.dep(), default = None),
+        "deps": attrs.list(attrs.dep()),
+    },
+)
+
 def _refuse_impl(ctx):
     fail("{}: {}".format(ctx.label, ctx.attrs.why))
 
@@ -355,7 +379,11 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
                 kw["deps"] = deps
             kw["rustc"] = rustc
             cargo_unit(name = _tname(uid) + "_" + mode, **kw)
+            if mode == "lint":
+                # The same run as diagnostics, for an editor (`:flycheck`).
+                cargo_unit(name = _tname(uid) + "_flycheck", diag = True, **kw)
         _step(name = mode, deps = [t(r) + "_" + mode for r in lint_ids], check = chk, visibility = ["PUBLIC"])
+    _flycheck_step(name = "flycheck", deps = [t(r) + "_flycheck" for r in lint_ids], check = chk, visibility = ["PUBLIC"])
     _refuse(name = "coverage", why = "coverage is P8: not implemented in this prototype", target_compatible_with = ["buildrules//platforms:not_implemented"], visibility = ["PUBLIC"])
 
     # 3b. fmt: rustfmt over the roots `cargo fmt -p <pkg>` hands it (fmt.bzl). A member that `:fmt` cannot check as cargo fmt would is refused when built, by name.
@@ -406,6 +434,14 @@ def cargo_workspace(path = ".", table = None):
     hashes.append(table["CARGO_LOCK_SHA256"])
     names.append(_join(ws, "Cargo.lock"))
     _check(name = "check", files = files, hashes = hashes, names = names, visibility = ["PUBLIC"])
+    here = native.package_name()
+    third_party = "//" + _join(ws, "third_party/buildrules")
+    rust_analyzer_inputs(
+        name = "rust_analyzer_inputs",
+        table = table,
+        label_of = lambda uid: _label(uid, table["UNITS"], ws, third_party, here),
+        check = ":check",
+    )
 
     # :rustfmt_config: the workspace root's rustfmt config, which a member's `:fmt` reads unless it has its own (fmt.bzl); refused when a directory between
     # the root and a member holds one, since `cargo fmt` would read that one instead.

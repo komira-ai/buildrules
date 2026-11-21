@@ -488,6 +488,16 @@ group(name = "crates", deps = [
     # OUT_DIR (protos), a source outside the crate (stamped), and the library and integration test targets of every member.
     "crates//:typecheck",
     "crates//crates/zdemo:typecheck",
+    # Code intelligence: what rust-analyzer needs that only a build makes, each member's diagnostics for a check on save, and the pinned
+    # rust-analyzer resolving the workspace's proc-macros and generated modules from what `buildrules rust-project develop` writes.
+    "crates//:rust_analyzer_inputs",
+    "crates//:rust_analyzer_test",
+    "crates//:flycheck_test",
+    "crates//crates/zdemo:flycheck",
+    "crates//crates/macros:flycheck",
+    "crates//crates/protos:flycheck",
+    "crates//crates/stamped:flycheck",
+    "crates//crates/pgdemo:flycheck",
 ])
 
 # A workspace whose dependency is a git repository pinned by commit (examples/gitcrates, its own cell): lint and test it. Its two git packages
@@ -505,6 +515,9 @@ group(name = "gitcrates", deps = [
     "gitcrates//crates/gdemo:sources",
     "gitcrates//third_party/buildrules:files",
     "gitcrates//:fmt",
+    # what rust-analyzer needs, a git crate's sources (the archive of its commit) among them, and the member's diagnostics
+    "gitcrates//:rust_analyzer_inputs",
+    "gitcrates//crates/gdemo:flycheck",
     "gitcrates//crates/gdemo:fmt",
     "gitcrates//:typecheck",
     "gitcrates//crates/gdemo:typecheck",
