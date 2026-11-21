@@ -84,6 +84,8 @@ pub const Result = struct {
     outputs: []const Output = &.{},
     /// Whether the second build, after a clean, gave the same bytes. Null when it was not made (farm: its cache answers).
     deterministic: ?bool = null,
+    /// How many commands of a farm leg ran a second time because the connection to the farm was cut (`runRetrying`).
+    cut_reruns: usize = 0,
 };
 
 pub const mopm_pins = "rules/mopm/pins.bzl";
@@ -211,43 +213,59 @@ pub fn copyRepo(a: std.mem.Allocator, src: []const u8, dst: []const u8) !usize {
 }
 
 /// Runs `argv`; when it fails only because a pinned download failed (`isDownloadFlake`) it is run again, up to `download_retries` times, with a wait
-/// that doubles. Any other failure is returned on the first run. The retried command is the same, so what it does is unchanged. From the second
+/// that doubles. Any other failure is returned on the first run, but for the cut below. The retried command is the same, so what it does is unchanged. From the second
 /// retry on, when `mirror_at` is set, `-c buildrules.url_map=<mirror_map>` is inserted at that index of the argv so the pins are fetched from
 /// their mirrors (the sha256 and size of every download are still checked). A command that cannot take that flag passes null and is run unchanged.
-fn runRetrying(a: std.mem.Allocator, io: Io, o: Options, cwd: []const u8, argv: []const []const u8, mirror_at: ?usize) !io_mod.Out {
+///
+/// On a farm, a run whose every failure is a cut connection to the farm (`farm.onlyCuts`) is run once more, at once and with the argv of the run
+/// that was cut; `cut_reruns` counts it. That is one rerun per command, apart from the download retries, and never a second: when the rerun is cut
+/// too, the command fails with `error.FarmConnectionCut`. A log with any other failure in it is returned as it is.
+fn runRetrying(a: std.mem.Allocator, io: Io, o: Options, cwd: []const u8, argv: []const []const u8, mirror_at: ?usize, cut_reruns: ?*usize) !io_mod.Out {
     var r = try io.run(a, cwd, argv);
+    var ran = argv;
     // The second build starts with no buck-out, so every pin is downloaded again; an upstream server that drops it must not block a release.
     var wait_ms = o.retry_delay_ms;
     var left = o.download_retries;
-    while (r.code != 0 and left > 0 and isDownloadFlake(r.stderr)) : (left -= 1) {
-        io_mod.say("beta {s}: a pinned download failed ({d} retries left); waiting {d} ms\n{s}\n", .{ o.lang, left, wait_ms, io_mod.tail(r.stderr, 6) });
-        if (wait_ms > 0) io.sleep(wait_ms);
-        wait_ms *= 2;
-        // The first retry asks the same host again (a throttle ends); from the second on the pins are fetched from their mirrors
-        // (`mirror_map`, rules/core/url_map.bzl).
-        if (left <= 2 and mirror_at != null) {
-            const at = mirror_at.?;
-            var m = std.ArrayList([]const u8).empty;
-            try m.appendSlice(a, argv[0..at]);
-            try m.appendSlice(a, &.{ "-c", "buildrules.url_map=" ++ mirror_map });
-            try m.appendSlice(a, argv[at..]);
-            r = try io.run(a, cwd, m.items);
-        } else {
-            r = try io.run(a, cwd, argv);
-        }
+    var cut_left: u8 = if (o.exec == .farm) 1 else 0;
+    while (r.code != 0) {
+        if (left > 0 and isDownloadFlake(r.stderr)) {
+            io_mod.say("beta {s}: a pinned download failed ({d} retries left); waiting {d} ms\n{s}\n", .{ o.lang, left, wait_ms, io_mod.tail(r.stderr, 6) });
+            if (wait_ms > 0) io.sleep(wait_ms);
+            wait_ms *= 2;
+            // The first retry asks the same host again (a throttle ends); from the second on the pins are fetched from their mirrors
+            // (`mirror_map`, rules/core/url_map.bzl).
+            if (left <= 2 and mirror_at != null) {
+                const at = mirror_at.?;
+                var m = std.ArrayList([]const u8).empty;
+                try m.appendSlice(a, argv[0..at]);
+                try m.appendSlice(a, &.{ "-c", "buildrules.url_map=" ++ mirror_map });
+                try m.appendSlice(a, argv[at..]);
+                ran = m.items;
+            }
+            left -= 1;
+        } else if (o.exec == .farm and farm.onlyCuts(r.stderr)) {
+            if (cut_left == 0) {
+                std.debug.print("beta {s}: the connection to the farm was cut again when `{s}` ran a second time (buck2: `{s}`), and a cut command is run only once more: re-run the job\n{s}\n", .{ o.lang, try std.mem.join(a, " ", ran), farm.cut_marker, io_mod.tail(r.stderr, 12) });
+                return error.FarmConnectionCut;
+            }
+            io_mod.say("beta {s}: the connection to the farm was cut (every failure is buck2's `{s}`); running the same command once more\n{s}\n", .{ o.lang, farm.cut_marker, io_mod.tail(r.stderr, 6) });
+            cut_left -= 1;
+            if (cut_reruns) |n| n.* += 1;
+        } else break;
+        r = try io.run(a, cwd, ran);
     }
     return r;
 }
 
 /// `buck2 build` of the targets, with their outputs. Local mode passes the mode on the command; a farm run must report no local command.
-fn build(a: std.mem.Allocator, io: Io, o: Options, cwd: []const u8, targets: []const []const u8) ![]const Output {
+fn build(a: std.mem.Allocator, io: Io, o: Options, cwd: []const u8, targets: []const []const u8, cut_reruns: ?*usize) ![]const Output {
     var argv = std.ArrayList([]const u8).empty;
     try argv.appendSlice(a, &.{ o.buck2, "build", "--console", "simple" });
     if (o.exec == .local) try argv.appendSlice(a, &.{ "-c", "buildrules_re.mode=local" });
     const show_at = argv.items.len;
     try argv.append(a, "--show-output");
     try argv.appendSlice(a, targets);
-    const r = try runRetrying(a, io, o, cwd, argv.items, show_at);
+    const r = try runRetrying(a, io, o, cwd, argv.items, show_at, cut_reruns);
     if (r.code != 0) {
         std.debug.print("beta {s}: `{s}` exited {d}\n{s}\n{s}\n", .{ o.lang, try std.mem.join(a, " ", argv.items), r.code, io_mod.tail(r.stderr, 60), io_mod.tail(r.stdout, 20) });
         return error.StepFailed;
@@ -318,7 +336,7 @@ pub fn run(a: std.mem.Allocator, io: Io, o: Options) !Result {
 }
 
 /// A `run` step: the command a user types, with `{origin}` and `{commit}` filled in and `buildrules` the candidate's command line, in the work directory.
-pub fn runCommand(a: std.mem.Allocator, io: Io, o: Options, words: []const []const u8) !void {
+pub fn runCommand(a: std.mem.Allocator, io: Io, o: Options, words: []const []const u8, cut_reruns: ?*usize) !void {
     var argv = std.ArrayList([]const u8).empty;
     for (words) |w| {
         const s = try steps_mod.substitute(a, w, o.origin, o.commit);
@@ -326,7 +344,7 @@ pub fn runCommand(a: std.mem.Allocator, io: Io, o: Options, words: []const []con
     }
     io_mod.say("beta {s}: $ {s}\n", .{ o.lang, try std.mem.join(a, " ", words) });
     // `buildrules sync` and `mojo sync` run buck2 inside to fetch the pinned tools, and the CLI does not forward `-c`, so the same argv is run again
-    const r = try runRetrying(a, io, o, o.work, argv.items, null);
+    const r = try runRetrying(a, io, o, o.work, argv.items, null, cut_reruns);
     if (r.code != 0) {
         std.debug.print("beta {s}: `{s}` exited {d}\n{s}\n{s}\n", .{ o.lang, try std.mem.join(a, " ", words), r.code, io_mod.tail(r.stderr, 40), io_mod.tail(r.stdout, 20) });
         return error.StepFailed;
@@ -345,13 +363,14 @@ pub fn writeConfig(a: std.mem.Allocator, o: Options) !void {
 }
 
 fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Result {
+    var reruns: usize = 0;
     var targets = std.ArrayList([]const u8).empty;
     for (spec.steps) |step| switch (step) {
-        .run => |words| try runCommand(a, io, o, words),
+        .run => |words| try runCommand(a, io, o, words, &reruns),
         .config => try writeConfig(a, o),
         .build => |ts| {
             io_mod.say("beta {s}: build {s}\n", .{ o.lang, try std.mem.join(a, " ", ts) });
-            _ = try build(a, io, o, o.work, ts);
+            _ = try build(a, io, o, o.work, ts, &reruns);
             for (ts) |x| {
                 var dup = false;
                 for (targets.items) |y| {
@@ -361,7 +380,7 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
             }
         },
         .expect => |e| {
-            const outs = try build(a, io, o, o.work, &.{e.target});
+            const outs = try build(a, io, o, o.work, &.{e.target}, &reruns);
             const rel = outputOf(outs, e.target) orelse {
                 std.debug.print("beta {s}: {s} has no output to run\n", .{ o.lang, e.target });
                 return error.NoOutput;
@@ -375,7 +394,7 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
             io_mod.say("beta {s}: {s} printed `{s}`\n", .{ o.lang, e.target, e.text });
         },
         .expect_file => |e| {
-            const outs = try build(a, io, o, o.work, &.{e.target});
+            const outs = try build(a, io, o, o.work, &.{e.target}, &reruns);
             const rel = outputOf(outs, e.target) orelse {
                 std.debug.print("beta {s}: {s} has no output\n", .{ o.lang, e.target });
                 return error.NoOutput;
@@ -393,7 +412,7 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
         },
     };
 
-    const first = try hashAll(a, o.work, try build(a, io, o, o.work, targets.items));
+    const first = try hashAll(a, o.work, try build(a, io, o, o.work, targets.items, &reruns));
     // A leg whose targets have no output at all would pass the comparison below having compared nothing: two empty lists are equal. That is a
     // vacuous determinism check, so it is red (on a farm too: the same STEPS would be vacuous on the runner). Name a target that makes a file.
     if (first.len == 0) {
@@ -401,7 +420,7 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
         _ = try io.run(a, o.work, &.{ o.buck2, "kill" });
         return error.NoOutputsToCompare;
     }
-    var res = Result{ .outcome = .passed, .outputs = first };
+    var res = Result{ .outcome = .passed, .outputs = first, .cut_reruns = reruns };
     if (o.exec == .farm) {
         io_mod.say("beta {s}: determinism not checked on a farm: its cache would answer the second build\n", .{o.lang});
         _ = try io.run(a, o.work, &.{ o.buck2, "kill" });
@@ -414,7 +433,7 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
     const work2 = try secondWorkDir(a, o.work);
     const copied = try copyRepo(a, o.work, work2);
     io_mod.say("beta {s}: second build in {s} ({d} file(s) copied, no buck-out)\n", .{ o.lang, work2, copied });
-    const second = hashAll(a, work2, try build(a, io, o, work2, targets.items)) catch |e| {
+    const second = hashAll(a, work2, try build(a, io, o, work2, targets.items, &reruns)) catch |e| {
         _ = try io.run(a, work2, &.{ o.buck2, "kill" });
         return e;
     };
@@ -440,7 +459,7 @@ fn runSteps(a: std.mem.Allocator, io: Io, o: Options, spec: steps_mod.Spec) !Res
 const t = std.testing;
 
 /// A fake `Io`. The first rule whose needle occurs in `cwd argv...` and that has uses left answers, and writes its files (under the cwd) first.
-const Fake = struct {
+pub const Fake = struct {
     a: std.mem.Allocator,
     rules: []Rule,
     calls: std.ArrayList([]const u8) = .empty,
@@ -449,13 +468,13 @@ const Fake = struct {
     sleep_log: [8]u64 = undefined,
     sleep_n: usize = 0,
 
-    const File = struct {
+    pub const File = struct {
         path: []const u8,
         bytes: []const u8,
         /// The directory the command ran in is appended to the bytes: an output that depends on the checkout path.
         embed_cwd: bool = false,
     };
-    const Rule = struct {
+    pub const Rule = struct {
         needle: []const u8,
         out: io_mod.Out = .{ .code = 0, .stdout = "", .stderr = "" },
         files: []const File = &.{},
@@ -486,7 +505,7 @@ const Fake = struct {
         return error.UnscriptedCommand;
     }
 
-    fn io(self: *Fake) Io {
+    pub fn io(self: *Fake) Io {
         return .{ .ctx = self, .run_fn = runCmd, .sleep_fn = sleepCmd };
     }
 
@@ -496,11 +515,11 @@ const Fake = struct {
         self.sleep_n += 1;
     }
 
-    fn waited(self: *const Fake) []const u64 {
+    pub fn waited(self: *const Fake) []const u64 {
         return self.sleep_log[0..self.sleep_n];
     }
 
-    fn count(self: *const Fake, needle: []const u8) usize {
+    pub fn count(self: *const Fake, needle: []const u8) usize {
         var n: usize = 0;
         for (self.calls.items) |c| {
             if (std.mem.indexOf(u8, c, needle) != null) n += 1;
@@ -509,14 +528,14 @@ const Fake = struct {
     }
 };
 
-fn okOut(stdout: []const u8, stderr: []const u8) io_mod.Out {
+pub fn okOut(stdout: []const u8, stderr: []const u8) io_mod.Out {
     return .{ .code = 0, .stdout = stdout, .stderr = stderr };
 }
 
-const farm_stderr = "Commands: 3 (cached: 1, remote: 2, local: 0)\nBUILD SUCCEEDED\n";
+pub const farm_stderr = "Commands: 3 (cached: 1, remote: 2, local: 0)\nBUILD SUCCEEDED\n";
 const local_stderr = "Commands: 3 (cached: 0, remote: 0, local: 3)\nBUILD SUCCEEDED\n";
 
-const demo_steps =
+pub const demo_steps =
     \\run buildrules init . --git {origin} --commit {commit}
     \\config
     \\build //app:bin
@@ -525,12 +544,12 @@ const demo_steps =
 ;
 
 /// A candidate checkout with one language `demo` (and the files of its repository), and an empty place for the repository.
-const Env = struct {
+pub const Env = struct {
     tmp: std.testing.TmpDir,
     root: []u8,
     work: []u8,
 
-    fn make(a: std.mem.Allocator, steps_text: []const u8) !Env {
+    pub fn make(a: std.mem.Allocator, steps_text: []const u8) !Env {
         var tmp = t.tmpDir(.{});
         try tmp.dir.makePath("cand/beta/demo/app");
         try tmp.dir.makePath("cand/rules/mopm");
@@ -543,12 +562,12 @@ const Env = struct {
         return .{ .tmp = tmp, .root = try std.fs.path.join(a, &.{ base, "cand" }), .work = try std.fs.path.join(a, &.{ base, "work" }) };
     }
 
-    fn opts(self: Env, exec: Exec) Options {
+    pub fn opts(self: Env, exec: Exec) Options {
         return .{ .lang = "demo", .root = self.root, .work = self.work, .origin = "https://example.invalid/r", .commit = "c" ** 40, .buck2 = "/bin/buck2", .buildrules = "/bin/buildrules", .exec = exec };
     }
 };
 
-const out_path = "buck-out/v2/art/root/app/bin";
+pub const out_path = "buck-out/v2/art/root/app/bin";
 
 test "a local beta: copies the user's files, runs the steps, builds, runs the output, and builds again in another directory to the same bytes" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
@@ -598,7 +617,7 @@ test "a local beta: copies the user's files, runs the steps, builds, runs the ou
 
 const flake_stderr = "Error materializing HTTP resource declared by target toolchains//:busybox_pin\n\nCaused by:\n    Timed out while making request to URI: https://busybox.net/downloads/busybox after 5 seconds\nBUILD FAILED\n";
 
-fn failOut(stderr: []const u8) io_mod.Out {
+pub fn failOut(stderr: []const u8) io_mod.Out {
     return .{ .code = 1, .stdout = "", .stderr = stderr };
 }
 
