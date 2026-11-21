@@ -54,9 +54,9 @@ def _impl(ctx):
     for part in ["bin/rustc", "lib", "libexec", ".rustc_version"]:
         files["sysroot/" + part] = sysroot.project(part)
     ra = ctx.attrs.rust_analyzer[DefaultInfo].default_outputs[0]
-    files["sysroot/bin/rust-analyzer"] = ra.project("rust-analyzer-preview/bin/rust-analyzer")
+    files["sysroot/bin/rust-analyzer"] = ra.project("bin/rust-analyzer")
     src = ctx.attrs.rust_src[DefaultInfo].default_outputs[0]
-    files["rust-src"] = src.project("rust-src/lib/rustlib/src/rust")
+    files["rust-src"] = src.project("lib/rustlib/src/rust")
 
     def add_run(bs):
         path = "build/" + bs.unit

@@ -246,7 +246,7 @@ none) and `rust_analyzer` (the `rust-analyzer-preview` component). Nothing is fe
 `rust_toolchains()` declares one toolchain per version: `toolchains//:rust_<v>`, `:sysroot_<v>`, `:cargo_<v>`, `:clippy_<v>`, `:rustfmt_<v>`
 (a version whose row pins rustfmt) and the pins behind them (`<v>` is the version with `_` for `.`: `rust_1_85_0`). `:rust`, `:sysroot`, `:cargo`, `:clippy`
 (and `:llvm_tools`, `:rustfmt`, `:rust_src`, `:rust_analyzer`) are aliases of the default's. A version whose row pins them also has `:rust_src_<v>` and
-`:rust_analyzer_<v>`, each the component's tarball unpacked as it is (`buildrules-pins.toml` cannot pin these two). A toolchain is an input of every compile, test and lint action of its
+`:rust_analyzer_<v>`, each unpacked by the pinned `unpack`, checked against the pin's sha256 and size and bounded at 64 MiB decompressed (`buildrules-pins.toml` cannot pin these two). A toolchain is an input of every compile, test and lint action of its
 units, so **two versions never share an action key**.
 
 **Which toolchain a target uses:** the table's `RUSTC` (the macros pass it as `rustc =`), or `RUST_DEFAULT` for the hand-written

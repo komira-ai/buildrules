@@ -46,13 +46,12 @@ seed_zig_exe(
 )
 
 # rustc_diag (rustc_diag.zig): a lint unit's run as a diagnostics run (`:flycheck`), a tool of its own so the launcher, and with it the key of
-# every compile, stays as it is. Built behind its unit tests, which run it with programs of the pinned busybox in place of rustc.
+# every compile, stays as it is. Built behind its unit tests, which run it with programs of the test's PATH in place of rustc.
 seed_zig_test(
     name = "rustc_diag_unit",
     exec_compatible_with = LINUX_X86_64,
     src = "rustc_diag_test.zig",
     imports = ["rustc_diag.zig"],
-    busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
 )
 
@@ -61,7 +60,6 @@ seed_zig_exe(
     exec_compatible_with = LINUX_X86_64,
     src = "rustc_diag.zig",
     unit_tests = [":rustc_diag_unit"],
-    busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
     visibility = ["PUBLIC"],
 )

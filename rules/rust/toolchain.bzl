@@ -255,26 +255,41 @@ rustfmt_dist = rule(
 
 # ---- code intelligence: rust-src and rust-analyzer --------------------------------
 
+# The most decompressed bytes (the tar stream, headers and padding included) a rust-src or rust-analyzer archive may hold: 64 MiB. The 1.95.0 archives
+# decompress to 49426944 bytes (rust-src) and 44780544 (rust-analyzer) (`gzip -dc | wc -c`), so the limit leaves about 30% to spare over the larger.
+_COMPONENT_MAX_OUTPUT = 64 * 1024 * 1024
+
 def _component_dist_impl(ctx):
-    # The tarball's one top directory is `top`; an output declared with that name is the directory busybox tar extracts it into, under the
-    # output's parent (as `crate_src` does). One command, no shell: the tree is used as the tarball has it (`artifact.project` names a path in it).
-    out = ctx.actions.declare_output(ctx.attrs.top, dir = True)
+    out = ctx.actions.declare_output(ctx.label.name, dir = True)
+
+    # The archive holds `<component>-<version>[-<triple>]/<component dir>/...`: two components are dropped, as for rustfmt (rust-src: `lib/rustlib/src/rust/library`;
+    # rust-analyzer: `bin/rust-analyzer`), and the installer's own files beside the component directory are left out.
     ctx.actions.run(
-        cmd_args(_file(ctx.attrs.busybox), "tar", "-xzf", _file(ctx.attrs.archive), "-C", cmd_args(out.as_output(), parent = 1)),
+        unpack_cmd(
+            ctx.label,
+            ctx.attrs.unpack,
+            _file(ctx.attrs.archive),
+            out,
+            ctx.attrs.sha256,
+            ctx.attrs.size_bytes,
+            _COMPONENT_MAX_OUTPUT,
+            2,
+            "tar.gz",
+        ),
         category = "rust_component_unpack",
-        identifier = ctx.attrs.top,
         env = _ENV,
     )
     return [DefaultInfo(default_output = out)]
 
-# An unpacked component tarball (`rust_src_<v>`: `<top>/rust-src/lib/rustlib/src/rust/library`; `rust_analyzer_<v>`:
-# `<top>/rust-analyzer-preview/bin/rust-analyzer`), for rules/rust/rust_analyzer.bzl.
+# An unpacked component (`rust_src_<v>`: `lib/rustlib/src/rust/library`; `rust_analyzer_<v>`: `bin/rust-analyzer`), unpacked by the pinned `unpack` with the
+# pin's sha256 and size, for rules/rust/rust_analyzer.bzl.
 rust_component_dist = rule(
     impl = _component_dist_impl,
     attrs = {
         "archive": attrs.dep(),
-        "busybox": attrs.dep(),
-        "top": attrs.string(),
+        "sha256": attrs.string(),
+        "size_bytes": attrs.int(),
+        "unpack": attrs.exec_dep(default = UNPACK, providers = [RunInfo]),
     },
 )
 
@@ -461,8 +476,8 @@ def rust_toolchains(extra = {}):
             rust_component_dist(
                 name = "{}_{}".format(role, n),
                 archive = ":{}_pin_{}".format(role, n),
-                busybox = ":busybox_pin",
-                top = p["name"][:-len(".tar.gz")],
+                sha256 = p["sha256"],
+                size_bytes = p["size"],
                 visibility = ["PUBLIC"],
             )
         rust_toolchain(
