@@ -811,6 +811,32 @@ test "the real hosts.bzl is a table this reads, every release in it is pinned, a
     }
 }
 
+test "the real tables pin mopm 0.0.135, the release of the Mojo 1.1.0 and 1.2.0 toolchains, for all three hosts" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const w = try std.process.getEnvVarOwned(a, "BUILDRULES_TEST_WORK");
+    const pins_text = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ w, "rules/mopm/pins.bzl" }), 1 << 20);
+    const hosts_text = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ w, "rules/mopm/hosts.bzl" }), 1 << 20);
+    const merged = try withHosts(a, try parse(a, pins_text), try parseHosts(a, hosts_text), &linux_x86_64_only);
+    const want = [_][2][]const u8{
+        .{ "0.0.135", "v0.0.135/mopm-0.0.135-linux-x86_64.tar.gz" },
+        .{ "0.0.135 linux-aarch64", "v0.0.135/mopm-0.0.135-linux-aarch64.tar.gz" },
+        .{ "0.0.135 macos-aarch64", "v0.0.135/mopm-0.0.135-macos-arm64.tar.gz" },
+    };
+    for (want) |wv| {
+        var found = false;
+        for (merged.rows) |r| {
+            if (!std.mem.eql(u8, r.version, wv[0])) continue;
+            found = true;
+            try t.expectEqualStrings(url_prefix ++ wv[1], r.url);
+            try t.expect(isHex64(r.sha256));
+            try t.expect(r.size > 0);
+        }
+        try t.expect(found);
+    }
+}
+
 test "isTrustedRootFetchFailure is a network failure and nothing else" {
     try t.expect(isTrustedRootFetchFailure("Error: tuf refresh failed: x"));
     try t.expect(isTrustedRootFetchFailure("warning: Could not fetch trusted_root.json"));
