@@ -161,25 +161,31 @@ fn run(a: std.mem.Allocator, cmd: []const u8, rest: []const []const u8) !u8 {
         return 1;
     }
     if (std.mem.eql(u8, cmd, "gamma")) {
-        const g = try parseArgs(a, rest, &.{ "work", "candidate", "repos", "targets", "buck2", "farm-config" });
-        const raw = std.fs.cwd().readFileAlloc(a, try g.need("farm-config"), 1 << 20) catch "";
+        const g = try parseArgs(a, rest, &gamma_flags);
         const buck2 = try g.need("buck2");
         var st = State{ .path_prefix = if (std.mem.eql(u8, std.fs.path.basename(buck2), "buck2")) dirOf(buck2) else "" };
-        const io = io_mod.Io{ .ctx = &st, .run_fn = realRun };
-        try std.fs.cwd().makePath(try g.need("work"));
-        try gamma.run(a, io, .{
-            .repos = try g.need("repos"),
-            .candidate = try g.need("candidate"),
-            .targets = g.get("targets") orelse "//...",
-            .work = try g.need("work"),
-            .buck2 = buck2,
-            .farm_config = try farm.buildrulesConfig(a, raw),
-        });
-        io_mod.say("gamma: every repository built on the farm with the candidate\n", .{});
-        return 0;
+        return gammaCommand(a, .{ .ctx = &st, .run_fn = realRun }, g);
     }
     std.debug.print("stage: unknown command `{s}`\n", .{cmd});
     return error.Usage;
+}
+
+pub const gamma_flags = [_][]const u8{ "work", "candidate", "repos", "targets", "buck2", "farm-config" };
+
+/// `stage gamma`: see gamma.zig.
+pub fn gammaCommand(a: std.mem.Allocator, io: io_mod.Io, g: Args) !u8 {
+    const raw = std.fs.cwd().readFileAlloc(a, try g.need("farm-config"), 1 << 20) catch "";
+    try std.fs.cwd().makePath(try g.need("work"));
+    try gamma.run(a, io, .{
+        .repos = try g.need("repos"),
+        .candidate = try g.need("candidate"),
+        .targets = g.get("targets") orelse "//...",
+        .work = try g.need("work"),
+        .buck2 = try g.need("buck2"),
+        .farm_config = try farm.buildrulesConfig(a, raw),
+    });
+    io_mod.say("gamma: every repository built on the farm with the candidate\n", .{});
+    return 0;
 }
 
 pub const beta_flags = [_][]const u8{ "root", "lang", "work", "origin", "commit", "buck2", "buildrules", "exec", "farm-config", "summary" };

@@ -317,3 +317,34 @@ test "gamma: a compile error, a mixed log, and a compile error after a cut are r
     try t.expectError(error.StepFailed, gamma.run(a, then_compile.io(), gamma.gammaOpts(try gammaWork(a, &tmp3), "org/first")));
     try t.expectEqual(@as(usize, 2), then_compile.count("buck2 build"));
 }
+
+/// `stage gamma` of `org/first org/second` with the farm's config, parsed from its command line, against `fake`.
+fn gammaCli(a: std.mem.Allocator, base: []const u8, fake: *gamma.GFake) !u8 {
+    const cfg_path = try std.fs.path.join(a, &.{ base, "farm.buckconfig" });
+    try std.fs.cwd().writeFile(.{ .sub_path = cfg_path, .data = farm_cfg });
+    const argv = [_][]const u8{
+        "--work",  try std.fs.path.join(a, &.{ base, "gamma" }), "--candidate",   "d" ** 40, "--repos", "org/first org/second",
+        "--buck2", "/bin/buck2",                                 "--farm-config", cfg_path,
+    };
+    return stage.gammaCommand(a, fake.io(), try stage.parseArgs(a, &argv, &stage.gamma_flags));
+}
+
+test "stage gamma: from its command line, a build cut once passes after one rerun, and a build cut twice is red with the cut named" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var once = gamma.GFake{ .a = a, .build_out = g_built, .build_first = &.{cut} };
+    try t.expectEqual(@as(u8, 0), try gammaCli(a, try gammaWork(a, &tmp), &once));
+    // the first repository twice (cut, then built), the second once
+    try t.expectEqual(@as(usize, 3), once.count("buck2 build"));
+    try t.expectEqual(@as(usize, 2), once.count("1-first :: /bin/buck2 build --console simple //..."));
+
+    var tmp2 = t.tmpDir(.{});
+    defer tmp2.cleanup();
+    var twice = gamma.GFake{ .a = a, .build_out = g_built, .build_first = &.{ cut, cut } };
+    try t.expectError(error.FarmConnectionCut, gammaCli(a, try gammaWork(a, &tmp2), &twice));
+    try t.expectEqual(@as(usize, 2), twice.count("buck2 build"));
+    try t.expectEqual(@as(usize, 1), twice.count("git clone"));
+}
