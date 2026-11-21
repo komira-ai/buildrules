@@ -506,6 +506,8 @@ group(name = "gitcrates", deps = [
     "gitcrates//third_party/buildrules:files",
     "gitcrates//:fmt",
     "gitcrates//crates/gdemo:fmt",
+    "gitcrates//:typecheck",
+    "gitcrates//crates/gdemo:typecheck",
 ])
 
 # The public CI workflow (.github/workflows/ci.yml, docs/contract.md section 14): the pinned actionlint accepts it, and ci/workflow_check.zig
