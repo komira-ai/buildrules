@@ -862,6 +862,24 @@ test "generate: member policy is read from the manifests: workspace lints, a pac
     try generateRefused(&e, repo, lock_with_itoa, json, "unknown key(s) ['bogus']");
 }
 
+test "generate: `typecheck` from the manifests: a workspace action chains it, a package default names it, and an action named `typecheck` refuses the sync" {
+    // Defects: a manifest whose action chains `typecheck` refused by sync (no repository could reach `:typecheck` through an action), or its chain or
+    // default left out of the table; a manifest that names an action `typecheck`, beside the member's own `:typecheck`, written into the table.
+    var e = Env.init();
+    defer e.deinit();
+    var repo = try Repo.create(&e, lock_with_itoa);
+    defer repo.tmp.cleanup();
+    const json = try repo.graph(&e, graph_app);
+    try repo.tmp.dir.writeFile(.{ .sub_path = "Cargo.toml", .data = ws_manifest ++ "quick = [\"fmt\", \"typecheck\"]\n" });
+    try repo.tmp.dir.writeFile(.{ .sub_path = "crates/app/Cargo.toml", .data = app_manifest ++ "[package.metadata.buildrules]\ndefault-action = \"typecheck\"\n" });
+    const ok = try GenerateOk.run(&e, repo, lock_with_itoa, json);
+    try t.expect(std.mem.indexOf(u8, ok.text, "\"quick\": [\"fmt\", \"typecheck\"]") != null);
+    try t.expect(std.mem.indexOf(u8, ok.text, "\"ci\": [\"lint\", \"test\"]") != null);
+    try t.expect(std.mem.indexOf(u8, ok.text, "\"default_action\": \"typecheck\"") != null);
+    try repo.tmp.dir.writeFile(.{ .sub_path = "crates/app/Cargo.toml", .data = app_manifest ++ "[package.metadata.buildrules.actions]\ntypecheck = [\"lint\"]\n" });
+    try generateRefused(&e, repo, lock_with_itoa, json, "action 'typecheck' has the name of a step (['fmt', 'lint', 'typecheck', 'debug', 'test', 'release', 'coverage']); name it differently");
+}
+
 test "generate: the output of a run that fails an allocation is an error, never a table (at every allocation)" {
     var e = Env.init();
     defer e.deinit();
