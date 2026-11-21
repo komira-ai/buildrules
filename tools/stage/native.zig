@@ -93,7 +93,7 @@ pub fn versionOf(a: std.mem.Allocator, io: Io, buildrules: []const u8) ![]const 
 fn prepare(a: std.mem.Allocator, io: Io, o: beta.Options, steps: []const steps_mod.Step) !usize {
     const n = try beta.copyTree(a, try std.fs.path.join(a, &.{ o.root, "beta", o.lang }), o.work);
     for (steps) |s| switch (s) {
-        .run => |words| try beta.runCommand(a, io, o, words),
+        .run => |words| try beta.runCommand(a, io, o, words, null),
         .config => try beta.writeConfig(a, o),
         else => unreachable,
     };
