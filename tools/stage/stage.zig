@@ -20,18 +20,18 @@ const farm = @import("farm.zig");
 const steps_mod = @import("steps.zig");
 const io_mod = @import("io.zig");
 
-const Args = struct {
+pub const Args = struct {
     names: []const []const u8,
     values: []const []const u8,
 
-    fn get(self: Args, name: []const u8) ?[]const u8 {
+    pub fn get(self: Args, name: []const u8) ?[]const u8 {
         for (self.names, self.values) |n, v| {
             if (std.mem.eql(u8, n, name)) return v;
         }
         return null;
     }
 
-    fn need(self: Args, name: []const u8) ![]const u8 {
+    pub fn need(self: Args, name: []const u8) ![]const u8 {
         return self.get(name) orelse {
             std.debug.print("stage: --{s} is required\n", .{name});
             return error.Usage;
@@ -39,7 +39,7 @@ const Args = struct {
     }
 };
 
-fn parseArgs(a: std.mem.Allocator, argv: []const []const u8, allowed: []const []const u8) !Args {
+pub fn parseArgs(a: std.mem.Allocator, argv: []const []const u8, allowed: []const []const u8) !Args {
     var names = std.ArrayList([]const u8).empty;
     var values = std.ArrayList([]const u8).empty;
     var i: usize = 0;
@@ -120,56 +120,10 @@ fn run(a: std.mem.Allocator, cmd: []const u8, rest: []const []const u8) !u8 {
         return plan(a, try g.need("root"), g.get("output"));
     }
     if (std.mem.eql(u8, cmd, "beta")) {
-        const g = try parseArgs(a, rest, &.{ "root", "lang", "work", "origin", "commit", "buck2", "buildrules", "exec", "farm-config", "summary" });
-        const mode = try g.need("exec");
-        var exec: beta.Exec = .local;
-        if (std.mem.eql(u8, mode, "farm")) {
-            const cfg_path = try g.need("farm-config");
-            const raw = std.fs.cwd().readFileAlloc(a, cfg_path, 1 << 20) catch {
-                std.debug.print("{s}", .{gamma.not_configured_message});
-                return error.FarmNotConfigured;
-            };
-            const cfg = try farm.buildrulesConfig(a, raw);
-            if (!farm.farmConfigured(cfg)) {
-                std.debug.print("{s}", .{gamma.not_configured_message});
-                return error.FarmNotConfigured;
-            }
-            exec = .{ .farm = cfg };
-        } else if (!std.mem.eql(u8, mode, "local")) {
-            std.debug.print("stage: --exec is local or farm\n", .{});
-            return error.Usage;
-        }
+        const g = try parseArgs(a, rest, &beta_flags);
         const buck2 = try g.need("buck2");
         var st = State{ .path_prefix = if (std.mem.eql(u8, std.fs.path.basename(buck2), "buck2")) dirOf(buck2) else "" };
-        const io = io_mod.Io{ .ctx = &st, .run_fn = realRun };
-        const lang = try g.need("lang");
-        const res = try beta.run(a, io, .{
-            .lang = lang,
-            .root = try g.need("root"),
-            .work = try g.need("work"),
-            .origin = try g.need("origin"),
-            .commit = try g.need("commit"),
-            .buck2 = buck2,
-            .buildrules = try g.need("buildrules"),
-            .exec = exec,
-        });
-        var md = std.ArrayList(u8).empty;
-        switch (res.outcome) {
-            .planned => {
-                io_mod.say("beta {s}: PLANNED (skipped): {s}\n", .{ lang, res.reason });
-                try md.print(a, "- beta `{s}`: **planned**, skipped: {s}\n", .{ lang, res.reason });
-            },
-            .passed => {
-                for (res.outputs) |x| io_mod.say("beta {s}: {s} {s} sha256 {s}\n", .{ lang, x.target, x.path, x.sha256 });
-                if (res.deterministic) |d| {
-                    io_mod.say("beta {s}: {d} output(s), {s} after a rebuild in another directory\n", .{ lang, res.outputs.len, if (d) "identical bytes" else "DIFFERENT" });
-                }
-                try md.print(a, "- beta `{s}`: passed, {d} output(s); {s}\n", .{ lang, res.outputs.len, if (res.deterministic == null) "determinism not checked on a farm" else "identical bytes after a clean rebuild" });
-                for (res.outputs) |x| try md.print(a, "  - `{s}` sha256 `{s}`\n", .{ x.target, x.sha256 });
-            },
-        }
-        if (g.get("summary")) |p| try appendFile(p, md.items);
-        return 0;
+        return betaCommand(a, .{ .ctx = &st, .run_fn = realRun }, g);
     }
     if (std.mem.eql(u8, cmd, "native")) {
         const g = try parseArgs(a, rest, &native_flags);
@@ -207,25 +161,92 @@ fn run(a: std.mem.Allocator, cmd: []const u8, rest: []const []const u8) !u8 {
         return 1;
     }
     if (std.mem.eql(u8, cmd, "gamma")) {
-        const g = try parseArgs(a, rest, &.{ "work", "candidate", "repos", "targets", "buck2", "farm-config" });
-        const raw = std.fs.cwd().readFileAlloc(a, try g.need("farm-config"), 1 << 20) catch "";
+        const g = try parseArgs(a, rest, &gamma_flags);
         const buck2 = try g.need("buck2");
         var st = State{ .path_prefix = if (std.mem.eql(u8, std.fs.path.basename(buck2), "buck2")) dirOf(buck2) else "" };
-        const io = io_mod.Io{ .ctx = &st, .run_fn = realRun };
-        try std.fs.cwd().makePath(try g.need("work"));
-        try gamma.run(a, io, .{
-            .repos = try g.need("repos"),
-            .candidate = try g.need("candidate"),
-            .targets = g.get("targets") orelse "//...",
-            .work = try g.need("work"),
-            .buck2 = buck2,
-            .farm_config = try farm.buildrulesConfig(a, raw),
-        });
-        io_mod.say("gamma: every repository built on the farm with the candidate\n", .{});
-        return 0;
+        return gammaCommand(a, .{ .ctx = &st, .run_fn = realRun }, g);
     }
     std.debug.print("stage: unknown command `{s}`\n", .{cmd});
     return error.Usage;
+}
+
+pub const gamma_flags = [_][]const u8{ "work", "candidate", "repos", "targets", "buck2", "farm-config" };
+
+/// `stage gamma`: see gamma.zig.
+pub fn gammaCommand(a: std.mem.Allocator, io: io_mod.Io, g: Args) !u8 {
+    const raw = std.fs.cwd().readFileAlloc(a, try g.need("farm-config"), 1 << 20) catch "";
+    try std.fs.cwd().makePath(try g.need("work"));
+    try gamma.run(a, io, .{
+        .repos = try g.need("repos"),
+        .candidate = try g.need("candidate"),
+        .targets = g.get("targets") orelse "//...",
+        .work = try g.need("work"),
+        .buck2 = try g.need("buck2"),
+        .farm_config = try farm.buildrulesConfig(a, raw),
+    });
+    io_mod.say("gamma: every repository built on the farm with the candidate\n", .{});
+    return 0;
+}
+
+pub const beta_flags = [_][]const u8{ "root", "lang", "work", "origin", "commit", "buck2", "buildrules", "exec", "farm-config", "summary" };
+
+/// `stage beta`: see beta.zig. The summary line says when a command of a farm leg ran again after a cut connection to the farm, and a leg that
+/// fails because the connection was cut on both runs says so there too.
+pub fn betaCommand(a: std.mem.Allocator, io: io_mod.Io, g: Args) !u8 {
+    const mode = try g.need("exec");
+    var exec: beta.Exec = .local;
+    if (std.mem.eql(u8, mode, "farm")) {
+        const cfg_path = try g.need("farm-config");
+        const raw = std.fs.cwd().readFileAlloc(a, cfg_path, 1 << 20) catch {
+            std.debug.print("{s}", .{gamma.not_configured_message});
+            return error.FarmNotConfigured;
+        };
+        const cfg = try farm.buildrulesConfig(a, raw);
+        if (!farm.farmConfigured(cfg)) {
+            std.debug.print("{s}", .{gamma.not_configured_message});
+            return error.FarmNotConfigured;
+        }
+        exec = .{ .farm = cfg };
+    } else if (!std.mem.eql(u8, mode, "local")) {
+        std.debug.print("stage: --exec is local or farm\n", .{});
+        return error.Usage;
+    }
+    const lang = try g.need("lang");
+    const res = beta.run(a, io, .{
+        .lang = lang,
+        .root = try g.need("root"),
+        .work = try g.need("work"),
+        .origin = try g.need("origin"),
+        .commit = try g.need("commit"),
+        .buck2 = try g.need("buck2"),
+        .buildrules = try g.need("buildrules"),
+        .exec = exec,
+    }) catch |e| {
+        if (e == error.FarmConnectionCut) {
+            if (g.get("summary")) |p| try appendFile(p, try std.fmt.allocPrint(a, "- beta `{s}`: **failed**: the connection to the farm was cut, and cut again when the command ran a second time (buck2: `{s}`)\n", .{ lang, farm.cut_marker }));
+        }
+        return e;
+    };
+    var md = std.ArrayList(u8).empty;
+    switch (res.outcome) {
+        .planned => {
+            io_mod.say("beta {s}: PLANNED (skipped): {s}\n", .{ lang, res.reason });
+            try md.print(a, "- beta `{s}`: **planned**, skipped: {s}\n", .{ lang, res.reason });
+        },
+        .passed => {
+            for (res.outputs) |x| io_mod.say("beta {s}: {s} {s} sha256 {s}\n", .{ lang, x.target, x.path, x.sha256 });
+            if (res.deterministic) |d| {
+                io_mod.say("beta {s}: {d} output(s), {s} after a rebuild in another directory\n", .{ lang, res.outputs.len, if (d) "identical bytes" else "DIFFERENT" });
+            }
+            if (res.cut_reruns != 0) io_mod.say("beta {s}: passed; {d} command(s) ran again after a cut connection to the farm\n", .{ lang, res.cut_reruns });
+            try md.print(a, "- beta `{s}`: passed, {d} output(s); {s}", .{ lang, res.outputs.len, if (res.deterministic == null) "determinism not checked on a farm" else "identical bytes after a clean rebuild" });
+            if (res.cut_reruns != 0) try md.print(a, "; {d} command(s) ran again after a cut connection to the farm", .{res.cut_reruns});
+            try md.append(a, '\n');
+            for (res.outputs) |x| try md.print(a, "  - `{s}` sha256 `{s}`\n", .{ x.target, x.sha256 });
+        },
+    }
+    if (g.get("summary")) |p| try appendFile(p, md.items);
+    return 0;
 }
 
 const native_flags = [_][]const u8{ "root", "lang", "work", "origin", "commit", "buck2", "buildrules", "host", "version", "summary" };
