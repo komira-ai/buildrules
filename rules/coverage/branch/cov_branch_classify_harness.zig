@@ -29,6 +29,7 @@ const Alloc = std.mem.Allocator;
 pub const case_ll = @embedFile("fixtures/case.ll");
 pub const case_golden = @embedFile("fixtures/case.golden.info");
 pub const rules_ll = @embedFile("fixtures/rules.ll");
+pub const rules_mojo11_ll = @embedFile("fixtures/rules_mojo11.ll");
 pub const rules_golden = @embedFile("fixtures/rules.golden.info");
 pub const try_ll = @embedFile("fixtures/try.ll");
 pub const try_golden = @embedFile("fixtures/try.golden.info");

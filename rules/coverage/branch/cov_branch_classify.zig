@@ -4,7 +4,7 @@
 //! ("cov_branch_classify") has the rules with their evidence; in brief:
 //!
 //! usage: cov_branch_classify --ir <test.ll> --out <file> --map <PREFIX>=<REPO>
-//!            [--src <DIR>] --stdlib <PREFIX> [--gen <REL>]...
+//!            [--src <DIR>] --stdlib <PREFIX>... [--gen <REL>]...
 //!            [--exclude <PREFIX>]... [--exclude-file <NAME>]...
 //!
 //! <test.ll> is the module `cov_branch annotate` prints after LLVM's
@@ -20,9 +20,13 @@
 //! A name equal to an --exclude-file or under an --exclude prefix is not
 //! measured; any other name is refused.
 //! Every `.mojo` file under --src is read for the functions it declares
-//! `@always_inline("nodebug")`. --stdlib names where
-//! the standard library's sources are (a String's last-reference test is
-//! its code, inlined at the branch).
+//! `@always_inline("nodebug")`. Each --stdlib
+//! (one or more, so one rule serves toolchains that name the standard
+//! library's sources differently: `oss/modular/mojo/stdlib/std/...` in Mojo
+//! 1.0, `Mojo/stdlib/std/...` in Mojo 1.1) names where the standard
+//! library's sources are: a file name is the standard library's when it
+//! starts with any of them (a String's last-reference test is its code,
+//! inlined at the branch).
 //!
 //! Classes. First by shape: a br or select testing a String's flags word or
 //! its last reference (a destructor or copy, `nodebug` code carrying the
@@ -106,7 +110,7 @@ const lessStr = records.lessStr;
 
 const usage =
     \\usage: cov_branch_classify --ir <test.ll> --out <file> --map <PREFIX>=<REPO>
-    \\           [--src <DIR>] --stdlib <PREFIX> [--gen <REL>]...
+    \\           [--src <DIR>] --stdlib <PREFIX>... [--gen <REL>]...
     \\           [--exclude <PREFIX>]... [--exclude-file <NAME>]...
     \\
 ;
@@ -242,11 +246,15 @@ pub const State = struct {
         return false;
     }
 
-    /// Whether `loc` is in the standard library (--stdlib), inlined at `at`.
+    /// Whether `loc` is in the standard library (any --stdlib), inlined at `at`.
     pub fn stdlibInlinedAt(self: *State, loc: u32, at: u32) bool {
         const w = self.where(loc) orelse return false;
         const i = w.inlined_at orelse return false;
-        return i == at and std.mem.startsWith(u8, w.name, self.opts.stdlib);
+        if (i != at) return false;
+        for (self.opts.stdlib) |p| {
+            if (std.mem.startsWith(u8, w.name, p)) return true;
+        }
+        return false;
     }
 
     pub fn weightsOf(self: *State, prof: ?u32, arms: usize, what: []const u8) ?[]const u64 {
@@ -617,7 +625,7 @@ pub fn main() void {
     var out_path: ?[]const u8 = null;
     var map: ?[]const u8 = null;
     var src_dir: ?[]const u8 = null;
-    var stdlib: ?[]const u8 = null;
+    var stdlibs = std.ArrayList([]const u8).empty;
     var gens = std.ArrayList([]const u8).empty;
     var excludes = std.ArrayList([]const u8).empty;
     var exclude_files = std.ArrayList([]const u8).empty;
@@ -640,9 +648,11 @@ pub fn main() void {
             if (v.len < 2 or v[v.len - 1] != '/') usageFail("--src '{s}' must end with '/'", .{v});
             src_dir = v;
         } else if (std.mem.eql(u8, flag, "--stdlib")) {
-            if (stdlib != null) usageFail("--stdlib given twice", .{});
             if (v.len < 2 or v[v.len - 1] != '/') usageFail("--stdlib '{s}' must end with '/'", .{v});
-            stdlib = v;
+            for (stdlibs.items) |p| {
+                if (std.mem.eql(u8, p, v)) usageFail("--stdlib '{s}' given twice", .{v});
+            }
+            stdlibs.append(alloc, v) catch oom();
         } else if (std.mem.eql(u8, flag, "--gen")) {
             if (v.len == 0 or v[0] == '/') usageFail("--gen '{s}' must be a relative path", .{v});
             gens.append(alloc, v) catch oom();
@@ -659,7 +669,7 @@ pub fn main() void {
     const in_file = ir_path orelse usageFail("--ir is required", .{});
     const out_file = out_path orelse usageFail("--out is required", .{});
     const m = map orelse usageFail("--map is required", .{});
-    const std_prefix = stdlib orelse usageFail("--stdlib is required", .{});
+    if (stdlibs.items.len == 0) usageFail("--stdlib is required", .{});
     const eq = std.mem.indexOfScalar(u8, m, '=') orelse usageFail("--map '{s}' is not PREFIX=REPO", .{m});
     const src = src_dir orelse m[0..eq];
     const opts = Opts{
@@ -669,7 +679,7 @@ pub fn main() void {
         .gens = gens.items,
         .excludes = excludes.items,
         .exclude_files = exclude_files.items,
-        .stdlib = std_prefix,
+        .stdlib = stdlibs.items,
     };
     if (opts.prefix.len < 2 or opts.prefix[opts.prefix.len - 1] != '/') usageFail("--map PREFIX '{s}' must end with '/'", .{opts.prefix});
     if (opts.repo.len > 0 and (opts.repo[0] == '/' or opts.repo[opts.repo.len - 1] != '/')) usageFail("--map REPO '{s}' must be empty or relative and end with '/'", .{opts.repo});

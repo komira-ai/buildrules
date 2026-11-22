@@ -51,8 +51,8 @@ pub const Opts = struct {
     gens: [][]const u8,
     excludes: [][]const u8,
     exclude_files: [][]const u8,
-    // Where the standard library's sources are named (`--stdlib`).
-    stdlib: []const u8,
+    // Where the standard library's sources are named (each `--stdlib`).
+    stdlib: []const []const u8,
 };
 
 pub fn cleanRel(rel: []const u8) bool {

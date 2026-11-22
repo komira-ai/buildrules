@@ -175,12 +175,13 @@ _CLASSIFY_CASE_INPUTS = [
     "fixtures/gen.src",
     "fixtures/rules.golden.info",
     "fixtures/rules.ll",
+    "fixtures/rules_mojo11.ll",
     "fixtures/t.src",
     "fixtures/try.golden.info",
     "fixtures/try.ll",
 ]
 
-_CLASSIFY_CASES = ["andor", "case", "files", "fold", "main", "rules", "try", "unequal"]
+_CLASSIFY_CASES = ["andor", "case", "files", "fold", "main", "rules", "stdlib", "try", "unequal"]
 
 [
     zig_test(

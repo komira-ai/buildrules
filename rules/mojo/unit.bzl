@@ -768,13 +768,19 @@ def _classify_impl(ctx):
         ctx.attrs.map,
         "--src",
         cmd_args(src, format = "{}/"),
-        # Where the standard library's sources are named: a String's last-reference test is its code inlined at the branch.
+        # Where the standard library's sources are named: a String's last-reference test is its code inlined at the branch. The two
+        # layouts are Mojo 1.0's (`oss/modular/mojo/stdlib/std/...`) and Mojo 1.1's (`Mojo/stdlib/std/...`) names for those sources, so
+        # one rule serves both toolchains.
         "--stdlib",
         "oss/modular/",
+        "--stdlib",
+        "Mojo/stdlib/",
         # The standard library, the closure's other packages, the test itself and the compile unit with no file are not measured. Any other
         # name fails the action, so a library compiled from a path of its own cannot read as measured with nothing in it.
         "--exclude",
         "oss/modular/",
+        "--exclude",
+        "Mojo/stdlib/",
     )
     for d in ctx.attrs.excludes:
         cmd.add("--exclude", d)
