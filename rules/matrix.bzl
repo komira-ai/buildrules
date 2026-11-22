@@ -1,7 +1,7 @@
-"""CI matrix: build the same targets under another Rust version or ISA level, in ONE `buck2 build`.
+"""CI matrix: build the same targets under another Rust version, ISA level or Mojo version, in ONE `buck2 build`.
 
-A target platform selects the Rust version (`rust_version`) and the ISA level (`isa_level`). To build under several of them at once
-the build needs a configuration transition, which is what these rules are: `rust_at` and `isa_at` depend on `deps` configured
+A target platform selects the Rust version (`rust_version`), the ISA level (`isa_level`) and the Mojo version (`mojo_version`). To build under several of them at once
+the build needs a configuration transition, which is what these rules are: `rust_at`, `isa_at` and `mojo_at` depend on `deps` configured
 for the same target platform with one constraint value replaced, and build them. Nothing else about the targets changes, so
 each cell of the matrix is an ordinary configured target with its own action keys and its own cache entries.
 
@@ -9,8 +9,15 @@ each cell of the matrix is an ordinary configured target with its own action key
 
 `buck2 build //ci:oldest` is then the same as `buck2 build --target-platforms buildrules//platforms:linux_x86_64_rust_1_85_0
 //examples/hello:hello_runs`, which is how a developer reproduces one cell.
+
+    mojo_at(name = "mojo_1_2_0", version = "1.2.0", deps = ["//pkg:lib"])
+
+builds `//pkg:lib` and every Mojo package it imports from their unit graphs for Mojo 1.2.0, with `toolchains//:mojo_1_2_0` (rules/mojo/versions.bzl): the same as
+`buck2 build --target-platforms buildrules//platforms:linux_x86_64_mojo_1_2_0 //pkg:lib`, or, on another platform, that platform with the constraint value
+`buildrules//platforms:mojo_1_2_0` added. A package whose table has no graph for the version is refused at analysis, naming it and `buildrules mojo sync`.
 """
 
+load("//rules/mojo:version_names.bzl", "MOJO_VERSIONS")
 load("//rules/rust:pins.bzl", "RUST_VERSIONS")
 
 def _impl(platform, refs):
@@ -26,13 +33,16 @@ def _impl(platform, refs):
     )
 
 # A transition must be assigned to a variable of its own, so each cell is spelled out. A version or level added to
-# rules/rust/pins.bzl or rules/isa.bzl without a line here is refused at load (below).
+# rules/rust/pins.bzl, rules/isa.bzl or rules/mojo/version_names.bzl without a line here is refused at load (below).
 _RUST_1_95_0 = transition(impl = _impl, refs = {"value": "buildrules//platforms:rust_1_95_0"})
 _RUST_1_85_0 = transition(impl = _impl, refs = {"value": "buildrules//platforms:rust_1_85_0"})
 _ISA_X86_64_V1 = transition(impl = _impl, refs = {"value": "buildrules//platforms:isa_x86_64_v1"})
 _ISA_X86_64_V2 = transition(impl = _impl, refs = {"value": "buildrules//platforms:isa_x86_64_v2"})
 _ISA_X86_64_V3 = transition(impl = _impl, refs = {"value": "buildrules//platforms:isa_x86_64_v3"})
 _ISA_X86_64_V4 = transition(impl = _impl, refs = {"value": "buildrules//platforms:isa_x86_64_v4"})
+_MOJO_1_0_0 = transition(impl = _impl, refs = {"value": "buildrules//platforms:mojo_1_0_0"})
+_MOJO_1_1_0 = transition(impl = _impl, refs = {"value": "buildrules//platforms:mojo_1_1_0"})
+_MOJO_1_2_0 = transition(impl = _impl, refs = {"value": "buildrules//platforms:mojo_1_2_0"})
 
 def _macos_impl(platform, refs):
     os = refs.os[ConstraintValueInfo]
@@ -50,7 +60,7 @@ def _macos_impl(platform, refs):
 # The OS and the CPU of the target platform replaced: the same targets built for macOS on Apple silicon (the Mojo rules then run on the macOS worker).
 _MACOS_AARCH64 = transition(impl = _macos_impl, refs = {"cpu": "buildrules//platforms:aarch64", "os": "buildrules//platforms:macos"})
 
-_DEP_ATTRS = ["deps", "macos_aarch64", "isa_x86_64_v1", "isa_x86_64_v2", "isa_x86_64_v3", "isa_x86_64_v4", "rust_1_85_0", "rust_1_95_0"]
+_DEP_ATTRS = ["deps", "macos_aarch64", "isa_x86_64_v1", "isa_x86_64_v2", "isa_x86_64_v3", "isa_x86_64_v4", "mojo_1_0_0", "mojo_1_1_0", "mojo_1_2_0", "rust_1_85_0", "rust_1_95_0"]
 
 def _group_impl(ctx):
     outs = []
@@ -68,6 +78,9 @@ _at = rule(
         "isa_x86_64_v2": attrs.list(attrs.transition_dep(cfg = _ISA_X86_64_V2), default = []),
         "isa_x86_64_v3": attrs.list(attrs.transition_dep(cfg = _ISA_X86_64_V3), default = []),
         "isa_x86_64_v4": attrs.list(attrs.transition_dep(cfg = _ISA_X86_64_V4), default = []),
+        "mojo_1_0_0": attrs.list(attrs.transition_dep(cfg = _MOJO_1_0_0), default = []),
+        "mojo_1_1_0": attrs.list(attrs.transition_dep(cfg = _MOJO_1_1_0), default = []),
+        "mojo_1_2_0": attrs.list(attrs.transition_dep(cfg = _MOJO_1_2_0), default = []),
         "rust_1_85_0": attrs.list(attrs.transition_dep(cfg = _RUST_1_85_0), default = []),
         "rust_1_95_0": attrs.list(attrs.transition_dep(cfg = _RUST_1_95_0), default = []),
     },
@@ -75,8 +88,10 @@ _at = rule(
 
 _RUST_CELLS = ["1.85.0", "1.95.0"]
 _ISA_CELLS = ["x86_64_v1", "x86_64_v2", "x86_64_v3", "x86_64_v4"]
+_MOJO_CELLS = ["1.0.0", "1.1.0", "1.2.0"]
 
 [fail("rules/matrix.bzl has no transition for Rust " + v) for v in RUST_VERSIONS if v not in _RUST_CELLS]
+[fail("rules/matrix.bzl has no transition for Mojo " + v) for v in MOJO_VERSIONS if v not in _MOJO_CELLS]
 
 def rust_at(name, version, deps, **kwargs):
     """Builds `deps` with the Rust `version` (one of `RUST_VERSIONS`; the platform constraint `rust_<v>`)."""
@@ -89,6 +104,12 @@ def isa_at(name, level_id, deps, **kwargs):
     if level_id not in _ISA_CELLS:
         fail("isa_at: {} has no transition ({})".format(level_id, ", ".join(_ISA_CELLS)))
     _at(name = name, **dict(kwargs, **{"isa_" + level_id: deps}))
+
+def mojo_at(name, version, deps, **kwargs):
+    """Builds `deps` from the unit graphs for Mojo `version` (one of `MOJO_VERSIONS`; the platform constraint `mojo_<v>`), and so every Mojo package they import."""
+    if version not in _MOJO_CELLS:
+        fail("mojo_at: {} has no transition ({})".format(version, ", ".join(_MOJO_CELLS)))
+    _at(name = name, **dict(kwargs, **{"mojo_" + version.replace(".", "_"): deps}))
 
 def macos_at(name, deps, **kwargs):
     """Builds `deps` for macOS on Apple silicon (`buildrules//platforms:macos_aarch64`), whatever platform the build is for."""

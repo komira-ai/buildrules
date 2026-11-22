@@ -35,7 +35,18 @@ pub const Lock = struct {
     /// The graphs of the other subdirs, in the order of `extra_subdirs`: `GRAPH_JSON_<SUBDIR>` blocks and the `GRAPHS` table that names them all. Empty
     /// when mopm was not asked for them, and then the table is byte for byte what it was.
     extra: []const SubGraph = &.{},
+    /// A package whose mopm.toml lists several Mojo versions: every listed version in mopm.toml's order, the default (`mojo`) included, and the graphs of the
+    /// others, version by version, linux-64 first: `MOJOS` and the `GRAPH_JSON_MOJO_*` blocks. Empty for a one-version package, and then the table is byte for
+    /// byte what it was.
+    mojos: []const MojoEntry = &.{},
+    mojo_blocks: []const MojoBlock = &.{},
 };
+
+/// One line of `MOJOS`: the version and its `CLOSURE_SHA256` (the text between the quotes; empty for the default's entry, which names `CLOSURE_SHA256` itself).
+pub const MojoEntry = struct { mojo: []const u8, closure_sha256: []const u8 };
+
+/// The graph of one subdir of a Mojo version other than the default: `GRAPH_JSON_MOJO_<V>[_<SUBDIR>]`.
+pub const MojoBlock = struct { mojo: []const u8, subdir: []const u8, graph_json: []const u8 };
 
 /// The subdir whose graph is `GRAPH` (mopm's default) and the others `sync` asks mopm for with `plan --subdir`, in the order they are written.
 pub const base_subdir = "linux-64";
@@ -51,6 +62,21 @@ pub fn graphVar(a: std.mem.Allocator, subdir: []const u8) ![]u8 {
     for (subdir, 0..) |c, i| out[prefix.len + i] = if (c == '-') '_' else std.ascii.toUpper(c);
     return out;
 }
+
+/// `1.2.0`, `linux-aarch64` -> `GRAPH_JSON_MOJO_1_2_0_LINUX_AARCH64`: the variable of a graph of a Mojo version other than the default; the linux-64 graph has no subdir part.
+pub fn graphVarMojo(a: std.mem.Allocator, mojo: []const u8, subdir: []const u8) ![]u8 {
+    var o = std.ArrayList(u8).empty;
+    try o.appendSlice(a, mojo_var_prefix);
+    for (mojo) |c| try o.append(a, if (c == '.') '_' else c);
+    if (!std.mem.eql(u8, subdir, base_subdir)) {
+        try o.append(a, '_');
+        for (subdir) |c| try o.append(a, if (c == '-') '_' else std.ascii.toUpper(c));
+    }
+    return o.toOwnedSlice(a);
+}
+
+const mojo_var_prefix = "GRAPH_JSON_MOJO_";
+const blocks_open = " = r'''";
 
 /// What follows the origin on the MOPM line of a table whose graph was asked for with --workspace-root. Starlark's boolean is `True`.
 const workspace_root_tail = ", \"workspace_root\": True}";
@@ -89,6 +115,25 @@ pub fn render(a: std.mem.Allocator, l: Lock) ![]u8 {
         for (l.extra) |x| try o.print(a, "    \"{s}\": json.decode({s}),\n", .{ x.subdir, try graphVar(a, x.subdir) });
         try o.appendSlice(a, "}\n");
     }
+    if (l.mojos.len > 0) {
+        for (l.mojo_blocks) |b| try appendGraph(a, &o, try std.fmt.allocPrint(a, "{s}{s}", .{ try graphVarMojo(a, b.mojo, b.subdir), blocks_open }), b.graph_json);
+        try o.appendSlice(a, "MOJOS = {\n");
+        for (l.mojos) |e| {
+            if (std.mem.eql(u8, e.mojo, l.mojo)) {
+                try o.print(a, "    \"{s}\": {{\"CLOSURE_SHA256\": CLOSURE_SHA256, \"GRAPHS\": {s}}},\n", .{ e.mojo, if (l.extra.len > 0) "GRAPHS" else "{\"" ++ base_subdir ++ "\": GRAPH}" });
+                continue;
+            }
+            try o.print(a, "    \"{s}\": {{\"CLOSURE_SHA256\": \"{s}\", \"GRAPHS\": {{", .{ e.mojo, e.closure_sha256 });
+            var first = true;
+            for (l.mojo_blocks) |b| {
+                if (!std.mem.eql(u8, b.mojo, e.mojo)) continue;
+                try o.print(a, "{s}\"{s}\": json.decode({s})", .{ if (first) "" else ", ", b.subdir, try graphVarMojo(a, b.mojo, b.subdir) });
+                first = false;
+            }
+            try o.appendSlice(a, "}},\n");
+        }
+        try o.appendSlice(a, "}\n");
+    }
     return o.toOwnedSlice(a);
 }
 
@@ -118,6 +163,58 @@ pub fn parse(a: std.mem.Allocator, name: []const u8, text: []const u8, diag: *Di
         extra.append(a, .{ .subdir = sd, .graph_json = text[eb..ee] }) catch return error.Invalid;
     }
     l.extra = extra.items;
+    // The blocks of the other Mojo versions, and the MOJOS table, which follow everything above.
+    var blocks = std.ArrayList(MojoBlock).empty;
+    var pos = ge;
+    while (std.mem.indexOfPos(u8, text, pos, "\n" ++ mojo_var_prefix)) |at| {
+        const ns = at + 1 + mojo_var_prefix.len;
+        const eq = std.mem.indexOfPos(u8, text, ns, blocks_open) orelse {
+            diag.add("{s}: cannot read the name of the GRAPH_JSON_MOJO_ block at byte {d}", .{ name, at + 1 });
+            return error.Invalid;
+        };
+        const eb = eq + blocks_open.len;
+        const ee = std.mem.indexOfPos(u8, text, eb, graph_close) orelse {
+            diag.add("{s}: the {s}{s} block is not closed", .{ name, mojo_var_prefix, text[ns..eq] });
+            return error.Invalid;
+        };
+        var version_part = text[ns..eq];
+        var block_subdir: []const u8 = base_subdir;
+        for (extra_subdirs) |sd| {
+            const tail = (graphVar(a, sd) catch return error.Invalid)["GRAPH_JSON".len..];
+            if (std.mem.endsWith(u8, version_part, tail)) {
+                version_part = version_part[0 .. version_part.len - tail.len];
+                block_subdir = sd;
+            }
+        }
+        const version = a.dupe(u8, version_part) catch return error.Invalid;
+        std.mem.replaceScalar(u8, version, '_', '.');
+        blocks.append(a, .{ .mojo = version, .subdir = block_subdir, .graph_json = text[eb..ee] }) catch return error.Invalid;
+        pos = ee;
+    }
+    l.mojo_blocks = blocks.items;
+    var entries = std.ArrayList(MojoEntry).empty;
+    const table = "\nMOJOS = {\n";
+    if (std.mem.indexOfPos(u8, text, ge, table)) |ti| {
+        var rows = std.mem.splitScalar(u8, text[ti + table.len ..], '\n');
+        while (rows.next()) |row| {
+            if (std.mem.eql(u8, row, "}")) break;
+            // `    "1.2.0": {"CLOSURE_SHA256": "<sha>", "GRAPHS": ...},`; the default's entry names CLOSURE_SHA256 itself
+            const sep = "\": {\"CLOSURE_SHA256\": ";
+            const key_end = std.mem.indexOf(u8, row, sep) orelse {
+                diag.add("{s}: cannot read the MOJOS line {s}", .{ name, row });
+                continue;
+            };
+            if (key_end < 5 or !std.mem.startsWith(u8, row, "    \"")) {
+                diag.add("{s}: cannot read the MOJOS line {s}", .{ name, row });
+                continue;
+            }
+            const value = row[key_end + sep.len ..];
+            var closure: []const u8 = "";
+            if (std.mem.startsWith(u8, value, "\"")) closure = value[1 .. std.mem.indexOfScalarPos(u8, value, 1, '"') orelse value.len];
+            entries.append(a, .{ .mojo = row[5..key_end], .closure_sha256 = closure }) catch return error.Invalid;
+        }
+    }
+    l.mojos = entries.items;
     var ms = std.ArrayList(Manifest).empty;
     var in_manifests = false;
     var it = std.mem.splitScalar(u8, text[0..gi], '\n');

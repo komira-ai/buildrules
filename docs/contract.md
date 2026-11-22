@@ -567,7 +567,7 @@ not covered by this.
 ```toml
 [toolchain]
 mopm = "0.0.48"     # an exact release: a version of rules/mopm/pins.bzl, or one buildrules-pins.toml gives a URL, sha256 and size for
-mojo = "1.0.0"     # an exact release mopm pins a toolchain for; the graph is made for it
+mojo = "1.0.0"     # an exact release mopm pins a toolchain for; the graph is made for it (the default of a mopm.toml that lists several: 12.3)
 ```
 
 **It is required**, like `rust-toolchain.toml`, and there is no implicit default: without it `mojo sync`, `mojo check` and the analysis of every
@@ -631,6 +631,49 @@ the graphs the table has. A table with the graph of linux-64 alone is built for 
 `mojo check` reads each block (the Mojo version, the subdir the toolchain names), and ci/subdirs.bzl configures an example for each platform and holds what was chosen (there is no
 execution platform for linux aarch64 or macOS arm64 yet, so the gate is analysis). Every compile action still declares a linux x86_64 execution platform, so the compiler chosen for
 another target platform would not run on it: a real aarch64 or macOS build also needs execution-platform selection, and the analysis gate is no proof that such a build works.
+
+**One graph per Mojo version.** A package's `mopm.toml` may list several Mojo versions (`[package] mojo = ["1.0.0", "1.1.0", "1.2.0"]`); `mopm-toolchain.toml` still names one
+mopm and one Mojo, the **default**, which must be one of them. `sync` asks mopm for the graph of each listed version (`mopm plan --unit-graph --locked --mojo <v>`, which mopm
+requires when the manifest lists several, and `--subdir <s>` for every other subdir the lock records for that version), normalised as above. Everything listed so far is the
+default's, unchanged; after it the table holds, for each other version in the order the manifest lists them, its blocks, and then `MOJOS`, which names every version (the default by
+reference) with its own closure hash and its graph per subdir:
+
+```python
+GRAPH_JSON_MOJO_1_2_0 = r'''<plan --mojo 1.2.0>'''
+GRAPH_JSON_MOJO_1_2_0_OSX_ARM64 = r'''<plan --mojo 1.2.0 --subdir osx-arm64>'''
+MOJOS = {
+    "1.0.0": {"CLOSURE_SHA256": CLOSURE_SHA256, "GRAPHS": GRAPHS},                  # {"linux-64": GRAPH} for a table without GRAPHS
+    "1.2.0": {"CLOSURE_SHA256": "<sha256>", "GRAPHS": {"linux-64": json.decode(GRAPH_JSON_MOJO_1_2_0), "osx-arm64": json.decode(GRAPH_JSON_MOJO_1_2_0_OSX_ARM64)}},
+}
+```
+
+`MOJOS` is a new optional key of schema 1 (the schema number does not move): a table without it is a table of one version, and a buildrules that does not know the key builds a table
+that has it at its default, as before. `buildrules.mojo.bzl` loads and passes `MOJOS` only for such a table, and `toolchains/mojo_pins.bzl` gets the rows of every version. A manifest
+that lists one version gets the table, the glue and the pins it always had.
+
+The analysis of the table (`_check_table` in rules/mojo/defs.bzl, then `check_mojos` in rules/mojo/versions.bzl) holds, besides what is above for
+each graph of each version: `MOJO` is one of `MOJOS` and its entry is `CLOSURE_SHA256` and the default's graphs; each block is for its version and its subdir; each version's
+`CLOSURE_SHA256` is its linux-64 graph's; every version has graphs for the same subdirs and the same units (compared by the unit id without the package's version and the Mojo version:
+a registry package may resolve to another version for each Mojo), with the same sources, outputs, native libraries, links and dependencies, and the same system libraries; and a
+version other than the default is one a platform can ask for. Each is refused naming what differs and `buildrules mojo sync`. `mojo check` holds, offline, the part it can read without the rules: the versions of `MOJOS` are those of the manifest, each once and each digits and dots, `MOJO` is among them, and each block is for its version and subdir with its entry's closure; the comparison of units, subdirs and system libraries across versions is the analysis's.
+
+The version is chosen by the **target platform**: the constraint `buildrules//platforms:mojo_version`, one value `mojo_<v>` for each version of `MOJO_VERSIONS`
+(rules/mojo/version_names.bzl: 1.0.0, 1.1.0 and 1.2.0; names, not pins), with the config settings `mojo_is_<v>`. The graph, the toolchain (`toolchains//:mojo_<v>`, with `_<subdir>` as
+above, and the version's coverage toolchains `_cov_link` and `_cov_branch`), the unit ids, the `.conda` of a registry package (`prebuilt_<import>.conda_mojo_<v>[_<subdir>]`) and the
+name of `:conda` (`-mojo<v>_0.conda`) of every target follow it, through a `select` by version around the `select` by subdir. A platform with no Mojo constraint builds the default,
+so a repository whose packages list one Mojo and whose platforms set none builds the same targets with the same actions and outputs as before (ci/mojo_versions.bzl holds eight
+examples to the paths of their outputs). A package's dependencies are configured with the same platform, so each is built from its own graph for that version with that version's
+toolchain, and the closure check of 12.4 refuses a library built for another. A platform that asks for a version a package's table has no graph for fails the analysis of its `:check`, and so of every target that carries it (the units, the tests, `:lib`, `:conda`, `:coverage`, the groups):
+
+```
+<pkg>:check: the target platform asks for Mojo 1.2.0 and buildrules.mojo.lock.bzl holds unit graphs for Mojo 1.0.0 only. List 1.2.0 in `mojo = [...]` of the package's mopm.toml,
+run `mopm lock`, then `buildrules mojo sync` (default Mojo: 1.0.0, from mopm-toolchain.toml)
+```
+
+One cell is `buck2 build --target-platforms buildrules//platforms:linux_x86_64_mojo_1_2_0 //pkg:lib`; several in one build are `mojo_at(name, version, deps)` of rules/matrix.bzl,
+which sets the constraint on whatever platform the build is for, as `rust_at` sets the Rust version. Each version is another configuration, so its actions have their own keys,
+outputs and cache entries. `:table` asks mopm for every version's graphs (`table_check --also <v>[@<subdir>]`). examples/mojo/versions is a package of three versions whose other
+two graphs are fixture data written by hand (no released mopm pins 1.1.0 or 1.2.0): //ci:all builds it at 1.0.0, and ci/mojo_versions.bzl analyses it at each version.
 
 ### 12.4 How a unit becomes an action
 
@@ -812,6 +855,8 @@ two cache entries, and the refusal `http_core 1.2.0 has no .mojoc for Mojo 1.1.0
 | a prebuilt whose bytes are not the pinned ones | the download | `Invalid sha256 digest. Expected A, got B` |
 | the toolchain's closure hash differs from the graph's | `mopm unit build` | `the toolchain at T is closure A, but the graph pins B` |
 | the two copies of the closure hash in the table differ | analysis; `mojo check` | `the table records toolchain closure A but its unit graph pins B: the file was edited by hand` |
+| a platform asks for a Mojo version the table has no graph for | analysis (the package's `:check`) | `<pkg>:check: the target platform asks for Mojo 1.2.0 and buildrules.mojo.lock.bzl holds unit graphs for Mojo 1.0.0 only. ... then `buildrules mojo sync`` |
+| the graph of one Mojo version names other units than the default's | analysis (`check_mojos`, rules/mojo/versions.bzl) | `the unit graph for Mojo 1.2.0 does not name the units of the graph for Mojo 1.0.0` |
 | the table's Mojo is not the graph's, or mopm-toolchain.toml names another | analysis; `mojo check`; `mojo sync` (mopm exit 4) | `the table says Mojo 1.1.0 but its unit graph is for Mojo 1.0.0`; `mopm has no pinned toolchain for mojo 1.1.0` |
 | a native library other than the pinned one | `mopm unit build` | `native library X has sha256 B, but the graph declares A` |
 | a library source no test compiled, that has any statement beyond comments, docstrings, imports, alias declarations and trait declarations (a re-export-only `__init__.mojo`, a file of `comptime NAME = ...` aliases, or a file of `trait` blocks whose methods have a body of only `pass`, `...` or a docstring, has none, is omitted by the report, and is listed `0/0`; a trait method with any other statement in its default body, and a struct or function, are code) | `:coverage` | `<file> is in no report: no test compiled it, or kcov could not open it` |

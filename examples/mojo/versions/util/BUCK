@@ -1,0 +1,9 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", fixture_package = "mojo_package")
+
+# The leaf of examples/mojo/versions (README.md): a package whose table holds unit graphs for Mojo 1.0.0 (the default, from mopm-toolchain.toml), 1.1.0 and 1.2.0.
+# `mojo_package` is called by another name so that `buildrules mojo sync` and `check` at the repository root, which find packages by that call, leave this
+# fixture alone: no released mopm can plan its other versions.
+fixture_package(path = ".")
+
+scrub_files()

@@ -14,6 +14,7 @@ load("//rules/rust:pins.bzl", "RUST_DEFAULT", rust_vname = "vname")
 load(":native_library.bzl", "native_library_problems", "native_link_cfg_problems")
 load(":native_macos.bzl", "native_macos_problems")
 load(":system_libs.bzl", "system_libs_problems")
+load(":mojo_versions.bzl", "versions_problems")
 load(":subdirs.bzl", "subdir_problems", UNSUPPORTED_SUBDIR_PLATFORM = "UNSUPPORTED", UNSUPPORTED_SUBDIR_PLATFORMS = "UNSUPPORTED_PLATFORMS")
 load("//examples/mojo/member_native:buildrules.mojo.lock.bzl", MEMBER_NATIVE_GRAPH = "GRAPH")
 load("//examples/mojo/member_native/cshim:buildrules.mojo.lock.bzl", CSHIM_GRAPH = "GRAPH")
@@ -56,6 +57,12 @@ CASES = [
     ("//examples/mojo/registry/cnative:coverage", "buildrules//platforms:linux_x86_64", "coverage_unmeasured.txt exists but this package has no library or no test"),
     ("//examples/mojo/registry/probe_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
     ("//examples/mojo/registry/probe_sys/base_sys:coverage", "buildrules//platforms:linux_x86_64", "this package has no test, so there is no coverage to measure"),
+    # A platform that asks for a Mojo version the table of a package has no graph for: refused by the package's :check, naming the package, the version and the fix
+    # (rules/mojo/versions.bzl, `unsupported_mojo`). The package has the graph of 1.0.0 alone; on the platform without the constraint it builds as before (//ci:all).
+    ("//examples/mojo/subdirs:lib_ungated", "buildrules//platforms:linux_x86_64_mojo_1_2_0", "examples/mojo/subdirs:check: the target platform asks for Mojo 1.2.0 and buildrules.mojo.lock.bzl holds unit graphs for Mojo 1.0.0 only. List 1.2.0 in `mojo = [...]` of the package's mopm.toml, run `mopm lock`, then `buildrules mojo sync`"),
+    # A chain a -> b -> c of one version at 1.1.0: refused by the :check of whichever package of the chain is analysed first (a's, or b's or c's through a's
+    # dependencies), so the text held is the part every one of them says.
+    ("//examples/mojo/sibfake/chain/a:lib", "buildrules//platforms:linux_x86_64_mojo_1_1_0", ":check: the target platform asks for Mojo 1.1.0 and buildrules.mojo.lock.bzl holds unit graphs for Mojo 1.0.0 only"),
     # A sibling whose table names another version of the library than the one next to it is (rules/mojo/unit.bzl, `check_closure_ids`).
     ("//examples/mojo/sibfake/stale:lib_ungated", "buildrules//platforms:linux_x86_64", "the graph imports chain_c as chain_c@0.2.0#mojo1.0.0/lib but the dependency target provides chain_c@0.1.0#mojo1.0.0/lib"),
     # A package with a graph per subdir, built for a platform that matches none of them (macOS on Intel): refused at analysis, and the message names the graphs it has
@@ -106,7 +113,7 @@ def negative_problems(ctx):
             problems.append("{} analysed on {}: the known defect is no longer red".format(label, platform))
         elif reason not in str(got.unwrap_err()):
             problems.append("{} is red on {}, but not for the reason it carries (expected \"{}\"): {}".format(label, platform, reason, str(got.unwrap_err())))
-    return problems + subdir_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + native_library_problems(ctx) + native_link_cfg_problems(ctx) + test_defines_problems(ctx) + hang_limit_problems(ctx) + system_libs_problems(ctx, GATE_PLATFORM) + unpack_problems(ctx)
+    return problems + subdir_problems(ctx) + versions_problems(ctx) + gate_problems(ctx) + faulty_problems(ctx) + coverage_red_problems(ctx) + coverage_floor_wiring_problems(ctx) + coverage_branch_wiring_problems(ctx) + native_link_problems(ctx) + native_macos_problems(ctx) + native_library_problems(ctx) + native_link_cfg_problems(ctx) + test_defines_problems(ctx) + hang_limit_problems(ctx) + system_libs_problems(ctx, GATE_PLATFORM) + unpack_problems(ctx)
 
 # Coverage fixtures that fail when their actions run, not at analysis (so CASES cannot hold them): built here, each must FAIL and say why. The partner
 # that is green is //examples/mojo/reexport:coverage, built by //ci:mojo: the same package with a __init__.mojo that only re-exports.

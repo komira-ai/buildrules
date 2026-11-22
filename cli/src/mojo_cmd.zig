@@ -24,6 +24,7 @@ const mopm_pins = @import("mopm_pins.zig");
 const pins_toml = @import("pins_toml.zig");
 const toolchain = @import("toolchain.zig");
 const plan = @import("mojo_plan.zig");
+const versions = @import("mojo_versions.zig");
 const sha256Of = plan.sha256Of;
 const graph_norm = @import("mojo_graph_norm");
 const Diag = @import("diag.zig").Diag;
@@ -603,6 +604,9 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
             code |= ctx.fail("{s}", .{why});
             continue;
         };
+        // `[package] mojo = [...]` of mopm.toml: with several versions the default must be one of them, and the table holds a graph of each.
+        const listed = try plan.listedMojos(a, (try ctx.readOpt(try inDir(a, pkg, "mopm.toml"))) orelse "");
+        if (!(try versions.listedOk(ctx, pkg, listed, tc.mojo, &code))) continue;
         const gop = try mopm_cache.getOrPut(tc.mopm);
         if (!gop.found_existing) gop.value_ptr.* = try mopmFor(ctx, buck2, tc.mopm, mopm_path);
         const mopm = gop.value_ptr.* orelse return ctxm.exit_fail;
@@ -675,6 +679,7 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
         var extras = std.ArrayList(lockm.SubGraph).empty;
         var extra_tcs = std.ArrayList(lockm.Tc).empty;
         if (!(try plan.committedExtras(ctx, pkg, tc.mojo, tc.mopm, extra_runs, &extras, &extra_tcs, &code))) continue;
+        const vs = (try versions.planVersions(ctx, &sub, pkg, mopm, tc.mopm, listed, tc.mojo, g.closure_sha256, rooted, &code)) orelse continue;
         const text = try lockm.render(a, .{
             .schema = contract.mojo_schema,
             .mopm_version = tc.mopm,
@@ -685,18 +690,21 @@ fn sync(ctx: *Ctx, given: []const []const u8, check_only: bool, mopm_path: ?[]co
             .manifests = ms.items,
             .graph_json = committed,
             .extra = extras.items,
+            .mojos = vs.entries,
+            .mojo_blocks = vs.blocks,
         });
         try tcs.append(a, .{ .mojo = g.mojo, .toolchain = g.toolchain });
         try tcs.appendSlice(a, extra_tcs.items);
+        try tcs.appendSlice(a, vs.tcs);
         code |= try ensureExport(ctx, tc, check_only, &pend);
         const lock_path = try inDir(a, pkg, contract.mojo_lock_file);
         const bzl_path = try inDir(a, pkg, contract.mojo_bzl_file);
         if (check_only) {
             code |= compareOne(ctx, lock_path, text);
-            code |= compareOne(ctx, bzl_path, contract.mojoBzlFor(extras.items.len > 0));
+            code |= compareOne(ctx, bzl_path, contract.mojoBzlForMojos(extras.items.len > 0, vs.entries.len > 0));
         } else {
             try queue(a, &pend, .{ .path = lock_path, .text = text });
-            try queue(a, &pend, .{ .path = bzl_path, .text = contract.mojoBzlFor(extras.items.len > 0) });
+            try queue(a, &pend, .{ .path = bzl_path, .text = contract.mojoBzlForMojos(extras.items.len > 0, vs.entries.len > 0) });
         }
     }
 
@@ -882,6 +890,10 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
         try tcs.append(a, .{ .mojo = xg.mojo, .toolchain = xg.toolchain, .subdir = x.subdir });
     }
 
+    // The Mojo versions of mopm.toml's `[package] mojo = [...]`: the table holds one graph for each when it lists several, and no more.
+    const listed = try plan.listedMojos(a, (try ctx.readOpt(try inDir(a, pkg, "mopm.toml"))) orelse "");
+    try versions.checkMojos(ctx, lock_path, l, listed, bad, tcs);
+
     // Every file the table was made from.
     for (l.manifests) |m| {
         const p = try inDir(a, pkg, m.path);
@@ -919,7 +931,7 @@ fn checkPackage(ctx: *Ctx, pkg: []const u8, bad: *usize, tcs: *std.ArrayList(loc
     // The glue and the BUCK file.
     const bzl_path = try inDir(a, pkg, contract.mojo_bzl_file);
     if (try ctx.readOpt(bzl_path)) |b| {
-        const want_bzl = contract.mojoBzlFor(l.extra.len > 0);
+        const want_bzl = contract.mojoBzlForMojos(l.extra.len > 0, l.mojos.len > 0);
         if (!std.mem.eql(u8, b, want_bzl)) stale(ctx, bad, "{s} is not what sync writes (first difference at line {d}): {s}", .{ bzl_path, firstDifference(b, want_bzl), fix });
     } else {
         _ = ctx.fail("{s} is missing: {s}", .{ bzl_path, fix });

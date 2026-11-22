@@ -71,6 +71,9 @@ member's units, a binary, `:build`, a conda package made from it). Build `:lib_u
 
 The ISA level of the target platform reaches the test and binary builds as compiler flags (rules/isa.bzl, one table for every
 toolchain) and the test runs as the platform's `exec_compatible_with`, so the farm schedules it on a worker that has the level.
+
+The Mojo version of the target platform (`buildrules//platforms:mojo_<v>`; none: the default, `MOJO`) chooses the graph, the toolchain and the unit ids of every target
+of a package whose table holds graphs for several versions (`MOJOS`), and its dependencies are configured with it: rules/mojo/versions.bzl.
 """
 
 load("//rules:isa.bzl", "ISA_LEVELS", "isa_select", "required_isa", "test_exec_compatible_with")
@@ -80,10 +83,11 @@ load("//rules/core:platform.bzl", "LINUX_X86_64", "TOOL_EXEC")
 load("//rules/core:url_map.bzl", "mapped_url")
 load("//rules/cxx:native.bzl", "native_static")
 load(":pack.bzl", "mojo_conda")
-load(":system_libs.bzl", _check_graph_format = "check_graph_format", _check_loads = "check_loads", _check_same_system_libs = "check_same_system_libs", _compile_format = "compile_format", _mojo_system_lib = "mojo_system_lib_rule", _system_libs_of = "system_libs_of")
-load(":link.bzl", _check_link_keys = "check_link_keys", _check_same_links = "check_same_links", _is_provided = "is_provided", _slice_has_provided = "slice_has_provided", _unit_link = "unit_link")
-load(":names.bzl", _check_import_names = "check_import_names", _import_name = "import_name")
-load(":subdirs.bzl", "BASE_SUBDIR", "by_subdir", "check_same_units", "subdir_suffix", "table_graphs", "unsupported_platform")
+load(":system_libs.bzl", _check_graph_format = "check_graph_format", _compile_format = "compile_format", _mojo_system_lib = "mojo_system_lib_rule", _system_libs_of = "system_libs_of")
+load(":link.bzl", _is_provided = "is_provided", _slice_has_provided = "slice_has_provided", _unit_link = "unit_link")
+load(":names.bzl", _import_name = "import_name")
+load(":subdirs.bzl", "BASE_SUBDIR", "by_subdir", "subdir_suffix", "unsupported_platform")
+load(":versions.bzl", "by_mojo", "check_mojos", "check_toolchain_file_present", "check_toolchain_file_recorded", "ids_by_slot", "unit_slot", "unsupported_mojo")
 load("//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
 load("//rules/mopm:pins.bzl", "vname")
 load(":check.bzl", _check = "mojo_check_rule", _table = "mojo_table_rule", _workspace = "mojo_workspace_rule")
@@ -309,25 +313,8 @@ def stage_package_test_data(where, test_graph_of, lib_names, test_data, installe
     held = {t: ([] if installed else [test_graph_of[t]] + sorted(lib_names)) for t in tests}
     return stage_test_data(where, tests, test_data, held, refuse)
 
-TOOLCHAIN_FILE = "mopm-toolchain.toml"
-
-# mopm-toolchain.toml is required: no mopm and no Mojo is chosen for a package that does not name them.
-TOOLCHAIN_FILE_HELP = ("{} is required and there is no default. Create it at or above the package directory, for example:\n\n" +
-                       "[toolchain]\nmopm = \"0.0.48\"\nmojo = \"1.0.0\"\n\n(an exact release each), then run `buildrules mojo sync`.").format(TOOLCHAIN_FILE)
-
-def check_toolchain_file_recorded(t, refuse = fail):
-    """A table made without mopm-toolchain.toml (or by hand) is refused: the file is what chooses mopm and Mojo. `refuse` is `fail` in a
-    build; a test passes a recorder (rules/rust/refusal.bzl)."""
-    names = [k for k in t.get("MANIFEST_SHA256", {}).keys() if k.split("/")[-1] == TOOLCHAIN_FILE]
-    if not names:
-        refuse("buildrules.mojo.lock.bzl records no {}: {}".format(TOOLCHAIN_FILE, TOOLCHAIN_FILE_HELP))
-
-def check_toolchain_file_present(where, present, refuse = fail):
-    """The file the table names is not in the checkout (`present` is the result of a glob): refused, naming the file and an example."""
-    if not present:
-        refuse("{}: {}".format(where, TOOLCHAIN_FILE_HELP))
-
 def _check_table(t):
+    """The table's checks (rules/mojo/subdirs.bzl, rules/mojo/versions.bzl); returns its graphs by Mojo version and subdir (`table_mojos`)."""
     check_toolchain_file_recorded(t)
     if t.get("SCHEMA") != SCHEMA:
         fail("buildrules.mojo.lock.bzl has SCHEMA {} but these rules read {}: run `buildrules mojo sync` with a matching buildrules".format(t.get("SCHEMA"), SCHEMA))
@@ -337,19 +324,7 @@ def _check_table(t):
         fail("the table says Mojo {} but its unit graph is for Mojo {}: run `buildrules mojo sync`".format(t["MOJO"], g["mojo"]))
     if g["toolchain"]["closure_sha256"] != t["CLOSURE_SHA256"]:
         fail("the table records toolchain closure {} but its unit graph pins {}: the file was edited by hand; run `buildrules mojo sync`".format(t["CLOSURE_SHA256"], g["toolchain"]["closure_sha256"]))
-    graphs = table_graphs(t)
-    check_same_units(graphs)
-    _check_same_system_libs(graphs, BASE_SUBDIR)
-    _check_same_links(graphs, BASE_SUBDIR)
-    for sd, x in sorted(graphs.items()):
-        _check_graph_format("the committed unit graph of {}".format(sd), x["unit_graph"])
-        _check_link_keys("the committed unit graph of {}".format(sd), x)
-        _check_import_names("the committed unit graph of {}".format(sd), x)
-        _check_loads("the committed unit graph of {}".format(sd), x, _system_libs_of("the committed unit graph of {}".format(sd), x))
-        if x["mojo"] != t["MOJO"] or x["toolchain"]["mojo"] != t["MOJO"]:
-            fail("the table says Mojo {} but its unit graph of {} is for Mojo {}: run `buildrules mojo sync`".format(t["MOJO"], sd, x["mojo"]))
-        if x["toolchain"].get("subdir", BASE_SUBDIR) != sd:
-            fail("the graph kept for {} is the graph of {}: the file was edited by hand; run `buildrules mojo sync`".format(sd, x["toolchain"].get("subdir", BASE_SUBDIR)))
+    return check_mojos(t)
 
 def own_static_natives(unit):
     """The static native libraries a registry package ships, `{soname: sha256}`, in the order of the unit's `natives` (mopm's link order). The
@@ -439,8 +414,9 @@ def mojo_coverage_floor(name, coverage, floor, visibility = ["PUBLIC"]):
 def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_env = {}, test_defines = {}, test_layout = "default", test_hang_limit_s = {}, conda = False, visibility = ["PUBLIC"]):
     if table == None:
         fail("mojo_package needs its table: load mojo_package from the buildrules.mojo.bzl next to mopm.toml (`buildrules mojo sync` writes it)")
-    _check_table(table)
+    mojos = _check_table(table)
     graph = table["GRAPH"]
+    # The default Mojo version: the one mopm-toolchain.toml names, built on a platform that asks for none (rules/mojo/versions.bzl).
     mojo = table["MOJO"]
     project = "" if path == "." else path
     here = native.package_name()
@@ -455,17 +431,31 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
     # The name the package's own library is imported by, staged under and measured as (`<import>/<file>`): the root's name in a graph before format 6.
     root_import = _import_name(root)
     prebuilt_packages = {u["package"]: True for u in graph["units"] if u["kind"] == "prebuilt"}
-    graphs = table_graphs(table)
-    units_by = {sd: {u["id"]: u for u in g["units"]} for sd, g in graphs.items()}
+    graphs = mojos[mojo]["graphs"]
     subdirs = sorted(graphs.keys())
 
-    def toolchain_of(sd):
-        return "toolchains//:mojo_" + vname(mojo) + ("" if sd == BASE_SUBDIR else "_" + subdir_suffix(sd))
+    # The units of every graph by id, and the id of each unit of the default graph in the graph of every version (the same unit has another id there:
+    # rules/mojo/versions.bzl, `unit_slot`). Every version has graphs for the same subdirs (`check_mojos`).
+    units_at = {v: {sd: {u["id"]: u for u in g["units"]} for sd, g in mojos[v]["graphs"].items()} for v in mojos.keys()}
+    slot_ids = {v: ids_by_slot(mojos[v]["graphs"][BASE_SUBDIR]) for v in mojos.keys()}
 
-    # The graph, the toolchain and the `.conda` directory of a unit follow the target platform (rules/mojo/subdirs.bzl). A coverage build is a linux-64
-    # build: it runs where kcov and the instrumented link are (rules/coverage), so what it is built from and run with names the linux-64 ones.
-    toolchain_base = toolchain_of(BASE_SUBDIR)
-    toolchain = by_subdir(graphs, {sd: toolchain_of(sd) for sd in subdirs})
+    def id_at(v, uid):
+        return slot_ids[v][unit_slot(uid)]
+
+    def by_version(value):
+        return by_mojo(mojos, mojo, value)
+
+    def by_cell(value):
+        # `value(version, subdir)`, chosen by the Mojo version of the target platform and then by its OS and CPU: a plain value for a table of one version and one graph.
+        return by_version(lambda v: by_subdir(mojos[v]["graphs"], {sd: value(v, sd) for sd in subdirs}))
+
+    def toolchain_of(v, sd):
+        return "toolchains//:mojo_" + vname(v) + ("" if sd == BASE_SUBDIR else "_" + subdir_suffix(sd))
+
+    # The graph, the toolchain and the `.conda` directory of a unit follow the target platform (rules/mojo/subdirs.bzl, rules/mojo/versions.bzl). A coverage build is a
+    # linux-64 build: it runs where kcov and the instrumented link are (rules/coverage), so what it is built from and run with names the linux-64 ones.
+    toolchain_base = by_version(lambda v: toolchain_of(v, BASE_SUBDIR))
+    toolchain = by_cell(toolchain_of)
     mopm = "toolchains//:mopm_" + vname(table["MOPM"]["version"])
     build_args = isa_select(lambda l: list(ISA_LEVELS[l]["mojo"]), [])
     taken = {}
@@ -501,13 +491,14 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         check_names.append(full)
     mojo_check_rule(
         name = name_once("check"),
-        expect_toolchain = by_subdir(graphs, {sd: {k: v for k, v in graphs[sd]["toolchain"].items() if k != "mojo"} for sd in subdirs}),
+        expect_toolchain = by_cell(lambda v, sd: {k: x for k, x in mojos[v]["graphs"][sd]["toolchain"].items() if k != "mojo"}),
         files = check_files,
         hashes = check_hashes,
-        mojo = mojo,
+        mojo = by_version(lambda v: v),
         names = check_names,
         toolchain = toolchain,
         unsupported = unsupported_platform(graphs, here + ":check"),
+        unsupported_mojo = unsupported_mojo(mojos, mojo, here + ":check"),
         exec_missing = unsupported_exec(here + ":check"),
         exec_compatible_with = TOOL_EXEC,
         visibility = visibility,
@@ -536,6 +527,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         mopm = mopm,
         package_dir = pkg_dir,
         subdirs = [sd for sd in subdirs if sd != BASE_SUBDIR],
+        also = [v + ("" if sd == BASE_SUBDIR else "@" + sd) for v in sorted(mojos.keys()) if v != mojo for sd in subdirs],
         table = _join(project, "buildrules.mojo.lock.bzl"),
         workspace = ":workspace",
         workspace_root = rooted,
@@ -557,8 +549,9 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         # A path of the graph below this package's directory (what the BUCK file's labels are relative to).
         return graph_path_in_package(path, pkg_dir, rooted)
 
-    def slice_of(uid, profile = None, sd = BASE_SUBDIR):
-        return json.encode(unit_slice(graphs[sd], units_by[sd], uid, profile))
+    def slice_of(v, uid, profile = None, sd = BASE_SUBDIR):
+        # The slice of the unit `uid` (its id in the default graph) of the graph of Mojo `v` and subdir `sd`.
+        return json.encode(unit_slice(mojos[v]["graphs"][sd], units_at[v][sd], id_at(v, uid), profile))
 
     def member_package_label(package):
         # The package (`//<dir>`) of the workspace member `package`, from the target of its library (`member_label` has refused a root it cannot name).
@@ -603,15 +596,15 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         sonames, native_labels = native_wiring(u, prebuilt_packages, {k: v for k, v in natives.items() if k not in provided_natives}, here, built = built_labels)
         return dict(
             deps = [label_of(d, ":lib_ungated" if kind == "test" else ":lib") for d in u["deps"]],
-            graph = slice_of(uid, profile) if profile else by_subdir(graphs, {sd: slice_of(uid, None, sd) for sd in subdirs}),
+            graph = by_version(lambda v: slice_of(v, uid, profile)) if profile else by_cell(lambda v, sd: slice_of(v, uid, None, sd)),
             kind = kind,
-            mojo = mojo,
+            mojo = by_version(lambda v: v),
             mopm = mopm,
             native_sonames = sonames,
             natives = native_labels,
             link = _unit_link(u),
             # Keyed and named by the import name: the `.mojoc` of a library is `<import>.mojoc`, which is what `mopm unit build` looks for among the dependencies.
-            closure_ids = {_import_name(units[c]["package"]): c for c in cl},
+            closure_ids = by_version(lambda v: {_import_name(units[c]["package"]): id_at(v, c) for c in cl}),
             graph_base = graph_from,
             package = _import_name(u["package"]),
             product = product,
@@ -619,7 +612,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             src_paths = [s["path"] for s in u["srcs"]],
             srcs = [_join(project, in_package(s["path"])) for s in u["srcs"]],
             toolchain = toolchain_base if profile else toolchain,
-            unit_id = uid,
+            unit_id = by_version(lambda v: id_at(v, uid)),
             # A coverage build (`profile`) is compiled with the linux x86_64 toolchain: it stays on linux x86_64 (coverage runs there only).
             exec_compatible_with = LINUX_X86_64 if profile else unit_exec(),
             visibility = visibility,
@@ -698,7 +691,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         if units[uid]["kind"] == "lib" and units[uid]["package"] == root and not is_native_unit(uid):
             own_lib = units[uid]
     branches = []
-    branch_tc = "toolchains//:mojo_{}_cov_branch".format(vname(mojo))
+    branch_tc = by_version(lambda v: "toolchains//:mojo_{}_cov_branch".format(vname(v)))
     # Branch coverage of the package's tests (rules/coverage/branch/README.md): bitcode, an instrumented binary, its run, the annotated IR and
     # the classified records, five actions after the compile. A test that links native libraries is instrumented too: its instrumented link is given
     # the same libraries in the same order (`__pgo`), and its run finds the shared ones through the library path. A package with `test_layout = "installed"`
@@ -782,20 +775,22 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
         if kind == "prebuilt":
             if u["package"] == root:
                 fail("{}: the graph holds a prebuilt unit for the root package itself".format(uid))
-            # The `.conda` of a registry package is the one of the subdir: `prebuilt_<import>.conda` is the linux-64 one, `..._<subdir>` the others.
+            # The `.conda` of a registry package is the one of the subdir and the Mojo version: `prebuilt_<import>.conda` is the linux-64 one of the default
+            # version, `..._<subdir>` the others; another version's are `..._mojo_<v>` and `..._mojo_<v>_<subdir>`.
             archives = {}
-            for sd in subdirs:
-                a = units_by[sd][uid]["artifact"]
-                fname = "prebuilt_" + _import_name(u["package"]) + ".conda" + ("" if sd == BASE_SUBDIR else "_" + subdir_suffix(sd))
-                pinned_file(name = name_once(fname), url = mapped_url(a["url"]), sha256 = a["sha256"], size_bytes = a["size"])
-                archives[sd] = ":" + fname
+            for v in sorted(mojos.keys()):
+                for sd in subdirs:
+                    a = units_at[v][sd][id_at(v, uid)]["artifact"]
+                    fname = "prebuilt_" + _import_name(u["package"]) + ".conda" + ("" if v == mojo else "_mojo_" + vname(v)) + ("" if sd == BASE_SUBDIR else "_" + subdir_suffix(sd))
+                    pinned_file(name = name_once(fname), url = mapped_url(a["url"]), sha256 = a["sha256"], size_bytes = a["size"])
+                    archives[(v, sd)] = ":" + fname
             mojo_prebuilt_rule(
                 name = name_once("prebuilt_" + _import_name(u["package"])),
-                archive = by_subdir(graphs, archives),
+                archive = by_cell(lambda v, sd: archives[(v, sd)]),
                 deps = [label_of(d) for d in u["deps"]],
-                natives = by_subdir(graphs, {sd: own_static_natives(units_by[sd][uid]) for sd in subdirs}),
+                natives = by_cell(lambda v, sd: own_static_natives(units_at[v][sd][id_at(v, uid)])),
                 package = _import_name(u["package"]),
-                unit_id = uid,
+                unit_id = by_version(lambda v: id_at(v, uid)),
                 visibility = visibility,
                 exec_compatible_with = unit_exec(),
             )
@@ -832,7 +827,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             mojo_unit_rule(
                 name = name_once(stem + "__cov_bin"),
                 build_args = build_args + define_args,
-                zig_override = "toolchains//:mojo_{}_cov_link".format(vname(mojo)),
+                zig_override = by_version(lambda v: "toolchains//:mojo_{}_cov_link".format(vname(v))),
                 **common(uid, "test", stem, _COVERAGE_PROFILE)
             )
             # The test file is compiled under the path the graph names (from the package, or from the repository root when the table is rooted), and
@@ -980,7 +975,7 @@ def mojo_package(path = ".", table = None, natives = {}, test_data = {}, test_en
             dir = pkg_dir,
             manifest = ":mopm.toml",
             members = {_relative(pkg_dir, l[2:-len(":lib")]): l[:-len(":lib")] + ":mopm.toml" for l in member_libs.values() if l != None},
-            mojo = mojo,
+            mojo = by_version(lambda v: v),
             mopm = mopm,
             natives = {nid: ":native_" + nid for nid in own_native_ids.keys()},
             link = _unit_link(own_lib) if own_lib else [],
