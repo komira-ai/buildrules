@@ -12,6 +12,9 @@
 //!   stage gamma  --work DIR --candidate SHA --repos "owner/name ..." --targets "//..." --buck2 PATH --farm-config FILE
 //!
 //! Exit 0 when the stage passed (`beta` also for a planned leg), 1 when it failed, 2 on a bad command line.
+//!
+//! Every command a stage starts runs under `command_limit` (bounded.zig): one still running after 30 minutes is stopped with its process group
+//! (what it started), and the stage fails with `CommandHung` and a line naming it. A line says each 5 minutes that a command is still running.
 const std = @import("std");
 const beta = @import("beta.zig");
 const gamma = @import("gamma.zig");
@@ -19,6 +22,12 @@ const native = @import("native.zig");
 const farm = @import("farm.zig");
 const steps_mod = @import("steps.zig");
 const io_mod = @import("io.zig");
+const bounded = @import("bounded.zig");
+
+/// The limit of one command. A beta leg took 1 to 5 minutes from start to end and the whole gamma job under 20 (release runs of main);
+/// a farm build whose connection stopped answering ran without end. 30 minutes is far above the first and ends the second well inside the job's
+/// 120: a cut command and its one rerun take 60 at most.
+pub const command_limit = bounded.Limit{ .limit_ms = 30 * std.time.ms_per_min, .note_ms = 5 * std.time.ms_per_min };
 
 pub const Args = struct {
     names: []const []const u8,
@@ -77,12 +86,9 @@ fn realRun(ctx: *anyopaque, a: std.mem.Allocator, cwd: []const u8, argv: []const
     }
     // the shell variable PWD names the directory the stage was started in; a program that trusts it would work there
     try env.put("PWD", cwd);
-    const r = try std.process.Child.run(.{ .allocator = a, .argv = argv, .cwd = cwd, .env_map = &env, .max_output_bytes = 1 << 28 });
-    const code: u8 = switch (r.term) {
-        .Exited => |c| c,
-        else => 255,
-    };
-    return .{ .code = code, .stdout = r.stdout, .stderr = r.stderr };
+    var buf: [1024]u8 = undefined;
+    var w = std.fs.File.stdout().writer(&buf);
+    return bounded.run(a, argv, cwd, &env, command_limit, bounded.system_clock, &w.interface);
 }
 
 fn appendFile(path: []const u8, bytes: []const u8) !void {
@@ -191,7 +197,7 @@ pub fn gammaCommand(a: std.mem.Allocator, io: io_mod.Io, g: Args) !u8 {
 pub const beta_flags = [_][]const u8{ "root", "lang", "work", "origin", "commit", "buck2", "buildrules", "exec", "farm-config", "summary" };
 
 /// `stage beta`: see beta.zig. The summary line says when a command of a farm leg ran again after a cut connection to the farm, and a leg that
-/// fails because the connection was cut on both runs says so there too.
+/// fails because the connection was cut on both runs, or because a command was stopped at `command_limit`, says so there too.
 pub fn betaCommand(a: std.mem.Allocator, io: io_mod.Io, g: Args) !u8 {
     const mode = try g.need("exec");
     var exec: beta.Exec = .local;
@@ -224,6 +230,9 @@ pub fn betaCommand(a: std.mem.Allocator, io: io_mod.Io, g: Args) !u8 {
     }) catch |e| {
         if (e == error.FarmConnectionCut) {
             if (g.get("summary")) |p| try appendFile(p, try std.fmt.allocPrint(a, "- beta `{s}`: **failed**: the connection to the farm was cut, and cut again when the command ran a second time (buck2: `{s}`)\n", .{ lang, farm.cut_marker }));
+        }
+        if (e == error.CommandHung) {
+            if (g.get("summary")) |p| try appendFile(p, try std.fmt.allocPrint(a, "- beta `{s}`: **failed**: a command was still running after {d} min and was stopped; the log names it and shows the last lines it wrote\n", .{ lang, command_limit.limit_ms / std.time.ms_per_min }));
         }
         return e;
     };

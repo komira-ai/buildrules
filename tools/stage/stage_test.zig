@@ -3,6 +3,7 @@ test {
     _ = @import("steps.zig");
     _ = @import("farm.zig");
     _ = @import("io.zig");
+    _ = @import("bounded.zig");
     _ = @import("beta.zig");
     _ = @import("gamma.zig");
     _ = @import("native.zig");
@@ -347,4 +348,80 @@ test "stage gamma: from its command line, a build cut once passes after one reru
     try t.expectError(error.FarmConnectionCut, gammaCli(a, try gammaWork(a, &tmp2), &twice));
     try t.expectEqual(@as(usize, 2), twice.count("buck2 build"));
     try t.expectEqual(@as(usize, 1), twice.count("git clone"));
+}
+
+// ---- a command stopped at its limit -----------------------------------------------------------------------------------------------------
+//
+// The real runner stops a command still running at `stage.command_limit` (bounded.zig) and says so in its `Out`; these hold what the stages do
+// with that: the leg or the repository fails with CommandHung at once, and the command is never run again, even when what it wrote before the
+// stop reads as a cut connection to the farm.
+
+/// What the runner returns for a build it stopped: the cut lines it had written, so a stage that read it as a result would run it again.
+const stopped = io_mod.Out{ .code = 255, .stdout = "", .stderr = farm.sample_cut, .stopped_ms = stage.command_limit.limit_ms };
+
+test "beta farm: a build stopped at the limit is red at once, is not run again, and the summary says it was stopped" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = try beta.Env.make(a, beta.demo_steps);
+    defer env.tmp.cleanup();
+    var rules = [_]beta.Fake.Rule{
+        .{ .needle = "init" },
+        .{ .needle = "build --console simple", .out = stopped, .times = 1 },
+        // a second run would pass: the test sees that it is not made
+        .{ .needle = "build --console simple", .out = built, .files = built_files },
+    };
+    var fake = beta.Fake{ .a = a, .rules = &rules };
+    const md = try betaFarm(a, env, &fake, error.CommandHung);
+    try t.expectEqualStrings("- beta `demo`: **failed**: a command was still running after 30 min and was stopped; the log names it and shows the last lines it wrote\n", md);
+    try t.expectEqual(@as(usize, 1), (try builds(a, &fake)).len);
+    try t.expectEqual(@as(usize, 0), fake.waited().len);
+}
+
+test "beta farm: the rerun after a cut, stopped at the limit, is red with the stop and not run a third time" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var env = try beta.Env.make(a, beta.demo_steps);
+    defer env.tmp.cleanup();
+    var rules = [_]beta.Fake.Rule{
+        .{ .needle = "init" },
+        .{ .needle = "build --console simple", .out = cut, .times = 1 },
+        .{ .needle = "build --console simple", .out = stopped, .times = 1 },
+        .{ .needle = "build --console simple", .out = built, .files = built_files },
+    };
+    var fake = beta.Fake{ .a = a, .rules = &rules };
+    const md = try betaFarm(a, env, &fake, error.CommandHung);
+    try t.expectEqualStrings("- beta `demo`: **failed**: a command was still running after 30 min and was stopped; the log names it and shows the last lines it wrote\n", md);
+    try t.expectEqual(@as(usize, 2), (try builds(a, &fake)).len);
+}
+
+test "beta: a step command stopped at the limit fails the leg before any build, on a farm and off it" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_]beta.Exec{ .local, .{ .farm = farm_cfg } }) |exec| {
+        var env = try beta.Env.make(a, beta.demo_steps);
+        defer env.tmp.cleanup();
+        var rules = [_]beta.Fake.Rule{
+            .{ .needle = "init", .out = .{ .code = 255, .stdout = "", .stderr = "", .stopped_ms = stage.command_limit.limit_ms } },
+            .{ .needle = "init" },
+        };
+        var fake = beta.Fake{ .a = a, .rules = &rules };
+        try t.expectError(error.CommandHung, beta.run(a, fake.io(), env.opts(exec)));
+        try t.expectEqual(@as(usize, 1), fake.count("init"));
+        try t.expectEqual(@as(usize, 0), (try builds(a, &fake)).len);
+    }
+}
+
+test "gamma: a build stopped at the limit is red at once, is not built again, and the next repository is not tried" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    var fake = gamma.GFake{ .a = a, .build_out = g_built, .build_first = &.{stopped} };
+    try t.expectError(error.CommandHung, gammaCli(a, try gammaWork(a, &tmp), &fake));
+    try t.expectEqual(@as(usize, 1), fake.count("buck2 build"));
+    try t.expectEqual(@as(usize, 1), fake.count("git clone"));
 }
