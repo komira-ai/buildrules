@@ -465,6 +465,17 @@ test "cell: a directory that does not exist, is outside the repository, is absol
     }
 }
 
+test "strictlyUnder: a resolved toolchains directory is below the root, never the root itself (a link back to the root), a sibling or an ancestor" {
+    const mc = @import("mojo_cmd.zig");
+    try t.expect(mc.strictlyUnder("/r/repo/toolchains", "/r/repo"));
+    try t.expect(mc.strictlyUnder("/r/repo/a/b", "/r/repo"));
+    try t.expect(!mc.strictlyUnder("/r/repo", "/r/repo"));
+    try t.expect(!mc.strictlyUnder("/r/repo-sibling", "/r/repo"));
+    try t.expect(!mc.strictlyUnder("/r/repox/toolchains", "/r/repo"));
+    try t.expect(!mc.strictlyUnder("/r", "/r/repo"));
+    try t.expect(!mc.strictlyUnder("/elsewhere", "/r/repo"));
+}
+
 test "a symbolic link that leads out of the repository is refused, also when the other directory's name starts with the root's" {
     const h = try repo("[cells]\n", "toolchains");
     defer h.destroy();
@@ -481,9 +492,10 @@ test "a symbolic link that leads out of the repository is refused, also when the
     const rel = try std.fmt.allocPrint(t.allocator, "../{s}", .{sibling});
     defer t.allocator.free(rel);
     try h.tmp.dir.symLink(rel, "linksibling", .{});
-    // And a link to the root itself, which is not below it.
-    try h.tmp.dir.symLink(".", "linkroot", .{});
-    for ([_][]const u8{ "linkout", "linksibling", "linkroot" }) |link| {
+    // A link to the root itself, which is not below it, is never made here: a link inside a directory that leads back to it is a loop, and buck2's
+    // file watcher, which follows links in every directory of the project (this one included), fails the next buck2 command on a loop. That case is
+    // the test of strictlyUnder above, which takes the two resolved paths this test's runs compare.
+    for ([_][]const u8{ "linkout", "linksibling" }) |link| {
         try h.put(".buckconfig", try std.fmt.allocPrint(h.a(), "[cells]\n  toolchains = {s}\n", .{link}));
         const r = h.run(&sync_args);
         try t.expectEqual(@as(u8, 1), r.code);

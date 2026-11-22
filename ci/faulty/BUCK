@@ -334,8 +334,11 @@ native_static(
 # archive_files stages the listed files of an archive, and never follows a symbolic link of the archive: a listed file that is a link, or lies behind a link, is refused. Each
 # archive below is a `pkg/` tree (ci/faulty/links, made with `tar --sort=name --format=ustar`, then `gzip -n`) with `ok.c` and:
 #   abs_link: link.c, a link to an absolute path of the machine that unpacks it;  rel_link: link.c, a link to a path that climbs out of the unpacked tree;
-#   dir_link: etc, a link to the directory /etc (so `etc/hostname` lies behind a link);
-#   prefix_link: top, a link to /etc, which is where `strip_prefix = "top"` points;  mid_link: a/mid, a link to /etc in the middle of the path a/mid/hostname;
+#   dir_link: etc, a link to the absolute directory path /nonexistent (so `etc/hostname` lies behind a link);
+#   prefix_link: top, a link to /nonexistent, which is where `strip_prefix = "top"` points;  mid_link: a/mid, a link to /nonexistent in the middle of the path a/mid/hostname;
+#   (A link to a directory names one that no machine has (Debian reserves /nonexistent for that), never a real one such as /etc: buck2's file watcher follows a
+#   directory link in the scratch directory where the archive is unpacked, and a directory under the target it cannot read, or a link that loops, fails the next
+#   buck2 command. The refusal reads the link itself, not its target, so a link that leads nowhere is refused the same way.)
 #   hard_link_outside: hl.c, a hard link to an absolute path of the machine that unpacks it;
 #   template_link: tmpl.in, a link to an absolute path, listed as the source of a template;
 #   control: no link that is listed: copy.c and ok.c are the same file (a hard link), sub/inner.c, and `unlisted`, a link nothing lists, which stays unread.

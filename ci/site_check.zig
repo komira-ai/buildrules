@@ -641,7 +641,7 @@ test "site.yml: the build" {
     try expectCaller(a, r, try mutate(a, r.caller, "ref: ${{ needs.plan.outputs.sha }}", "ref: ${{ github.sha }}"), "ref: ${{ needs.plan.outputs.sha }}");
     try expectCaller(a, r, try mutate(a, r.caller, "./buck2 build --console simple -c buildrules_re.mode=local --show", "./buck2 build --console simple --show"), "does not pass");
     try expectCaller(a, r, try mutate(a, r.caller, "//site:test //site:dist >", "//site:dist >"), "//site:test");
-    try expectCaller(a, r, try mutate(a, r.caller, "echo \"1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst\"", "echo \"0000  buck2.zst\""), "sha256");
+    try expectCaller(a, r, try mutate(a, r.caller, "echo \"51d209f834c3509bc83024bf4ede62cd907135e7b289b29ed69d763dcde67b04  buck2.zst\"", "echo \"0000  buck2.zst\""), "sha256");
     try expectCaller(a, r, try mutate(a, r.caller, "if-no-files-found: error", "if-no-files-found: ignore"), "if-no-files-found: error");
     // The defect of site.yml run 39617458648: the plain copy of Buck2's relative-symlink output dangles and upload-artifact finds no file.
     try expectCaller(a, r, try mutate(a, r.caller, "cp -rL --no-preserve=mode", "cp -r --no-preserve=mode"), "does not follow symlinks");

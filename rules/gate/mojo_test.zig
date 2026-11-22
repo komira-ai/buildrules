@@ -392,13 +392,36 @@ test "a share directory the test cannot enter: the test does not run, and the ba
     const e = try Env.init();
     defer e.deinit();
     const share = try e.path("root/share");
-    try std.fs.cwd().makePath(share);
-    try posix.fchmodat(posix.AT.FDCWD, share, 0o000, 0);
+    try kit.unenterableDir(share);
     defer posix.fchmodat(posix.AT.FDCWD, share, 0o755, 0) catch {};
     const r = try e.run(try e.args("exit", &.{ "--arg", "0" }), .{});
     try std.testing.expectEqual(@as(u8, 2), r.status);
     try std.testing.expect(std.mem.indexOf(u8, r.err, "gate: cannot change to the test's directory\n") != null);
     try std.testing.expect(!kit.exists(try e.path("passed")));
+}
+
+// Catches a directory made without its read bit (mode 0000, as this file's share case once made): buck2's file watcher cannot
+// read it, and the next buck2 command fails on it although the test passed and the directory is gone.
+test "an unenterable directory: made with its missing parents, listable at every step, never entered; made again where it exists" {
+    // Root enters and reads any directory; the case is for the users that cannot.
+    if (std.os.linux.getuid() == 0) return error.SkipZigTest;
+    const e = try Env.init();
+    defer e.deinit();
+    const dir = try e.path("a/b/unenterable");
+    try kit.unenterableDir(dir);
+    defer posix.fchmodat(posix.AT.FDCWD, dir, 0o755, 0) catch {};
+    // Made again where it exists: the same mode, no error.
+    try kit.unenterableDir(dir);
+    const st = try posix.fstatat(posix.AT.FDCWD, dir, 0);
+    try std.testing.expect(posix.S.ISDIR(st.mode));
+    try std.testing.expectEqual(@as(u32, 0o600), @as(u32, @intCast(st.mode & 0o7777)));
+    // Listable: what a file watcher does with it.
+    var d = try std.fs.cwd().openDir(dir, .{ .iterate = true });
+    defer d.close();
+    var it = d.iterate();
+    try std.testing.expectEqual(@as(?std.fs.Dir.Entry, null), try it.next());
+    // Never entered: a path through it is refused.
+    try std.testing.expectError(error.AccessDenied, std.fs.cwd().access(try std.fmt.allocPrint(e.a, "{s}/.", .{dir}), .{}));
 }
 
 fn hasEntry(env: []const []const u8, line: []const u8) bool {

@@ -89,8 +89,8 @@ jobs:
         run: |
           curl --fail --silent --show-error --location --retry 3 \
             --output buck2.zst \
-            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
-          echo "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst" | sha256sum --check --strict -
+            https://github.com/facebook/buck2/releases/download/2026-11-15/buck2-x86_64-unknown-linux-gnu.zst
+          echo "51d209f834c3509bc83024bf4ede62cd907135e7b289b29ed69d763dcde67b04  buck2.zst" | sha256sum --check --strict -
           zstd --decompress --quiet buck2.zst -o buck2
           chmod +x buck2
           ./buck2 --version

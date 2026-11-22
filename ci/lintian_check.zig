@@ -206,7 +206,7 @@ test "an action not pinned by commit, a buck2 that drifted, or a build outside l
     try expectDefect(a, r, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4", "not pinned to a full commit");
     try expectDefect(a, r, "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "uses: someone/else@3d3c42e5aac5ba805825da76410c181273ba90b1", "not allowed");
     try expectDefect(a, r, "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n", "      - run: true\n", "no `uses:` line found");
-    try expectDefect(a, r, "1268fce33fb6", "0268fce33fb6", "sha256 pinned");
+    try expectDefect(a, r, "51d209f834c3", "41d209f834c3", "sha256 pinned");
     try expectDefect(a, r, "build --console simple -c buildrules_re.mode=local --out ci-channels", "build --console simple --out ci-channels", "does not pass `-c buildrules_re.mode=local`");
 }
 
