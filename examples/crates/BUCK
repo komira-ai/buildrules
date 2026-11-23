@@ -138,7 +138,7 @@ _WORKSPACE = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "BUCK", "buildr
         index = glob(["registry/index/**"]),
         registry_root = "registry",
         rustc = "1.95.0",
-        deps = ["//crates/linked:sources", "//crates/linkuser:sources", "//crates/macros:sources", "//crates/pgdemo:sources", "//crates/protos:sources", "//crates/selfdev:sources", "//crates/stamped:sources", "//crates/zdemo:sources", "//third_party/buildrules:files"],
+        deps = ["//crates/covdemo:sources", "//crates/linked:sources", "//crates/linkuser:sources", "//crates/macros:sources", "//crates/pgdemo:sources", "//crates/protos:sources", "//crates/selfdev:sources", "//crates/stamped:sources", "//crates/zdemo:sources", "//third_party/buildrules:files"],
         srcs = _WORKSPACE,
         visibility = ["PUBLIC"],
     )
@@ -154,6 +154,7 @@ zig_test(
     src = "rust_analyzer_test.zig",
     data = {
         "buildrules.lock.bzl": "buildrules.lock.bzl",
+        "crates/covdemo": "//crates/covdemo:sources",
         "crates/linked": "//crates/linked:sources",
         "crates/linkuser": "//crates/linkuser:sources",
         "crates/macros": "//crates/macros:sources",

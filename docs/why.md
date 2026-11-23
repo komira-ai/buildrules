@@ -545,7 +545,7 @@ channels are planned (section 9).
   build there: no toolchain of the rules runs on those hosts.
 - **Rust:** crates.io, and git repositories on github.com pinned by commit; the workspace root is the repository root and must be a virtual workspace;
   every package listed in `members` (a glob other than `dir/*` is refused); doctests not run;
-  `:coverage` refuses; lto, rpath, incremental and split-debuginfo refused; `sync` needs the network
+  `:coverage` is linux x86_64 only and counts a member's own tests; lto, rpath, incremental and split-debuginfo refused; `sync` needs the network
   the first time a registry crate is fetched.
 - **Node:** lockfile version 3 only; no workspaces; registry tarballs over https only; install
   scripts do not run; scripts must fit the shell-free subset; one `dist` directory.

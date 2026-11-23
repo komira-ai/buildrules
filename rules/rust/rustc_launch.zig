@@ -95,24 +95,33 @@ fn shim(a: std.mem.Allocator, args: []const []const u8, tool: []const u8) noretu
             argv.append(a, "-Wl,--strip-debug") catch die("oom", .{});
         }
     }
-    // The target is the one in cc.cfg (the zig spelling of the cargo triple, with the glibc floor). The `cc` crate
-    // names the cargo triple (`--target=x86_64-unknown-linux-gnu`) and zig cannot parse that spelling: drop it.
-    var skip_next = false;
-    for (args[1..]) |x| {
-        if (skip_next) {
-            skip_next = false;
-            continue;
-        }
-        if (std.mem.startsWith(u8, x, "--target=")) continue;
-        if (std.mem.eql(u8, x, "-target") or std.mem.eql(u8, x, "--target")) {
-            skip_next = true;
-            continue;
-        }
-        argv.append(a, x) catch die("oom", .{});
-    }
+    passArgs(a, args[1..], !(std.mem.eql(u8, tool, "ar") or std.mem.eql(u8, tool, "ranlib")), &argv) catch die("oom", .{});
     var env = privateEnv(a, cache) catch die("oom", .{});
     const e = std.process.execve(a, argv.items, &env);
     die("cannot run zig: {s}", .{@errorName(e)});
+}
+
+/// The arguments a shim was called with, as zig takes them, appended to `out`. The target is the one in cc.cfg (the zig spelling of the cargo
+/// triple, with the glibc floor): the `cc` crate names the cargo triple (`--target=x86_64-unknown-linux-gnu`, `-target <triple>`) and zig cannot
+/// parse that spelling, so it is dropped. For the C driver (`driver`: `cc` and `c++`), gcc's `-u <symbol>` (rustc links a binary built with
+/// `-C instrument-coverage` with `-u __llvm_profile_runtime`) becomes `-Wl,-u,<symbol>`: `zig cc` does not know `-u` and would take the symbol
+/// for an input file.
+pub fn passArgs(a: std.mem.Allocator, args: []const []const u8, driver: bool, out: *std.ArrayList([]const u8)) !void {
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const x = args[i];
+        if (std.mem.startsWith(u8, x, "--target=")) continue;
+        if (std.mem.eql(u8, x, "-target") or std.mem.eql(u8, x, "--target")) {
+            i += 1;
+            continue;
+        }
+        if (driver and std.mem.eql(u8, x, "-u") and i + 1 < args.len) {
+            try out.append(a, try std.fmt.allocPrint(a, "-Wl,-u,{s}", .{args[i + 1]}));
+            i += 1;
+            continue;
+        }
+        try out.append(a, x);
+    }
 }
 
 /// The same program under the name `rustc` (a symlink beside `rustc.cfg`: sysroot, zig directory, cc target, one per
@@ -242,4 +251,28 @@ pub fn main() !void {
     if (std.mem.eql(u8, std.fs.path.basename(args[0]), "rustc")) std.process.exit(try rustcShim(a, args));
     const code = try launch(a, args);
     std.process.exit(code);
+}
+
+test "a shim drops the cargo triple and gives zig cc gcc's -u as a linker option" {
+    const a = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const x = arena.allocator();
+    var cc = std.ArrayList([]const u8).empty;
+    try passArgs(x, &.{ "--target=x86_64-unknown-linux-gnu", "-o", "out", "-target", "x86_64-unknown-linux-gnu", "-u", "__llvm_profile_runtime", "a.o", "--target", "t", "-u" }, true, &cc);
+    try std.testing.expectEqual(@as(usize, 5), cc.items.len);
+    const want = [_][]const u8{ "-o", "out", "-Wl,-u,__llvm_profile_runtime", "a.o", "-u" };
+    for (want, cc.items) |w, g| try std.testing.expectEqualStrings(w, g);
+    // `ar` and `ranlib` are not the C driver: `-u` is theirs to read.
+    var ar = std.ArrayList([]const u8).empty;
+    try passArgs(x, &.{ "-u", "lib.a", "--target=t" }, false, &ar);
+    try std.testing.expectEqual(@as(usize, 2), ar.items.len);
+    try std.testing.expectEqualStrings("-u", ar.items[0]);
+    try std.testing.expectEqualStrings("lib.a", ar.items[1]);
+    // Every allocation that fails is an error, not a half-made command line.
+    var buf: [0]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    var none = std.ArrayList([]const u8).empty;
+    try std.testing.expectError(error.OutOfMemory, passArgs(fba.allocator(), &.{"a.o"}, true, &none));
+    try std.testing.expectError(error.OutOfMemory, passArgs(fba.allocator(), &.{ "-u", "s" }, true, &none));
 }

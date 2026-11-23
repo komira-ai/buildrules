@@ -57,6 +57,8 @@ group(name = "refusals", deps = [
     "//rules/rust/tests:unpinned_without_record_is_refused",
     "//rules/rust/tests:recorded_hashes_must_be_the_pinned_ones",
     "//rules/rust/tests:pinned_version_with_user_origin_is_refused",
+    "//rules/rust/tests:coverage_with_llvm_tools_is_accepted",
+    "//rules/rust/tests:coverage_without_llvm_tools_is_refused",
     "//rules/rust/tests:edges_take_the_same_edge_listed_twice_once",
     "//rules/rust/tests:edges_refuse_two_units_under_one_name",
     "//rules/rust/tests:edges_make_the_runs_of_links_dependencies_link_deps",
@@ -551,6 +553,23 @@ group(name = "crates", deps = [
     "crates//crates/selfdev:flycheck",
     "crates//crates/linkuser:flycheck",
     "crates//crates/linked:flycheck",
+    "crates//crates/covdemo:flycheck",
+    # `:coverage` (rules/rust/coverage.bzl), every member's tests built again with coverage counters and read with the pinned llvm-cov: a binary a test
+    # runs (covdemo), the Postgres fixture (pgdemo), a build script's generated code (protos), a source outside the crate (stamped), a dev-dependency
+    # on the package itself (selfdev), a C library linked into the tests (zdemo, linkuser). Each member's `:coverage_floor` holds it to 99% (protos has
+    # none: its own sources hold no function outside generated code, so its figure is 0/0, and its coverage is lines only, crates/protos/BUCK), but
+    # covdemo's, red on purpose (its tests do not run all its code), which ci/negative.bzl holds red (COVERAGE_REDS).
+    "crates//:coverage",
+    "crates//crates/linked:coverage_floor",
+    "crates//crates/linkuser:coverage_floor",
+    "crates//crates/macros:coverage_floor",
+    "crates//crates/pgdemo:coverage_floor",
+    "crates//crates/selfdev:coverage_floor",
+    "crates//crates/stamped:coverage_floor",
+    "crates//crates/zdemo:coverage_floor",
+    "crates//crates/covdemo:lib",
+    "crates//crates/covdemo:bin",
+    "crates//crates/covdemo:coverage[lcov]",
 ])
 
 # A workspace whose dependency is a git repository pinned by commit (examples/gitcrates, its own cell): lint and test it. Its two git packages
@@ -574,6 +593,9 @@ group(name = "gitcrates", deps = [
     "gitcrates//crates/gdemo:fmt",
     "gitcrates//:typecheck",
     "gitcrates//crates/gdemo:typecheck",
+    # the coverage of a member whose dependency is a git crate (built without counters, as every registry crate is), held to its floor
+    "gitcrates//:coverage",
+    "gitcrates//crates/gdemo:coverage_floor",
 ])
 
 # The public CI workflow (.github/workflows/ci.yml, docs/contract.md section 14): the pinned actionlint accepts it, and ci/workflow_check.zig
@@ -929,6 +951,7 @@ _PACKAGES = [
     "//tools/scrub:scrub_files",
     "//tools/stage:scrub_files",
     "crates//:scrub_files",
+    "crates//crates/covdemo:scrub_files",
     "crates//crates/linked:scrub_files",
     "crates//crates/linkuser:scrub_files",
     "crates//crates/macros:scrub_files",
@@ -1115,6 +1138,7 @@ group(name = "all", deps = [
     "//ci/faulty:table_in_sync",
     "//ci/faulty:fmt_of_a_well_formatted_file",
     "//ci/faulty:typecheck_of_a_clippy_warning",
+    "//ci/faulty:coverage_of_a_proc_macro_test",
     "//ci/faulty:typecheck_of_the_library_beside_a_type_error_in_its_tests",
     "//ci/faulty:archive_files_of_files_without_links",
     "//ci/faulty:archive_files_of_separate_files_without_links",

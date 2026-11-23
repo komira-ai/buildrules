@@ -2,9 +2,10 @@
 # proc-macro crates serde_derive, clap_derive and tokio-macros; protos compiles protobuf in its build script (protox, tonic-prost-build);
 # stamped embeds a commit given as an input and reads a source outside its directory (shared/); the tests of pgdemo run with the Postgres fixture;
 # selfdev has a dev-dependency on itself that turns on a feature; linkuser's build script reads the metadata of linked (a member with `links`) and of zstd-sys.
+# covdemo is the fixture of `:coverage` (a library and a binary its integration test runs; its tests do not run all its code, so its floor is held red).
 [workspace]
 resolver = "3"
-members = ["crates/linked", "crates/linkuser", "crates/macros", "crates/pgdemo", "crates/protos", "crates/selfdev", "crates/stamped", "crates/zdemo"]
+members = ["crates/covdemo", "crates/linked", "crates/linkuser", "crates/macros", "crates/pgdemo", "crates/protos", "crates/selfdev", "crates/stamped", "crates/zdemo"]
 
 # Every external dependency's version, declared once; a member names it with `workspace = true` and adds the features it uses.
 [workspace.dependencies]

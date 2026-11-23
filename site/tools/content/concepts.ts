@@ -69,7 +69,6 @@ export const concepts: Page = {
     p('Some Cargo behavior is not reproduced yet:'),
     ul(
       'Doctests are not run by `:test`; `cargo test` runs them.',
-      'Coverage is not built; the `:coverage` target refuses.',
       'Install scripts of npm packages do not run, here or in the Buck2 build; if a package needs one to work, it needs a rule of its own.',
       'Link-time optimization, a custom codegen backend, rpath, incremental compilation and split debuginfo profile fields are refused for Rust.',
     ),

@@ -120,6 +120,15 @@ hits the 99% target needs.
 To add a package: `zig_coverage(test_targets = [":a_unit", ...], expect = ["pkg/a.zig", ...])` after its `zig_test` targets, a `coverage_floor.txt` with today's figures
 (build `:coverage` and read its totals), and the package's `:coverage_floor` in `//ci:floors` (`ci/BUCK`; `ci/completeness.bxl` fails until it is).
 
+## Rust coverage
+
+A cargo member's `:coverage` (`rules/rust/coverage.bzl`, docs/contract.md section 5) is not kcov's: each of its tests is built again with LLVM's
+coverage counters (`-C instrument-coverage -Z coverage-options=branch`), run, and read with the `llvm-profdata` and `llvm-cov` of the same Rust release
+(`rules/rust/rust_cov.zig`). Its `coverage.txt` is the text above, so its floor is the same file, `coverage_floor.txt` beside the member's BUCK file,
+held by the same `cov_floor` as `:coverage_floor` (`zig_coverage_floor_rule`); a member whose code has no decision has a `branches total 0/0` and a
+floor of `lines NN.NN` alone. `examples/crates/crates/covdemo` is the fixture: its tests do not run all its code, so its `:coverage_floor` is
+held red at the 99% floor (ci/negative.bzl, `COVERAGE_REDS`).
+
 ## Jest coverage
 
 `jest_test(coverage = True)` runs `jest --coverage` and its target is the `coverage` directory (the `coverage-summary.json` of the run, a text table on the log), which

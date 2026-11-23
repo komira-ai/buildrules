@@ -245,6 +245,40 @@ cargo_unit(
     **_TYPECHECK
 )
 
+# Refused at analysis, by name (ci/negative.bzl, CASES): coverage counters (rules/rust/cargo_unit.bzl, `coverage = True`, what a member's `:coverage` builds) on a unit
+# whose mode runs no test code, and on a proc-macro, which runs on the build host inside the compile. The units a `:coverage` builds are crates//:coverage, built by //ci:all.
+cargo_unit(
+    name = "coverage_of_a_lint",
+    mode = "lint",
+    coverage = True,
+    root = "typecheck/clippy_warning.rs",
+    srcs = ["typecheck/clippy_warning.rs"],
+    **_TYPECHECK
+)
+
+cargo_unit(
+    name = "coverage_of_a_proc_macro",
+    mode = "build",
+    crate_type = "proc-macro",
+    coverage = True,
+    root = "typecheck/clippy_warning.rs",
+    srcs = ["typecheck/clippy_warning.rs"],
+    **_TYPECHECK
+)
+
+# The control of that refusal: the test target of a proc-macro crate is a test binary on the target, instrumented and run like any other (a
+# workspace member that is a proc-macro has one in its `:coverage`). Built by //ci:all.
+cargo_unit(
+    name = "coverage_of_a_proc_macro_test",
+    mode = "test",
+    crate_type = "proc-macro",
+    coverage = True,
+    root = "coverage/proc_macro_test.rs",
+    srcs = ["coverage/proc_macro_test.rs"],
+    visibility = ["//ci:"],
+    **_TYPECHECK
+)
+
 # A library welded to that test: the copy that is the published library is made by an action that reads the test's marker. (Control: //examples/hello:hello_lib.)
 rust_library(
     name = "lib_behind_a_failing_test",
