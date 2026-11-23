@@ -10,6 +10,8 @@
 //!   stage action-ref --dir DIR --ref SHA
 //!   stage gamma-vars (--farm-address V --farm-instance V --farm-properties V --ts-client-id V --ts-audience V --connect-repo V --connect-ref V --repos V)
 //!   stage gamma  --work DIR --candidate SHA --repos "owner/name ..." --targets "//..." --buck2 PATH --farm-config FILE
+//!   stage farm-macos --root DIR --buck2 PATH --farm-config FILE [--summary FILE]
+//!                (the targets labelled `macos-farm` built on a farm with macOS workers; macos_farm.zig)
 //!
 //! Exit 0 when the stage passed (`beta` also for a planned leg), 1 when it failed, 2 on a bad command line.
 const std = @import("std");
@@ -17,6 +19,7 @@ const beta = @import("beta.zig");
 const gamma = @import("gamma.zig");
 const native = @import("native.zig");
 const farm = @import("farm.zig");
+const macos_farm = @import("macos_farm.zig");
 const steps_mod = @import("steps.zig");
 const io_mod = @import("io.zig");
 
@@ -98,7 +101,7 @@ pub fn main() !u8 {
     const a = arena.allocator();
     const argv = try std.process.argsAlloc(a);
     if (argv.len < 2) {
-        std.debug.print("usage: stage plan|beta|native|version|action-ref|gamma --flag value ...\n", .{});
+        std.debug.print("usage: stage plan|beta|native|version|action-ref|gamma|farm-macos --flag value ...\n", .{});
         return 2;
     }
     return run(a, argv[1], argv[2..]) catch |e| switch (e) {
@@ -166,8 +169,35 @@ fn run(a: std.mem.Allocator, cmd: []const u8, rest: []const []const u8) !u8 {
         var st = State{ .path_prefix = if (std.mem.eql(u8, std.fs.path.basename(buck2), "buck2")) dirOf(buck2) else "" };
         return gammaCommand(a, .{ .ctx = &st, .run_fn = realRun }, g);
     }
+    if (std.mem.eql(u8, cmd, "farm-macos")) {
+        const g = try parseArgs(a, rest, &farm_macos_flags);
+        var st = State{ .path_prefix = "" };
+        return farmMacosCommand(a, .{ .ctx = &st, .run_fn = realRun }, g);
+    }
     std.debug.print("stage: unknown command `{s}`\n", .{cmd});
     return error.Usage;
+}
+
+pub const farm_macos_flags = [_][]const u8{ "root", "buck2", "farm-config", "summary" };
+
+/// `stage farm-macos`: see macos_farm.zig. A farm config that is missing or names no farm is red as a farm leg's is; one with no macOS worker set says which
+/// variables to set.
+pub fn farmMacosCommand(a: std.mem.Allocator, io: io_mod.Io, g: Args) !u8 {
+    const root = try g.need("root");
+    const buck2 = try g.need("buck2");
+    const raw = std.fs.cwd().readFileAlloc(a, try g.need("farm-config"), 1 << 20) catch {
+        std.debug.print("{s}", .{gamma.not_configured_message});
+        return error.FarmNotConfigured;
+    };
+    const cfg = try macos_farm.macosConfig(a, raw);
+    if (!farm.farmConfigured(cfg)) {
+        std.debug.print("{s}", .{gamma.not_configured_message});
+        return error.FarmNotConfigured;
+    }
+    const res = try macos_farm.run(a, io, .{ .root = root, .buck2 = buck2, .config = cfg });
+    io_mod.say("farm-macos: passed: {d} target(s) built on the farm, Commands: {d} (cached: {d}, remote: {d}, local: {d})\n", .{ res.targets.len, res.summary.total, res.summary.cached, res.summary.remote, res.summary.local });
+    if (g.get("summary")) |p| try appendFile(p, try macos_farm.summary(a, res));
+    return 0;
 }
 
 pub const gamma_flags = [_][]const u8{ "work", "candidate", "repos", "targets", "buck2", "farm-config" };

@@ -57,7 +57,7 @@ Three tiers, and each runs where it is cheapest to be wrong:
 | gamma | the whole system with real consumers: our own repositories on the farm (see "The gamma stage") | the `gamma` stage of `release.yml`, on a push to `main` after the merge |
 
 A pull request runs `ci.yml` and nothing else: it builds `//ci:all` (the unit tests of every package and the lints of every workflow, `release.yml` and `beta.yml` among them, so a broken
-`release.yml` is red before the merge) and runs the completeness check, on linux x86_64 runners alone: every other platform (linux aarch64, macOS) is tested by the beta stage of the release (the legs `host_arm`, `unpack_macos`, `mojo_macos`, `beta_arm` and `beta_macos` of `beta.yml`, see "The beta stage"), after the merge and not on a pull request (`ci/pr_runners_check.zig` refuses a runner other than `ubuntu-latest`, `ubuntu-24.04` or `ubuntu-22.04` in a workflow a pull request starts). It does not run the beta, the gamma, the signing, the attestation, the reproduction or the
+`release.yml` is red before the merge) and runs the completeness check, on linux x86_64 runners alone: every other platform (linux aarch64, macOS) is tested by the beta stage of the release (the legs `host_arm`, `unpack_macos`, `mojo_macos`, `beta_arm` and `beta_macos` of `beta.yml`, see "The beta stage"; `farm-macos.yml` runs the same checks of `unpack` on the farm's macOS workers after each push, beside the release, see "macOS on the farm"), after the merge and not on a pull request (`ci/pr_runners_check.zig` refuses a runner other than `ubuntu-latest`, `ubuntu-24.04` or `ubuntu-22.04` in a workflow a pull request starts). It does not run the beta, the gamma, the signing, the attestation, the reproduction or the
 verification of a release: those happen once, in the release run on the push to `main`, and a red one there leaves no tag. `release.yml` and `beta.yml` have no `pull_request` trigger
 (`ci/release_check.zig` and `ci/stages_check.zig` refuse one), and `ci.yml` calls neither (`ci/workflow_check.zig` refuses the call of `beta.yml`, a build of the stage tool or the release
 tool, `id-token` and a cosign or attestation action there).
@@ -88,7 +88,7 @@ and then, from nothing, builds again.
 | `mojo` | a Mojo package, built by the pinned mopm 0.0.48 release | ubuntu x86_64 |
 | `ubuntu-24.04-arm`, `macos-15` (native) | `zig` and `cxx`, with the command line the release ships for `linux-aarch64` and `macos-arm64`, run on that machine: `--version` says the planned version, `init` writes the same bytes in two directories, Buck2 loads the candidate as the external cell and lists the targets. **No build**: see "The native legs" | arm Linux, macOS (Apple silicon) |
 | `host_arm` | the aarch64 hosts: the buck2 of `tools/buck2` for linux-aarch64, the execution platform local mode resolves to, and every pinned download of `//rules/pins:host_downloads` (`docs/pins.md`, "Other hosts") | arm Linux |
-| `unpack_cross`, `unpack_macos` | the macOS program of `unpack`, cross-built on linux x86_64 and handed to a Mac that checks it against its pin and unpacks the real darwin zig tarball (`docs/pins.md`, "unpack") | ubuntu x86_64, macOS (Apple silicon) |
+| `unpack_cross`, `unpack_macos` | the macOS program of `unpack`, cross-built on linux x86_64 and handed to a Mac that checks it against its pin and unpacks the real darwin zig tarball (`docs/pins.md`, "unpack"); not run while the repository variable `MACOS_ON_FARM` is `true` (see "macOS on the farm") | ubuntu x86_64, macOS (Apple silicon) |
 | `mojo_macos` | a Mac that runs Buck2 itself builds the tool tier of the Mojo rules and a Mojo package natively | macOS (Apple silicon) |
 | farm | the ubuntu legs again, built on the farm | only when the repository variables `FARM_ADDRESS` and `FARM_CONNECT_REF` are set |
 
@@ -135,6 +135,24 @@ built the hello-world repositories, and the native legs only start it.
 
 The native legs run only after the merge, like every beta leg, and a red one blocks the tag (the beta comes before it).
 
+### macOS on the farm (`farm-macos.yml`)
+
+The checks of `unpack` on macOS also run as Buck2 actions on the farm's macOS arm64 workers: `.github/workflows/farm-macos.yml`, on every push to main and when started
+by hand (never on a pull request), from a linux runner. The targets are the ones labelled `macos-farm` (`tools/bootstrap/BUCK`, rules in `tools/bootstrap/macos.bzl`):
+each unit test of `unpack` compiled for aarch64-macos on a linux worker (`zig_test_bin`) and run on a Mac worker by `check marker` (`host_run`), and the pinned macOS
+program on the real darwin zig 0.12.0 tarball, whose tree is held to the system tar's (entries, executable bits, sizes, digests, link targets and the permission bits of every file),
+whose zig says its version, and which refuses the tarball under another sha256 or size and a copy cut off after 1,000,000 bytes (`src/darwin_test.zig`). A Mac
+action has no network, so the tarball is an action input (the pinned download of `rules/pins/hosts.bzl`). The macOS minimum of the pinned program (13.0) is read on
+linux by `//tools/bootstrap:unpack_macos_minos`, which every pull request builds. `stage farm-macos` (`tools/stage/macos_farm.zig`) writes the farm's settings with
+the macOS worker set as `[buildrules_re] macos_aarch64_properties`, finds the labelled targets, builds them, and requires `local: 0`.
+
+It runs when `FARM_ADDRESS`, `FARM_CONNECT_REF`, `FARM_DARWIN_ARM64_PROPERTIES` and `FARM_DARWIN_MACOS_HOSTS` are all set; otherwise it says so with a notice and is
+green. `MACOS_ON_FARM = true` switches the hosted leg (`unpack_cross` and `unpack_macos` of `beta.yml`) off, and then farm-macos.yml fails instead of skipping while
+those variables are not all set. Set it once a farm-macos run is green. farm-macos.yml is not a stage of the release: it runs beside it on the same push, and
+`release.yml` neither calls it nor waits for it, so while `MACOS_ON_FARM` is `true` a red farm-macos run is red on the commit but does not stop its tag (the hosted leg,
+as a beta leg, does). The other macOS legs stay on `macos-15`: the native `beta_macos` legs run the command line,
+which starts a buck2 daemon and fetches the candidate as a git cell from GitHub (a Mac action has no network), and `mojo_macos` runs Buck2 itself on the Mac.
+
 ## The gamma stage
 
 `gamma` builds our own repositories with the candidate, one after the other, in the order the repository variable `GAMMA_REPOS` gives. For each:
@@ -155,6 +173,8 @@ mopm repository has one and the other repository planned for this stage does not
 | `GAMMA_REPOS` | the repositories to build, as `owner/name owner/name`, in order |
 | `GAMMA_TARGETS` | optional; the targets to build in each (`//...`) |
 | `FARM_TLS` | optional; `true` when the farm speaks TLS (default `false`) |
+| `FARM_DARWIN_ARM64_PROPERTIES`, `FARM_DARWIN_MACOS_HOSTS` | optional; the worker property set of the farm's macOS arm64 workers, and the identities of those workers separated by spaces (the farm-connect action takes both or neither); with both, farm-macos.yml runs (see "macOS on the farm") |
+| `MACOS_ON_FARM` | optional; `true` turns off the hosted macOS leg of the checks farm-macos.yml runs (`unpack_cross` and `unpack_macos` of `beta.yml`), and makes farm-macos.yml fail rather than skip while its variables are not all set |
 | `RELEASE_FREEZE` | optional; `true` stops every release (read by the plan alone; see "The freeze"). Empty and `false` mean not frozen |
 | `RELEASE_BOT_APP_ID` | the App id of the release bot whose token the `tag` job makes the tag with (with the secret `RELEASE_BOT_PRIVATE_KEY`, an environment secret of `release`; see "The tag ruleset"); not the farm's, and read by `tag`, `bump` and `tap` |
 | `BUMP_REPOSITORY` | the name, without its owner, of the internal repository whose `buildrules` submodule the `bump` job moves to each release (see "The submodule bump"); read by `bump` alone |

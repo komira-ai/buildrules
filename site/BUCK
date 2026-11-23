@@ -47,6 +47,7 @@ jest_test(
     data = {
         ".github/workflows/ci.yml": "//:ci.yml",
         ".github/workflows/beta.yml": "//:beta.yml",
+        ".github/workflows/farm-macos.yml": "//:farm-macos.yml",
         ".github/workflows/release.yml": "//:release.yml",
         "beta/check.zig": "//beta:check.zig",
         "RELEASING.md": "//:RELEASING.md",

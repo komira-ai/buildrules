@@ -3,6 +3,9 @@
 # linux aarch64, macOS aarch64). Those three are published as release assets and pinned (rules/pins/bootstrap.bzl), so that an action can run `unpack` before
 # anything else has been unpacked; //ci:unpack_pin_check rebuilds the tree's copy and requires its sha256 to be the pin's.
 load("@buildrules//rules/core:pinned_file.bzl", "pinned_file")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64", "MACOS_AARCH64")
+load("@buildrules//rules/pins:hosts.bzl", "HOST_PINS")
+load(":macos.bzl", "MACOS_FARM", "host_run", "macos_gate", "zig_test_bin")
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_exe_target_test", "zig_module", "zig_test")
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
@@ -31,6 +34,8 @@ _TESTS = [
         src = "src/" + name + "_test.zig",
         imports = _SRCS,
         zig = _ZIG,
+        # ci/faulty runs one the way the Mac does (`host_run_of_a_passing_test`).
+        visibility = ["//ci/faulty:"],
     )
     for name in _TESTS
 ]
@@ -172,5 +177,88 @@ pinned_file(
         "rustc_gz": ":rustc_gz_for_memory",
     }.items()
 ]
+
+# ---- on a Mac (macos.bzl; .github/workflows/farm-macos.yml) ---------------------------------------------------------------------------------------------
+# Each test of the program compiled for aarch64-macos on linux x86_64 and run on a farm's macOS arm64 worker, and the pinned macOS program on the real darwin zig
+# tarball against the system's tar (src/darwin_test.zig). A Mac action has no network, so the tarball is an input: the pinned download of rules/pins/hosts.bzl.
+# Every target that runs on a Mac is incompatible while no macOS execution platform is registered (`macos_gate`): no platform has this value.
+constraint_setting(name = "macos_workers", visibility = ["PUBLIC"])
+
+constraint_value(name = "waiting_on_macos_workers", constraint_setting = ":macos_workers", visibility = ["PUBLIC"])
+
+# What the compiles run on: the program's own pins, on linux x86_64.
+_MAC_COMPILE = {
+    "exec_compatible_with": LINUX_X86_64,
+    "target": "aarch64-macos",
+    "target_compatible_with": macos_gate(),
+}
+
+_MAC_RUN = {
+    "exec_compatible_with": MACOS_AARCH64,
+    "labels": [MACOS_FARM],
+    "target_compatible_with": macos_gate(),
+}
+
+[
+    [
+        zig_test_bin(
+            name = name + "_macos_bin",
+            test = ":" + name + "_unit",
+            **_MAC_COMPILE
+        ),
+        host_run(
+            name = name + "_macos",
+            exe = ":" + name + "_macos_bin",
+            **_MAC_RUN
+        ),
+    ]
+    for name in _TESTS
+]
+
+# Compiled only for the Mac (`darwin_integration_bin`): it runs the system's tar (/usr/bin/tar), so it is an integration test, run on the farm's Mac and not on linux.
+zig_test(
+    name = "darwin_integration_test",
+    src = "src/darwin_test.zig",
+    imports = _SRCS,
+    zig = _ZIG,
+    target_compatible_with = macos_gate(),
+)
+
+zig_test_bin(
+    name = "darwin_integration_bin",
+    test = ":darwin_integration_test",
+    # ReleaseSafe: the test hashes the whole extracted distribution twice.
+    optimize = "ReleaseSafe",
+    **_MAC_COMPILE
+)
+
+_DARWIN_ZIG = HOST_PINS["macos-aarch64"]["zig"]
+
+host_run(
+    name = "darwin_integration",
+    exe = ":darwin_integration_bin",
+    env_tools = {
+        # The pinned program, as an action downloads it (rules/pins/bootstrap.bzl); //ci:unpack_pin_check holds it to this tree's build.
+        "UNPACK": "buildrules//rules/pins:bootstrap_unpack_macos_aarch64",
+        "ZIG_TARBALL": "buildrules//rules/pins:macos-aarch64__" + _DARWIN_ZIG["name"],
+    },
+    env = {
+        "ZIG_SHA256": _DARWIN_ZIG["sha256"],
+        "ZIG_SIZE": str(_DARWIN_ZIG["size"]),
+        "ZIG_VERSION": "0.12.0",
+    },
+    **_MAC_RUN
+)
+
+# The macOS minimum of the pinned program is at most 13.0, the minimum of buildrules (docs/pins.md, "unpack"): read from the Mach-O on linux, so it is built by
+# //ci:all on every pull request.
+host_run(
+    name = "unpack_macos_minos",
+    exe = "//ci:macho_minos_exe",
+    args = ["--max", "13.0", "$(location buildrules//rules/pins:bootstrap_unpack_macos_aarch64)"],
+    installed = False,
+    exec_compatible_with = LINUX_X86_64,
+    visibility = ["//ci:"],
+)
 
 scrub_files()

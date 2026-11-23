@@ -1,0 +1,101 @@
+# The checks of `unpack` on the farm's macOS arm64 workers, from a Linux runner: the targets labelled `macos-farm` (tools/bootstrap/BUCK; tools/bootstrap/macos.bzl),
+# each a program compiled for aarch64-macos on a linux worker and run on a Mac worker (the unit tests of `unpack`, and the pinned macOS program on the real darwin zig
+# tarball against the system's tar). Every action runs on the farm: the build must say `local: 0` (`stage farm-macos`, tools/stage/macos_farm.zig).
+#
+# It runs after the merge only, never on a pull request (a pull request runs on linux x86_64 alone, RELEASING.md "The tiers"): on a push to main, and when started by
+# hand. The farm is joined as beta.yml's farm leg joins it: the farm-connect action is checked out of the repository FARM_CONNECT_REPO names at the full commit
+# FARM_CONNECT_REF names, and the stage tool refuses a checkout that is not that commit. Only the action's own directory is checked out, so the query of the
+# checkout's packages meets no package of another repository. The macOS worker set and the identities of those workers are the repository variables
+# FARM_DARWIN_ARM64_PROPERTIES and FARM_DARWIN_MACOS_HOSTS; no endpoint or worker property set is in this file.
+#
+# Setting the macOS variables turns the build on. The repository variable MACOS_ON_FARM says which runs the hosted macOS leg of the same checks (`unpack_cross` and
+# `unpack_macos` of beta.yml): unset, GitHub's macos-15 runner still runs it, and while the macOS variables are not all set this workflow builds nothing, says so,
+# and is green. `true` drops that leg from beta.yml, and this workflow is then the only macOS run of those checks: with the macOS variables not all set it fails
+# instead of skipping. It is not a stage of the release (release.yml neither calls it nor waits for it), so a red run here does not stop a tag; the hosted leg, a leg
+# of the beta stage, does. ci/farm_macos_check.zig (`//ci:workflow`) holds this file to all of that.
+name: farm-macos
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The macOS workers are not configured. The conditions read the variables without putting their values in a step's environment, which GitHub prints in the log.
+  not_configured:
+    if: ${{ vars.FARM_ADDRESS == '' || vars.FARM_CONNECT_REF == '' || vars.FARM_DARWIN_ARM64_PROPERTIES == '' || vars.FARM_DARWIN_MACOS_HOSTS == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: the macOS workers are not configured, and beta.yml runs the hosted macOS leg
+        if: ${{ vars.MACOS_ON_FARM != 'true' }}
+        run: echo "::notice title=farm-macos::the repository variables FARM_ADDRESS, FARM_CONNECT_REF, FARM_DARWIN_ARM64_PROPERTIES and FARM_DARWIN_MACOS_HOSTS are not all set, so there are no macOS workers to run on. Skipped; nothing was built. MACOS_ON_FARM is not true, so the macos-15 leg of beta.yml runs these checks."
+      # MACOS_ON_FARM took the hosted leg out of beta.yml: a skip here would leave the commit unchecked on macOS.
+      - name: the macOS checks are on the farm, but the macOS workers are not configured
+        if: ${{ vars.MACOS_ON_FARM == 'true' }}
+        run: echo "::error title=farm-macos::MACOS_ON_FARM is true, so beta.yml runs no macos-15 leg of unpack, but FARM_ADDRESS, FARM_CONNECT_REF, FARM_DARWIN_ARM64_PROPERTIES and FARM_DARWIN_MACOS_HOSTS are not all set. Set them, or unset MACOS_ON_FARM." && false
+
+  macos:
+    if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_CONNECT_REF != '' && vars.FARM_DARWIN_ARM64_PROPERTIES != '' && vars.FARM_DARWIN_MACOS_HOSTS != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      # for farm-connect only: the token the farm's network trusts
+      id-token: write
+    env:
+      CONNECT_REF: ${{ vars.FARM_CONNECT_REF }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/farm_macos_check.zig compares both.
+      - name: Install buck2
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output buck2.zst \
+            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
+          echo "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst" | sha256sum --check --strict -
+          zstd --decompress --quiet buck2.zst -o buck2
+          chmod +x buck2
+          ./buck2 --version
+
+      # The stage tool is built on the runner before the farm is joined: it is what writes the farm's configuration.
+      - name: The stage tool
+        run: ./buck2 build --console simple -c buildrules_re.mode=local --out "$RUNNER_TEMP/stage" //tools/stage:stage
+
+      - name: Stop the buck2 of the local build
+        run: ./buck2 kill
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.FARM_CONNECT_REPO }}
+          ref: ${{ vars.FARM_CONNECT_REF }}
+          path: farm-action
+          sparse-checkout: .github/actions/farm-connect
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: the action that joins the farm is at the commit the variable names
+        run: '"$RUNNER_TEMP/stage" action-ref --dir farm-action --ref "$CONNECT_REF"'
+
+      - name: connect to the farm (linux and macOS workers)
+        uses: ./farm-action/.github/actions/farm-connect
+        with:
+          ts-client-id: ${{ vars.TS_CLIENT_ID }}
+          ts-audience: ${{ vars.TS_AUDIENCE }}
+          farm-address: ${{ vars.FARM_ADDRESS }}
+          farm-instance: ${{ vars.FARM_INSTANCE }}
+          farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
+          darwin-properties: ${{ vars.FARM_DARWIN_ARM64_PROPERTIES }}
+          darwin-macos-hosts: ${{ vars.FARM_DARWIN_MACOS_HOSTS }}
+          tls: ${{ vars.FARM_TLS || 'false' }}
+
+      - name: The macos-farm targets, built on the farm
+        run: '"$RUNNER_TEMP/stage" farm-macos --root "$GITHUB_WORKSPACE" --buck2 "$GITHUB_WORKSPACE/buck2" --farm-config "$HOME/.buckconfig.d/farm.buckconfig" --summary "$GITHUB_STEP_SUMMARY"'

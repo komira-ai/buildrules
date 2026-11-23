@@ -605,7 +605,7 @@ actionlint_check(
     name = "workflow_lint",
     exec_compatible_with = LINUX_X86_64,
     actionlint = "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
-    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml", "//:site.yml", "//:site-publish.yml", "//:advisories.yml", "//:lintian.yml", "//:publish-unpack.yml", "//:mopm-pin.yml", "//:apt-rotation.yml"],
+    workflows = ["//:ci.yml", "//:release.yml", "//:beta.yml", "//:site.yml", "//:site-publish.yml", "//:advisories.yml", "//:lintian.yml", "//:publish-unpack.yml", "//:mopm-pin.yml", "//:apt-rotation.yml", "//:farm-macos.yml"],
 )
 
 zig_test(
@@ -734,6 +734,26 @@ zig_test(
     },
 )
 
+# The farm-macos workflow (.github/workflows/farm-macos.yml, RELEASING.md "macOS on the farm"): actionlint accepts it (above), and ci/farm_macos_check.zig holds it to a push to main
+# and a manual run and nothing else, a token that reads the contents with the id-token in the farm job alone, hosted linux runners, the pinned buck2 in local mode for the stage tool,
+# the farm joined at FARM_CONNECT_REF with the macOS worker set, the jobs under the exact conditions of the variables, and beta.yml's hosted leg switched by MACOS_ON_FARM. Each of
+# its rules is tested against an edited copy of the file that breaks it.
+zig_test(
+    name = "farm_macos_check",
+    exec_compatible_with = LINUX_X86_64,
+    src = "farm_macos_check.zig",
+    imports = ["workflow_check.zig", "release_check.zig"],
+    data = {
+        ".github/workflows/farm-macos.yml": "//:farm-macos.yml",
+        ".github/workflows/beta.yml": "//:beta.yml",
+        ".github/workflows/ci.yml": "//:ci.yml",
+        ".github/workflows/release.yml": "//:release.yml",
+        "tools/buck2": "//:buck2.pin",
+        # the tests of the two files this one imports run here too
+        "ci/BUCK": "BUCK",
+    },
+)
+
 # The publish-unpack workflow (.github/workflows/publish-unpack.yml, tools/bootstrap/README.md): actionlint accepts it (above), and ci/publish_unpack_check.zig holds it to a manual
 # trigger and nothing else, the main-ref guard, a read-only token, the release bot's token minted by release.yml's own step and only when `apply` is true (and given to the last step
 # alone), the pinned buck2, local mode, and no forcing or clobbering. It reuses the rules of workflow_check.zig and the job parser of release_check.zig, and each of its rules is tested against an edited copy of the file that breaks it.
@@ -766,6 +786,7 @@ zig_test(
         ".github/workflows/apt-rotation.yml": "//:apt-rotation.yml",
         ".github/workflows/beta.yml": "//:beta.yml",
         ".github/workflows/ci.yml": "//:ci.yml",
+        ".github/workflows/farm-macos.yml": "//:farm-macos.yml",
         ".github/workflows/lintian.yml": "//:lintian.yml",
         ".github/workflows/mopm-pin.yml": "//:mopm-pin.yml",
         ".github/workflows/publish-unpack.yml": "//:publish-unpack.yml",
@@ -1038,7 +1059,7 @@ zig_test(
     },
 )
 
-group(name = "workflow", deps = [":mopm_pin_workflow_check", ":mopm_pin_unit", ":mopm_pin", ":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":apt_rotation_check", ":lintian_check", ":publish_unpack_check", ":pr_runners_check", ":pin_mirrors_check", ":unpack_macos_check", ":macho_minos", ":macho_minos_exe", ":unpack_pin_check", ":agents_check", "//ci/negative:negative_check"])
+group(name = "workflow", deps = [":mopm_pin_workflow_check", ":mopm_pin_unit", ":mopm_pin", ":no_shell", ":workflow_lint", ":workflow_check", ":release_check", ":stages_check", ":site_check", ":advisories_check", ":apt_rotation_check", ":lintian_check", ":farm_macos_check", ":publish_unpack_check", ":pr_runners_check", ":pin_mirrors_check", ":unpack_macos_check", ":macho_minos", ":macho_minos_exe", ":unpack_pin_check", ":agents_check", "//ci/negative:negative_check"])
 
 # The coverage of every package with Zig unit tests (rules/coverage/README.md, "Zig coverage"), each held to its floor (`coverage_floor.txt` beside its
 # BUCK file) both ways: a fall fails, and so does a rise the floor has not been raised to. Building this builds the tests again under kcov and with block
@@ -1132,6 +1153,7 @@ group(name = "all", deps = [
     "//ci/mojo_syslibs:run_green_libless",
     "//ci/mojo_syslibs:run_green_via_lib",
     "//ci/faulty:c_check_of_its_stdout",
+    "//ci/faulty:host_run_of_a_passing_test",
     "//ci/faulty:native_good",
     "//ci/faulty:native_prefix_good",
     "//ci/faulty:native_prefix_namespace_good",
@@ -1180,6 +1202,8 @@ group(name = "all", deps = [
     "//tools/bootstrap:linux_x86_64_is_x86_64_linux_musl",
     "//tools/bootstrap:linux_aarch64_is_aarch64_linux_musl",
     "//tools/bootstrap:macos_aarch64_is_aarch64_macos",
+    # The macOS minimum of the pinned macOS program, read on linux (the targets that run it on a Mac are farm-macos.yml's, `macos-farm`).
+    "//tools/bootstrap:unpack_macos_minos",
     # The pinned release assets of `unpack` for each host, fetched and checked against their sha256 and size, and the alias that picks the one of the execution platform: it is what every unpacking action runs.
     "//rules/pins:bootstrap_unpack_linux_x86_64",
     "//rules/pins:bootstrap_unpack_linux_aarch64",
