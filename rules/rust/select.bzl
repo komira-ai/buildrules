@@ -30,3 +30,9 @@ def llvm_tools_for(version = None):
     m = {"buildrules//platforms:rust_is_" + vname(k): ("toolchains//:llvm_tools_" + vname(k)) if has_llvm_tools(k) else None for k in RUST_VERSIONS}
     m["DEFAULT"] = ("toolchains//:llvm_tools_" + vname(v)) if has_llvm_tools(v) else None
     return select(m)
+
+def rust_version_for(version = None):
+    """The Rust release `toolchain_for(version)` selects, as its version string: what a refusal names."""
+    m = {"buildrules//platforms:rust_is_" + vname(k): k for k in RUST_VERSIONS}
+    m["DEFAULT"] = version or RUST_DEFAULT
+    return select(m)

@@ -79,7 +79,7 @@ rust_coverage = rule(
         "extra": attrs.list(attrs.source(allow_directory = True), default = []),
         # The unpacked llvm-tools of the Rust release the member compiles with (its llvm-profdata and llvm-cov read that rustc's profiles).
         "llvm_tools": attrs.option(attrs.exec_dep(), default = None),
-        # The Rust release of the table, for the refusal of one without llvm-tools.
+        # The Rust release the member compiles with (the table's, or the one a platform selects), for the refusal of one without llvm-tools.
         "rustc": attrs.string(default = ""),
         "runs": attrs.list(attrs.dep(providers = [RustCovRunInfo])),
         "_tool": attrs.exec_dep(default = "buildrules//rules/rust:rust_cov", providers = [RunInfo]),

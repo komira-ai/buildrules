@@ -6,8 +6,8 @@ RUSTC = "1.95.0"
 TARGET = "x86_64-unknown-linux-gnu"
 CARGO_LOCK_SHA256 = "41c41c9dd964506f616169188a0432a10dca79d50d138ba34818f90abda680f6"
 MANIFEST_SHA256 = {
-    "Cargo.toml": "c69bd108bfa054bb84be9dea1099d88dd1e2410ac86f8ed11fa85a5d7245beb1",
-    "crates/covdemo/Cargo.toml": "6bd6119c1a3972b73c25ecc426602073d854a02af2fb206ca0295eed58ba38b4",
+    "Cargo.toml": "d6599ef7fb766d485a68b81606df25e3cdf088baf28ded5ad22432308381e90c",
+    "crates/covdemo/Cargo.toml": "4bca286371e526ea96df4dd4647d18b03b719f1b70ffc36f8908173d9bd17254",
     "crates/linked/Cargo.toml": "ddb2274f2c313ba78692d3e0de2af92bfc3f07466c44de015c89f9d20951006f",
     "crates/linkuser/Cargo.toml": "1ca8be7459832d57ac37a250ac775cb068069c96165935c758228dda59142236",
     "crates/macros/Cargo.toml": "312c86a7ab024cc0dfb610a3e3831f33f8faa835e2a585d79937d5b513cae707",

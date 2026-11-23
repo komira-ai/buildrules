@@ -3,10 +3,10 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # (or accepted, and planned) as stated.
 # They are analysis tests; see rules/rust/refusal.bzl. The same refusal through the front door is
 # //examples/unpinned/crates/app:unpinned_rustc_is_refused.
-load("//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_VERSIONS")
+load("//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_OLDEST", "RUST_VERSIONS")
 load("//rules/rust:refusal.bzl", "refusal_test")
 load("//rules/rust:fmt.bzl", "workspace_config_candidates")
-load(":cases.bzl", "MID_EDITION", "NEW_EDITION", "OLD_EDITION", "edge_refusals", "edge_unit", "edges_mismatch", "fmt_plan_mismatch", "fmt_refusals", "refused", "same", "table", "unit", "ws_config_of")
+load(":cases.bzl", "MID_EDITION", "NEW_EDITION", "OLD_EDITION", "coverage_refused", "edge_refusals", "edge_unit", "edges_mismatch", "fmt_plan_mismatch", "fmt_refusals", "refused", "same", "table", "unit", "ws_config_of")
 
 # A pinned version with the hashes the pins file has: accepted.
 refusal_test(name = "pinned_is_accepted", refusals = refused(table(RUST_DEFAULT, "builtin")), none = True, visibility = ["PUBLIC"])
@@ -50,6 +50,18 @@ refusal_test(
 )
 
 # The same refusal through the front door and the consumer's own table is in //examples/unpinned/crates/app.
+
+# A member's `:coverage` (rules/rust/cargo.bzl, `check_coverage_toolchain`) needs the llvm-tools of its rustc: the default release pins them, so it is accepted;
+# a release of the pins without them (the oldest) and a release the user pinned in buildrules-pins.toml (which pins no llvm-tools) are refused, naming the
+# release and the pins file. The same refusal for a release a platform selects is ci/negative.bzl's CASES row on crates//crates/covdemo:coverage.
+refusal_test(name = "coverage_with_llvm_tools_is_accepted", refusals = coverage_refused(RUST_DEFAULT), none = True, visibility = ["PUBLIC"])
+
+refusal_test(
+    name = "coverage_without_llvm_tools_is_refused",
+    refusals = coverage_refused(RUST_OLDEST) + coverage_refused("1.2.3"),
+    contains = ["coverage needs the llvm-tools component (llvm-profdata, llvm-cov) of rustc " + RUST_OLDEST + ", which rules/rust/pins.bzl does not pin", "of rustc 1.2.3,"],
+    visibility = ["PUBLIC"],
+)
 
 # ---- the dependency edges of a member's unit (rules/rust/cargo.bzl, `unit_deps`) -----------------------------------------------------------------------
 # The units are the shapes cargo's unit graph has (`cargo test --unit-graph`); the ids are made up. examples/crates builds both shapes through the front door:

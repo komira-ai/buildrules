@@ -126,8 +126,8 @@ A cargo member's `:coverage` (`rules/rust/coverage.bzl`, docs/contract.md sectio
 coverage counters (`-C instrument-coverage -Z coverage-options=branch`), run, and read with the `llvm-profdata` and `llvm-cov` of the same Rust release
 (`rules/rust/rust_cov.zig`). Its `coverage.txt` is the text above, so its floor is the same file, `coverage_floor.txt` beside the member's BUCK file,
 held by the same `cov_floor` as `:coverage_floor` (`zig_coverage_floor_rule`); a member whose code has no decision has a `branches total 0/0` and a
-floor of `lines NN.NN` alone. `examples/crates/crates/covdemo` is the fixture: its own floor is its figures, and floors above them are held red
-(ci/negative.bzl, `COVERAGE_REDS`).
+floor of `lines NN.NN` alone. `examples/crates/crates/covdemo` is the fixture: its tests do not run all its code, so its `:coverage_floor` is
+held red at the 99% floor (ci/negative.bzl, `COVERAGE_REDS`).
 
 ## Jest coverage
 

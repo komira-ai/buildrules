@@ -1,2 +1,2 @@
 # No `branches` figure for code that has decisions: ci/negative.bzl requires `:coverage_floor_without_branches` red, naming the figure to add.
-lines 85.71
+lines 99.00

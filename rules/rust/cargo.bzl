@@ -54,7 +54,7 @@ load(":fmt.bzl", "AUTO_ROOTS", "CONFIG_NAMES", "fmt_plan", "rustfmt_check", "rus
 load(":pins.bzl", "RUST_VERSIONS")
 load(":refusal.bzl", "recording")
 load(":rust_analyzer.bzl", "rust_analyzer_inputs")
-load(":select.bzl", "has_llvm_tools", "llvm_tools_for", "toolchain_for")
+load(":select.bzl", "has_llvm_tools", "llvm_tools_for", "rust_version_for", "toolchain_for")
 
 def _tname(uid):
     return uid.replace(":", "_")
@@ -290,11 +290,22 @@ def instrumented(u):
     return (u["source"] == "path" and u["mode"] == "build" and u["side"] == "target" and
             u["target_kind"] != ["custom-build"] and "proc-macro" not in u["crate_types"])
 
+def check_coverage_toolchain(rustc, refuse = fail):
+    """True when a member compiled by rustc `rustc` (the table's `RUSTC`) can have a `:coverage`: buildrules pins the llvm-tools component of
+    that release (rules/rust/pins.bzl), whose llvm-profdata and llvm-cov read that rustc's profiles. Otherwise `refuse` is called with the
+    reason and False is returned; `fail`, the default, stops the load (a test passes a recorder, rules/rust/refusal.bzl)."""
+    if has_llvm_tools(rustc):
+        return True
+    refuse("coverage needs the llvm-tools component (llvm-profdata, llvm-cov) of rustc {}, which rules/rust/pins.bzl does not pin".format(rustc))
+    return False
+
 def _coverage(name, row, mine, tests, units, ws, third_party, here, table, rustc, extra_srcs, pg, chk, branches):
-    """The `_cov` units of a member, its `:coverage` and, with a `coverage_floor.txt` beside the BUCK file, its `:coverage_floor`."""
+    """The `_cov` units of a member, its `:coverage` and, with a `coverage_floor.txt` beside the BUCK file, its `:coverage_floor`. For a
+    release without pinned llvm-tools, `:coverage` refuses by name when built, and a wildcard build skips it."""
     floor = native.glob(["coverage_floor.txt"])
-    if not has_llvm_tools(rustc):
-        _refuse(name = "coverage", why = "coverage needs the llvm-tools component of rustc {}, which rules/rust/pins.bzl does not pin".format(rustc), target_compatible_with = ["buildrules//platforms:not_implemented"], visibility = ["PUBLIC"])
+    why, refuse_cov = recording()
+    if not check_coverage_toolchain(rustc, refuse_cov):
+        _refuse(name = "coverage", why = why[0], target_compatible_with = ["buildrules//platforms:not_implemented"], visibility = ["PUBLIC"])
     else:
         def cov_label(did):
             lab = _label(did, units, ws, third_party, here)
@@ -343,7 +354,7 @@ def _coverage(name, row, mine, tests, units, ws, third_party, here, table, rustc
             exclude = sorted(nested),
             extra = list(extra_srcs),
             llvm_tools = llvm_tools_for(rustc),
-            rustc = rustc,
+            rustc = rust_version_for(rustc),
             branches = branches,
             check = chk,
             visibility = ["PUBLIC"],

@@ -1,3 +1,5 @@
-# The figures of :coverage today (18/21 lines, 4/6 branch arms: `untested` is run by nothing).
-lines 85.71
-branches 66.66
+# The floor every package holds: 99% of lines and of branch arms. covdemo's tests are written not to reach it (`untested` is run by nothing; its
+# figures are 18/21 lines and 4/6 branch arms), so its `:coverage_floor` is red on purpose: ci/negative.bzl (COVERAGE_REDS) requires it to fail
+# with both figures, "coverage fell".
+lines 99.00
+branches 99.00
