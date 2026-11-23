@@ -213,9 +213,49 @@ pub fn hostVersionsArePinned(table: Table, host_rows: []const Row) !void {
     }
 }
 
-/// `table` with the rows of the host tarballs added: every one is verified by `verifyAll` like a linux x86_64 row.
-pub fn withHosts(a: std.mem.Allocator, table: Table, host_rows: []const Row) !Table {
+/// The pinned versions that have a linux x86_64 tarball and no other. 0.0.48 is kept so on purpose: ci/exec_select.bzl analyses `toolchains//:mopm_0_0_48` on the Arm
+/// hosts to hold the refusal of a mopm that has no tarball for the host that runs it (rules/mopm/toolchain.bzl).
+pub const linux_x86_64_only = [_][]const u8{"0.0.48"};
+
+fn isIn(list: []const []const u8, v: []const u8) bool {
+    for (list) |o| {
+        if (std.mem.eql(u8, o, v)) return true;
+    }
+    return false;
+}
+
+fn hasHostRow(host_rows: []const Row, version: []const u8, host: []const u8) bool {
+    for (host_rows) |r| {
+        const sp = std.mem.indexOfScalar(u8, r.version, ' ').?;
+        if (std.mem.eql(u8, r.version[0..sp], version) and std.mem.eql(u8, r.version[sp + 1 ..], host)) return true;
+    }
+    return false;
+}
+
+/// Every pinned version has a tarball for each host: its linux x86_64 row in `table` and a row of `host_rows` for each of `hosts`, so a mopm pinned for one host alone
+/// is found here and not when a Mojo package on another host fails analysis. The versions of `linux_x86_64_only` are the exception, and each must be pinned and have no
+/// host row, so the list never outlives its reason. `linux_only` is `linux_x86_64_only` but in tests.
+pub fn everyHostIsPinned(table: Table, host_rows: []const Row, linux_only: []const []const u8) !void {
+    for (linux_only) |o| {
+        var pinned = false;
+        for (table.rows) |p| pinned = pinned or std.mem.eql(u8, p.version, o);
+        if (!pinned) return error.LinuxOnlyVersionNotPinned;
+    }
+    for (table.rows) |p| {
+        for (hosts) |h| {
+            const has = hasHostRow(host_rows, p.version, h);
+            if (isIn(linux_only, p.version)) {
+                if (has) return error.LinuxOnlyVersionHasHostRow;
+            } else if (!has) return error.VersionWithoutHostRow;
+        }
+    }
+}
+
+/// `table` with the rows of the host tarballs added: every one is verified by `verifyAll` like a linux x86_64 row. Every pinned version must have its
+/// host rows except those of `linux_only` (`everyHostIsPinned`).
+pub fn withHosts(a: std.mem.Allocator, table: Table, host_rows: []const Row, linux_only: []const []const u8) !Table {
     try hostVersionsArePinned(table, host_rows);
+    try everyHostIsPinned(table, host_rows, linux_only);
     return .{ .default = table.default, .rows = try std.mem.concat(a, Row, &.{ table.rows, host_rows }) };
 }
 
@@ -717,13 +757,42 @@ test "a host tarball is verified like any pinned row, and its release must be pi
     // the version of a host row is a pinned version
     const pinned = [_]Row{try goodRow(a)};
     const table = Table{ .default = "1.2.3", .rows = &pinned };
-    const ok_rows = [_]Row{host_row};
-    const merged = try withHosts(a, table, &ok_rows);
-    try t.expectEqual(@as(usize, 2), merged.rows.len);
+    var mac_row = host_row;
+    mac_row.version = "1.2.3 macos-aarch64";
+    const ok_rows = [_]Row{ host_row, mac_row };
+    const merged = try withHosts(a, table, &ok_rows, &.{});
+    try t.expectEqual(@as(usize, 3), merged.rows.len);
     var other = host_row;
     other.version = "9.9.9 linux-aarch64";
-    const bad_rows = [_]Row{other};
-    try t.expectError(error.HostVersionNotPinned, withHosts(a, table, &bad_rows));
+    const bad_rows = [_]Row{ other, mac_row };
+    try t.expectError(error.HostVersionNotPinned, withHosts(a, table, &bad_rows, &.{}));
+}
+
+fn hostRow(version: []const u8) Row {
+    return .{ .version = version, .url = url_prefix ++ "v0/x.tar.gz", .sha256 = "1848ffbb6c3f3522e95c36d3d5f7d4260abb8dde2cb3c415b17ca94dc48edeac", .size = 1 };
+}
+
+test "every pinned version has a tarball for each host, except the versions kept for linux x86_64 alone" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const pinned = [_]Row{ try goodRow(a), hostRow("0.0.1") };
+    const table = Table{ .default = "1.2.3", .rows = &pinned };
+    const both = [_]Row{ hostRow("1.2.3 linux-aarch64"), hostRow("1.2.3 macos-aarch64") };
+    // 1.2.3 has both host rows; 0.0.1 has none, which only the exception allows
+    try everyHostIsPinned(table, &both, &.{"0.0.1"});
+    try t.expectEqual(@as(usize, 4), (try withHosts(a, table, &both, &.{"0.0.1"})).rows.len);
+    try t.expectError(error.VersionWithoutHostRow, everyHostIsPinned(table, &both, &.{}));
+    try t.expectError(error.VersionWithoutHostRow, withHosts(a, table, &both, &.{}));
+    // one host of the two is not enough, for either host
+    try t.expectError(error.VersionWithoutHostRow, everyHostIsPinned(table, both[0..1], &.{"0.0.1"}));
+    try t.expectError(error.VersionWithoutHostRow, everyHostIsPinned(table, both[1..2], &.{"0.0.1"}));
+    // naming as an exception a version that has both host rows is stale too
+    try t.expectError(error.LinuxOnlyVersionHasHostRow, everyHostIsPinned(table, &both, &.{ "0.0.1", "1.2.3" }));
+    // an exception that has a host row, or names a version that is not pinned, is stale
+    const mixed = [_]Row{ both[0], both[1], hostRow("0.0.1 macos-aarch64") };
+    try t.expectError(error.LinuxOnlyVersionHasHostRow, everyHostIsPinned(table, &mixed, &.{"0.0.1"}));
+    try t.expectError(error.LinuxOnlyVersionNotPinned, everyHostIsPinned(table, &both, &.{ "0.0.1", "0.0.2" }));
 }
 
 test "the real hosts.bzl is a table this reads, every release in it is pinned, and each url is a release asset of mopm" {
@@ -735,10 +804,36 @@ test "the real hosts.bzl is a table this reads, every release in it is pinned, a
     const text = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ w, "rules/mopm/hosts.bzl" }), 1 << 20);
     const rows = try parseHosts(a, text);
     try t.expect(rows.len >= 2);
-    _ = try withHosts(a, try parse(a, pins_text), rows);
+    _ = try withHosts(a, try parse(a, pins_text), rows, &linux_x86_64_only);
     for (rows) |r| {
         try t.expect(std.mem.startsWith(u8, r.url, url_prefix));
         try t.expect(r.size > 0);
+    }
+}
+
+test "the real tables pin mopm 0.0.135, the release of the Mojo 1.1.0 and 1.2.0 toolchains, for all three hosts" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const w = try std.process.getEnvVarOwned(a, "BUILDRULES_TEST_WORK");
+    const pins_text = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ w, "rules/mopm/pins.bzl" }), 1 << 20);
+    const hosts_text = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ w, "rules/mopm/hosts.bzl" }), 1 << 20);
+    const merged = try withHosts(a, try parse(a, pins_text), try parseHosts(a, hosts_text), &linux_x86_64_only);
+    const want = [_][2][]const u8{
+        .{ "0.0.135", "v0.0.135/mopm-0.0.135-linux-x86_64.tar.gz" },
+        .{ "0.0.135 linux-aarch64", "v0.0.135/mopm-0.0.135-linux-aarch64.tar.gz" },
+        .{ "0.0.135 macos-aarch64", "v0.0.135/mopm-0.0.135-macos-arm64.tar.gz" },
+    };
+    for (want) |wv| {
+        var found = false;
+        for (merged.rows) |r| {
+            if (!std.mem.eql(u8, r.version, wv[0])) continue;
+            found = true;
+            try t.expectEqualStrings(try std.mem.concat(a, u8, &.{ url_prefix, wv[1] }), r.url);
+            try t.expect(isHex64(r.sha256));
+            try t.expect(r.size > 0);
+        }
+        try t.expect(found);
     }
 }
 

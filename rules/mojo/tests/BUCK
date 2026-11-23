@@ -1,7 +1,8 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # mopm-toolchain.toml is required (docs/contract.md, section 12): the refusals of rules/mojo/defs.bzl as analysis tests (rules/rust/refusal.bzl).
 # Each target is green only if the rule refused as stated; make the rule fall back to a default and it stops existing (analysis fails).
-load("//rules/mojo:defs.bzl", "check_natives_used", "check_provided_native", "check_toolchain_file_present", "check_toolchain_file_recorded", "graph_path_in_package", "member_label", "native_wiring")
+load("//rules/mojo:defs.bzl", "check_natives_used", "check_provided_native", "graph_path_in_package", "member_label", "native_wiring")
+load("//rules/mojo:versions.bzl", "check_toolchain_file_present", "check_toolchain_file_recorded")
 load("//rules/mojo:unit.bzl", "check_closure_ids", "check_closure_known", "cov_link_natives")
 load("//rules/rust:refusal.bzl", "accepts", "recording", "refusal_test", "refuses")
 load(":generated.bzl", "generated_member_below_the_package_is_named_by_its_manifest_directory", "generated_sibling_is_named_by_its_manifest_directory", "longest_manifest_directory_wins", "manifest_directories_are_those_of_the_recorded_manifests", "src_name_is_read_before_the_manifests")
@@ -12,6 +13,7 @@ load("//rules/mojo:sync.bzl", "sync_packages", "sync_stage_tree")
 load(":sync.bzl", "packages_are_normalized", "stage_holds_the_workspaces_and_the_other_files_once")
 load(":subdirs.bzl", "LINUX_64", "LINUX_AARCH64", "OSX_ARM64", "a_table_with_graphs_per_subdir_is_read_as_it_is", "a_table_with_graphs_per_subdir_refuses_the_platforms_it_has_none_for", "a_table_with_the_linux_64_graph_alone_is_refused_on_arm_only", "a_table_without_graphs_per_subdir_has_the_linux_64_graph_alone", "every_vocabulary_of_a_subdir_chooses_its_value", "graph_with_a_unit_more", "graph_with_other_dependencies", "same_units_in_every_graph", "the_graph_of_a_single_subdir_gives_the_value_itself", "toolchain_rows_are_told_by_their_key")
 load("//rules/mojo:subdirs.bzl", "table_graphs")
+load(":versions.bzl", "a_table_of_three_versions_is_read_and_checked", "a_table_without_mojos_has_its_default_alone", "a_version_holding_the_graph_of_another", "a_version_no_platform_can_ask_for", "a_version_whose_closure_is_not_its_graphs", "a_version_with_a_unit_more", "a_version_with_other_dependencies", "a_version_with_other_subdirs", "a_version_with_other_system_libs", "edited_default", "mojos_without_the_default", "one_version_leaves_every_attribute_a_plain_value", "platforms_of_the_versions_of_a_table_are_accepted", "refusal_of_a_version", "slots_are_the_id_without_the_versions")
 load(":test_data_targets.bzl", "test_data_targets")
 load(":names.bzl", "a_bare_package_name_in_format_six_is_refused", "a_native_unit_not_named_for_its_package_is_refused", "a_slice_of_a_graph_of_format_five_is_as_it_was", "a_slice_of_a_graph_of_format_six_says_six_and_keeps_the_import_names", "a_unit_of_format_six_without_import_is_refused", "an_import_in_a_graph_older_than_six_is_refused", "an_import_that_is_not_the_name_of_the_package_is_refused", "import_names_are_the_name_after_the_namespace", "mopm_graph_of_format_six_says_the_import_names_mopm_prints", "the_archive_of_a_registry_package_of_format_six_is_named_by_its_import", "the_conda_name_of_a_full_name_spells_the_namespace_with_a_dot", "the_member_of_a_rooted_graph_of_format_six_is_named_by_its_import")
 load(":link.bzl", "a_graph_of_format_five_with_link_and_a_provided_native_is_accepted", "a_graph_of_format_four_with_a_provided_native_and_no_link_is_accepted", "a_graph_of_format_three_without_either_key_is_accepted", "a_link_in_a_graph_older_than_five_is_refused", "a_link_name_outside_the_list_is_refused", "a_link_name_twice_is_refused", "a_link_on_a_native_unit_is_refused", "a_provided_native_in_a_graph_older_than_four_is_refused", "a_provided_that_is_not_a_bool_is_refused", "a_provided_unit_that_is_not_native_is_refused", "a_subdir_that_provides_another_unit_is_refused", "a_subdir_whose_unit_links_other_libraries_is_refused", "a_unit_link_is_what_the_graph_says_and_none_is_empty", "an_empty_link_in_an_old_graph_is_the_same_as_none", "subdirs_with_one_link_are_accepted")
@@ -447,6 +449,94 @@ refuses(
     check = graph_with_other_dependencies,
     args = [],
     contains = ["the unit graph of linux-aarch64 does not name the units of the graph of linux-64"],
+)
+
+# The graphs per Mojo version (rules/mojo/versions.bzl; the checks are in tests/versions.bzl, the configured build is held by ci/mojo_versions.bzl).
+accepts(name = "mojo_unit_slots_are_the_id_without_the_versions", check = slots_are_the_id_without_the_versions, args = [])
+
+accepts(name = "mojo_table_without_mojos_has_its_default_alone", check = a_table_without_mojos_has_its_default_alone, args = [])
+
+accepts(name = "mojo_table_of_three_versions_is_accepted", check = a_table_of_three_versions_is_read_and_checked, args = [])
+
+accepts(name = "mojo_one_version_leaves_every_attribute_a_plain_value", check = one_version_leaves_every_attribute_a_plain_value, args = [])
+
+accepts(name = "mojo_platforms_of_the_versions_of_a_table_are_accepted", check = platforms_of_the_versions_of_a_table_are_accepted, args = [])
+
+refuses(
+    name = "mojo_version_a_one_version_table_lacks_is_refused",
+    check = refusal_of_a_version,
+    args = [{"1.0.0": {}}, "1.2.0"],
+    contains = ["examples/p:check: the target platform asks for Mojo 1.2.0", "graphs for Mojo 1.0.0 only", "List 1.2.0 in `mojo = [...]`", "then `buildrules mojo sync`", "default Mojo: 1.0.0"],
+)
+
+refuses(
+    name = "mojo_version_a_several_version_table_lacks_is_refused",
+    check = refusal_of_a_version,
+    args = [{"1.0.0": {}, "1.2.0": {}}, "1.1.0"],
+    contains = ["examples/p:check: the target platform asks for Mojo 1.1.0", "graphs for Mojo 1.0.0, 1.2.0 only", "buildrules mojo sync"],
+)
+
+refuses(
+    name = "mojo_default_entry_edited_by_hand_is_refused",
+    check = edited_default,
+    args = [],
+    contains = ["the MOJOS entry of the default Mojo 1.0.0 is not its MOJO, CLOSURE_SHA256 and graphs", "buildrules mojo sync"],
+)
+
+refuses(
+    name = "mojo_mojos_without_the_default_is_refused",
+    check = mojos_without_the_default,
+    args = [],
+    contains = ["has MOJOS for 1.0.0, 1.1.0, 1.2.0 and MOJO 1.3.0, which it does not name"],
+)
+
+refuses(
+    name = "mojo_other_version_no_platform_can_ask_for_is_refused",
+    check = a_version_no_platform_can_ask_for,
+    args = [],
+    contains = ["a unit graph for Mojo 1.3.0, a version no target platform of these rules can ask for (they know 1.0.0, 1.1.0, 1.2.0)"],
+)
+
+refuses(
+    name = "mojo_version_with_a_unit_more_is_refused",
+    check = a_version_with_a_unit_more,
+    args = [],
+    contains = ["the unit graph for Mojo 1.1.0 does not name the units of the graph for Mojo 1.0.0"],
+)
+
+refuses(
+    name = "mojo_version_with_other_dependencies_is_refused",
+    check = a_version_with_other_dependencies,
+    args = [],
+    contains = ["the unit graph for Mojo 1.2.0 does not name the units of the graph for Mojo 1.0.0"],
+)
+
+refuses(
+    name = "mojo_version_with_other_subdirs_is_refused",
+    check = a_version_with_other_subdirs,
+    args = [],
+    contains = ["graphs of linux-64, osx-arm64 for Mojo 1.2.0 and of linux-64 for Mojo 1.0.0"],
+)
+
+refuses(
+    name = "mojo_version_with_other_system_libs_is_refused",
+    check = a_version_with_other_system_libs,
+    args = [],
+    contains = ["the unit graph for Mojo 1.2.0 of linux-64 pins other system libraries than the graph for Mojo 1.0.0"],
+)
+
+refuses(
+    name = "mojo_version_whose_closure_is_not_its_graphs_is_refused",
+    check = a_version_whose_closure_is_not_its_graphs,
+    args = [],
+    contains = ["records toolchain closure " + ("120" * 64)[:64] + " for Mojo 1.1.0 but its unit graph pins " + ("110" * 64)[:64]],
+)
+
+refuses(
+    name = "mojo_version_holding_the_graph_of_another_is_refused",
+    check = a_version_holding_the_graph_of_another,
+    args = [],
+    contains = ["the committed unit graph for Mojo 1.1.0 of linux-64 is for Mojo 1.2.0, not 1.1.0"],
 )
 
 # The system libraries a graph of format 3 pins for the tests to load (rules/mojo/system_libs.bzl, docs/contract.md section 12.11; the checks are in tests/system_libs.bzl).

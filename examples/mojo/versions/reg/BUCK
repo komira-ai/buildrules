@@ -1,0 +1,8 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":buildrules.mojo.bzl", fixture_package = "mojo_package")
+
+# A package of examples/mojo/versions (README.md) over the registry package `example/nsshim`, whose `.conda` is another file for each Mojo version (and, for 1.2.0,
+# another version of the package): ci/mojo_versions.bzl holds that each version builds from its own. Called by another name for the reason ../util/BUCK gives.
+fixture_package(path = ".")
+
+scrub_files()

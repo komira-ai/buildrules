@@ -1,6 +1,7 @@
 //! The gamma stage (RELEASING.md): our own repositories build with the candidate on the farm, one after the other. Each repository is cloned,
 //! its pin of buildrules in `.buckconfig` is set to the candidate commit in the working copy (nothing is committed), the farm's settings are
-//! written as its `.buckconfig.local`, and its targets are built by buck2. The build must succeed and must report `local: 0`.
+//! written as its `.buckconfig.local`, and its targets are built by buck2. The build must succeed and must report `local: 0`. A build whose every
+//! failure is a cut connection to the farm (`farm.onlyCuts`) is built once more; a second cut fails the stage naming the cut.
 //!
 //! The farm is never optional here: with no farm configured the stage fails and says which repository variables to set. The repositories are
 //! named by a repository variable, so no repository is named in this file.
@@ -33,7 +34,7 @@ pub const not_configured_message =
     \\
 ;
 
-pub const Error = error{ NoRepos, BadRepo, NoCandidate, FarmNotConfigured, NoBuildrulesCell, StepFailed, FarmRanLocally, NoSummary, BadRef };
+pub const Error = error{ NoRepos, BadRepo, NoCandidate, FarmNotConfigured, NoBuildrulesCell, StepFailed, FarmRanLocally, NoSummary, BadRef, FarmConnectionCut };
 
 fn isHex40(s: []const u8) bool {
     if (s.len != 40) return false;
@@ -142,9 +143,20 @@ pub fn run(a: std.mem.Allocator, io: Io, o: Options) !void {
         try argv.appendSlice(a, &.{ o.buck2, "build", "--console", "simple" });
         var ts = std.mem.tokenizeScalar(u8, o.targets, ' ');
         while (ts.next()) |tg| try argv.append(a, tg);
-        const b = try io.run(a, dir, argv.items);
+        var b = try io.run(a, dir, argv.items);
+        // A build whose every failure is a cut connection to the farm runs once more, at once, and never a third time (farm.onlyCuts).
+        var reran = false;
+        if (b.code != 0 and farm.onlyCuts(b.stderr)) {
+            io_mod.say("gamma: the connection to the farm was cut while {s} built (every failure is buck2's `{s}`); building it once more\n{s}\n", .{ repo, farm.cut_marker, io_mod.tail(b.stderr, 6) });
+            reran = true;
+            b = try io.run(a, dir, argv.items);
+        }
         _ = try io.run(a, dir, &.{ o.buck2, "kill" });
         if (b.code != 0) {
+            if (reran and farm.onlyCuts(b.stderr)) {
+                fail("the connection to the farm was cut again when {s} was built a second time (buck2: `{s}`), and a cut build is run only once more: re-run the job\n{s}", .{ repo, farm.cut_marker, io_mod.tail(b.stderr, 12) });
+                return error.FarmConnectionCut;
+            }
             fail("`buck2 build {s}` of {s} exited {d}\n{s}", .{ o.targets, repo, b.code, io_mod.tail(b.stderr, 60) });
             return error.StepFailed;
         }
@@ -156,7 +168,7 @@ pub fn run(a: std.mem.Allocator, io: Io, o: Options) !void {
             fail("{d} action(s) of {s} ran on this machine; the build must say `local: 0`", .{ s.local, repo });
             return error.FarmRanLocally;
         }
-        io_mod.say("gamma: {s} built on the farm: Commands: {d} (cached: {d}, remote: {d}, local: 0)\n", .{ repo, s.total, s.cached, s.remote });
+        io_mod.say("gamma: {s} built on the farm: Commands: {d} (cached: {d}, remote: {d}, local: 0){s}\n", .{ repo, s.total, s.cached, s.remote, if (reran) "; it ran again after a cut connection to the farm" else "" });
     }
 }
 
@@ -261,10 +273,13 @@ test "the repository variable is read as plain names, in order" {
     }
 }
 
-const GFake = struct {
+pub const GFake = struct {
     a: std.mem.Allocator,
     calls: std.ArrayList([]const u8) = .empty,
     build_out: io_mod.Out,
+    /// The outputs of the first builds, in order; `build_out` answers every build after them.
+    build_first: []const io_mod.Out = &.{},
+    builds: usize = 0,
     /// The .buckconfig each clone makes.
     buckconfig: []const u8 = sample_buckconfig,
     clone_code: u8 = 0,
@@ -280,16 +295,19 @@ const GFake = struct {
             try std.fs.cwd().writeFile(.{ .sub_path = try std.fs.path.join(a, &.{ dir, ".buckconfig" }), .data = self.buckconfig });
             return .{ .code = 0, .stdout = "", .stderr = "" };
         }
-        if (std.mem.indexOf(u8, line, "buck2 build") != null) return self.build_out;
+        if (std.mem.indexOf(u8, line, "buck2 build") != null) {
+            self.builds += 1;
+            return if (self.builds <= self.build_first.len) self.build_first[self.builds - 1] else self.build_out;
+        }
         if (std.mem.indexOf(u8, line, "buck2 kill") != null) return .{ .code = 0, .stdout = "", .stderr = "" };
         return error.UnscriptedCommand;
     }
 
-    fn io(self: *GFake) Io {
+    pub fn io(self: *GFake) Io {
         return .{ .ctx = self, .run_fn = runCmd };
     }
 
-    fn count(self: *const GFake, needle: []const u8) usize {
+    pub fn count(self: *const GFake, needle: []const u8) usize {
         var n: usize = 0;
         for (self.calls.items) |c| {
             if (std.mem.indexOf(u8, c, needle) != null) n += 1;
@@ -298,7 +316,7 @@ const GFake = struct {
     }
 };
 
-fn gammaOpts(work: []const u8, repos: []const u8) Options {
+pub fn gammaOpts(work: []const u8, repos: []const u8) Options {
     return .{ .repos = repos, .candidate = cand, .targets = "//...", .work = work, .buck2 = "/bin/buck2", .farm_config = cfg };
 }
 

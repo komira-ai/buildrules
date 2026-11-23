@@ -140,7 +140,7 @@ The native legs run only after the merge, like every beta leg, and a red one blo
 `gamma` builds our own repositories with the candidate, one after the other, in the order the repository variable `GAMMA_REPOS` gives. For each:
 the repository is cloned, the `commit_hash` of `[external_cell_buildrules]` in its `.buckconfig` is set to the candidate in the working copy (nothing
 is committed), the farm's settings are written as its `.buckconfig.local`, and `buck2 build` of its targets (`GAMMA_TARGETS`, default `//...`) must succeed
-and print `local: 0`. A repository with no buildrules cell in its `.buckconfig` is refused, since building it says nothing about the candidate: today the
+and print `local: 0` (a build whose every failure is a cut connection to the farm is built once more; see "A cut connection to the farm"). A repository with no buildrules cell in its `.buckconfig` is refused, since building it says nothing about the candidate: today the
 mopm repository has one and the other repository planned for this stage does not, so `GAMMA_REPOS` is the mopm repository alone until the other uses buildrules.
 
 **With no farm configured gamma fails**, and so no release is made: its first step names every repository variable that is empty. The repository owner sets these
@@ -551,6 +551,24 @@ upstream host that drops a request from blocking a release, and none of them can
   `-c buildrules.url_map=...` (`mirror_map` in `tools/stage/beta.zig`) so the pins come from their mirrors.
 - **Mirrors** (`docs/pins.md`, "Mirrors"): where a pin has a host that serves the identical bytes, the map names it. `pinned_file` applies `buildrules.url_map` to every
   download it declares.
+
+## A cut connection to the farm
+
+When the connection between a runner and the farm is cut, every remote action in flight fails, and buck2 reports each one with its own `Error:` line holding
+`RE channel error: code:` (`Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: ...`). That
+is the network, not the candidate, so the stage tool runs such a command once more instead of failing the release:
+
+- **Which commands.** A command of a `beta <lang> (farm)` leg (its `buck2 build`s, and the `buildrules` steps after `config`, which run buck2 on the farm too), and the
+  `buck2 build` of each repository in `gamma`. A local leg is never rerun this way.
+- **Which failures.** Only a failed run in which every failure is a cut (`onlyCuts` in `tools/stage/farm.zig`): at least one cut line; every `Action failed:` report
+  has the reason `Internal error (stage: ...): Remote Execution Error on ...` with the cut line right after it; and no line says a command returned non-zero, timed
+  out or panicked, or is another error (`Error ...` of buck2, `error:` of a compiler). A log
+  that mixes a compile error, a failing test or a timeout with cuts fails at once, so the rerun never passes over a real failure. The phrase anywhere but on
+  buck2's `Error:` line is not a cut.
+- **How often.** Once per command, at once, with the same arguments, and apart from the download retries above (which keep their own three). A command cut on
+  its second run too fails the stage with `FarmConnectionCut`, naming the cut; it is never run a third time. Re-run the job.
+- **What it says.** The rerun is printed on stdout. A beta leg that passed after one says so in its summary line (`N command(s) ran again after a cut connection
+  to the farm`), and one cut twice writes a **failed** line naming the cut; gamma, which writes no summary, says it on stdout beside the repository's `Commands:` line.
 
 ## Two pushes at once
 

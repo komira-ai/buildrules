@@ -85,6 +85,7 @@ _TESTS = [
     "mojo_format6",
     "mojo_lock",
     "mojo_subdir",
+    "mojo_versions",
     "mojo_toolchains",
     "mopm_pins",
     "pins_toml",

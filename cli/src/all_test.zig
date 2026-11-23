@@ -33,6 +33,7 @@ test {
     _ = @import("mojo_lock_test.zig");
     _ = @import("mojo_subdir_test.zig");
     _ = @import("mojo_toolchains_test.zig");
+    _ = @import("mojo_versions_test.zig");
     _ = @import("mopm_pins_test.zig");
     _ = @import("npm_cmd_test.zig");
     _ = @import("pins_toml_test.zig");

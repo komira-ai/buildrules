@@ -58,27 +58,38 @@ pub const buckconfig_toolchains_key = "toolchains";
 pub const mojo_defs_label = "@buildrules//rules/mojo:defs.bzl";
 
 /// The glue of a table that holds the graph of linux-64 alone (what every table was before graphs per subdir): unchanged byte for byte.
-pub const mojo_bzl_text = mojoBzl(false);
+pub const mojo_bzl_text = mojoBzl(false, false);
 
 /// The glue of a table that also holds the graphs of the other subdirs (`GRAPHS`, rules/mojo/subdirs.bzl).
-pub const mojo_bzl_text_graphs = mojoBzl(true);
+pub const mojo_bzl_text_graphs = mojoBzl(true, false);
 
 /// The glue `sync` writes for a table: `with_graphs` when the table has `GRAPHS`.
 pub fn mojoBzlFor(with_graphs: bool) []const u8 {
+    return mojoBzlForMojos(with_graphs, false);
+}
+
+/// The glue of a table of a package whose mopm.toml lists several Mojo versions: it also loads and passes `MOJOS`.
+pub const mojo_bzl_text_mojos = mojoBzl(false, true);
+pub const mojo_bzl_text_graphs_mojos = mojoBzl(true, true);
+
+/// The glue `sync` writes for a table: `with_graphs` when it has `GRAPHS`, `with_mojos` when it has `MOJOS`.
+pub fn mojoBzlForMojos(with_graphs: bool, with_mojos: bool) []const u8 {
+    if (with_mojos) return if (with_graphs) mojo_bzl_text_graphs_mojos else mojo_bzl_text_mojos;
     return if (with_graphs) mojo_bzl_text_graphs else mojo_bzl_text;
 }
 
-fn mojoBzl(comptime with_graphs: bool) []const u8 {
+fn mojoBzl(comptime with_graphs: bool, comptime with_mojos: bool) []const u8 {
     return "# Written by `buildrules mojo sync`. Do not edit: `buildrules check` fails when this differs from what sync writes.\n" ++
         "# Binds the generated table (" ++ mojo_lock_file ++ ") to the macro of " ++ mojo_defs_label ++ ".\n" ++
         "load(\"" ++ mojo_defs_label ++ "\", _mojo_package = \"mojo_package\")\n" ++
-        "load(\":" ++ mojo_lock_file ++ "\", \"CLOSURE_SHA256\", \"GRAPH\", " ++ (if (with_graphs) "\"GRAPHS\", " else "") ++ "\"MANIFEST_SHA256\", \"MOJO\", \"MOPM\", \"SCHEMA\")\n\n" ++
+        "load(\":" ++ mojo_lock_file ++ "\", \"CLOSURE_SHA256\", \"GRAPH\", " ++ (if (with_graphs) "\"GRAPHS\", " else "") ++ "\"MANIFEST_SHA256\", \"MOJO\", " ++ (if (with_mojos) "\"MOJOS\", " else "") ++ "\"MOPM\", \"SCHEMA\")\n\n" ++
         "TABLE = {\n" ++
         "    \"CLOSURE_SHA256\": CLOSURE_SHA256,\n" ++
         "    \"GRAPH\": GRAPH,\n" ++
         (if (with_graphs) "    \"GRAPHS\": GRAPHS,\n" else "") ++
         "    \"MANIFEST_SHA256\": MANIFEST_SHA256,\n" ++
         "    \"MOJO\": MOJO,\n" ++
+        (if (with_mojos) "    \"MOJOS\": MOJOS,\n" else "") ++
         "    \"MOPM\": MOPM,\n" ++
         "    \"SCHEMA\": SCHEMA,\n" ++
         "}\n\n" ++

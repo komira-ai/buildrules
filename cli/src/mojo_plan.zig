@@ -4,6 +4,8 @@ const std = @import("std");
 const ctxm = @import("ctx.zig");
 const lockm = @import("mojo_lock.zig");
 const graph_norm = @import("mojo_graph_norm");
+const toml = @import("toml.zig");
+const val = @import("val.zig");
 const Diag = @import("diag.zig").Diag;
 const Ctx = ctxm.Ctx;
 
@@ -152,4 +154,53 @@ pub fn planAll(ctx: *Ctx, sub: *Ctx, pkg: []const u8, mopm: []const u8, mojo: []
     }
     if (failed) return null;
     return .{ .base = base, .extra = extra.items };
+}
+
+/// The Mojo versions of `[package] mojo = [...]` in a mopm.toml's text, in its order; none when the key is absent, is not a list or the file is not TOML.
+/// A package that lists more than one has one unit graph per version (`planOther`).
+pub fn listedMojos(a: std.mem.Allocator, text: []const u8) ![]const []const u8 {
+    const doc = toml.parse(a, text);
+    if (doc.msg.len != 0) return if (std.mem.eql(u8, doc.msg, "out of memory")) error.OutOfMemory else &.{};
+    var out = std.ArrayList([]const u8).empty;
+    for (val.items(toml.at(doc.value, &.{ "package", "mojo" }))) |v| {
+        const s = val.asStr(v) orelse return &.{};
+        try out.append(a, s);
+    }
+    return out.items;
+}
+
+/// The graphs of one Mojo version other than the default, as the table holds them (path dependencies by identity only), and the toolchains they carry.
+pub const Other = struct { closure_sha256: []const u8, blocks: []const lockm.MojoBlock, tcs: []const lockm.Tc };
+
+/// `planAll` for the Mojo version `mojo`: its linux-64 graph and the graph of each subdir the lock records for it, each held to be a graph of that version.
+/// Null after reporting why (and adding to `code`).
+pub fn planOther(ctx: *Ctx, sub: *Ctx, pkg: []const u8, mopm: []const u8, mopm_version: []const u8, mojo: []const u8, rooted: bool, code: *u8) !?Other {
+    const a = ctx.a;
+    const planned = (try planAll(ctx, sub, pkg, mopm, mojo, rooted, code)) orelse return null;
+    var diag = Diag.init(a);
+    const g = lockm.parseGraph(a, pkg, planned.base, &diag) catch {
+        for (diag.msgs.items) |m| _ = ctx.fail("{s}", .{m});
+        if (diag.lost > 0) _ = ctx.fail("{s}", .{Diag.lost_text});
+        code.* = ctxm.exit_fail;
+        return null;
+    };
+    if (!std.mem.eql(u8, g.mojo, mojo)) {
+        code.* |= ctx.fail("{s}: asked mopm for Mojo {s} and got a graph for {s}", .{ pkg, mojo, g.mojo });
+        return null;
+    }
+    const committed = graph_norm.identityOnly(a, planned.base) catch |e| switch (e) {
+        error.OutOfMemory => return e,
+        error.Broken => {
+            code.* |= ctx.fail("{s}: mopm's Mojo {s} unit graph is not in the layout `buildrules mojo sync` reads (a unit block it cannot edit): the pinned mopm {s} and this buildrules disagree", .{ pkg, mojo, mopm_version });
+            return null;
+        },
+    };
+    var extras = std.ArrayList(lockm.SubGraph).empty;
+    var tcs = std.ArrayList(lockm.Tc).empty;
+    try tcs.append(a, .{ .mojo = mojo, .toolchain = g.toolchain });
+    if (!(try committedExtras(ctx, pkg, mojo, mopm_version, planned.extra, &extras, &tcs, code))) return null;
+    var blocks = std.ArrayList(lockm.MojoBlock).empty;
+    try blocks.append(a, .{ .mojo = mojo, .subdir = lockm.base_subdir, .graph_json = committed });
+    for (extras.items) |x| try blocks.append(a, .{ .mojo = mojo, .subdir = x.subdir, .graph_json = x.graph_json });
+    return .{ .closure_sha256 = g.closure_sha256, .blocks = blocks.items, .tcs = tcs.items };
 }
