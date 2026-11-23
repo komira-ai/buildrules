@@ -34,11 +34,14 @@ jobs:
     steps:
       - name: the macOS workers are not configured, and beta.yml runs the hosted macOS leg
         if: ${{ vars.MACOS_ON_FARM != 'true' }}
-        run: echo "::notice title=farm-macos::the repository variables FARM_ADDRESS, FARM_CONNECT_REF, FARM_DARWIN_ARM64_PROPERTIES and FARM_DARWIN_MACOS_HOSTS are not all set, so there are no macOS workers to run on. Skipped; nothing was built. MACOS_ON_FARM is not true, so the macos-15 leg of beta.yml runs these checks."
+        run: echo "::notice title=farm-macos::the repository variables FARM_ADDRESS, FARM_CONNECT_REF, FARM_DARWIN_ARM64_PROPERTIES and FARM_DARWIN_MACOS_HOSTS are not all set, so there are no macOS workers to run on. Skipped, and nothing was built. MACOS_ON_FARM is not true, so the macos-15 leg of beta.yml runs these checks."
       # MACOS_ON_FARM took the hosted leg out of beta.yml: a skip here would leave the commit unchecked on macOS.
       - name: the macOS checks are on the farm, but the macOS workers are not configured
         if: ${{ vars.MACOS_ON_FARM == 'true' }}
-        run: echo "::error title=farm-macos::MACOS_ON_FARM is true, so beta.yml runs no macos-15 leg of unpack, but FARM_ADDRESS, FARM_CONNECT_REF, FARM_DARWIN_ARM64_PROPERTIES and FARM_DARWIN_MACOS_HOSTS are not all set. Set them, or unset MACOS_ON_FARM." && false
+        run: echo "::error title=farm-macos::MACOS_ON_FARM is true, so beta.yml runs no macos-15 leg of unpack, but FARM_ADDRESS, FARM_CONNECT_REF, FARM_DARWIN_ARM64_PROPERTIES and FARM_DARWIN_MACOS_HOSTS are not all set. Set them, or unset MACOS_ON_FARM."
+      - name: and the job fails
+        if: ${{ vars.MACOS_ON_FARM == 'true' }}
+        run: exit 1
 
   macos:
     if: ${{ vars.FARM_ADDRESS != '' && vars.FARM_CONNECT_REF != '' && vars.FARM_DARWIN_ARM64_PROPERTIES != '' && vars.FARM_DARWIN_MACOS_HOSTS != '' }}
@@ -56,15 +59,15 @@ jobs:
           persist-credentials: false
 
       # The release pinned in tools/buck2 (the digest is the sha256 of the .zst); ci/farm_macos_check.zig compares both.
-      - name: Install buck2
-        run: |
-          curl --fail --silent --show-error --location --retry 3 \
-            --output buck2.zst \
-            https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
-          echo "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst" | sha256sum --check --strict -
-          zstd --decompress --quiet buck2.zst -o buck2
-          chmod +x buck2
-          ./buck2 --version
+      # One command a step: download, check, decompress, make executable.
+      - name: Download buck2
+        run: curl --fail --silent --show-error --location --retry 3 --output buck2.zst https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst
+      - name: buck2 is the pinned release
+        run: test "$(sha256sum buck2.zst)" = "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89  buck2.zst"
+      - name: Decompress buck2
+        run: zstd --decompress --quiet buck2.zst -o buck2
+      - name: Make buck2 executable
+        run: chmod +x buck2
 
       # The stage tool is built on the runner before the farm is joined: it is what writes the farm's configuration.
       - name: The stage tool

@@ -33,9 +33,9 @@ def _zig_test_bin_impl(ctx):
     exe = ctx.actions.declare_output(ctx.label.name + "/" + ctx.label.name)
 
     # The compile of `zig_test` (rules/zig/zig.bzl) with another `-target` and `--test-no-exec`: zig writes the test executable (`-femit-bin`) and runs
-    # nothing. No script and no busybox: zig is the action's executable, and its caches are directories of the action's working directory, as
-    # `zig_bootstrap_exe`'s are. The executable is alone in its directory, because `host_run` copies the directory that holds the program.
-    cmd = cmd_args(cmd_args(info.zig, "/zig", delimiter = ""), "test")
+    # nothing. No script and no busybox: zig is the action's executable, and its caches are directories of the action's working directory, named
+    # by zig's own flags. The executable is alone in its directory, because `host_run` copies the directory that holds the program.
+    cmd = cmd_args(cmd_args(info.zig, "/zig", delimiter = ""), "test", "--cache-dir", ".zig-cache/local", "--global-cache-dir", ".zig-cache/global")
     if ctx.attrs.optimize != "Debug":
         cmd.add("-O" + ctx.attrs.optimize)
     cmd.add(
@@ -47,7 +47,6 @@ def _zig_test_bin_impl(ctx):
     )
     ctx.actions.run(
         cmd_args(cmd, hidden = info.hidden),
-        env = {"ZIG_GLOBAL_CACHE_DIR": ".zig-cache/global", "ZIG_LOCAL_CACHE_DIR": ".zig-cache/local"},
         category = "zig_test_bin",
     )
     return [DefaultInfo(default_output = exe), RunInfo(args = cmd_args(exe))]

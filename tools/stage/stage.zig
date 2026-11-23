@@ -373,6 +373,18 @@ test "an unknown command, and a beta with a bad mode or a missing flag, are usag
     try t.expectError(error.Usage, run(a, "version", &.{ "--output", "/w" }));
 }
 
+test "the commands through the real runner: version runs the program it is named, action-ref and farm-macos refuse before they run anything" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // `true` (an applet on the PATH the test is given) exits 0 and prints no version: the program was started, and its answer is refused
+    try t.expectError(error.WrongVersion, run(a, "version", &.{ "--buildrules", "true" }));
+    // a ref that is not a full commit sha is refused before git is asked
+    try t.expectError(error.BadRef, run(a, "action-ref", &.{ "--dir", ".", "--ref", "main" }));
+    // with no farm file there is nothing to build, and nothing is started
+    try t.expectError(error.FarmNotConfigured, run(a, "farm-macos", &.{ "--root", ".", "--buck2", "/b/buck2", "--farm-config", "/nonexistent/farm.buckconfig" }));
+}
+
 test "plan lists the legs, planned ones with the reason, from the checkout" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -388,7 +400,7 @@ test "plan lists the legs, planned ones with the reason, from the checkout" {
     try tmp.dir.writeFile(.{ .sub_path = "out", .data = "" });
     const root = try tmp.dir.realpathAlloc(a, ".");
     const outp = try std.fs.path.join(a, &.{ root, "out" });
-    try t.expectEqual(@as(u8, 0), try plan(a, root, outp));
+    try t.expectEqual(@as(u8, 0), try run(a, "plan", &.{ "--root", root, "--output", outp }));
     try t.expectEqualStrings("mojo=planned\nzig=ready\n", try tmp.dir.readFileAlloc(a, "out", 1 << 10));
     // the pin loses its marker: mojo is ready
     try tmp.dir.writeFile(.{ .sub_path = "rules/mopm/pins.bzl", .data = "X = {\"sha256\": \"a\"}\n" });

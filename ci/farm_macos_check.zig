@@ -10,6 +10,7 @@
 //!    release pinned in tools/buck2, a buck2 command of this file outside local mode (the farm build is the stage tool's);
 //!  - the farm joined some other way: the farm-connect action checked out of the repository and commit FARM_CONNECT_REPO and FARM_CONNECT_REF name, its own directory alone,
 //!    checked by `stage action-ref` before it runs, given the macOS worker set and host identities, then `stage farm-macos` with the file the action wrote;
+//!  - a step that is not one command (a `run:` block, or commands joined by `&&`, `||`, `;` or a pipe);
 //!  - the switch: the farm job runs exactly when its four variables are set, the other job exactly when one is not; that job notices when MACOS_ON_FARM is not `true`
 //!    and fails when it is; and beta.yml's hosted leg of the same checks (`unpack_cross`, `unpack_macos`) is off exactly when MACOS_ON_FARM is `true`.
 const std = @import("std");
@@ -87,6 +88,24 @@ fn stepWith(a: std.mem.Allocator, jt: []const u8, needle: []const u8) !?[]const 
     return found;
 }
 
+/// Every `run:` of the workflow is one command on its line: no block (`|`, `>`), and no `&&`, `||`, `;` or ` | ` joining commands (rule B4).
+fn oneCommandSteps(a: std.mem.Allocator, f: *Findings, wf: []const u8) !void {
+    var it = std.mem.splitScalar(u8, wf, '\n');
+    while (it.next()) |raw| {
+        var l = std.mem.trimLeft(u8, raw, " ");
+        if (std.mem.startsWith(u8, l, "- ")) l = std.mem.trimLeft(u8, l[2..], " ");
+        if (!std.mem.startsWith(u8, l, "run:")) continue;
+        const v = std.mem.trim(u8, l["run:".len..], " \r");
+        if (v.len == 0 or v[0] == '|' or v[0] == '>') {
+            try add(a, f, "{s}: a `run:` is a block of lines, not one command: {s}", .{ file, std.mem.trim(u8, raw, " ") });
+            continue;
+        }
+        for ([_][]const u8{ "&&", "||", ";", " | " }) |join| {
+            if (has(v, join)) try add(a, f, "{s}: a `run:` joins commands with `{s}`: {s}", .{ file, join, v });
+        }
+    }
+}
+
 /// Everything wrong with `raw` (farm-macos.yml), given tools/buck2 (the dotslash file) and beta.yml.
 pub fn check(a: std.mem.Allocator, raw: []const u8, dotslash: []const u8, beta: []const u8) !Findings {
     var f = Findings.init(a);
@@ -94,6 +113,7 @@ pub fn check(a: std.mem.Allocator, raw: []const u8, dotslash: []const u8, beta: 
 
     try wc.noContinueOnError(a, &f, wf);
     try wc.noInlineContext(a, &f, wf);
+    try oneCommandSteps(a, &f, wf);
     try wc.prRunners(a, &f, wf);
     const uses = try wc.pinnedUses(a, &f, wf, &.{farm_action});
     if (uses == 0) try add(a, &f, "{s}: no `uses:` line found (this parser is blind)", .{file});
@@ -132,8 +152,9 @@ pub fn check(a: std.mem.Allocator, raw: []const u8, dotslash: []const u8, beta: 
         const notice = try stepWith(a, jt, "::notice title=farm-macos::");
         if (notice == null or !has(notice.?, "        if: " ++ switch_off ++ "\n")) try add(a, &f, "{s}: no one step says with a notice that nothing was built while MACOS_ON_FARM is not `true` (`if: {s}`)", .{ file, switch_off });
         const err = try stepWith(a, jt, "::error title=farm-macos::");
-        if (err == null or !has(err.?, "        if: " ++ switch_on ++ "\n") or !std.mem.endsWith(u8, std.mem.trimRight(u8, err.?, " \n"), "&& false"))
-            try add(a, &f, "{s}: no one step fails (`&& false`) while MACOS_ON_FARM is `true` and the macOS workers are not configured (`if: {s}`)", .{ file, switch_on });
+        const exit = try stepWith(a, jt, "        run: exit 1\n");
+        if (err == null or !has(err.?, "        if: " ++ switch_on ++ "\n") or exit == null or !has(exit.?, "        if: " ++ switch_on ++ "\n"))
+            try add(a, &f, "{s}: no step says with an error, and one fails (`exit 1`), while MACOS_ON_FARM is `true` and the macOS workers are not configured (`if: {s}`)", .{ file, switch_on });
         if (has(jt, "./buck2") or has(jt, "stage\"")) try add(a, &f, "{s}: the job `not_configured` builds something", .{file});
     } else try add(a, &f, "{s}: the job `not_configured` is missing", .{file});
 
@@ -243,10 +264,10 @@ test "the parsers are not blind: the real file has the triggers, the jobs and th
     const jobs = try rc.parseJobs(a, wf);
     try t.expectEqual(@as(usize, 2), jobs.len);
     const nc = jobBlock(wf, "not_configured");
-    try t.expect(std.mem.endsWith(u8, std.mem.trimRight(u8, nc, " \n"), "&& false"));
+    try t.expect(std.mem.endsWith(u8, std.mem.trimRight(u8, nc, " \n"), "run: exit 1"));
+    try t.expectEqual(@as(usize, 3), (try steps(a, nc)).len);
     try t.expect(std.mem.startsWith(u8, jobBlock(wf, "macos"), "\n  macos:\n"));
     try t.expectEqualStrings("", jobBlock(wf, "none"));
-    try t.expectEqual(@as(usize, 2), (try steps(a, nc)).len);
     try t.expect((try stepWith(a, nc, "::notice title=farm-macos::")) != null);
     try t.expect((try stepWith(a, nc, "title=farm-macos::")) == null);
     try t.expectEqual(@as(usize, 0), (try steps(a, "    runs-on: ubuntu-latest\n")).len);
@@ -299,8 +320,9 @@ test "the switch: either job under another condition, a notice or a failure that
     try expectDefect(a, r, "    if: " ++ configured ++ "\n", "    if: ${{ vars.FARM_ADDRESS != '' }}\n", "does not run exactly when the four variables are set");
     try expectDefect(a, r, "    if: " ++ not_configured ++ "\n", "", "does not run exactly when one of the four variables is empty");
     try expectDefect(a, r, "        if: " ++ switch_off ++ "\n", "", "says with a notice");
-    try expectDefect(a, r, "        if: " ++ switch_on ++ "\n", "        if: " ++ switch_off ++ "\n", "fails (`&& false`)");
-    try expectDefect(a, r, " Set them, or unset MACOS_ON_FARM.\" && false", " Set them, or unset MACOS_ON_FARM.\"", "fails (`&& false`)");
+    try expectDefect(a, r, "        if: " ++ switch_on ++ "\n", "        if: " ++ switch_off ++ "\n", "one fails (`exit 1`)");
+    try expectDefect(a, r, "        run: exit 1\n", "        run: true\n", "one fails (`exit 1`)");
+    try expectDefect(a, r, "      - name: and the job fails\n        if: " ++ switch_on ++ "\n", "      - name: and the job fails\n", "one fails (`exit 1`)");
     try expectDefect(a, r, "      - name: the macOS checks are on the farm", "      - run: ./buck2 build --console simple -c buildrules_re.mode=local //tools/stage:stage\n      - name: the macOS checks are on the farm", "`not_configured` builds something");
     try expectDefect(a, r, "      contents: read\n    steps:", "      contents: read\n      id-token: read\n    steps:", "`not_configured` holds an id-token");
     try expectDefect(a, r, "\n  not_configured:\n", "\n  unconfigured:\n", "the job `not_configured` is missing");
@@ -334,6 +356,20 @@ test "the farm joined another way, or the stage tool not given what it needs, is
     const ref_at = std.mem.indexOf(u8, r.wf, "      - name: the action that joins the farm").?;
     const swapped = try std.mem.concat(a, u8, &.{ r.wf[0..ref_at], r.wf[connect_at..build_at], r.wf[ref_at..connect_at], r.wf[build_at..] });
     try expectFinding(a, r, swapped, r.beta, "uses: " ++ farm_action);
+}
+
+test "a step that is not one command is found" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const r = try real(a);
+    try expectDefect(a, r, "        run: chmod +x buck2\n", "        run: |\n          chmod +x buck2\n          ./buck2 --version\n", "is a block of lines");
+    try expectDefect(a, r, "        run: chmod +x buck2\n", "        run: >\n          chmod +x buck2\n", "is a block of lines");
+    try expectDefect(a, r, "        run: chmod +x buck2\n", "        run: chmod +x buck2 && ./buck2 --version\n", "joins commands with `&&`");
+    try expectDefect(a, r, "        run: chmod +x buck2\n", "        run: chmod +x buck2 || true\n", "joins commands with `||`");
+    try expectDefect(a, r, "        run: chmod +x buck2\n", "        run: chmod +x buck2; true\n", "joins commands with `;`");
+    try expectDefect(a, r, "        run: chmod +x buck2\n", "        run: sha256sum buck2.zst | tee x\n", "joins commands with ` | `");
+    try expectDefect(a, r, "        run: chmod +x buck2\n", "        - run:\n", "is a block of lines");
 }
 
 test "a buck2 that is not the pinned release, a build outside local mode, an endpoint, or a value expanded into a script is found" {
