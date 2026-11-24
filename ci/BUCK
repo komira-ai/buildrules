@@ -500,7 +500,7 @@ group(name = "mojo", deps = [
 ])
 
 # A workspace with crates.io dependencies, a build script and a native library (examples/crates, its own cell): format-check, lint, type-check and test it, and prove its
-# generated files are what `buildrules sync` writes now (on the farm, against a local copy of the registry: no network). Its members also hold the
+# generated files are what `buildrules sync` writes now (on the farm, against the crates Cargo.lock pins, downloaded by hash: no network). Its members also hold the
 # proc-macros (macros), a protox and tonic-prost-build build script (protos), a commit stamp with a source outside the crate (stamped), a dev-dependency
 # on the package itself (selfdev), a build script reading the metadata of dependencies with `links` (linkuser, linked), and a `[[bin]]` under
 # tests/ with a test that runs `env!("CARGO")` (hook).
@@ -583,10 +583,13 @@ group(name = "crates", deps = [
     "crates//crates/covdemo:coverage[lcov]",
 ])
 
-# A workspace whose dependency is a git repository pinned by commit (examples/gitcrates, its own cell): lint and test it. Its two git packages
+# A workspace whose dependency is a git repository pinned by commit (examples/gitcrates, its own cell): lint and test it, and prove its generated files are
+# what `buildrules sync` writes now (on the farm: the commit is GitHub's archive, downloaded by the recorded hash). Its two git packages
 # (a build script that reads a file of the repository, a proc-macro in a subdirectory) build from GitHub's archive of the commit.
 group(name = "gitcrates", deps = [
     "gitcrates//:ci",
+    "gitcrates//:sync_check",
+    "gitcrates//:sync",
     "gitcrates//:debug",
     "gitcrates//:release",
     "gitcrates//:lint",

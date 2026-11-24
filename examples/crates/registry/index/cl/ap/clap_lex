@@ -1,1 +1,0 @@
-{"name":"clap_lex","vers":"1.1.1","deps":[{"name":"automod","req":"^1.0.16","features":[],"optional":false,"default_features":true,"target":null,"kind":"dev"}],"cksum":"1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486","features":{},"yanked":false,"rust_version":"1.85"}
