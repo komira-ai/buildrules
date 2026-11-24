@@ -238,6 +238,7 @@ group(name = "refusals", deps = [
     "//rules/native/tests:all",
     "//rules/node/tests:all",
     "//rules/coverage/tests:all",
+    "//rules/affected/tests:all",
 ])
 
 group(name = "matrix", deps = [
@@ -857,6 +858,8 @@ zig_exe(
 _PACKAGES = [
     "//:scrub_files",
     "//beta:scrub_files",
+    "//ci/affected_fixture/agg:scrub_files",
+    "//ci/affected_fixture:scrub_files",
     "//ci/cargo_run:scrub_files",
     "//ci/mojo_data:scrub_files",
     "//ci/mojo_syslibs:scrub_files",
@@ -945,6 +948,8 @@ _PACKAGES = [
     "//packaging/deb:scrub_files",
     "//platforms/exec:scrub_files",
     "//platforms:scrub_files",
+    "//rules/affected/tests:scrub_files",
+    "//rules/affected:scrub_files",
     "//rules/core/tests:scrub_files",
     "//rules/core:scrub_files",
     "//rules/coverage/branch:scrub_files",
@@ -1156,6 +1161,7 @@ group(name = "mojo_tables", deps = [
 # (`buck2 bxl //ci:completeness.bxl:check`) fails when a target of the tree is in neither this closure, //ci:mojo's, nor EXCLUDED in ci/all.bzl.
 group(name = "all", deps = [
     ":matrix",
+    "//ci/affected_fixture:all",
     "//ci/mojo_gate:consumer_of_green",
     "//ci/cargo_run:env_test",
     "//ci/cargo_run:bin_test",

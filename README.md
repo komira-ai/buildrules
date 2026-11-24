@@ -16,6 +16,7 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
     rules/postgres    the Postgres fixture of the Rust tests: pins.bzl (Postgres 17 and its conda-forge closure), pg_prefix (one tree of them), pg_run (a private
                       server for one test run, on a Unix socket in the action's TMPDIR, or /tmp when that is too long)
     rules/coverage    kcov v42 built from source and the coverage path tools, cov_run, cov_summary; branch/: the branch coverage of Mojo tests (cov_branch, the IR classifier, the LLVM pieces)
+    rules/affected    the affected-target selector (README.md in it, docs/contract.md section 15): the files of a change -> the targets a pull request check builds; a consumer keeps a thin `affected.bxl`
     cli/              the `buildrules` command line (Zig): init, cargo new/init/adopt, sync, check, npm sync/check, mojo sync/check, rust-project develop/check. The unit-graph generator is part of it
     rules/platforms.bzl   the execution platforms: remote by default (properties come from .buckconfig.local), local on request (`-c buildrules_re.mode=local`, docs/contract.md section 14)
     toolchains/       the `toolchains` cell: rust_toolchains(), cxx_toolchains(), mopm_toolchains(), mojo_toolchains() (the last from mopm's graphs)
