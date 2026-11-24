@@ -6,7 +6,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_OLDEST", "RUST_VERSIONS")
 load("//rules/rust:refusal.bzl", "refusal_test")
 load("//rules/rust:fmt.bzl", "workspace_config_candidates")
-load(":cases.bzl", "MID_EDITION", "NEW_EDITION", "OLD_EDITION", "coverage_refused", "edge_refusals", "edge_unit", "edges_mismatch", "fmt_plan_mismatch", "fmt_refusals", "refused", "same", "table", "unit", "ws_config_of")
+load(":cases.bzl", "MID_EDITION", "NEW_EDITION", "OLD_EDITION", "coverage_refused", "edge_refusals", "edge_unit", "edges_mismatch", "fmt_plan_mismatch", "fmt_refusals", "globs_mismatch", "refused", "same", "table", "unit", "ws_config_of")
 
 # A pinned version with the hashes the pins file has: accepted.
 refusal_test(name = "pinned_is_accepted", refusals = refused(table(RUST_DEFAULT, "builtin")), none = True, visibility = ["PUBLIC"])
@@ -131,6 +131,41 @@ refusal_test(
         },
         {"deps": {"bin:tool": ":pkg:bin", "build_script_build": ":pkg:run", "dep": ":dep:lib"}, "link_deps": []},
     ),
+    none = True,
+    visibility = ["PUBLIC"],
+)
+
+# ---- the sources of a member's unit (rules/rust/cargo.bzl, `globs_for`) -------------------------------------------------------------------------------
+# examples/crates/crates/hook builds the first case through the front door: a `[[bin]]` at tests/bin/example_hook.rs, which its integration test runs.
+
+# A target whose root is in another top directory than its kind's has that directory too: a `[[bin]]` under tests/, a `[[test]]` under src/, a
+# `[[bin]]` outside both, a library whose root is outside src/.
+refusal_test(
+    name = "globs_give_a_target_the_top_directory_of_its_root",
+    refusals = globs_mismatch([
+        ("bin", "tests/bin/example_hook.rs", ["src/**", "tests/**"]),
+        ("test", "src/check.rs", ["tests/**", "src/**"]),
+        ("bin", "tools/lambda/canary/main.rs", ["src/**", "tools/**"]),
+        ("lib", "lib/core.rs", ["src/**", "build.rs", "lib/**"]),
+    ]),
+    none = True,
+    visibility = ["PUBLIC"],
+)
+
+# The conventional layouts are unchanged: a library has src/ and build.rs, a binary src/, an integration test tests/, a build script the whole package
+# wherever its root is; a root at the top of the package adds no directory.
+refusal_test(
+    name = "globs_of_the_conventional_layouts",
+    refusals = globs_mismatch([
+        ("lib", "src/lib.rs", ["src/**", "build.rs"]),
+        ("bin", "src/main.rs", ["src/**"]),
+        ("bin", "src/bin/tool/main.rs", ["src/**"]),
+        ("test", "tests/it.rs", ["tests/**"]),
+        ("test", "tests/suite/main.rs", ["tests/**"]),
+        ("custom-build", "build.rs", ["**"]),
+        ("custom-build", "tools/build.rs", ["**"]),
+        ("bin", "main.rs", ["src/**"]),
+    ]),
     none = True,
     visibility = ["PUBLIC"],
 )

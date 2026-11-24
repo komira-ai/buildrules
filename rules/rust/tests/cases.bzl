@@ -1,7 +1,7 @@
-"""Tables and the recorder the toolchain-refusal targets of BUCK are made from, the inputs of the `:fmt` plan cases and of the dependency-edge cases
-(a BUCK file may not define functions)."""
+"""Tables and the recorder the toolchain-refusal targets of BUCK are made from, the inputs of the `:fmt` plan cases, of the dependency-edge cases and of
+the source-glob cases (a BUCK file may not define functions)."""
 
-load("//rules/rust:cargo.bzl", "check_coverage_toolchain", "check_toolchain", "unit_deps")
+load("//rules/rust:cargo.bzl", "check_coverage_toolchain", "check_toolchain", "globs_for", "unit_deps")
 load("//rules/rust:fmt.bzl", "fmt_plan", "workspace_fmt_config")
 load("//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_VERSIONS")
 load("//rules/rust:refusal.bzl", "recording")
@@ -81,3 +81,12 @@ def edges_mismatch(u, units, want):
 
 def edge_refusals(u, units):
     return edges_of(u, units)[1]
+
+# ---- the sources of a member's unit (cargo.bzl, `globs_for`) ----------------------------------------------------------------------------------------------
+
+def globs_mismatch(cases):
+    """[] when `globs_for` gives each unit of `cases` (target kind, crate root, wanted globs) the wanted globs, in order, else every difference."""
+    out = []
+    for kind, root, want in cases:
+        out += same("globs_for({} {})".format(kind, root), globs_for({"target_kind": [kind], "crate_root": root}), want)
+    return out

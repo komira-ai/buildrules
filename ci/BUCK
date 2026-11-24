@@ -65,6 +65,8 @@ group(name = "refusals", deps = [
     "//rules/rust/tests:edges_make_the_runs_of_links_dependencies_link_deps",
     "//rules/rust/tests:edges_refuse_the_run_of_a_package_without_links",
     "//rules/rust/tests:edges_keep_a_compiles_script_run_and_binaries_as_deps",
+    "//rules/rust/tests:globs_give_a_target_the_top_directory_of_its_root",
+    "//rules/rust/tests:globs_of_the_conventional_layouts",
     "//rules/rust/tests:fmt_takes_each_table_root_once_under_its_edition",
     "//rules/rust/tests:fmt_adds_discovered_examples_and_benches_under_the_package_edition",
     "//rules/rust/tests:fmt_reads_the_member_config_dot_name_first",
@@ -500,7 +502,8 @@ group(name = "mojo", deps = [
 # A workspace with crates.io dependencies, a build script and a native library (examples/crates, its own cell): format-check, lint, type-check and test it, and prove its
 # generated files are what `buildrules sync` writes now (on the farm, against a local copy of the registry: no network). Its members also hold the
 # proc-macros (macros), a protox and tonic-prost-build build script (protos), a commit stamp with a source outside the crate (stamped), a dev-dependency
-# on the package itself (selfdev) and a build script reading the metadata of dependencies with `links` (linkuser, linked).
+# on the package itself (selfdev), a build script reading the metadata of dependencies with `links` (linkuser, linked), and a `[[bin]]` under
+# tests/ with a test that runs `env!("CARGO")` (hook).
 group(name = "crates", deps = [
     "crates//:ci",
     "crates//:sync_check",
@@ -531,6 +534,11 @@ group(name = "crates", deps = [
     "crates//crates/linkuser:lib",
     "crates//crates/linkuser:debug",
     "crates//crates/linkuser:release",
+    # A `[[bin]]` whose path is under tests/, run by the package's integration test, and a test that runs the cargo `env!("CARGO")` names (hook).
+    "crates//crates/hook:lib",
+    "crates//crates/hook:bin",
+    "crates//crates/hook:debug",
+    "crates//crates/hook:release",
     # The Postgres fixture (rules/postgres): every test of pgdemo runs with a private server; the row test writes a row and reads it back.
     "crates//crates/pgdemo:test",
     "crates//crates/pgdemo:lint",
@@ -555,12 +563,14 @@ group(name = "crates", deps = [
     "crates//crates/linkuser:flycheck",
     "crates//crates/linked:flycheck",
     "crates//crates/covdemo:flycheck",
+    "crates//crates/hook:flycheck",
     # `:coverage` (rules/rust/coverage.bzl), every member's tests built again with coverage counters and read with the pinned llvm-cov: a binary a test
     # runs (covdemo), the Postgres fixture (pgdemo), a build script's generated code (protos), a source outside the crate (stamped), a dev-dependency
     # on the package itself (selfdev), a C library linked into the tests (zdemo, linkuser). Each member's `:coverage_floor` holds it to 99% (protos has
     # none: its own sources hold no function outside generated code, so its figure is 0/0, and its coverage is lines only, crates/protos/BUCK), but
     # covdemo's, red on purpose (its tests do not run all its code), which ci/negative.bzl holds red (COVERAGE_REDS).
     "crates//:coverage",
+    "crates//crates/hook:coverage_floor",
     "crates//crates/linked:coverage_floor",
     "crates//crates/linkuser:coverage_floor",
     "crates//crates/macros:coverage_floor",
@@ -974,6 +984,7 @@ _PACKAGES = [
     "//tools/stage:scrub_files",
     "crates//:scrub_files",
     "crates//crates/covdemo:scrub_files",
+    "crates//crates/hook:scrub_files",
     "crates//crates/linked:scrub_files",
     "crates//crates/linkuser:scrub_files",
     "crates//crates/macros:scrub_files",

@@ -1,0 +1,10 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//:buildrules.bzl", "cargo_package")
+
+# src/lib.rs includes tests/fixtures/usage.txt, a file of this package outside what the library sees (src/ and build.rs): declared by its path here.
+cargo_package(
+    path = ".",
+    extra_srcs = ["tests/fixtures/usage.txt"],
+)
+
+scrub_files()

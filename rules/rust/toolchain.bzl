@@ -329,6 +329,7 @@ def _rust_toolchain_impl(ctx):
             cc_target = ctx.attrs.cc_target,
             launcher = _file(ctx.attrs.launcher),
             bs_runner = _file(ctx.attrs.bs_runner),
+            cargo = _file(ctx.attrs.cargo),
             version_ok = ok,
             version = ctx.attrs.version,
             clippy = _file(ctx.attrs.clippy),
@@ -341,6 +342,8 @@ rust_toolchain = rule(
     attrs = {
         "bs_runner": attrs.exec_dep(default = "buildrules//rules/rust:bs_runner"),
         "busybox": attrs.exec_dep(),
+        # The pinned cargo of the same version (`cargo_dist`): `CARGO` of every unit and test run.
+        "cargo": attrs.exec_dep(),
         "cc_target": attrs.string(),
         "clippy": attrs.exec_dep(),
         "launcher": attrs.exec_dep(default = "buildrules//rules/rust:rustc_launch"),
@@ -482,6 +485,7 @@ def rust_toolchains(extra = {}):
             )
         rust_toolchain(
             name = "rust_" + n,
+            cargo = ":cargo_" + n,
             clippy = ":clippy_" + n,
             rustfmt = (":rustfmt_" + n) if "rustfmt" in row else None,
             busybox = ":busybox_pin",

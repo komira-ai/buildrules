@@ -89,7 +89,7 @@ def _impl(ctx):
     for uid, dep in ctx.attrs.proc_macros.items():
         add_proc_macro(uid, dep[RustCrateInfo])
 
-    # A member's sources outside its package (`extra_srcs`): their directories, which rust-analyzer must read as the member's own.
+    # A member's `extra_srcs` (sources outside its package, or files of it outside a unit's own): their directories, which rust-analyzer must read as the member's own.
     for pkg, dep in ctx.attrs.members.items():
         dirs = {}
         for p in dep[RustCrateInfo].extra_srcs:

@@ -16,6 +16,9 @@ RustToolchainInfo = provider(fields = {
     "launcher": provider_field(typing.Any),
     # bs_runner: runs a build script (decision.md 6.1).
     "bs_runner": provider_field(typing.Any),
+    # Directory: bin/cargo, the pinned cargo of the same version. A unit is compiled with `CARGO` naming it, as cargo sets it for every crate it compiles,
+    # and a test runs with it (cargo_unit.bzl); no compile reads it.
+    "cargo": provider_field(typing.Any),
     # A file that exists only if the sysroot's `rustc --version` is the pinned line.
     "version_ok": provider_field(typing.Any),
     "version": provider_field(str),
@@ -41,7 +44,7 @@ RustCrateInfo = provider(fields = {
     "build_script": provider_field(typing.Any, default = None),
     # A registry crate's unpacked (and patched) sources, its `crate_src` (whose target the generated package does not make visible), or None.
     "src": provider_field(typing.Any, default = None),
-    # The paths (from the cell root) of the files outside the package its sources read (`extra_srcs`: a `#[path]` module, an `include_str!`).
+    # The paths (from the cell root) of the files its sources read that are not its `srcs` (`extra_srcs`: a `#[path]` module, an `include_str!`).
     "extra_srcs": provider_field(list, default = []),
 })
 
