@@ -389,18 +389,26 @@ test "vendor: an archive whose top directory is not the recorded one, a crate wh
     try t.expect(!kit.contains(msg, "old/"));
 }
 
-test "vendor: cargo's config quotes a path with a quote or a backslash, and a root that cannot be opened is refused by name" {
+test "a path in cargo's config is a TOML basic string: a backslash and a quote are escaped" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    // Text only: a backslash in a name under the checkout fails the next buck2 command of a local-mode build (its file watcher cannot relativize it).
+    try t.expectEqualStrings("\"/w/q\\\"b\\\\s\"", try sources.quoted(ar.allocator(), "/w/q\"b\\s"));
+    try t.expectEqualStrings("\"\"", try sources.quoted(ar.allocator(), ""));
+}
+
+test "vendor: cargo's config quotes a root with a quote in its name, and a root that cannot be opened is refused by name" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
     var l = try Layout.init(a);
     defer l.tmp.cleanup();
     const sum = try ctxm.sha256Hex(a, l.crate);
-    try l.tmp.dir.makePath("q\"b\\s");
-    const odd_root = try l.tmp.dir.realpathAlloc(a, "q\"b\\s");
+    try l.tmp.dir.makePath("q\"b");
+    const odd_root = try l.tmp.dir.realpathAlloc(a, "q\"b");
     var d = Diag.init(a);
     try sources.vendor(a, &d, l.src, odd_root, try entriesOf(a, try lockOf(a, sum, false)), null);
-    const cfg = try l.tmp.dir.readFileAlloc(a, "q\"b\\s/buck-out/buildrules/cargo-home/config.toml", 1 << 16);
+    const cfg = try l.tmp.dir.readFileAlloc(a, "q\"b/buck-out/buildrules/cargo-home/config.toml", 1 << 16);
     const escaped = try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, odd_root, "\\", "\\\\"), "\"", "\\\"");
     try t.expect(kit.contains(cfg, try std.fmt.allocPrint(a, "directory = \"{s}/" ++ sources.crates_dir ++ "\"\n", .{escaped})));
     const gone = try std.fmt.allocPrint(a, "{s}/gone", .{l.root});

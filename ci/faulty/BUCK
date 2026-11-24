@@ -12,7 +12,7 @@ load("@buildrules//rules/mojo:same.bzl", "mojo_same")
 load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
 load("@buildrules//rules/rust:cargo.bzl", "cargo_table_check")
 load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit")
-load("@buildrules//rules/rust:defs.bzl", "rust_library", "rust_test")
+load("@buildrules//rules/rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("@buildrules//rules/rust:fmt.bzl", "rustfmt_check", "rustfmt_config")
 load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "ZIG_CC_TARGET")
 load("@buildrules//rules/rust:test_run.bzl", "test_run")
@@ -106,6 +106,15 @@ rust_test(
     srcs = ["fails.rs"],
     crate_root = "fails.rs",
     crate_name = "fails",
+)
+
+# A static link (-C target-feature=+crt-static) of a binary for the glibc target: the linker (rules/rust/rustc_launch.zig) refuses it by name, as zig cc
+# cannot link glibc statically and would give a dynamically linked program. (Control: //examples/hello:hello, a binary the same rule links.)
+rust_binary(
+    name = "binary_with_crt_static",
+    srcs = ["crt_static.rs"],
+    crate_root = "crt_static.rs",
+    rustc_flags = ["-C", "target-feature=+crt-static"],
 )
 
 # `:fmt` (rules/rust/fmt.bzl): the pinned rustfmt over files it would change, each red with rustfmt's own difference. The control is the same rule over

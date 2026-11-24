@@ -223,7 +223,9 @@ A unit has one of four modes:
 the environment from nothing (an empty `PATH`; private `HOME`, `TMPDIR` and Zig caches), remaps the
 working directory to `.`, and acts as the linker: it runs `zig cc` from the pinned Zig, with
 `-Wl,--strip-debug`, because Zig's C runtime start-up objects otherwise record the directory they
-were built in.
+were built in. The target is glibc, which `zig cc` cannot link statically, so a static link
+(`-C target-feature=+crt-static`, in a crate's flags or in a build script that runs `RUSTC`) fails
+and names the flag; without that refusal it would succeed with a dynamically linked program.
 
 **Build scripts** run under `bs_runner`, which reproduces what Cargo gives a script: `OUT_DIR`,
 `CARGO_CFG_*` (from `rustc --print=cfg`), `DEP_<LINKS>_<KEY>` from direct dependencies with `links`,

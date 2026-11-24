@@ -15,6 +15,9 @@
 //! because zig's C runtime objects record the directory they were built in. Under the names `c++`, `ar` and
 //! `ranlib` it is the C++ driver, the archiver and the archive indexer of a build script's `cc` crate
 //! (`zig c++`, `zig ar`, `zig ranlib`), so a build script sees one pinned toolchain and no host cc.
+//! A static link (`-static`, `-static-pie`: what rustc passes for `-C target-feature=+crt-static`) for a glibc target is refused with
+//! status 2, naming the flag, also when rustc passed it in a response file (`@<path>`): zig cannot link glibc statically and would give a
+//! dynamically linked program (see `staticGlibcRefusal`).
 //! A compile step also gets `-ffile-prefix-map=<execution root>=.` (no worker path in an object) and
 //! `-fno-sanitize=undefined` (zig's default UBSan-trap instrumentation is not what a C library's authors tested).
 //!
@@ -91,9 +94,10 @@ fn shim(a: std.mem.Allocator, args: []const []const u8, tool: []const u8) noretu
         argv.append(a, tool) catch die("oom", .{});
     } else {
         // `cc` and `c++`: a compile (-c, -S, -E) gets the reproducibility flags, a link gets --strip-debug.
-        var compile = false;
-        for (args[1..]) |x| {
-            if (std.mem.eql(u8, x, "-c") or std.mem.eql(u8, x, "-S") or std.mem.eql(u8, x, "-E")) compile = true;
+        const compile = isCompile(args[1..]);
+        if (!compile) {
+            const link = withResponseFiles(a, std.fs.cwd(), args[1..]) catch die("oom", .{});
+            if (staticGlibcRefusal(a, target, link) catch die("oom", .{})) |m| die("{s}", .{m});
         }
         argv.appendSlice(a, &.{ tool, "-target", target }) catch die("oom", .{});
         if (compile) {
@@ -107,6 +111,47 @@ fn shim(a: std.mem.Allocator, args: []const []const u8, tool: []const u8) noretu
     var env = privateEnv(a, cache) catch die("oom", .{});
     const e = std.process.execve(a, argv.items, &env);
     die("cannot run zig: {s}", .{@errorName(e)});
+}
+
+/// Whether a call of the C driver compiles (`-c`, `-S`, `-E`) rather than links.
+pub fn isCompile(args: []const []const u8) bool {
+    for (args) |x| {
+        if (std.mem.eql(u8, x, "-c") or std.mem.eql(u8, x, "-S") or std.mem.eql(u8, x, "-E")) return true;
+    }
+    return false;
+}
+
+/// `args` with the arguments of each response file (`@<path>`, read from `dir`) after it, one per line: rustc hands the linker its arguments
+/// in such a file when the command line is too long, and a static link in it is refused like one on the command line. The `@<path>` itself
+/// stays; a file that cannot be read adds nothing (zig reports it when it runs).
+pub fn withResponseFiles(a: std.mem.Allocator, dir: std.fs.Dir, args: []const []const u8) ![]const []const u8 {
+    var out = std.ArrayList([]const u8).empty;
+    for (args) |x| {
+        try out.append(a, x);
+        if (x.len < 2 or x[0] != '@') continue;
+        const text = dir.readFileAlloc(a, x[1..], 1 << 26) catch |e| switch (e) {
+            error.OutOfMemory => return e,
+            else => continue,
+        };
+        var it = std.mem.splitScalar(u8, text, '\n');
+        while (it.next()) |l| try out.append(a, l);
+    }
+    return out.items;
+}
+
+/// The refusal of a static link (`-static` or `-static-pie`, which rustc passes for `-C target-feature=+crt-static`) for a glibc target
+/// (`target` is the zig spelling, `x86_64-linux-gnu.2.34`), or null for any other link. `zig cc` cannot link glibc statically: given
+/// either flag it links a dynamically linked program and succeeds, so the link is refused, naming the flag, before zig runs. A target
+/// with another C library (`-musl`) links statically and is not refused; a compile (`args` holding `-c`, `-S` or `-E`) is the caller's to leave out.
+pub fn staticGlibcRefusal(a: std.mem.Allocator, target: []const u8, args: []const []const u8) !?[]const u8 {
+    if (std.mem.indexOf(u8, target, "-gnu") == null) return null;
+    for (args) |x| {
+        if (std.mem.eql(u8, x, "-static") or std.mem.eql(u8, x, "-static-pie")) {
+            return try std.fmt.allocPrint(a, "a static link ({s}, which rustc passes for -C target-feature=+crt-static) for the glibc target {s} is refused: " ++
+                "zig cc cannot link glibc statically, and the link would succeed with a dynamically linked program. Build without +crt-static.", .{ x, target });
+        }
+    }
+    return null;
 }
 
 /// The arguments a shim was called with, as zig takes them, appended to `out`. The target is the one in cc.cfg (the zig spelling of the cargo

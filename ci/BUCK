@@ -31,6 +31,7 @@ _RUST = [
 
 group(name = "rust_default", deps = _RUST + [
     "//rules/rust:rustc_launch_unit",
+    "//rules/rust:crt_static_test",
     "//examples/zig:hello_zig",
     "//examples/zig:hello_unit",
 ])
