@@ -249,7 +249,7 @@ pub fn unpack(a: std.mem.Allocator, d: *Diag, what: []const u8, bytes: []const u
 // ---- the sources cargo reads ---------------------------------------------------------------------------------------------
 
 /// A TOML basic string.
-fn quoted(a: std.mem.Allocator, s: []const u8) error{OutOfMemory}![]const u8 {
+pub fn quoted(a: std.mem.Allocator, s: []const u8) error{OutOfMemory}![]const u8 {
     const slashes = try std.mem.replaceOwned(u8, a, s, "\\", "\\\\");
     return std.fmt.allocPrint(a, "\"{s}\"", .{try std.mem.replaceOwned(u8, a, slashes, "\"", "\\\"")});
 }
