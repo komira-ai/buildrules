@@ -83,12 +83,25 @@ seed_zig_exe(
     visibility = ["PUBLIC"],
 )
 
-# (Zig 0.15, like the launcher itself.) The version test of the launcher's `-C linker-features` rule (Rust 1.90+ only).
+# (Zig 0.15, like the launcher itself.) The launcher's own tests (the version test of its `-C linker-features` rule, Rust 1.90+ only, and the
+# arguments its shims give zig) and the refusal of a static link for a glibc target (rustc_launch_test.zig).
 seed_zig_test(
     name = "rustc_launch_unit",
     exec_compatible_with = LINUX_X86_64,
-    src = "rustc_launch.zig",
+    src = "rustc_launch_test.zig",
+    imports = ["rustc_launch.zig"],
     busybox = "buildrules//rules/pins:busybox",
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["PUBLIC"],
+)
+
+# A static link (-C target-feature=+crt-static) for the glibc target, through the pinned rustc and the launcher, in a compile and in a build
+# script's RUSTC: refused by name, and the same runs without it link as before (crt_static_test.zig).
+seed_zig_test(
+    name = "crt_static_test",
+    exec_compatible_with = LINUX_X86_64,
+    src = "crt_static_test.zig",
+    exec_tools = {"LAUNCH": ":rustc_launch", "SYSROOT": "toolchains//:sysroot", "ZIG": "toolchains//:zig"},
     zig = "buildrules//rules/pins:zig_next",
     visibility = ["PUBLIC"],
 )

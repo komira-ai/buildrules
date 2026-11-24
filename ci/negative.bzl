@@ -480,6 +480,7 @@ FAULTY = [
     ("//ci/faulty:table_of_other_bytes", "//ci/faulty:table_in_sync", "STALE ci/faulty/empty.txt"),
     ("//ci/faulty:rust_toolchain_of_other_version", "toolchains//:rust", "rust_toolchain: expected output starting with 'rustc 0.0.0 (' but"),
     ("//ci/faulty:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
+    ("//ci/faulty:binary_with_crt_static", "//examples/hello:hello", "rustc_launch: a static link (-static-pie, which rustc passes for -C target-feature=+crt-static) for the glibc target x86_64-linux-gnu.2.34 is refused"),
     ("//ci/faulty:host_run_of_a_failing_test", "//ci/faulty:host_run_of_a_passing_test", "FailsByDesign"),
     ("//ci/faulty:pgdemo_row_without_postgres", "crates//crates/pgdemo:pgdemo-0.1.0_9ff37c4d80", "PGDEMO_URL names no Postgres server"),
     ("//ci/faulty:lib_behind_a_failing_test", "//examples/hello:hello_lib", "this test fails by design"),
