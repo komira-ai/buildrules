@@ -84,10 +84,12 @@ The worker properties come from `[buildrules_re]` in the root `.buckconfig.local
 `drop_build_script`, `cfgs`, `native_deps` (static archives a binary or test links) and `patch` (copy / sub / add on the
 unpacked crate, `rules/rust/crate_patch.zig`). The example is `aws-lc-sys` -> `//third_party/aws-lc:crypto[static-pic]`.
 Every other build script runs as it is, under `rules/rust/bs_runner.zig` (`examples/crates`: zstd-sys). A `cargo_package(extra_srcs = [...])` names files
-outside the package that `#[path]`, `include_str!` or a build script reads (exported with `mode = "reference"`); `stamp_env` and `stamp_rustc_env` give a
-build script a commit as an input in place of `git rev-parse`; a `[[bin]]`/`[[test]]` whose path is outside `src/` and `tests/` is a source.
-`examples/crates` holds a fixture of each: proc-macros (serde_derive, clap_derive, tokio-macros), a protox and tonic-prost-build build script, a stamp and
-a `#[path]` outside the crate.
+outside the package that `#[path]`, `include_str!` or a build script reads (exported with `mode = "reference"`), or files of the package outside what
+a unit sees (docs/contract.md, "What each unit of a member sees"); `stamp_env` and `stamp_rustc_env` give a build script a commit as an input in place of
+`git rev-parse`; a `[[bin]]`/`[[test]]` whose path is in another top directory than its kind's (`tests/bin/hook.rs`, `tools/main.rs`) has that directory
+as a source; every unit is compiled with `CARGO`, the pinned cargo. `examples/crates` holds a fixture of each: proc-macros (serde_derive, clap_derive,
+tokio-macros), a protox and tonic-prost-build build script, a stamp and a `#[path]` outside the crate, a `[[bin]]` under `tests/` and a test that runs
+`env!("CARGO")` (hook).
 
 ## The front door (`cargo_workspace`, `cargo_package`)
 

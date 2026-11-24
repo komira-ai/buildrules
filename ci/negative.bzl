@@ -164,6 +164,7 @@ COVERAGE_FLOOR_PACKAGES = [
     ("//examples/mojo/ws/util/base", False),
     # The cargo members (rules/rust/cargo.bzl): a floor file gives `:coverage_floor`, its absence none.
     ("crates//crates/covdemo", True),
+    ("crates//crates/hook", True),
     ("crates//crates/linked", True),
     ("crates//crates/linkuser", True),
     ("crates//crates/macros", True),
@@ -673,12 +674,12 @@ def faulty_problems(ctx):
 # The command `buck2 test` runs for a test (its ExternalRunnerTestInfo): `check run`, the start options, then `--` and the program. No build action of CI runs it,
 # so a command that lost its options is green everywhere but under `buck2 test`; this holds the text of the command of one cargo test (the working directory, the
 # absolute directories and the one that is made) and of one Mojo test run (the compiler's lib on the library path), and that the program is the test's binary.
-# It also holds the rest of what `buck2 test` is given: the environment (the keys a test reads: CARGO_MANIFEST_DIR, the package's CARGO_PKG_*, the nonce, and
+# It also holds the rest of what `buck2 test` is given: the environment (the keys a test reads: CARGO_MANIFEST_DIR, the package's CARGO_PKG_*, CARGO, the nonce, and
 # CARGO_TARGET_TMPDIR for an integration test only), the labels, and the inputs the run reads (`hidden`). The three kinds of cargo test are here: a library
 # test (examples/p4ws), a binary's test and an integration test (ci/cargo_run). Each row: label, text of the command, keys the environment has, keys it has not,
 # labels, text of the command's `hidden`.
-_CARGO_START = "\"run\", \"--tmpdir-link-in\", \"/tmp\", \"--abs\", \"CARGO_MANIFEST_DIR\", \"--cwd-env\", \"CARGO_MANIFEST_DIR\", "
-_CARGO_ENV = ["CARGO_MANIFEST_DIR", "CARGO_PKG_NAME", "CARGO_PKG_VERSION", "BUILDRULES_NONCE"]
+_CARGO_START = "\"run\", \"--tmpdir-link-in\", \"/tmp\", \"--abs\", \"CARGO_MANIFEST_DIR\", \"--cwd-env\", \"CARGO_MANIFEST_DIR\", \"--abs\", \"CARGO\", "
+_CARGO_ENV = ["CARGO_MANIFEST_DIR", "CARGO_PKG_NAME", "CARGO_PKG_VERSION", "CARGO", "BUILDRULES_NONCE"]
 TEST_COMMANDS = [
     ("//ci/cargo_run:env_test", [
         _CARGO_START + "\"--abs\", \"CARGO_TARGET_TMPDIR\", \"--mkdir-env\", \"CARGO_TARGET_TMPDIR\", \"--\", <build artifact env_test__bin_bin/env",
