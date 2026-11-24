@@ -590,6 +590,20 @@ is the network, not the candidate, so the stage tool runs such a command once mo
 - **What it says.** The rerun is printed on stdout. A beta leg that passed after one says so in its summary line (`N command(s) ran again after a cut connection
   to the farm`), and one cut twice writes a **failed** line naming the cut; gamma, which writes no summary, says it on stdout beside the repository's `Commands:` line.
 
+## A command that does not end
+
+A farm build whose connection stopped answering can wait without end: buck2 neither fails nor finishes, and its output is shown only when it ends. So every command the stage tool starts
+(beta, on a farm and off it, native, gamma) runs under one limit, `command_limit` in `tools/stage/stage.zig`, by the runner in `tools/stage/bounded.zig`:
+
+- **The limit.** 30 minutes for one command. A beta leg took 1 to 5 minutes from start to end, and the whole gamma job under 20, on the release runs of main before this limit; a cut command and its
+  one rerun take 60 at most, inside the job's 120.
+- **On the way.** Every 5 minutes a line on stdout says the command is still running and when it is stopped, so the log of a quiet build shows it is alive.
+- **The end of a command** is its own exit. A process it left behind that still holds its output (a daemon that kept it) is waited for 10 seconds at most, and the
+  command keeps its own status.
+- **At the limit.** The command is stopped with its process group (it runs in one of its own, so a `buildrules` step stops the buck2 client it started; a buck2 daemon leaves the group and ends with the job), and the stage fails at once with `CommandHung`
+  and a line that names the command, how long it ran and the last lines it wrote. A stopped command is never run again, also when what it wrote reads as a cut. A
+  beta leg writes a **failed** summary line saying a command was stopped. Look at the farm, then re-run the job.
+
 ## Two pushes at once
 
 The workflow runs one push at a time. Its concurrency is one group for every push (`release-push`; any other event would get a group of its own, its run id)
