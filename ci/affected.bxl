@@ -1,0 +1,17 @@
+# The real-graph cases of the selector (ci/affected.bzl) must hold. The public CI runs them as a part of
+# `buck2 bxl //ci:completeness.bxl:check`; run alone:
+#
+#   buck2 bxl //ci:affected.bxl:check
+
+load("@buildrules//ci:affected.bzl", "FIXTURE", "affected_problems")
+
+def _impl(ctx):
+    problems = affected_problems(ctx)
+    if problems:
+        fail("ci/affected: {} problem(s):\n  ".format(len(problems)) + "\n  ".join(problems))
+    ctx.output.print("ok: the selector's cases over {} answer as they should (owners, build files, the loaders of a .bzl, reverse dependencies, the excluded rows)".format(FIXTURE))
+
+check = bxl_main(
+    impl = _impl,
+    cli_args = {},
+)

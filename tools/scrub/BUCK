@@ -46,6 +46,8 @@ scrub_test(
     packages = [
     "//:scrub_files",
     "//beta:scrub_files",
+    "//ci/affected_fixture/agg:scrub_files",
+    "//ci/affected_fixture:scrub_files",
     "//ci/cargo_run:scrub_files",
     "//ci/mojo_data:scrub_files",
     "//ci/mojo_syslibs:scrub_files",
@@ -132,6 +134,8 @@ scrub_test(
     "//packaging/deb:scrub_files",
     "//platforms/exec:scrub_files",
     "//platforms:scrub_files",
+    "//rules/affected/tests:scrub_files",
+    "//rules/affected:scrub_files",
     "//rules/core/tests:scrub_files",
     "//rules/core:scrub_files",
     "//rules/coverage/branch:scrub_files",

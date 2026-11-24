@@ -6,8 +6,10 @@
 # tests, so a test is in the closure of what it gates), when its rule only describes a configuration, or when ci/all.bzl lists it under
 # EXCLUDED with a reason. Anything else is an uncovered target: this fails and names it. It also fails when an exclusion matches nothing, or
 # when //ci:all builds a target that is excluded (the exclusion would be a lie). It also holds the known defect of ci/negative red (ci/negative.bzl).
+# It also runs the selector's cases over the real graph of its fixture (ci/affected.bzl).
 # It also fails for a package that neither the scrub nor the no-shell lint (//ci:no_shell) is given, unless NO_SHELL_EXCLUDED (ci/no_shell.bzl) lists it with a reason.
 
+load("@buildrules//ci:affected.bzl", "affected_problems")
 load("@buildrules//ci:all.bzl", "EXCLUDED", "MIRROR_ONLY", "NOT_BUILT_KINDS")
 load("@buildrules//ci:negative.bzl", "negative_problems")
 load("@buildrules//ci:negative.bzl", "farm_only_note")
@@ -69,15 +71,20 @@ def _impl(ctx):
     # The known defect of ci/negative, which no wildcard build reaches, is still red for the reason it carries (ci/negative.bzl).
     negative = negative_problems(ctx)
 
-    if problems or negative:
+    # The selector's cases over the real graph of ci/affected_fixture (ci/affected.bzl).
+    affected = affected_problems(ctx)
+
+    if problems or negative or affected:
         # The failure message is what a failed bxl command shows (its stdout is dropped), so the lists go in it.
         report = []
         if problems:
             report.append("{} problem(s); add each uncovered target to //ci:all in ci/BUCK, or list it in EXCLUDED in ci/all.bzl with a reason:\n  ".format(len(problems)) + "\n  ".join(problems))
         if negative:
             report.append("ci/negative: {} problem(s) with the known defect (ci/negative.bzl):\n  ".format(len(negative)) + "\n  ".join(negative))
+        if affected:
+            report.append("ci/affected: {} problem(s) with the selector's cases over its fixture (ci/affected.bzl):\n  ".format(len(affected)) + "\n  ".join(affected))
         fail("\n".join(report))
-    ctx.output.print("ok: every target of the tree is built by //ci:all or //ci:mojo, or excluded with a reason ({} exclusions); the known defects of ci/negative are red and the Mojo gate holds{}".format(len(EXCLUDED), farm_only_note()))
+    ctx.output.print("ok: every target of the tree is built by //ci:all or //ci:mojo, or excluded with a reason ({} exclusions); the known defects of ci/negative are red and the Mojo gate holds; the selector's cases over its fixture hold{}".format(len(EXCLUDED), farm_only_note()))
 
 check = bxl_main(
     impl = _impl,

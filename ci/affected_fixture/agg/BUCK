@@ -1,0 +1,12 @@
+# The aggregate of the selector's fixture (see ../BUCK): it depends on every check of the fixture, so its package is left out of the
+# reverse-dependency universe and a change to it widens.
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//rules:matrix.bzl", "group")
+
+group(
+    name = "agg",
+    deps = ["//ci/affected_fixture:top", "//ci/affected_fixture:lonely"],
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()
