@@ -26,3 +26,16 @@ fn the_scratch_directories_are_absolute_and_there() {
     assert!(target_tmp.is_absolute(), "CARGO_TARGET_TMPDIR is {target_tmp:?}, not an absolute path");
     assert!(target_tmp.is_dir(), "CARGO_TARGET_TMPDIR {target_tmp:?} was not made");
 }
+
+// A test that binds a Unix socket below TMPDIR, as tests that start a server on a socket in a directory of their own do. A socket path holds 107 bytes, so
+// this needs a TMPDIR as short as cargo's (`/tmp`): the action's scratch path, about 98 bytes deep on the farm, leaves no room for these names.
+#[test]
+fn a_unix_socket_binds_below_tmpdir() {
+    use std::os::unix::net::{UnixListener, UnixStream};
+    let dir = std::env::temp_dir().join("cargo-run-socket-test/nested-a/nested-b");
+    std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("cannot make {dir:?}: {e}"));
+    let path = dir.join("listener.sock");
+    let listener = UnixListener::bind(&path).unwrap_or_else(|e| panic!("cannot bind {path:?} ({} bytes): {e}", path.as_os_str().len()));
+    let _client = UnixStream::connect(&path).unwrap_or_else(|e| panic!("cannot connect to {path:?}: {e}"));
+    let (_server, _) = listener.accept().expect("the listener accepts the connection");
+}
