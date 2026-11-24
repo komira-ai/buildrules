@@ -12,6 +12,18 @@ test "flags: every tool is required, --sources and --check are optional, anythin
     try t.expect(!bare.check);
     try t.expect(bare.sources == null);
     try t.expectError(error.MissingFlag, S.parseArgs(&.{ "--src", "s", "--out", "o" }));
+    // each required flag, alone missing
+    const all = [_][]const u8{ "--src", "s", "--out", "o", "--buildrules", "b", "--cargo", "c", "--sysroot", "r", "--pins", "p" };
+    var drop: usize = 0;
+    while (drop < all.len) : (drop += 2) {
+        var argv: [all.len - 2][]const u8 = undefined;
+        var n: usize = 0;
+        for (all, 0..) |x, i| if (i != drop and i != drop + 1) {
+            argv[n] = x;
+            n += 1;
+        };
+        try t.expectError(error.MissingFlag, S.parseArgs(&argv));
+    }
     try t.expectError(error.UnknownFlag, S.parseArgs(&.{ "--nope", "x" }));
     // the local registry of earlier versions is gone: the sources are fetched by hash
     try t.expectError(error.UnknownFlag, S.parseArgs(&.{ "--registry", "x" }));
@@ -167,4 +179,84 @@ test "collect: a sync that changed nothing leaves the output empty" {
     try t.expectEqual(@as(usize, 0), (try S.collect(a, src, work, out, added)).len);
     var it = out.iterate();
     try t.expect(try it.next() == null);
+}
+
+fn failOn(comptime bad: []const u8) *const fn (std.mem.Allocator, []const u8) anyerror![]u8 {
+    return struct {
+        fn f(a: std.mem.Allocator, p: []const u8) anyerror![]u8 {
+            if (std.mem.eql(u8, p, bad)) return error.FileNotFound;
+            return std.fmt.allocPrint(a, "/abs/{s}", .{p});
+        }
+    }.f;
+}
+
+test "the sync's command line: a tool or directory that cannot be resolved is the error of the action" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const base = S.Args{ .src = "s", .out = "o", .buildrules = "br", .cargo = "c", .sysroot = "r", .pins = "p.bzl", .sources = "fetched" };
+    try t.expectError(error.FileNotFound, S.syncArgv(a, base, "/work", failOn("br")));
+    try t.expectError(error.FileNotFound, S.syncArgv(a, base, "/work", failOn("c")));
+    try t.expectError(error.FileNotFound, S.syncArgv(a, base, "/work", failOn("r")));
+    try t.expectError(error.FileNotFound, S.syncArgv(a, base, "/work", failOn("p.bzl")));
+    try t.expectError(error.FileNotFound, S.syncArgv(a, base, "/work", failOn("fetched")));
+}
+
+/// Runs `f(allocator)` with the allocator failing at its 1st, 2nd, ... allocation until a run meets no failure: each failure ends the
+/// call with error.OutOfMemory, and the run without one succeeds.
+fn sweep(ctx: anytype, comptime f: fn (@TypeOf(ctx), std.mem.Allocator) anyerror!void) !void {
+    var i: usize = 0;
+    while (true) : (i += 1) {
+        var ar = std.heap.ArenaAllocator.init(t.allocator);
+        defer ar.deinit();
+        var fa = std.testing.FailingAllocator.init(ar.allocator(), .{ .fail_index = i });
+        f(ctx, fa.allocator()) catch |e| {
+            try t.expect(fa.has_induced_failure);
+            try t.expectEqual(error.OutOfMemory, e);
+            continue;
+        };
+        try t.expect(!fa.has_induced_failure);
+        return;
+    }
+}
+
+const Dirs = struct { src: std.fs.Dir, work: std.fs.Dir, out: std.fs.Dir };
+
+test "allocation failures in staging, in the command line and in collecting end the action with OutOfMemory, never a wrong answer" {
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    try tmp.dir.makePath("src/crates/x");
+    try tmp.dir.writeFile(.{ .sub_path = "src/crates/x/Cargo.toml", .data = "[package]\n" });
+    try tmp.dir.writeFile(.{ .sub_path = "src/Cargo.lock", .data = "lock\n" });
+    try tmp.dir.makePath("work");
+    try tmp.dir.makePath("out");
+    const dirs = Dirs{
+        .src = try tmp.dir.openDir("src", .{ .iterate = true }),
+        .work = try tmp.dir.openDir("work", .{ .iterate = true }),
+        .out = try tmp.dir.openDir("out", .{ .iterate = true }),
+    };
+    defer {
+        var all = dirs;
+        all.src.close();
+        all.work.close();
+        all.out.close();
+    }
+    try sweep(dirs, struct {
+        fn f(d: Dirs, a: std.mem.Allocator) anyerror!void {
+            _ = try S.stage(a, d.src, d.work);
+        }
+    }.f);
+    try dirs.work.writeFile(.{ .sub_path = "buildrules.lock.bzl", .data = "table\n" });
+    try dirs.work.deleteFile("Cargo.lock");
+    try sweep(dirs, struct {
+        fn f(d: Dirs, a: std.mem.Allocator) anyerror!void {
+            const removed = try S.collect(a, d.src, d.work, d.out, true);
+            if (removed.len != 1) return error.TestUnexpectedResult;
+        }
+    }.f);
+    try sweep(@as(u8, 0), struct {
+        fn f(_: u8, a: std.mem.Allocator) anyerror!void {
+            _ = try S.syncArgv(a, .{ .src = "s", .out = "o", .buildrules = "br", .cargo = "c", .sysroot = "r", .pins = "p", .sources = "g", .check = true }, "/w", &fakeReal);
+        }
+    }.f);
 }

@@ -85,8 +85,9 @@ pub fn syncArgv(a: std.mem.Allocator, args: Args, work: []const u8, real: *const
     return cmd.items;
 }
 
+/// Whether the file at `path` is one a sync may write: anything outside buck-out/ (its scratch).
 fn generated(path: []const u8) bool {
-    return !(std.mem.eql(u8, path, "buck-out") or std.mem.startsWith(u8, path, "buck-out/"));
+    return !std.mem.startsWith(u8, path, "buck-out/");
 }
 
 /// Step 3: copies into `out` each file of `work` (outside buck-out/, and not the `.buckconfig` stage added) that `src` lacks or holds with
