@@ -39,3 +39,21 @@ fn a_unix_socket_binds_below_tmpdir() {
     let _client = UnixStream::connect(&path).unwrap_or_else(|e| panic!("cannot connect to {path:?}: {e}"));
     let (_server, _) = listener.accept().expect("the listener accepts the connection");
 }
+
+// A test that writes a program below TMPDIR and runs it, as tests that stage a helper binary do: TMPDIR must be a directory programs can be run from
+// (not a file system mounted `noexec`). The program is a copy of this test binary, asked only for its list of tests.
+#[test]
+fn a_program_copied_below_tmpdir_runs() {
+    let exe = std::env::current_exe().expect("the test binary's path");
+    let dir = std::env::temp_dir().join("cargo-run-exec-test");
+    std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("cannot make {dir:?}: {e}"));
+    let copy = dir.join("env-copy");
+    std::fs::copy(&exe, &copy).unwrap_or_else(|e| panic!("cannot copy {exe:?} to {copy:?}: {e}"));
+    let out = std::process::Command::new(&copy)
+        .args(["--list", "--format", "terse"])
+        .output()
+        .unwrap_or_else(|e| panic!("cannot run {copy:?}: {e}"));
+    assert!(out.status.success(), "{copy:?} --list exited {:?}: {}", out.status, String::from_utf8_lossy(&out.stderr));
+    let listing = String::from_utf8_lossy(&out.stdout);
+    assert!(listing.lines().any(|l| l == "a_program_copied_below_tmpdir_runs: test"), "{copy:?} --list printed {listing:?}");
+}
