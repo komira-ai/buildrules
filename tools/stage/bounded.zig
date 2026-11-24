@@ -279,3 +279,10 @@ test "the system clock reads the time, and does not go back between two readings
     try t.expect(x > 0);
     try t.expect(y >= x);
 }
+
+// Catches: a command ended by a signal read as a success or as some other exit code, or an exit code lost.
+test "a command's own exit keeps its code, and an end by a signal is 255" {
+    try t.expectEqual(@as(u8, 0), codeOf(0));
+    try t.expectEqual(@as(u8, 3), codeOf(3 << 8));
+    try t.expectEqual(@as(u8, 255), codeOf(9)); // the status of a process ended by SIGKILL (9)
+}
