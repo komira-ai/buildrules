@@ -59,6 +59,18 @@ const ported = [_]Ported{
     .{ .job = "mojo_macos", .runner = "macos-15" },
 };
 
+/// The ported jobs whose checks farm-macos.yml also runs, on the farm's macOS workers: the only ones that may be switched off, and only by this exact `if:`
+/// (the repository variable MACOS_ON_FARM is `true` when the farm is where those checks run; ci/farm_macos_check.zig holds the other side of the switch).
+pub const macos_switched = [_][]const u8{ "unpack_cross", "unpack_macos" };
+pub const macos_switch_if = "${{ vars.MACOS_ON_FARM != 'true' }}";
+
+fn isMacosSwitched(name: []const u8) bool {
+    for (macos_switched) |n| {
+        if (std.mem.eql(u8, n, name)) return true;
+    }
+    return false;
+}
+
 fn isPorted(name: []const u8) bool {
     for (ported) |p| {
         if (std.mem.eql(u8, p.job, name)) return true;
@@ -319,7 +331,13 @@ pub fn checkBeta(a: std.mem.Allocator, wf: []const u8, dotslash: []const u8, dir
     for (ported) |p| {
         if (rc.jobNamed(jobs, p.job)) |j| {
             const jt = try j.text(a);
-            if (j.if_expr != null) try add(a, &f, "the job `{s}` has an `if:`: it runs in every release (a leg that is skipped proves nothing)", .{p.job});
+            if (j.if_expr) |cond| {
+                if (!isMacosSwitched(p.job)) {
+                    try add(a, &f, "the job `{s}` has an `if:`: it runs in every release (a leg that is skipped proves nothing)", .{p.job});
+                } else if (!std.mem.eql(u8, cond, macos_switch_if)) {
+                    try add(a, &f, "the job `{s}` has an `if:` other than `{s}`: it runs in every release unless farm-macos.yml runs its checks", .{ p.job, macos_switch_if });
+                }
+            }
             const runs_on = try std.fmt.allocPrint(a, "runs-on: {s}", .{p.runner});
             if (!contains(jt, runs_on)) try add(a, &f, "the job `{s}` does not run on {s}", .{ p.job, p.runner });
         }
@@ -1084,6 +1102,14 @@ test "rule: the jobs a pull request used to run are legs of the beta, on their o
         const wrong = try std.fmt.allocPrint(a, "does not run on {s}", .{p.runner});
         try expectFinding(a, r, try mutateIn(a, r.wf, p.job, runs_on, other), wrong);
         try expectFinding(a, r, try mutateIn(a, r.wf, p.job, "    permissions:\n", "    if: ${{ vars.SKIP == '' }}\n    permissions:\n"), "has an `if:`");
+        // the switch to the farm's macOS workers: the exact `if:`, on the two jobs whose checks farm-macos.yml runs and on no other
+        const switched = try mutateIn(a, r.wf, p.job, "    permissions:\n", "    if: " ++ macos_switch_if ++ "\n    permissions:\n");
+        if (isMacosSwitched(p.job)) {
+            try t.expectEqual(@as(usize, 0), (try checkBeta(a, switched, r.ds, r.langs)).items.len);
+            try expectFinding(a, r, try mutateIn(a, r.wf, p.job, "    permissions:\n", "    if: ${{ vars.MACOS_ON_FARM == '' }}\n    permissions:\n"), "has an `if:` other than");
+        } else {
+            try expectFinding(a, r, switched, "has an `if:`: it runs in every release");
+        }
     }
     // the aarch64 host job keeps its own rules here (they were ci.yml's)
     try expectFinding(a, r, try mutateIn(a, r.wf, "host_arm", "        run: test \"$(uname -m)\" = aarch64\n", "        run: true\n"), "uname -m");

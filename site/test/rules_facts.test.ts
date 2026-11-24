@@ -635,6 +635,7 @@ describe('the stages of the release: the page, RELEASING.md, beta.yml and releas
   const releasing = repoFile('RELEASING.md');
   const release = repoFile('.github/workflows/release.yml');
   const beta = repoFile('.github/workflows/beta.yml');
+  const farmMacos = repoFile('.github/workflows/farm-macos.yml');
   const checkZig = repoFile('beta/check.zig');
 
   test('the order is gate -> plan -> build-cli -> beta -> gamma -> archive -> attest -> verify -> tag -> publish, in the workflow and in RELEASING.md', () => {
@@ -678,7 +679,7 @@ describe('the stages of the release: the page, RELEASING.md, beta.yml and releas
 
   test('every repository variable the workflows read is documented in RELEASING.md, and every documented one is read', () => {
     const used = new Set<string>();
-    for (const wf of [release, beta]) for (const m of wf.matchAll(/vars\.([A-Z][A-Z0-9_]+)/g)) used.add(m[1]);
+    for (const wf of [release, beta, farmMacos]) for (const m of wf.matchAll(/vars\.([A-Z][A-Z0-9_]+)/g)) used.add(m[1]);
     const section = releasing.slice(releasing.indexOf('## The gamma stage'), releasing.indexOf('## The release page'));
     const documented = new Set<string>();
     for (const line of section.split('\n')) {

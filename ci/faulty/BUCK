@@ -18,7 +18,9 @@ load("@buildrules//rules/rust:pins.bzl", "RUST_DEFAULT", "ZIG_CC_TARGET")
 load("@buildrules//rules/rust:test_run.bzl", "test_run")
 load("@buildrules//rules/rust:toolchain.bzl", "rust_toolchain")
 load("@buildrules//rules/pins:pins.bzl", "PINS", "strip_prefix")
-load("@buildrules//rules/zig:zig.bzl", "zig_dist", "zig_exe")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//tools/bootstrap:macos.bzl", "host_run", "zig_test_bin")
+load("@buildrules//rules/zig:zig.bzl", "zig_dist", "zig_exe", "zig_test")
 load(":fixture.bzl", "faulty_mojo_exe", "faulty_mojo_toolchain")
 
 # Bad inputs for the checks and markers of the rules. Each target below is a rule given an input its action must refuse, so its build must be red: an action
@@ -748,5 +750,35 @@ cargo_unit(
     srcs = ["fails.rs"],
     extra_srcs = [":fails_rs_copied"],
 )
+
+# host_run over zig_test_bin (tools/bootstrap/macos.bzl): the two rules that run unpack's tests on a farm's Mac, here on linux x86_64, so a pull request runs
+# them. A test compiled and not run, then run by `check marker`: red when the test fails, with the test's own failure. (Control: `host_run_of_a_passing_test`,
+# unpack's `paths` tests the same way, built by //ci:all.)
+zig_test(
+    name = "zig_test_that_fails",
+    src = "fails_test.zig",
+    exec_compatible_with = LINUX_X86_64,
+)
+
+[
+    [
+        zig_test_bin(
+            name = name + "_bin",
+            test = test,
+            target = "x86_64-linux-musl",
+            exec_compatible_with = LINUX_X86_64,
+        ),
+        host_run(
+            name = name,
+            exe = ":" + name + "_bin",
+            exec_compatible_with = LINUX_X86_64,
+            visibility = ["//ci:"],
+        ),
+    ]
+    for name, test in {
+        "host_run_of_a_failing_test": ":zig_test_that_fails",
+        "host_run_of_a_passing_test": "//tools/bootstrap:paths_unit",
+    }.items()
+]
 
 scrub_files()

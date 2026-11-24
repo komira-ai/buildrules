@@ -13,7 +13,9 @@
 #   beta_macos    macos-15: the same for macos-arm64
 #   host_arm      ubuntu-24.04-arm: the buck2 of that host, its execution platform, and every pinned download of the aarch64 hosts (docs/pins.md, "Other hosts")
 #   unpack_cross  ubuntu x86_64: the macOS program of unpack, cross-built the way the release builds it, handed to unpack_macos
-#   unpack_macos  macos-15: that program checked against its pin and run on the real darwin zig tarball (docs/pins.md, "unpack")
+#   unpack_macos  macos-15: that program checked against its pin and run on the real darwin zig tarball (docs/pins.md, "unpack"). These two are the hosted leg of
+#                 the checks farm-macos.yml runs on the farm's macOS workers, and are not run while the repository variable MACOS_ON_FARM is `true` (farm-macos.yml
+#                 is not a stage of the release: with the switch on, these checks no longer stop a tag)
 #   mojo_macos    macos-15: a Mac that runs Buck2 itself builds the tool tier of the Mojo rules and a Mojo package natively
 #   beta_farm     the same repositories built on a remote-execution farm, only when the repository variable FARM_ADDRESS is set (RELEASING.md)
 #
@@ -325,6 +327,7 @@ jobs:
   # pin row of rules/pins/bootstrap.bzl before it runs it, so what runs on macOS is the pinned program and not another build of the same source.
   unpack_cross:
     runs-on: ubuntu-latest
+    if: ${{ vars.MACOS_ON_FARM != 'true' }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -358,14 +361,16 @@ jobs:
         if: always()
         run: ./buck2 kill
 
-  # The unpack program on macOS. The farm cannot run a macOS binary, so this job is the proof that the pinned macOS build is a working program: on GitHub's macos-15 runner
+  # The unpack program on macOS, on GitHub's macos-15 runner, while the same checks are not on the farm's macOS workers (MACOS_ON_FARM is not `true`; farm-macos.yml
+  # runs them there as Buck2 actions, tools/bootstrap/BUCK). It is the proof that the pinned macOS build is a working program: on the runner
   # (aarch64) the program of `unpack_cross` is checked against the pin and run on the REAL darwin zig 0.12.0 tarball (the pinned download of rules/pins/hosts.bzl: its sha256 and
   # size are checked by unpack itself) into a tree equal to the one the system's tar makes (contents, modes, symbolic links), whose zig then runs and says its version. The
   # pinned zig 0.15.2 for macOS also builds the source natively and runs the unit tests there. ci/unpack_macos_check.zig holds the urls and digests below to the tables in
-  # hosts.bzl and bootstrap.bzl. No rule of buildrules runs on macOS yet.
+  # hosts.bzl and bootstrap.bzl.
   unpack_macos:
     runs-on: macos-15
     needs: unpack_cross
+    if: ${{ vars.MACOS_ON_FARM != 'true' }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -439,8 +444,8 @@ jobs:
           if ./cross/unpack-macos-aarch64 --check zig-cut.tar.xz; then echo "a cut-off tarball was accepted"; exit 1; fi
 
   # A Mac that runs Buck2 itself (`mode = local` on macOS arm64, docs/contract.md section 14): the tool tier of the Mojo rules is built for the Mac by its own zig and a Mojo
-  # package is compiled and tested natively on it, with a macOS compile naming the one host `local`. The farm cannot run a macOS binary, so this job is the proof that this
-  # works. The runner's /bin, /usr/bin, C driver and SDK are what the actions meet; none is in an action key.
+  # package is compiled and tested natively on it, with a macOS compile naming the one host `local`. The farm's macOS workers run single actions, not Buck2 itself, so this job is the
+  # proof that this works. The runner's /bin, /usr/bin, C driver and SDK are what the actions meet; none is in an action key.
   mojo_macos:
     runs-on: macos-15
     timeout-minutes: 90
