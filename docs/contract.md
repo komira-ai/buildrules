@@ -235,8 +235,8 @@ in the action's scratch path (`check --tmpdir-link-in /tmp`, rules/check/README.
 failed. The link is short, so a test that binds a Unix socket below `std::env::temp_dir()` has room in the 107 bytes of a socket path, as under
 cargo, where `TMPDIR` is `/tmp`; the action's scratch path is about 98 bytes deep on the farm. What the test writes there lands in the scratch path,
 which has the action's room and is not `noexec` (a job container's `/tmp` can be both small and `noexec`), so a program a test writes there can be
-run. A test that resolves the path (`std::fs::canonicalize`) gets the scratch path. A run that is itself killed (SIGKILL) leaves the link behind,
-dangling once the action's scratch path is gone.
+run. A test that resolves the path (`std::fs::canonicalize`) gets the scratch path. A run that is itself killed (SIGKILL) leaves the link behind
+(its directory goes with the action's scratch path), dangling once that is gone.
 
 **The Postgres fixture.** `postgres = { url-env = "NAME" }` makes every test target of the package (`:test`, and the same `buck2 test` targets) run
 under `pg_run` (rules/postgres/README.md): before the test it starts a private server of the pinned Postgres (`rules/postgres/pins.bzl`, conda-forge,

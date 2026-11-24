@@ -122,7 +122,7 @@ pub fn remove(s: Scratch) void {
     removeTree(s.dir);
 }
 
-/// Removes the tree at `path`, a directory this file made (the one place its failure, which no case can make the file system raise, is dropped).
+/// Removes the tree at `path`, a directory this file made. Its failure, which no case can make the file system raise, is dropped: one arm for the three removals.
 fn removeTree(path: []const u8) void {
     std.fs.cwd().deleteTree(path) catch {};
 }

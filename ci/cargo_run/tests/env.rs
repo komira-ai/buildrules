@@ -32,12 +32,15 @@ fn the_scratch_directories_are_absolute_and_there() {
 #[test]
 fn a_unix_socket_binds_below_tmpdir() {
     use std::os::unix::net::{UnixListener, UnixStream};
-    let dir = std::env::temp_dir().join("cargo-run-socket-test/nested-a/nested-b");
+    // A name of this process's own, removed at the end: under plain cargo TMPDIR is the machine's /tmp, which every run shares.
+    let root = std::env::temp_dir().join(format!("cargo-run-socket-{}", std::process::id()));
+    let dir = root.join("nested-a/nested-b");
     std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("cannot make {dir:?}: {e}"));
     let path = dir.join("listener.sock");
     let listener = UnixListener::bind(&path).unwrap_or_else(|e| panic!("cannot bind {path:?} ({} bytes): {e}", path.as_os_str().len()));
     let _client = UnixStream::connect(&path).unwrap_or_else(|e| panic!("cannot connect to {path:?}: {e}"));
     let (_server, _) = listener.accept().expect("the listener accepts the connection");
+    std::fs::remove_dir_all(&root).unwrap_or_else(|e| panic!("cannot remove {root:?}: {e}"));
 }
 
 // A test that writes a program below TMPDIR and runs it, as tests that stage a helper binary do: TMPDIR must be a directory programs can be run from
@@ -45,7 +48,7 @@ fn a_unix_socket_binds_below_tmpdir() {
 #[test]
 fn a_program_copied_below_tmpdir_runs() {
     let exe = std::env::current_exe().expect("the test binary's path");
-    let dir = std::env::temp_dir().join("cargo-run-exec-test");
+    let dir = std::env::temp_dir().join(format!("cargo-run-exec-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("cannot make {dir:?}: {e}"));
     let copy = dir.join("env-copy");
     std::fs::copy(&exe, &copy).unwrap_or_else(|e| panic!("cannot copy {exe:?} to {copy:?}: {e}"));
@@ -56,4 +59,5 @@ fn a_program_copied_below_tmpdir_runs() {
     assert!(out.status.success(), "{copy:?} --list exited {:?}: {}", out.status, String::from_utf8_lossy(&out.stderr));
     let listing = String::from_utf8_lossy(&out.stdout);
     assert!(listing.lines().any(|l| l == "a_program_copied_below_tmpdir_runs: test"), "{copy:?} --list printed {listing:?}");
+    std::fs::remove_dir_all(&dir).unwrap_or_else(|e| panic!("cannot remove {dir:?}: {e}"));
 }
