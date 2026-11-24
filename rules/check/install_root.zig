@@ -8,6 +8,8 @@
 //!     root/share/  made with the root and empty: the data of the run goes here
 //!
 //! `installBinary` then puts `root/bin/<exe>` in the root. Nothing here is shared between two runs, and `remove` takes the whole directory away after the run.
+//! `makeTmp` makes the other private directory a run can have: a TMPDIR of its own, a link with a short name (in `/tmp` for a cargo test) to a directory in
+//! the action's scratch path; `removeTmp` takes both away.
 //! Both `check` (the test run) and `cov_run` (the coverage run) build their runs from this one file, so the two see the same layout.
 //!
 //! No function reads the process's environment or working directory: the caller passes what it knows, and every path is absolute.
@@ -68,9 +70,61 @@ pub fn makeNamed(a: Alloc, where: []const u8, name: []const u8) anyerror!Scratch
     return s;
 }
 
+/// The TMPDIR of one run (`check --tmpdir-link-in`): a short link, and the directory it leads to. When the two parents are one directory there is no link, and
+/// `link` is `dir`.
+pub const Tmp = struct {
+    /// `<link parent>/br_tmp.<hex>`: what TMPDIR is set to.
+    link: []const u8,
+    /// `<directory parent>/br_tmp.<hex>`: where what the run writes below TMPDIR lands.
+    dir: []const u8,
+};
+
+/// A fresh, empty directory named `br_tmp.<16 random hexadecimal digits>` in `dir_in`, readable by its owner only, and a link of the same name in `link_in`
+/// that leads to it (both absolute, each made when it is not there). The link's name is short so that a path below it fits in a Unix socket's 107 bytes when
+/// `link_in` is `/tmp`; the directory is in `dir_in` (the action's scratch path) so that what the run writes there takes no room in `/tmp`, and a program
+/// written there can be run where `/tmp` is mounted `noexec`.
+pub fn makeTmp(a: Alloc, link_in: []const u8, dir_in: []const u8) anyerror!Tmp {
+    var random: [8]u8 = undefined;
+    std.crypto.random.bytes(&random);
+    const hex = std.fmt.bytesToHex(random, .lower);
+    return makeTmpNamed(a, link_in, dir_in, try std.fmt.allocPrint(a, "br_tmp.{s}", .{&hex}));
+}
+
+/// `makeTmp` with the name given. Both parents are their real paths, with no link in them. A directory or a link of that name that is there already belongs to
+/// another run: it is an error (`PathAlreadyExists`), never reused, and left as it is; on any error nothing this call made is left behind. When the two parents
+/// are the same real directory, the directory is made and no link (it would be the directory's own name).
+pub fn makeTmpNamed(a: Alloc, link_in: []const u8, dir_in: []const u8, name: []const u8) anyerror!Tmp {
+    const cwd = std.fs.cwd();
+    try cwd.makePath(dir_in);
+    try cwd.makePath(link_in);
+    // Every allocation is made before anything is created, so a failed one leaves nothing to take away.
+    const t = Tmp{
+        .link = try join(a, &.{ try cwd.realpathAlloc(a, link_in), name }),
+        .dir = try join(a, &.{ try cwd.realpathAlloc(a, dir_in), name }),
+    };
+    try std.posix.mkdir(t.dir, 0o700);
+    if (std.mem.eql(u8, t.link, t.dir)) return t;
+    std.posix.symlink(t.dir, t.link) catch |err| {
+        removeTree(t.dir);
+        return err;
+    };
+    return t;
+}
+
+/// Takes the run's TMPDIR away: the link, and the directory with what the run left in it. One that is gone already is no error.
+pub fn removeTmp(t: Tmp) void {
+    if (!std.mem.eql(u8, t.link, t.dir)) std.posix.unlink(t.link) catch {};
+    removeTree(t.dir);
+}
+
 /// Takes the run's directory away; one that is gone already is no error.
 pub fn remove(s: Scratch) void {
-    std.fs.cwd().deleteTree(s.dir) catch {};
+    removeTree(s.dir);
+}
+
+/// Removes the tree at `path`, a directory this file made. Its failure, which no case can make the file system raise, is dropped: one arm for the three removals.
+fn removeTree(path: []const u8) void {
+    std.fs.cwd().deleteTree(path) catch {};
 }
 
 /// Installs the test binary `exe` (absolute) under `root`: the directory that holds it is copied to `root/bin`, so that the binary is `root/bin/<name>`, with its

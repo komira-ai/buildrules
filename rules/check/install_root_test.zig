@@ -135,6 +135,98 @@ test "make: a parent that cannot be made is an error; remove takes the whole dir
     ir.remove(s);
 }
 
+fn expectTmpName(name: []const u8) !void {
+    try t.expect(std.mem.startsWith(u8, name, "br_tmp."));
+    try t.expectEqual(@as(usize, "br_tmp.".len + 16), name.len);
+    for (name["br_tmp.".len..]) |ch| try t.expect((ch >= '0' and ch <= '9') or (ch >= 'a' and ch <= 'f'));
+}
+
+test "makeTmp: a link br_tmp.<16 hex> in one parent to a fresh, empty directory of that name in the other, readable by its owner only; parents real and made; two runs never share one" {
+    var e = try Env.init();
+    defer e.deinit();
+    try e.tmp.dir.makePath("real");
+    try e.tmp.dir.symLink("real", "linked", .{});
+    const first = try ir.makeTmp(e.a(), try e.at("linked/links"), try e.at("linked/dirs"));
+    const second = try ir.makeTmp(e.a(), try e.at("linked/links"), try e.at("linked/dirs"));
+    try t.expect(!std.mem.eql(u8, first.link, second.link));
+    for ([_]ir.Tmp{ first, second }) |tmp| {
+        try t.expectEqualStrings(try e.at("real/links"), std.fs.path.dirname(tmp.link).?);
+        try t.expectEqualStrings(try e.at("real/dirs"), std.fs.path.dirname(tmp.dir).?);
+        try expectTmpName(std.fs.path.basename(tmp.link));
+        try t.expectEqualStrings(std.fs.path.basename(tmp.link), std.fs.path.basename(tmp.dir));
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        try t.expectEqualStrings(tmp.dir, try std.fs.cwd().readLink(tmp.link, &buf));
+        try t.expect(try isEmpty(tmp.dir) and try isEmpty(tmp.link));
+        const st = try std.fs.cwd().statFile(tmp.dir);
+        try t.expectEqual(std.fs.File.Kind.directory, st.kind);
+        try t.expectEqual(@as(std.fs.File.Mode, 0o700), st.mode & 0o777);
+    }
+    // removeTmp takes the link and the directory with what is in it; a second one is no error.
+    try std.fs.cwd().writeFile(.{ .sub_path = try std.fs.path.join(e.a(), &.{ first.link, "file" }), .data = "x" });
+    try t.expectEqualStrings("x", try e.read(try std.fs.path.join(e.a(), &.{ "real/dirs", std.fs.path.basename(first.dir), "file" })));
+    ir.removeTmp(first);
+    ir.removeTmp(first);
+    ir.removeTmp(second);
+    try t.expect(try isEmpty(try e.at("real/links")) and try isEmpty(try e.at("real/dirs")));
+}
+
+test "makeTmp: when the two parents are one directory (also through a link), TMPDIR is the directory itself, no link is made, and removeTmp takes it away" {
+    var e = try Env.init();
+    defer e.deinit();
+    try e.tmp.dir.makePath("same");
+    try e.tmp.dir.symLink("same", "alias", .{});
+    const tmp = try ir.makeTmp(e.a(), try e.at("alias"), try e.at("same"));
+    try t.expectEqualStrings(tmp.dir, tmp.link);
+    try t.expectEqualStrings(try e.at("same"), std.fs.path.dirname(tmp.dir).?);
+    try expectTmpName(std.fs.path.basename(tmp.dir));
+    try t.expectEqual(std.fs.File.Kind.directory, (try std.fs.cwd().statFile(tmp.dir)).kind);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    try t.expectError(error.NotLink, std.fs.cwd().readLink(tmp.dir, &buf));
+    try std.fs.cwd().writeFile(.{ .sub_path = try std.fs.path.join(e.a(), &.{ tmp.dir, "file" }), .data = "x" });
+    ir.removeTmp(tmp);
+    try t.expect(try isEmpty(try e.at("same")));
+}
+
+test "makeTmpNamed: a directory or a link of that name that is there already is another run's: an error, left as it is, and nothing of this call is left behind" {
+    var e = try Env.init();
+    defer e.deinit();
+    const first = try ir.makeTmpNamed(e.a(), try e.at("links"), try e.at("dirs"), "br_tmp.fixed");
+    try std.fs.cwd().writeFile(.{ .sub_path = try std.fs.path.join(e.a(), &.{ first.dir, "mine" }), .data = "x" });
+    // The directory is there: no link is made in the other parent.
+    try t.expectError(error.PathAlreadyExists, ir.makeTmpNamed(e.a(), try e.at("links2"), try e.at("dirs"), "br_tmp.fixed"));
+    try t.expect(try isEmpty(try e.at("links2")));
+    try t.expectEqualStrings("x", try e.read("dirs/br_tmp.fixed/mine"));
+    // The link is there: the directory this call made is removed, and the link still leads where it did.
+    try t.expectError(error.PathAlreadyExists, ir.makeTmpNamed(e.a(), try e.at("links"), try e.at("dirs2"), "br_tmp.fixed"));
+    try t.expect(try isEmpty(try e.at("dirs2")));
+    try t.expectEqualStrings("x", try e.read("links/br_tmp.fixed/mine"));
+}
+
+test "makeTmp: a parent that cannot be made is an error, leaving nothing behind; every allocation failed in turn is an error, leaving nothing behind" {
+    var e = try Env.init();
+    defer e.deinit();
+    try e.put("blocked", "a file where the parent goes", 0o644);
+    try t.expectError(error.NotDir, ir.makeTmp(e.a(), try e.at("links"), try e.at("blocked/inside")));
+    try t.expectError(error.FileNotFound, e.tmp.dir.access("links", .{}));
+    try t.expectError(error.NotDir, ir.makeTmp(e.a(), try e.at("blocked/inside"), try e.at("dirs")));
+    try t.expect(try isEmpty(try e.at("dirs")));
+    try e.tmp.dir.makePath("sweep/links");
+    try e.tmp.dir.makePath("sweep/dirs");
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        var fa = std.testing.FailingAllocator.init(e.a(), .{ .fail_index = i });
+        const tmp = ir.makeTmp(fa.allocator(), try e.at("sweep/links"), try e.at("sweep/dirs")) catch |err| {
+            try t.expect(err == error.OutOfMemory);
+            try t.expect(try isEmpty(try e.at("sweep/links")) and try isEmpty(try e.at("sweep/dirs")));
+            continue;
+        };
+        try t.expect(!fa.has_induced_failure);
+        ir.removeTmp(tmp);
+        break;
+    }
+    try t.expect(i > 0);
+}
+
 test "installBinary: the directory of the binary is copied to root/bin, the binary in it with its permission bits, and what sits beside it with it" {
     var e = try Env.init();
     defer e.deinit();

@@ -7,6 +7,14 @@ const t = std.testing;
 const kit = @import("checkkit.zig");
 const check = @import("check.zig");
 
+/// The directory `name` of the case has nothing in it.
+fn empty(c: *kit.Case, name: []const u8) !bool {
+    var d = try c.tmp.dir.openDir(name, .{ .iterate = true });
+    defer d.close();
+    var it = d.iterate();
+    return (try it.next()) == null;
+}
+
 fn sweepTool(c: *kit.Case, before: kit.Args, program: kit.Args, outputs: []const []const u8) !void {
     try kit.sweep(c, try c.line(before, program), outputs);
 }
@@ -20,7 +28,8 @@ test "run: every allocation of the option handling and the preparation, failed i
     try sweepTool(&c, &.{"run"}, &.{"true"}, outs);
     try sweepTool(&c, &.{"run"}, &.{"false"}, outs);
     try sweepTool(&c, &.{ "run", "--clear-env", "--env", "A=1", "--env", "B=2" }, &.{"true"}, outs);
-    try sweepTool(&c, &.{ "run", "--scratch", "s", "--dir", "D=sub/x", "--dir", "R=.", "--tmpdir", "--cwd-env", "R" }, &.{"true"}, outs);
+    try sweepTool(&c, &.{ "run", "--scratch", "s", "--dir", "D=sub/x", "--dir", "R=.", "--tmpdir-link-in", "tmps", "--cwd-env", "R" }, &.{"true"}, outs);
+    try t.expect(try empty(&c, "tmps") and try empty(&c, "scratch-root"));
     try sweepTool(&c, &.{ "run", "--ld-library-path", "lib", "--abs", "REL", "--abs-prefix", "PFX_", "--mkdir-env", "REL", "--cwd", "sub" }, &.{"true"}, outs);
     try sweepTool(&c, &.{ "run", "--ld-library-path", "lib", "--lib-dir", "libs/one", "--lib-dir", "/abs/two" }, &.{"true"}, outs);
     try sweepTool(&c, &.{ "run", "--lib-dir", "libs/one" }, &.{"true"}, outs);
@@ -190,13 +199,17 @@ test "the scratch directory is named without a BUCK_SCRATCH_PATH, with allocatio
     try kit.sweep(&c, &.{"frobnicate"}, outs);
 }
 
-test "more of the preparation under a failing allocator: TMPDIR default, a working directory from a variable, an empty one, a relative program" {
+test "more of the preparation under a failing allocator: a TMPDIR of the run's own, a working directory from a variable, an empty one, a relative program" {
     var c = try kit.Case.init();
     defer c.deinit();
     const outs: []const []const u8 = &.{};
     try c.tmp.dir.makePath("sub");
     try c.tmp.dir.symLink(c.toolbox, "toolbox", .{});
-    try kit.sweep(&c, &.{ "run", "--tmpdir", "--", c.toolbox, "true" }, outs);
+    c.environ = &.{"BUCK_SCRATCH_PATH=scr"};
+    try kit.sweep(&c, &.{ "run", "--tmpdir-link-in", "tmps", "--", c.toolbox, "true" }, outs);
+    // Every run, the ones an allocation failed in included, removed the link and the directory it made.
+    try t.expect(try empty(&c, "tmps") and try empty(&c, "scr"));
+    c.environ = &.{};
     try kit.sweep(&c, &.{ "run", "--env", "W=sub", "--cwd-env", "W", "--", c.toolbox, "true" }, outs);
     try kit.sweep(&c, &.{ "run", "--cwd", "", "--", c.toolbox, "true" }, outs);
     try kit.sweep(&c, &.{ "run", "--", "./toolbox", "true" }, outs);
