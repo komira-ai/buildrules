@@ -1,7 +1,8 @@
 load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # Kept by hand, in the unit-level form (see examples/p4ws): an integration test of a cargo package, whose run //ci:all builds. The test reads back how it was started
-# (tests/env.rs): in its package directory, with CARGO_MANIFEST_DIR, TMPDIR and CARGO_TARGET_TMPDIR absolute and the last one made. They are the options of
-# `check marker` that rules/rust/cargo_unit.bzl gives (`_START`); drop one and this test is red.
+# (tests/env.rs): in its package directory, with CARGO_MANIFEST_DIR, TMPDIR and CARGO_TARGET_TMPDIR absolute and the last one made, and a TMPDIR short
+# enough to bind a Unix socket below it and from which a program written there runs. They are the options of `check marker` that rules/rust/cargo_unit.bzl
+# gives (`_START`); drop one and this test is red.
 load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit")
 
 cargo_unit(
