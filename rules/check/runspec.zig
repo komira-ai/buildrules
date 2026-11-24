@@ -5,8 +5,13 @@
 //!   1. the process's own, or nothing with --clear-env;
 //!   2. each --env NAME=VALUE;
 //!   3. each --dir NAME=SUB: NAME is the absolute path of SUB in the scratch directory (`.` is the scratch directory), made;
-//!   4. --tmpdir: TMPDIR is the action's scratch path (BUCK_SCRATCH_PATH of the process's environment) made absolute; without one TMPDIR is
-//!      kept, and is /tmp if it is empty or not set;
+//!   4. --tmpdir-link-in DIR: TMPDIR is `DIR/br_tmp.<16 random hexadecimal digits>` (DIR made absolute, its real path, made when it is not there),
+//!      a link to a fresh, empty directory of the same name, readable by its owner only, in BUCK_SCRATCH_PATH (made absolute), else the process's
+//!      TMPDIR, else /tmp (install_root.zig, `makeTmp`). Both are removed after the run, whatever the run's end. The link's name is short so that a
+//!      test can bind a Unix socket below TMPDIR (107 bytes) when DIR is `/tmp`, as it can under cargo; what the test writes there lands in the
+//!      action's scratch path, which has the room and lets a program written there run (a job container's /tmp can be small, and `noexec`). A link
+//!      or directory of that name that is there already is never reused. When DIR and the directory's parent are one directory, TMPDIR is the
+//!      directory itself, with no link;
 //!   5. --ld-library-path DIR: LD_LIBRARY_PATH (DYLD_LIBRARY_PATH on macOS, whose loader reads no other) is DIR made absolute (it replaces, it does not append);
 //!      --macos-library-dirs DIRS (colon separated, absolute): on macOS DYLD_FALLBACK_LIBRARY_PATH is DIRS followed by `/usr/local/lib:/usr/lib`, so a library the
 //!      program opens by its bare name (`dlopen("liblz4.dylib")`) is found in them; without the option, or on another system, the variable is not set;
@@ -19,7 +24,7 @@
 //!   7. each --mkdir-env NAME: the directory NAME names is made, with its parents.
 //! --private-scratch makes a directory of the run's own (install_root.zig), fresh and named at random, in BUCK_SCRATCH_PATH (made absolute), else
 //! TMPDIR, else /tmp, and removes it after the run. It holds `tmp` (TMPDIR and TEST_TMPDIR are its absolute path, empty at the start), `home` (HOME,
-//! the same) and `root`. They are set after --tmpdir and before --ld-library-path, so they replace whatever --env or --tmpdir gave.
+//! the same) and `root`. They are set after --tmpdir-link-in and before --ld-library-path, so they replace whatever --env or --tmpdir-link-in gave.
 //! --installed (needs --private-scratch) runs the program from `root`: the directory that holds the program is copied to `root/bin` (so `root/bin/<name>` is a copy of
 //! it, and what sits beside it, such as its `lib/`, is there too), `root/share` holds a copy of the tree --install-share names, --share-env NAME is the absolute
 //! path of `root/share`, and the working directory is `root` unless --cwd or --cwd-env says another.
@@ -47,7 +52,7 @@ pub const Spec = struct {
     // How the program is started.
     refuse: ?[]const u8 = null,
     clear_env: bool = false,
-    tmpdir: bool = false,
+    tmpdir_link_in: ?[]const u8 = null,
     scratch: ?[]const u8 = null,
     ld_library_path: ?[]const u8 = null,
     macos_library_dirs: ?[]const u8 = null,
@@ -85,7 +90,7 @@ const E = 1 << @intFromEnum(Kind.expect);
 const Options = enum {
     @"--refuse",
     @"--clear-env",
-    @"--tmpdir",
+    @"--tmpdir-link-in",
     @"--scratch",
     @"--ld-library-path",
     @"--macos-library-dirs",
@@ -117,7 +122,7 @@ const Options = enum {
 fn belongs(opt: Options) u8 {
     return switch (opt) {
         .@"--refuse" => R,
-        .@"--clear-env", .@"--tmpdir", .@"--scratch", .@"--ld-library-path", .@"--macos-library-dirs", .@"--lib-dir", .@"--cwd", .@"--cwd-env", .@"--env", .@"--dir", .@"--abs", .@"--abs-prefix", .@"--mkdir-env", .@"--private-scratch", .@"--installed", .@"--install-share", .@"--share-env" => R | M | E,
+        .@"--clear-env", .@"--tmpdir-link-in", .@"--scratch", .@"--ld-library-path", .@"--macos-library-dirs", .@"--lib-dir", .@"--cwd", .@"--cwd-env", .@"--env", .@"--dir", .@"--abs", .@"--abs-prefix", .@"--mkdir-env", .@"--private-scratch", .@"--installed", .@"--install-share", .@"--share-env" => R | M | E,
         .@"--out" => M | E,
         .@"--capture", .@"--stamp", .@"--stamp-log", .@"--hang-limit-s", .@"--hang-label" => M,
         .@"--want", .@"--prefix", .@"--name" => E,
@@ -126,7 +131,7 @@ fn belongs(opt: Options) u8 {
 
 fn takesValue(opt: Options) bool {
     return switch (opt) {
-        .@"--clear-env", .@"--tmpdir", .@"--private-scratch", .@"--installed", .@"--capture", .@"--stamp-log", .@"--prefix" => false,
+        .@"--clear-env", .@"--private-scratch", .@"--installed", .@"--capture", .@"--stamp-log", .@"--prefix" => false,
         else => true,
     };
 }
@@ -166,7 +171,13 @@ pub fn parse(io: Io, sub: []const u8, kind: Kind, args: []const []const u8) Oom!
         switch (opt) {
             .@"--refuse" => spec.refuse = value,
             .@"--clear-env" => spec.clear_env = true,
-            .@"--tmpdir" => spec.tmpdir = true,
+            .@"--tmpdir-link-in" => {
+                if (value.len == 0) {
+                    io.say(sub, &.{"--tmpdir-link-in is empty"});
+                    return null;
+                }
+                spec.tmpdir_link_in = value;
+            },
             .@"--scratch" => spec.scratch = value,
             .@"--ld-library-path" => spec.ld_library_path = value,
             .@"--macos-library-dirs" => spec.macos_library_dirs = value,
@@ -235,6 +246,8 @@ pub const Prepared = struct {
     scratch: ?[]const u8,
     /// The private directories of the run (--private-scratch), removed after it.
     private: ?ir.Scratch = null,
+    /// The run's own TMPDIR (--tmpdir-link-in), removed after it.
+    tmp: ?ir.Tmp = null,
 };
 
 /// The result of `prepare`: the program ready, or the exit status to end with (the reason is already said).
@@ -318,6 +331,22 @@ pub fn prepare(io: Io, sub: []const u8, spec: Spec) Oom!Preparation {
             return .{ .fail = 1 };
         };
     }
+    if (spec.tmpdir_link_in) |dir| {
+        const link_in = common.absolute(a, here, dir) catch |err| {
+            cleanup(io, prepared);
+            return err;
+        };
+        const dir_in = ir.parent(a, here, io.getenv("BUCK_SCRATCH_PATH"), io.getenv("TMPDIR")) catch |err| {
+            cleanup(io, prepared);
+            return err;
+        };
+        prepared.tmp = ir.makeTmp(a, link_in, dir_in) catch |err| {
+            cleanup(io, prepared);
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            io.say(sub, &.{ "cannot make a private TMPDIR: a link in ", link_in, " to a directory in ", dir_in, ": ", @errorName(err) });
+            return .{ .fail = 1 };
+        };
+    }
     const failed = fill(io, sub, spec, here, &prepared) catch |e| {
         cleanup(io, prepared);
         return e;
@@ -386,7 +415,7 @@ pub fn setLibraryEnvWith(a: Alloc, env: *std.process.EnvMap, os: std.Target.Os.T
     try putEnv(env, "DYLD_FALLBACK_LIBRARY_PATH", v);
 }
 
-/// The steps after the scratch directory: --dir, --tmpdir, --ld-library-path, the absolute variables, --mkdir-env, the working directory and
+/// The steps after the scratch directory: --dir, --tmpdir-link-in, --ld-library-path, the absolute variables, --mkdir-env, the working directory and
 /// the program. Returns 0, or the status to end with.
 fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom!u8 {
     const a = io.a;
@@ -406,15 +435,7 @@ fn fill(io: Io, sub: []const u8, spec: Spec, here: []const u8, p: *Prepared) Oom
         };
         try putEnv(&p.env, kv[0], dir);
     }
-    if (spec.tmpdir) {
-        const bs = io.getenv("BUCK_SCRATCH_PATH") orelse "";
-        const have = p.env.get("TMPDIR") orelse "";
-        if (bs.len > 0) {
-            try putEnv(&p.env, "TMPDIR", try common.absolute(a, here, bs));
-        } else if (have.len == 0) {
-            try putEnv(&p.env, "TMPDIR", "/tmp");
-        }
-    }
+    if (p.tmp) |tmp| try putEnv(&p.env, "TMPDIR", tmp.link);
     if (p.private) |s| {
         try putEnv(&p.env, "TMPDIR", s.tmp);
         try putEnv(&p.env, "TEST_TMPDIR", s.tmp);
@@ -587,8 +608,9 @@ fn notStarted(io: Io, sub: []const u8, p: Prepared, err: anyerror) Outcome {
     return .{ .code = if (err == error.FileNotFound) 127 else 126 };
 }
 
-/// Removes the scratch directory, if there was one.
+/// Removes the scratch directory, the private directories and the run's TMPDIR, those there were.
 pub fn cleanup(io: Io, p: Prepared) void {
     if (p.scratch) |dir| io.cwd.deleteTree(dir) catch {};
     if (p.private) |s| ir.remove(s);
+    if (p.tmp) |tmp| ir.removeTmp(tmp);
 }

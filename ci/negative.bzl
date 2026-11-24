@@ -678,7 +678,7 @@ def faulty_problems(ctx):
 # CARGO_TARGET_TMPDIR for an integration test only), the labels, and the inputs the run reads (`hidden`). The three kinds of cargo test are here: a library
 # test (examples/p4ws), a binary's test and an integration test (ci/cargo_run). Each row: label, text of the command, keys the environment has, keys it has not,
 # labels, text of the command's `hidden`.
-_CARGO_START = "\"run\", \"--tmpdir\", \"--abs\", \"CARGO_MANIFEST_DIR\", \"--cwd-env\", \"CARGO_MANIFEST_DIR\", \"--abs\", \"CARGO\", "
+_CARGO_START = "\"run\", \"--tmpdir-link-in\", \"/tmp\", \"--abs\", \"CARGO_MANIFEST_DIR\", \"--cwd-env\", \"CARGO_MANIFEST_DIR\", \"--abs\", \"CARGO\", "
 _CARGO_ENV = ["CARGO_MANIFEST_DIR", "CARGO_PKG_NAME", "CARGO_PKG_VERSION", "CARGO", "BUILDRULES_NONCE"]
 TEST_COMMANDS = [
     ("//ci/cargo_run:env_test", [

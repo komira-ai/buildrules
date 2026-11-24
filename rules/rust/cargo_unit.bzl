@@ -356,10 +356,12 @@ def _build_impl(ctx):
 # ---- mode test -------------------------------------------------------------------
 
 # The run, shared by the welded marker and `buck2 test`: the same pinned binary, the same environment, the working directory at the package. These
-# are the options of `check marker` and `check run` (rules/check) that start it: TMPDIR is the action's scratch directory; CARGO_MANIFEST_DIR (and
-# CARGO_TARGET_TMPDIR, made, for an integration test) is made absolute against the action's directory; the binary runs in CARGO_MANIFEST_DIR;
-# CARGO, the pinned cargo, is made absolute too.
-_START = ["--tmpdir", "--abs", "CARGO_MANIFEST_DIR", "--cwd-env", "CARGO_MANIFEST_DIR", "--abs", "CARGO"]
+# are the options of `check marker` and `check run` (rules/check) that start it: TMPDIR is a fresh link of the run's own in /tmp, to a fresh directory
+# in the action's scratch path, both removed after it, so a path below TMPDIR is as short as under cargo (a Unix socket path holds 107 bytes; the
+# scratch path is about 98 deep on the farm) while what the test writes there has the scratch path's room and can be run (the farm's /tmp is noexec);
+# CARGO_MANIFEST_DIR (and CARGO_TARGET_TMPDIR, made, for an integration test) is made absolute against the action's directory; the binary runs in
+# CARGO_MANIFEST_DIR; CARGO, the pinned cargo, is made absolute too.
+_START = ["--tmpdir-link-in", "/tmp", "--abs", "CARGO_MANIFEST_DIR", "--cwd-env", "CARGO_MANIFEST_DIR", "--abs", "CARGO"]
 _START_TARGET_TMPDIR = ["--abs", "CARGO_TARGET_TMPDIR", "--mkdir-env", "CARGO_TARGET_TMPDIR"]
 
 # The build action's marker is the test's own output (stdout, then stderr): it says how many tests passed. A failed run shows that output.

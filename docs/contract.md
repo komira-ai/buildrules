@@ -250,6 +250,15 @@ code only another member's tests run counts as not run, a member nested in anoth
 (`lines NN.NN`, and `branches NN.NN` when the code has a decision) with `cov_floor`, the check of the Zig, Node and Mojo packages: a figure below its
 floor is red. The workspace's `//:coverage` builds every member's `:coverage`.
 
+**The test's TMPDIR.** Every run of a cargo test (`:test`, `:coverage`'s runs, and the same `buck2 test` targets) gets a `TMPDIR` of its own:
+`/tmp/br_tmp.<16 random hexadecimal digits>`, a link made fresh for the run to a fresh, empty directory of the same name (readable by its owner only)
+in the action's scratch path (`check --tmpdir-link-in /tmp`, rules/check/README.md). Both are removed after the run, whether the test passed or
+failed. The link is short, so a test that binds a Unix socket below `std::env::temp_dir()` has room in the 107 bytes of a socket path, as under
+cargo, where `TMPDIR` is `/tmp`; the action's scratch path is about 98 bytes deep on the farm. What the test writes there lands in the scratch path,
+which has the action's room and is not `noexec` (a job container's `/tmp` can be both small and `noexec`), so a program a test writes there can be
+run. A test that resolves the path (`std::fs::canonicalize`) gets the scratch path. A run that is itself killed (SIGKILL) leaves the link behind
+(its directory goes with the action's scratch path), dangling once that is gone.
+
 **The Postgres fixture.** `postgres = { url-env = "NAME" }` makes every test target of the package (`:test`, and the same `buck2 test` targets) run
 under `pg_run` (rules/postgres/README.md): before the test it starts a private server of the pinned Postgres (`rules/postgres/pins.bzl`, conda-forge,
 by version, sha256 and size) with a fresh database cluster in the action's scratch directory, listening only on a Unix socket in a directory of its own
