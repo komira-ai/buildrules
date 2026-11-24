@@ -1,0 +1,26 @@
+# The fixture of the selector's real-graph cases (ci/affected.bzl): a small graph the cases ask Buck2 about.
+#
+#     top -> mid -> leaf -> leaf_src (leaf.txt)        lonely -> lonely_src (lonely.txt)
+#
+# `top`, `mid`, `leaf` and `lonely` stand for checks, declared by the macro of defs.bzl (which loads inner.bzl); the `_src` groups own the
+# files. `.unowned` is a dotfile, which no glob holds, so no target owns it. The aggregate is in agg/. `all` puts every target here in the
+# closure of //ci:all.
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//rules:matrix.bzl", "group")
+load(":defs.bzl", "fixture_check")
+
+filegroup(name = "leaf_src", srcs = ["leaf.txt"], visibility = ["PUBLIC"])
+
+filegroup(name = "lonely_src", srcs = ["lonely.txt"], visibility = ["PUBLIC"])
+
+fixture_check(name = "leaf", deps = [":leaf_src"])
+
+fixture_check(name = "mid", deps = [":leaf"])
+
+fixture_check(name = "top", deps = [":mid"])
+
+fixture_check(name = "lonely", deps = [":lonely_src"])
+
+group(name = "all", deps = [":top", ":lonely", "//ci/affected_fixture/agg:agg"], visibility = ["PUBLIC"])
+
+scrub_files()
