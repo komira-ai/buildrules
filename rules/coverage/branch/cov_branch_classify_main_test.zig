@@ -31,8 +31,9 @@ const usages = [_]Usage{
     .{ .args = &(IO ++ MAP ++ STD ++ [_][]const u8{ "--exclude", "oss" }), .msg = "--exclude 'oss' must end with '/'" },
     .{ .args = &(IO ++ MAP ++ STD ++ [_][]const u8{ "--gen", "/abs" }), .msg = "--gen '/abs' must be a relative path" },
     .{ .args = &(IO ++ MAP), .msg = "--stdlib is required" },
-    .{ .args = &(IO ++ MAP ++ STD ++ STD), .msg = "--stdlib given twice" },
+    .{ .args = &(IO ++ MAP ++ STD ++ STD), .msg = "--stdlib 'oss/modular/' given twice" },
     .{ .args = &(IO ++ MAP ++ [_][]const u8{ "--stdlib", "oss" }), .msg = "--stdlib 'oss' must end with '/'" },
+    .{ .args = &(IO ++ MAP ++ STD ++ [_][]const u8{ "--stdlib", "Mojo/stdlib" }), .msg = "--stdlib 'Mojo/stdlib' must end with '/'" },
     .{ .args = &(IO ++ MAP ++ [_][]const u8{ "--src", h.SRC ++ "/", "--src", h.SRC ++ "/" } ++ STD), .msg = "--src given twice" },
     .{ .args = &(IO ++ MAP ++ [_][]const u8{ "--src", h.SRC } ++ STD), .msg = "--src '" ++ h.SRC ++ "' must end with '/'" },
 };
