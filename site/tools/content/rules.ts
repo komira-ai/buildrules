@@ -99,7 +99,7 @@ export const rust: Page = {
       ['`table`', 'the generated table as a dict (bound by `//:buildrules.bzl`)'],
       ['`third_party`', 'the package that holds the registry crates (bound to `//third_party/buildrules`)'],
       ['`check`', 'the label of the workspace `:check`; the default is `//:check`'],
-      ['`extra_srcs`', 'files or directories outside the package that the sources or the build script read, such as with `#[path]` or `include_str!`; they become inputs of every unit of the package and of its test runs. Each must be the file of the tree, exported with `export_file(mode = "reference")`: a copy made by a rule is refused'],
+      ['`extra_srcs`', 'files or directories that the sources or the build script read, such as with `#[path]` or `include_str!`, and that a unit does not see by itself: outside the package, exported with `export_file(mode = "reference")`, or in the package outside the unit\'s own files (a library sees `src/` and `build.rs`, an integration test `tests/`), by its path (`"tests/fixtures"`). They become inputs of every unit of the package and of its test runs. Each must be the file of the tree: a copy made by a rule is refused'],
       ['`refuse`', 'what a refused table calls with the reason; the default, `fail`, stops the load. Only tests of the refusal pass anything else (`rules/rust/refusal.bzl`)'],
       ['`stamp_env`', 'a variable name and the label of a text file (`stamp_file`): the runs of the package\'s build script get the variable set to the file\'s text. A commit given this way replaces asking `git`, which a build script cannot run here'],
       ['`stamp_rustc_env`', 'a `rustc-env` name and the label of a text file: the value the build script prints for that name is replaced by the file\'s text'],

@@ -91,6 +91,7 @@ cargo_table_check(
 rust_toolchain(
     name = "rust_toolchain_of_other_version",
     busybox = "toolchains//:busybox_pin",
+    cargo = "toolchains//:cargo",
     cc_target = ZIG_CC_TARGET,
     clippy = "toolchains//:clippy",
     sysroot = "toolchains//:sysroot",
