@@ -91,6 +91,7 @@ _TESTS = [
     "pins_toml",
     "npm_cmd",
     "rust_project",
+    "sources",
     "sync_check",
     "toml",
     "unitgen",

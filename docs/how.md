@@ -471,6 +471,40 @@ means every member).
 Not supported: doctests (`cargo test` still runs them; `:test` and `:coverage` do not),
 alternate-registry dependencies, git dependencies not pinned by commit or not on github.com, a root `[package]`.
 
+#### After editing `Cargo.toml` or `Cargo.lock`
+
+The one command, run where the farm builds (nothing runs cargo on your machine):
+
+```sh
+buck2 build //:sync --out .
+```
+
+It writes into the repository every file the sync changed (`Cargo.lock` too, if cargo had to change it); commit them. `buck2 build
+//:sync_check` is red until the committed files are what a sync writes. The targets are a `cargo_sync` call in the root `BUCK`, once:
+
+```python
+load("@buildrules//rules/rust:sync.bzl", "cargo_sync")
+
+[
+    cargo_sync(
+        name = name,
+        check = check,
+        rustc = "1.95.0",  # the channel of rust-toolchain.toml
+        srcs = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "BUCK", "buildrules.bzl", "buildrules.lock.bzl"] + glob(["toolchains/**"]),
+        deps = ["//crates/hello:sources", "//third_party/buildrules:files"],  # every member's :sources
+    )
+    for name, check in [("sync", False), ("sync_check", True)]
+]
+```
+
+The action has no network. Every crates.io package of `Cargo.lock` is downloaded by the sha256 `Cargo.lock` records and every git
+commit as GitHub's archive by the sha256 and size `third_party/buildrules/git_archives.tsv` records, and cargo reads those in place
+of crates.io and of a clone; a file whose bytes are not the pinned ones is refused, naming the package. So the sync resolves only the
+packages `Cargo.lock` already names: a change that keeps to them (features, a new member, a dependency on a package the lock has,
+dropping one) needs nothing else, while a crate or a git commit the lock does not name yet is refused by name, and `buildrules sync`
+on a machine with a network adds it once. A file the sync removed (the git record, after the last git dependency) is named in the
+build's output, to be deleted by hand: `--out` only adds and replaces.
+
 #### rust-analyzer
 
 ```sh

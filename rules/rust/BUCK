@@ -117,7 +117,7 @@ export_file(
     visibility = ["//site:"],
 )
 
-# `buildrules sync` on the farm, in a copy of a workspace and against a local copy of the registry (sync_stage.zig, rules/rust/sync.bzl).
+# `buildrules sync` on the farm, in a copy of a workspace, against the packages of its Cargo.lock fetched by hash (sync_stage.zig, rules/rust/sync.bzl).
 seed_zig_test(
     name = "sync_stage_unit",
     exec_compatible_with = LINUX_X86_64,

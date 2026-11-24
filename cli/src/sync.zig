@@ -20,6 +20,7 @@ const toolchain = @import("toolchain.zig");
 const unitgen = @import("unitgen.zig");
 const val = @import("val.zig");
 const pins_toml = @import("pins_toml.zig");
+const sources = @import("sources.zig");
 const ws = @import("workspace.zig");
 const Diag = @import("diag.zig").Diag;
 const Ctx = ctxm.Ctx;
@@ -30,7 +31,7 @@ pub const work_dir = "buck-out/buildrules";
 
 pub const usage_text =
     \\usage: buildrules sync [--dir DIR] [--check] [--cargo CARGO --rustc RUSTC --pins FILE]
-    \\                       [--buck2 BUCK2]
+    \\                       [--buck2 BUCK2] [--sources DIR | --list-sources FILE]
     \\
     \\  --dir DIR       the repository root (default .): holds .buckconfig, Cargo.toml, Cargo.lock,
     \\                  rust-toolchain.toml
@@ -41,6 +42,14 @@ pub const usage_text =
     \\                  Any that is absent is built from the buildrules cell with `buck2 build` (the
     \\                  toolchains//:cargo and :sysroot targets, buildrules//rules/rust:pins.bzl).
     \\  --buck2 BUCK2   the buck2 binary for that (default buck2)
+    \\  --sources DIR   download nothing: DIR holds every crates.io package of Cargo.lock as
+    \\                  <name>-<version>.crate and every git commit as GitHub's archive,
+    \\                  <owner>_<repository>_<commit>.tar.gz, each with the sha256 Cargo.lock or
+    \\                  third_party/buildrules/git_archives.tsv records; cargo reads them in place
+    \\                  of the network, so it resolves only the packages Cargo.lock names
+    \\  --list-sources FILE
+    \\                  write the files --sources needs to FILE (JSON: file, url, sha256, size) and
+    \\                  exit; reads Cargo.lock and the git record, runs nothing
     \\
 ;
 
@@ -51,6 +60,9 @@ const Opts = struct {
     rustc: ?[]const u8 = null,
     pins: ?[]const u8 = null,
     buck2: []const u8 = "buck2",
+    /// Absolute: the directory of `--sources`.
+    sources: ?[]const u8 = null,
+    list_sources: ?[]const u8 = null,
 };
 
 pub fn run(root: *Ctx, args: []const []const u8) u8 {
@@ -61,17 +73,57 @@ pub fn run(root: *Ctx, args: []const []const u8) u8 {
         if (std.mem.eql(u8, arg, "--check")) {
             o.check = true;
         } else if (std.mem.eql(u8, arg, "--dir") or std.mem.eql(u8, arg, "--cargo") or std.mem.eql(u8, arg, "--rustc") or
-            std.mem.eql(u8, arg, "--pins") or std.mem.eql(u8, arg, "--buck2"))
+            std.mem.eql(u8, arg, "--pins") or std.mem.eql(u8, arg, "--buck2") or std.mem.eql(u8, arg, "--sources") or std.mem.eql(u8, arg, "--list-sources"))
         {
             const v = ctxm.flagValue(args, &i) orelse return root.usage("sync: {s} needs a value", .{arg});
-            if (std.mem.eql(u8, arg, "--dir")) o.dir = v else if (std.mem.eql(u8, arg, "--cargo")) o.cargo = v else if (std.mem.eql(u8, arg, "--rustc")) o.rustc = v else if (std.mem.eql(u8, arg, "--pins")) o.pins = v else o.buck2 = v;
+            if (std.mem.eql(u8, arg, "--dir")) o.dir = v else if (std.mem.eql(u8, arg, "--cargo")) o.cargo = v else if (std.mem.eql(u8, arg, "--rustc")) o.rustc = v else if (std.mem.eql(u8, arg, "--pins")) o.pins = v else if (std.mem.eql(u8, arg, "--sources")) o.sources = v else if (std.mem.eql(u8, arg, "--list-sources")) o.list_sources = v else o.buck2 = v;
         } else {
             return root.usage("sync: unknown argument {s}\n{s}", .{ arg, usage_text });
         }
     }
+    if (o.sources != null and o.list_sources != null) return root.usage("sync: --sources and --list-sources exclude each other\n{s}", .{usage_text});
     var ctx = root.into(o.dir) catch |e| return root.fail("cannot open {s}: {s}", .{ o.dir, @errorName(e) });
     defer ctx.dir.close();
+    if (o.list_sources) |file| return listSources(root, &ctx, file) catch |e| root.fail("sync: {s}", .{@errorName(e)});
+    // DIR and FILE are relative to where the command runs, as --dir is.
+    if (o.sources) |dir| o.sources = root.dir.realpathAlloc(root.a, dir) catch |e| return root.fail("cannot open --sources {s}: {s}", .{ dir, @errorName(e) });
     return sync(&ctx, o) catch |e| root.fail("sync: {s}", .{@errorName(e)});
+}
+
+/// Cargo.lock's packages, or null when it cannot be read (each problem reported).
+fn lockEntries(ctx: *Ctx, why: []const u8) !?[]const cargo_lock.Entry {
+    const lock = (try ctx.readOpt("Cargo.lock")) orelse {
+        _ = ctx.fail("Cargo.lock is missing: {s}", .{why});
+        return null;
+    };
+    var diag = Diag.init(ctx.a);
+    return cargo_lock.parse(ctx.a, "Cargo.lock", lock, &diag) catch {
+        _ = reportAll(ctx, &diag);
+        return null;
+    };
+}
+
+/// The committed record of the git archives, or null when there is none; error.Refused when it cannot be read (reported).
+fn gitRecord(ctx: *Ctx, diag: *Diag) !?git_archive.Record {
+    const text = (try ctx.readOpt(contract.git_archives_file)) orelse return null;
+    return try git_archive.parse(ctx.a, diag, text);
+}
+
+/// `--list-sources FILE`: the files a `--sources` run needs, from Cargo.lock and the git record.
+fn listSources(root: *Ctx, ctx: *Ctx, file: []const u8) !u8 {
+    const entries = (try lockEntries(ctx, "the sources to fetch are the packages it names")) orelse return ctxm.exit_fail;
+    var diag = Diag.init(ctx.a);
+    const record = gitRecord(ctx, &diag) catch |e| switch (e) {
+        error.Refused => return reportAll(ctx, &diag),
+        else => return e,
+    };
+    const items = sources.list(ctx.a, &diag, entries, record) catch |e| switch (e) {
+        error.Refused => return reportAll(ctx, &diag),
+        else => return e,
+    };
+    try root.dir.writeFile(.{ .sub_path = file, .data = try sources.listJson(ctx.a, items) });
+    ctx.say("wrote   {s}: {d} source(s)", .{ file, items.len });
+    return ctxm.exit_ok;
 }
 
 const Tools = struct { cargo: []const u8, rustc: []const u8, pins: []const u8 };
@@ -219,6 +271,29 @@ fn sync(ctx: *Ctx, o: Opts) !u8 {
     // flag, which a stable cargo accepts under RUSTC_BOOTSTRAP (nothing compiles).
     const base_env = [_][2][]const u8{ .{ "RUSTC", tools.rustc }, .{ "CARGO_HOME", cargo_home } };
     const graph_env = [_][2][]const u8{ .{ "RUSTC", tools.rustc }, .{ "CARGO_HOME", cargo_home }, .{ "RUSTC_BOOTSTRAP", "1" } };
+
+    // Without the network (sources.zig): the packages of Cargo.lock are laid out from the files of --sources and cargo's own
+    // config points it at them. A config an earlier such run left is removed by a run with the network.
+    const cargo_config = work_dir ++ "/cargo-home/" ++ sources.config_file;
+    if (o.sources) |dir| {
+        const entries = (try lockEntries(ctx, "a sync without the network resolves only the packages Cargo.lock names; run `buildrules sync` where there is a network")) orelse return ctxm.exit_fail;
+        var sdiag = Diag.init(a);
+        const record = gitRecord(ctx, &sdiag) catch |e| switch (e) {
+            error.Refused => return reportAll(ctx, &sdiag),
+            else => return e,
+        };
+        sources.vendor(a, &sdiag, dir, root_abs, cargo_home, entries, record) catch |e| switch (e) {
+            error.Refused => return reportAll(ctx, &sdiag),
+            else => return e,
+        };
+        git_archive.local_dir = dir;
+    } else {
+        ctx.dir.deleteFile(cargo_config) catch |e| switch (e) {
+            error.FileNotFound => {},
+            else => return e,
+        };
+    }
+    defer git_archive.local_dir = null;
 
     // 2. Cargo.lock and the sources it names. Cargo resolves: `cargo fetch` creates the lock when there is none and
     //    changes it as little as the manifests need (a new dependency adds its crates, nothing else is upgraded);

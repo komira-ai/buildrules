@@ -5,11 +5,27 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # every step) holds the table to Cargo.lock and the manifests.
 #
 #   buck2 build //:ci                    lint and test the member; both git packages build from GitHub's archive of the commit
+#   buck2 build //:sync_check            red unless the generated files are what `buildrules sync` writes now (on the farm, no network)
+#   buck2 build //:sync --out .         regenerate after a change to a Cargo.toml or Cargo.lock: writes the files the sync changed (on the farm)
 #
-# There is no `cargo_sync` here: a farm action has no network, and cargo resolves a git source by cloning it (the local registry that
-# examples/crates syncs against serves crates.io packages only). Regenerate with `buildrules sync` on a machine with a network.
+# The sync runs on the farm with no network (rules/rust/sync.bzl): the crates.io packages are downloaded by the sha256 Cargo.lock records, the
+# commit as GitHub's archive by the sha256 and size third_party/buildrules/git_archives.tsv records, and cargo reads them in place of crates.io
+# and of a clone of the repository.
+load("@buildrules//rules/rust:sync.bzl", "cargo_sync")
 load("//:buildrules.bzl", "cargo_workspace")
 
 cargo_workspace(path = ".")
+
+[
+    cargo_sync(
+        name = name,
+        check = check,
+        rustc = "1.95.0",
+        deps = ["//crates/gdemo:sources", "//third_party/buildrules:files"],
+        srcs = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "BUCK", "buildrules.bzl", "buildrules.lock.bzl"] + glob(["toolchains/**"]),
+        visibility = ["PUBLIC"],
+    )
+    for name, check in [("sync", False), ("sync_check", True)]
+]
 
 scrub_files()
