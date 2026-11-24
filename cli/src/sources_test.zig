@@ -100,13 +100,20 @@ test "list: what cannot be fetched by hash is refused by package name, every one
     const a = ar.allocator();
     const lock = "version = 4\n\n" ++
         "[[package]]\nname = \"nosum\"\nversion = \"1.0.0\"\nsource = \"" ++ crates_io ++ "\"\n\n" ++
+        "[[package]]\nname = \"shortsum\"\nversion = \"1.0.0\"\nsource = \"" ++ crates_io ++ "\"\nchecksum = \"abc\"\n\n" ++
+        "[[package]]\nname = \"upper\"\nversion = \"1.0.0\"\nsource = \"" ++ crates_io ++ "\"\nchecksum = \"" ++ ("AB" ** 32) ++ "\"\n\n" ++
+        "[[package]]\nname = \"nothex\"\nversion = \"1.0.0\"\nsource = \"" ++ crates_io ++ "\"\nchecksum = \"" ++ ("zz" ** 32) ++ "\"\n\n" ++
         "[[package]]\nname = \"other\"\nversion = \"1.0.0\"\nsource = \"sparse+https://example.invalid/index/\"\nchecksum = \"" ++ ("ab" ** 32) ++ "\"\n\n" ++
         "[[package]]\nname = \"branchy\"\nversion = \"0.1.0\"\nsource = \"git+https://github.com/o/b?branch=main#" ++ rev ++ "\"\n\n" ++
         "[[package]]\nname = \"r\"\nversion = \"0.1.0\"\nsource = \"" ++ git_src ++ "\"\n";
     var d = Diag.init(a);
     try t.expectError(error.Refused, sources.list(a, &d, try entriesOf(a, lock), null));
     const msgs = try joinedMsgs(a, &d);
-    try t.expectEqual(@as(usize, 4), d.count());
+    try t.expectEqual(@as(usize, 7), d.count());
+    try t.expect(kit.contains(msgs, "upper 1.0.0: Cargo.lock has no sha256 checksum"));
+    try kit.sweepRefusal(sources.list, .{ try entriesOf(a, lock), null });
+    try t.expect(kit.contains(msgs, "shortsum 1.0.0: Cargo.lock has no sha256 checksum"));
+    try t.expect(kit.contains(msgs, "nothex 1.0.0: Cargo.lock has no sha256 checksum"));
     try t.expect(kit.contains(msgs, "nosum 1.0.0: Cargo.lock has no sha256 checksum for it, so it cannot be fetched by hash"));
     try t.expect(kit.contains(msgs, "other 1.0.0: the source sparse+https://example.invalid/index/ is not crates.io or a git repository"));
     try t.expect(kit.contains(msgs, "branchy 0.1.0: the git source git+https://github.com/o/b?branch=main follows branch `main`"));
@@ -129,6 +136,37 @@ test "unpack: files and links land below the destination without the top directo
     try t.expectEqualStrings("notes\n", try tmp.dir.readFileAlloc(a, "impl/NOTES", 1 << 10));
 }
 
+test "unpack: a destination the archive cannot be laid into ends with the filesystem's error; reading an archive survives allocation failures" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "impl", .data = "a file where the archive has a directory" });
+    var d = Diag.init(a);
+    try t.expectError(error.NotDir, sources.unpack(a, &d, "r", try rArchive(a), tmp.dir));
+    try kit.sweepRefusal(sources.readTar, .{ "r", try rArchive(a) });
+}
+
+test "unpack: an archive compressed with real deflate blocks (back-references, Huffman codes, as crates.io serves) is inflated whole" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    var d = Diag.init(a);
+    try t.expectEqualStrings("deflated-1.0.0", try sources.unpack(a, &d, "deflated", @embedFile("fixture/deflated.crate"), tmp.dir));
+    var n: usize = 0;
+    var src = try tmp.dir.openDir("src", .{ .iterate = true });
+    defer src.close();
+    var it = src.iterate();
+    while (try it.next()) |_| n += 1;
+    try t.expectEqual(@as(usize, 24), n);
+    const last = try tmp.dir.readFileAlloc(a, "src/f23.rs", 1 << 20);
+    try t.expectEqual(@as(usize, 7212), last.len);
+    try t.expect(std.mem.startsWith(u8, last, "            crybazehs lyhr piaoz roowamk"));
+}
+
 test "unpack: an archive with two top directories, an unsafe path, no entries or no gzip is refused, naming what it unpacked" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
@@ -139,14 +177,38 @@ test "unpack: an archive with two top directories, an unsafe path, no entries or
         .{ .bytes = try kit.tarGz(a, &.{ .{ .path = "a/x", .data = "1" }, .{ .path = "b/y", .data = "2" } }, 0), .msg = "thing: more than one top directory (a, b)" },
         .{ .bytes = try kit.tarGz(a, &.{.{ .path = "a/./x", .data = "1" }}, 0), .msg = "thing: holds the path a/./x, which is not a plain relative path" },
         .{ .bytes = try kit.tarGz(a, &.{.{ .path = "./x", .data = "1" }}, 0), .msg = "thing: the top directory `.` is not a plain name" },
+        .{ .bytes = try kit.tarGz(a, &.{.{ .path = "a/../x", .data = "1" }}, 0), .msg = "thing: holds the path a/../x, which is not a plain relative path" },
+        .{ .bytes = try kit.tarGz(a, &.{.{ .path = "a//x", .data = "1" }}, 0), .msg = "thing: holds the path a//x, which is not a plain relative path" },
         .{ .bytes = try kit.tarGz(a, &.{}, 0), .msg = "thing: the archive is empty" },
         .{ .bytes = "not a gzip stream", .msg = "thing: not a gzip tar (" },
+        // a gzip stream whose bytes are no tar
+        .{ .bytes = try kit.gzipStored(a, "x" ** 1024), .msg = "thing: not a gzip tar (" },
+        // a tar cut short in the bytes of its one file
+        .{ .bytes = try kit.gzipStored(a, (try ungz(a, try kit.tarGz(a, &.{ .{ .path = "a/" }, .{ .path = "a/f", .data = "y" ** 600 } }, 0)))[0 .. 512 * 4 + 7]), .msg = "thing: cut short in a/f (" },
     };
     for (cases) |c| {
         var d = Diag.init(a);
         try t.expectError(error.Refused, sources.unpack(a, &d, "thing", c.bytes, tmp.dir));
         try t.expect(kit.contains(try joinedMsgs(a, &d), c.msg));
+        try kit.sweepRefusal(sources.readTar, .{ "thing", c.bytes });
     }
+}
+
+fn ungz(a: std.mem.Allocator, gz: []const u8) ![]const u8 {
+    return git_archive.gunzip(a, gz);
+}
+
+test "apply: every step that the filesystem refuses ends the layout with its error, and the steps before it are done" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "plain", .data = "a file" });
+    try tmp.dir.makePath("adir");
+    try t.expectError(error.NotDir, sources.apply(tmp.dir, &.{.{ .kind = .clear, .path = "plain/x" }}));
+    try t.expectError(error.NotDir, sources.apply(tmp.dir, &.{ .{ .kind = .dir, .path = "made" }, .{ .kind = .dir, .path = "plain" } }));
+    try tmp.dir.access("made", .{});
+    try t.expectError(error.NotDir, sources.apply(tmp.dir, &.{.{ .kind = .file, .path = "plain/f", .data = "x" }}));
+    try t.expectError(error.IsDir, sources.apply(tmp.dir, &.{.{ .kind = .file, .path = "adir", .data = "x" }}));
+    try t.expectError(error.PathAlreadyExists, sources.apply(tmp.dir, &.{.{ .kind = .link, .path = "plain", .data = "adir" }}));
 }
 
 // ---- the layout cargo reads ----------------------------------------------------------------------------------------------
@@ -178,7 +240,13 @@ const Layout = struct {
 
     fn vendor(l: *Layout, d: *Diag, lock: []const u8, record: ?[]const u8) !void {
         const rec = if (record) |r| try recordParsed(l.a, r) else null;
-        return sources.vendor(l.a, d, l.src, l.root, l.home, try entriesOf(l.a, lock), rec);
+        return sources.vendor(l.a, d, l.src, l.root, try entriesOf(l.a, lock), rec);
+    }
+
+    /// `vendor` again with the allocator failing at each allocation: the refusal (or the layout) is reached or an error ends it.
+    fn sweep(l: *Layout, lock: []const u8, record: ?[]const u8) !void {
+        const rec = if (record) |r| try recordParsed(l.a, r) else null;
+        try kit.sweepRefusal(sources.vendor, .{ l.src, l.root, try entriesOf(l.a, lock), rec });
     }
 
     fn read(l: *Layout, rel: []const u8) ![]const u8 {
@@ -245,28 +313,33 @@ test "vendor: a file missing from DIR, or with bytes other than the pinned ones,
     // Cargo.lock names other bytes than the file has
     var d = Diag.init(a);
     try t.expectError(error.Refused, l.vendor(&d, try lockOf(a, changed, false), null));
+    try l.sweep(try lockOf(a, changed, false), null);
     try t.expectEqualStrings(try std.fmt.allocPrint(a, "itoa 1.0.15: {s}/itoa-1.0.15.crate has sha256 {s}, but Cargo.lock records " ++ changed ++ ": a file whose bytes are not the pinned ones is refused", .{ l.src, sum }), try joinedMsgs(a, &d));
     try t.expectError(error.FileNotFound, l.tmp.dir.access("repo/buck-out/buildrules/cargo-home/config.toml", .{}));
     // the archive differs from the record, in its sha256 or its size
     const rec = try recordOf(a, l.archive);
     d = Diag.init(a);
     try t.expectError(error.Refused, l.vendor(&d, try lockOf(a, sum, true), try std.mem.replaceOwned(u8, a, rec, try ctxm.sha256Hex(a, l.archive), changed)));
+    try l.sweep(try lockOf(a, sum, true), try std.mem.replaceOwned(u8, a, rec, try ctxm.sha256Hex(a, l.archive), changed));
     try t.expect(kit.contains(try joinedMsgs(a, &d), "github.com/o/r at " ++ rev ++ ": "));
     try t.expect(kit.contains(try joinedMsgs(a, &d), "but third_party/buildrules/git_archives.tsv records " ++ changed));
     d = Diag.init(a);
     const sized = try std.mem.replaceOwned(u8, a, rec, try std.fmt.allocPrint(a, " {d} ", .{l.archive.len}), " 7 ");
     try t.expectError(error.Refused, l.vendor(&d, try lockOf(a, sum, true), sized));
+    try l.sweep(try lockOf(a, sum, true), sized);
     try t.expect(kit.contains(try joinedMsgs(a, &d), try std.fmt.allocPrint(a, "o_r_" ++ rev ++ ".tar.gz is {d} bytes, but third_party/buildrules/git_archives.tsv records 7", .{l.archive.len})));
     // a file that is not there
     try l.tmp.dir.deleteFile("fetched/itoa-1.0.15.crate");
     d = Diag.init(a);
     try t.expectError(error.Refused, l.vendor(&d, try lockOf(a, sum, false), null));
+    try l.sweep(try lockOf(a, sum, false), null);
     try t.expectEqualStrings(try std.fmt.allocPrint(a, "itoa 1.0.15: {s}/itoa-1.0.15.crate cannot be read (FileNotFound): every source --list-sources names must be there", .{l.src}), try joinedMsgs(a, &d));
     // and DIR itself
     d = Diag.init(a);
     const none = try std.fmt.allocPrint(a, "{s}/none", .{l.root});
-    try t.expectError(error.Refused, sources.vendor(a, &d, none, l.root, l.home, try entriesOf(a, try lockOf(a, sum, false)), null));
+    try t.expectError(error.Refused, sources.vendor(a, &d, none, l.root, try entriesOf(a, try lockOf(a, sum, false)), null));
     try t.expectEqualStrings(try std.fmt.allocPrint(a, "--sources {s}: FileNotFound", .{none}), try joinedMsgs(a, &d));
+    try kit.sweepRefusal(sources.vendor, .{ none, l.root, try entriesOf(a, try lockOf(a, sum, false)), null });
 }
 
 test "vendor: an archive whose top directory is not the recorded one, a crate whose top is not name-version, and a package the archive lacks or holds twice" {
@@ -279,12 +352,14 @@ test "vendor: an archive whose top directory is not the recorded one, a crate wh
     const rec = try recordOf(a, l.archive);
     var d = Diag.init(a);
     try t.expectError(error.Refused, l.vendor(&d, try lockOf(a, sum, true), try std.mem.replaceOwned(u8, a, rec, " r-" ++ rev, " other-top")));
+    try l.sweep(try lockOf(a, sum, true), try std.mem.replaceOwned(u8, a, rec, " r-" ++ rev, " other-top"));
     try t.expectEqualStrings("github.com/o/r at " ++ rev ++ ": the archive's top directory is r-" ++ rev ++ ", but third_party/buildrules/git_archives.tsv records other-top", try joinedMsgs(a, &d));
 
     const odd = try kit.tarGz(a, &.{.{ .path = "itoa/Cargo.toml", .data = itoa_manifest }}, 0);
     try l.tmp.dir.writeFile(.{ .sub_path = "fetched/itoa-1.0.15.crate", .data = odd });
     d = Diag.init(a);
     try t.expectError(error.Refused, l.vendor(&d, try lockOf(a, try ctxm.sha256Hex(a, odd), false), null));
+    try l.sweep(try lockOf(a, try ctxm.sha256Hex(a, odd), false), null);
     try t.expectEqualStrings("itoa 1.0.15: the top directory of itoa-1.0.15.crate is itoa, not itoa-1.0.15", try joinedMsgs(a, &d));
     try l.tmp.dir.writeFile(.{ .sub_path = "fetched/itoa-1.0.15.crate", .data = l.crate });
 
@@ -292,6 +367,7 @@ test "vendor: an archive whose top directory is not the recorded one, a crate wh
     const missing = try std.mem.replaceOwned(u8, a, try lockOf(a, sum, true), "name = \"r-impl\"", "name = \"r-gone\"");
     d = Diag.init(a);
     try t.expectError(error.Refused, l.vendor(&d, missing, rec));
+    try l.sweep(missing, rec);
     try t.expectEqualStrings("r-gone 0.1.0: no Cargo.toml in the archive of github.com/o/r at " ++ rev ++ " is that package", try joinedMsgs(a, &d));
 
     const top = "r-" ++ rev;
@@ -300,15 +376,38 @@ test "vendor: an archive whose top directory is not the recorded one, a crate wh
         .{ .path = top ++ "/copy/Cargo.toml", .data = "[package]\nname = \"r\"\nversion = \"0.1.0\"\n" },
         .{ .path = top ++ "/old/Cargo.toml", .data = "[package]\nname = \"r\"\nversion = \"0.0.1\"\n" },
         .{ .path = top ++ "/bad/Cargo.toml", .data = "[package\n" },
+        .{ .path = top ++ "/virtual/Cargo.toml", .data = "[workspace]\nmembers = []\n" },
     }, 0);
     try l.tmp.dir.writeFile(.{ .sub_path = "fetched/o_r_" ++ rev ++ ".tar.gz", .data = twice });
     const only_r = try std.mem.replaceOwned(u8, a, try lockOf(a, sum, true), "\n[[package]]\nname = \"r-impl\"\nversion = \"0.1.0\"\nsource = \"" ++ git_src ++ "\"\n", "");
     d = Diag.init(a);
     try t.expectError(error.Refused, l.vendor(&d, only_r, try recordOf(a, twice)));
+    try l.sweep(only_r, try recordOf(a, twice));
     const msg = try joinedMsgs(a, &d);
     try t.expect(kit.contains(msg, "r 0.1.0: the archive of github.com/o/r at " ++ rev ++ " has two Cargo.toml of the package ("));
     try t.expect(kit.contains(msg, "copy/Cargo.toml"));
     try t.expect(!kit.contains(msg, "old/"));
+}
+
+test "vendor: cargo's config quotes a path with a quote or a backslash, and a root that cannot be opened is refused by name" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    var l = try Layout.init(a);
+    defer l.tmp.cleanup();
+    const sum = try ctxm.sha256Hex(a, l.crate);
+    try l.tmp.dir.makePath("q\"b\\s");
+    const odd_root = try l.tmp.dir.realpathAlloc(a, "q\"b\\s");
+    var d = Diag.init(a);
+    try sources.vendor(a, &d, l.src, odd_root, try entriesOf(a, try lockOf(a, sum, false)), null);
+    const cfg = try l.tmp.dir.readFileAlloc(a, "q\"b\\s/buck-out/buildrules/cargo-home/config.toml", 1 << 16);
+    const escaped = try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, odd_root, "\\", "\\\\"), "\"", "\\\"");
+    try t.expect(kit.contains(cfg, try std.fmt.allocPrint(a, "directory = \"{s}/" ++ sources.crates_dir ++ "\"\n", .{escaped})));
+    const gone = try std.fmt.allocPrint(a, "{s}/gone", .{l.root});
+    d = Diag.init(a);
+    try t.expectError(error.Refused, sources.vendor(a, &d, l.src, gone, try entriesOf(a, try lockOf(a, sum, false)), null));
+    try t.expectEqualStrings(try std.fmt.allocPrint(a, "{s}: FileNotFound", .{gone}), try joinedMsgs(a, &d));
+    try kit.sweepRefusal(sources.vendor, .{ l.src, gone, try entriesOf(a, try lockOf(a, sum, false)), null });
 }
 
 test "vendor: a package with no member beside it gets no root-manifest link, and a repository with no root manifest gets none either" {
@@ -342,11 +441,12 @@ test "vendor and list: the refusals of the list are the vendor's too, and alloca
     const lock = "version = 4\n\n[[package]]\nname = \"nosum\"\nversion = \"1.0.0\"\nsource = \"" ++ crates_io ++ "\"\n";
     var d = Diag.init(a);
     try t.expectError(error.Refused, l.vendor(&d, lock, null));
+    try l.sweep(lock, null);
     try t.expect(kit.contains(try joinedMsgs(a, &d), "nosum 1.0.0: Cargo.lock has no sha256 checksum"));
     const entries = try entriesOf(a, try lockOf(a, try ctxm.sha256Hex(a, l.crate), true));
     const record = try recordParsed(a, try recordOf(a, l.archive));
     try kit.sweepRefusal(sources.list, .{ entries, record });
-    try kit.sweepRefusal(sources.vendor, .{ l.src, l.root, l.home, entries, record });
+    try kit.sweepRefusal(sources.vendor, .{ l.src, l.root, entries, record });
 }
 
 // ---- `buildrules sync --sources` and `--list-sources` ---------------------------------------------------------------------
@@ -582,6 +682,12 @@ test "sync --list-sources writes the downloads and runs nothing; it needs Cargo.
     r = h.run(&.{ "sync", "--list-sources", "plan2.json" });
     try t.expectEqual(@as(u8, 1), r.code);
     try t.expect(kit.contains(r.err, "Cargo.lock is missing: the sources to fetch are the packages it names"));
+    // a file that cannot be written is the command's error
+    try h.put("Cargo.lock", lock);
+    try h.put(record_file, try recordOf(a, l.archive));
+    r = h.run(&.{ "sync", "--list-sources", "no-such-dir/plan.json" });
+    try t.expectEqual(@as(u8, 1), r.code);
+    try t.expect(kit.contains(r.err, "sync: FileNotFound"));
     // the two flags exclude each other; each needs its value
     try t.expectEqual(@as(u8, 2), h.run(&.{ "sync", "--list-sources", "p.json", "--sources", "d" }).code);
     try t.expectEqual(@as(u8, 2), h.run(&.{ "sync", "--sources" }).code);

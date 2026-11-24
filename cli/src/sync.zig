@@ -274,7 +274,8 @@ fn sync(ctx: *Ctx, o: Opts) !u8 {
 
     // Without the network (sources.zig): the packages of Cargo.lock are laid out from the files of --sources and cargo's own
     // config points it at them. A config an earlier such run left is removed by a run with the network.
-    const cargo_config = work_dir ++ "/cargo-home/" ++ sources.config_file;
+    comptime std.debug.assert(std.mem.eql(u8, sources.cargo_home_dir, work_dir ++ "/cargo-home"));
+    const cargo_config = sources.cargo_home_dir ++ "/" ++ sources.config_file;
     if (o.sources) |dir| {
         const entries = (try lockEntries(ctx, "a sync without the network resolves only the packages Cargo.lock names; run `buildrules sync` where there is a network")) orelse return ctxm.exit_fail;
         var sdiag = Diag.init(a);
@@ -282,7 +283,7 @@ fn sync(ctx: *Ctx, o: Opts) !u8 {
             error.Refused => return reportAll(ctx, &sdiag),
             else => return e,
         };
-        sources.vendor(a, &sdiag, dir, root_abs, cargo_home, entries, record) catch |e| switch (e) {
+        sources.vendor(a, &sdiag, dir, root_abs, entries, record) catch |e| switch (e) {
             error.Refused => return reportAll(ctx, &sdiag),
             else => return e,
         };

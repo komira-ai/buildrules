@@ -80,6 +80,7 @@ test "collect: only what the sync wrote or changed reaches the output, never buc
         .{ "src/Cargo.toml", "[workspace]\n" },
         .{ "src/third_party/buildrules/git_archives.tsv", "# record\n" },
         .{ "src/third_party/buildrules/BUCK", "# old\n" },
+        .{ "src/toolchains/rust_pins.bzl", "# pins\n" },
     }) |f| {
         if (std.fs.path.dirname(f[0])) |d| try tmp.dir.makePath(d);
         try tmp.dir.writeFile(.{ .sub_path = f[0], .data = f[1] });
@@ -95,14 +96,17 @@ test "collect: only what the sync wrote or changed reaches the output, never buc
     try work.writeFile(.{ .sub_path = "buildrules.bzl", .data = "# glue\n" });
     try work.writeFile(.{ .sub_path = "third_party/buildrules/BUCK", .data = "# new\n" });
     try work.deleteFile("third_party/buildrules/git_archives.tsv");
+    try work.deleteFile("toolchains/rust_pins.bzl");
     try work.makePath("buck-out/buildrules/vendor");
     try work.writeFile(.{ .sub_path = "buck-out/buildrules/vendor/x", .data = "scratch" });
     try tmp.dir.makePath("out");
     var out = try tmp.dir.openDir("out", .{ .iterate = true });
     defer out.close();
     const removed = try S.collect(a, src, work, out, true);
-    try t.expectEqual(@as(usize, 1), removed.len);
+    // named in path order
+    try t.expectEqual(@as(usize, 2), removed.len);
     try t.expectEqualStrings("third_party/buildrules/git_archives.tsv", removed[0]);
+    try t.expectEqualStrings("toolchains/rust_pins.bzl", removed[1]);
     try t.expectEqualStrings("table v2\n", try out.readFileAlloc(a, "buildrules.lock.bzl", 1 << 10));
     try t.expectEqualStrings("# glue\n", try out.readFileAlloc(a, "buildrules.bzl", 1 << 10));
     try t.expectEqualStrings("# new\n", try out.readFileAlloc(a, "third_party/buildrules/BUCK", 1 << 10));
@@ -122,6 +126,25 @@ test "collect: only what the sync wrote or changed reaches the output, never buc
     defer out2.close();
     _ = try S.collect(a, src, work, out2, false);
     try t.expectEqualStrings("[cells]\n  x = .\n", try out2.readFileAlloc(a, ".buckconfig", 1 << 10));
+}
+
+test "collect: a file of the sync where the workspace has a directory cannot be compared, and the error is the build's" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    try tmp.dir.makePath("src/x");
+    try tmp.dir.makePath("work");
+    try tmp.dir.writeFile(.{ .sub_path = "work/x", .data = "a file now" });
+    try tmp.dir.makePath("out");
+    var src = try tmp.dir.openDir("src", .{ .iterate = true });
+    defer src.close();
+    var work = try tmp.dir.openDir("work", .{ .iterate = true });
+    defer work.close();
+    var out = try tmp.dir.openDir("out", .{ .iterate = true });
+    defer out.close();
+    try t.expectError(error.IsDir, S.collect(a, src, work, out, false));
 }
 
 test "collect: a sync that changed nothing leaves the output empty" {
