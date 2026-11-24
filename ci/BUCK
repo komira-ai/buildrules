@@ -1300,6 +1300,9 @@ group(name = "all", deps = [
     # The mopm of the Mojo 1.1.0 and 1.2.0 toolchains (docs/pins.md "mopm 0.0.135"), which no example names yet: its tarball downloaded at the pinned
     # sha256 and size and unpacked into its pinned `dir`.
     "toolchains//:mopm_0_0_135",
+    # The mopm that repeats a request whose TLS handshake or TLS read fails (docs/pins.md "mopm 0.0.138"), which no example names yet: the same
+    # download and unpack at its own pinned sha256, size and `dir`.
+    "toolchains//:mopm_0_0_138",
 ])
 
 # Read by //ci/negative:negative_check, which holds the known defect's files to each other.

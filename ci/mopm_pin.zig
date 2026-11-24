@@ -811,7 +811,9 @@ test "the real hosts.bzl is a table this reads, every release in it is pinned, a
     }
 }
 
-test "the real tables pin mopm 0.0.135, the release of the Mojo 1.1.0 and 1.2.0 toolchains, for all three hosts" {
+/// The committed pins.bzl and hosts.bzl have a row of `version` for linux-x86_64, linux-aarch64 and macos-aarch64, each with the release asset's url,
+/// a 64-hex sha256 and a non-zero size, and the tables pass `withHosts` with its every-host rule.
+fn expectRealTablesPinEveryHost(version: []const u8) !void {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -820,21 +822,35 @@ test "the real tables pin mopm 0.0.135, the release of the Mojo 1.1.0 and 1.2.0 
     const hosts_text = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ w, "rules/mopm/hosts.bzl" }), 1 << 20);
     const merged = try withHosts(a, try parse(a, pins_text), try parseHosts(a, hosts_text), &linux_x86_64_only);
     const want = [_][2][]const u8{
-        .{ "0.0.135", "v0.0.135/mopm-0.0.135-linux-x86_64.tar.gz" },
-        .{ "0.0.135 linux-aarch64", "v0.0.135/mopm-0.0.135-linux-aarch64.tar.gz" },
-        .{ "0.0.135 macos-aarch64", "v0.0.135/mopm-0.0.135-macos-arm64.tar.gz" },
+        .{ "", "linux-x86_64" },
+        .{ " linux-aarch64", "linux-aarch64" },
+        .{ " macos-aarch64", "macos-arm64" },
     };
     for (want) |wv| {
+        const row_name = try std.mem.concat(a, u8, &.{ version, wv[0] });
+        const url = try std.mem.concat(a, u8, &.{ url_prefix, "v", version, "/mopm-", version, "-", wv[1], ".tar.gz" });
         var found = false;
         for (merged.rows) |r| {
-            if (!std.mem.eql(u8, r.version, wv[0])) continue;
+            if (!std.mem.eql(u8, r.version, row_name)) continue;
             found = true;
-            try t.expectEqualStrings(try std.mem.concat(a, u8, &.{ url_prefix, wv[1] }), r.url);
+            try t.expectEqualStrings(url, r.url);
             try t.expect(isHex64(r.sha256));
             try t.expect(r.size > 0);
         }
         try t.expect(found);
     }
+}
+
+test "the real tables pin mopm 0.0.135, the release of the Mojo 1.1.0 and 1.2.0 toolchains, for all three hosts" {
+    try expectRealTablesPinEveryHost("0.0.135");
+}
+
+test "the real tables pin mopm 0.0.138, the release that repeats a request whose TLS handshake fails, for all three hosts" {
+    try expectRealTablesPinEveryHost("0.0.138");
+}
+
+test "the real tables check fails for a release that is not pinned" {
+    try t.expectError(error.TestUnexpectedResult, expectRealTablesPinEveryHost("0.0.999"));
 }
 
 test "isTrustedRootFetchFailure is a network failure and nothing else" {
