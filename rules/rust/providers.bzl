@@ -16,6 +16,9 @@ RustToolchainInfo = provider(fields = {
     "launcher": provider_field(typing.Any),
     # bs_runner: runs a build script (decision.md 6.1).
     "bs_runner": provider_field(typing.Any),
+    # Directory: bin/cargo, the pinned cargo of the same version. A unit is compiled with `CARGO` naming it, as cargo sets it for every crate it compiles,
+    # and a test runs with it (cargo_unit.bzl); no compile reads it.
+    "cargo": provider_field(typing.Any),
     # A file that exists only if the sysroot's `rustc --version` is the pinned line.
     "version_ok": provider_field(typing.Any),
     "version": provider_field(str),

@@ -1,0 +1,11 @@
+[package]
+name = "hook"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# A program kept with the tests that run it: a `[[bin]]` whose path is under tests/ (tests/bin/example_hook.rs), which the integration test
+# tests/hook.rs runs as `CARGO_BIN_EXE_example_hook`. tests/cargo.rs runs `env!("CARGO")`, the cargo that compiled it. No dependencies.
+[[bin]]
+name = "example_hook"
+path = "tests/bin/example_hook.rs"

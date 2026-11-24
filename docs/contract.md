@@ -89,11 +89,32 @@ lines to the unit's output and succeeds when rustc's status is `1`, an error in 
 built even when the code has errors; what `buildrules rust-project check` builds),
 `:coverage` (below), `:coverage_floor` (only with a `coverage_floor.txt` beside the member's BUCK file), and one target per action in the policy. Every `:debug :release :test
 :lint :typecheck :fmt :flycheck :coverage` carries the workspace `:check` as a validation. No compile action takes a `Cargo.toml` as an
-input, so a policy edit re-runs the check and nothing else. A build script, compiled and run, has every file of its package but
-`BUCK`, `Cargo.toml` and `target/`, as under cargo, where it runs in the package directory (`rerun-if-changed` is recorded, not
-used to narrow this, so any edit in the package re-runs the script, and a script that reads its own `Cargo.toml` fails); the other
-units have `src/` (a library also `build.rs`, an integration test `tests/`, and a target whose root is outside both, that root's directory). The `cargo_unit` targets themselves are named
+input, so a policy edit re-runs the check and nothing else. The `cargo_unit` targets themselves are named
 by content id (`<crate>-<version>_<hash>`).
+
+What each unit of a member sees **[p7]** (`rules/rust/cargo.bzl`, `globs_for`). A unit's inputs are files of its package, never
+`BUCK`, `Cargo.toml`, `coverage_floor.txt` or `target/`, plus the package's `extra_srcs`:
+
+| Unit | Files of its package |
+| --- | --- |
+| the library, and its test binary | `src/**` and `build.rs` |
+| a binary (`[[bin]]`), and its test binary | `src/**` |
+| an integration test (`tests/*.rs`, `[[test]]`) | `tests/**` |
+| a target whose root is in another top directory of the package | also that directory: a `[[bin]]` at `tests/bin/example_hook.rs` has `tests/**`, a `[[test]]` at `src/check.rs` has `src/**`, a `[[bin]]` at `tools/lambda/canary/main.rs` has `tools/**` |
+| the build script, compiled and run | every file of the package, as under cargo, where it runs in the package directory (`rerun-if-changed` is recorded, not used to narrow this, so any edit in the package re-runs the script, and a script that reads its own `Cargo.toml` fails) |
+
+The run of a test reads `src/**`, `tests/**`, `build.rs`, the directories of the package's roots outside `src/` and `tests/`, the
+package's binaries and `extra_srcs`, with the package directory as its working directory. So a file a unit reads outside its own set
+builds under cargo and is missing here until the package declares it in `extra_srcs`: a library's `include_str!("../tests/fixtures/a.json")`
+(`extra_srcs = ["tests/fixtures/a.json"]`, a path in the package), an integration test's `#[path = "../src/testdir.rs"]` (`"src/testdir.rs"`), a
+file outside the package (`"//:docs/conformance.md"`, exported by reference). An entry is an input of every unit of the package and of its
+test runs.
+
+Every unit is compiled with `CARGO` set to the pinned cargo of the table's Rust version (`env!("CARGO")`), an absolute path, as cargo
+sets it for every crate it compiles; a test runs with `CARGO` set to the same cargo. Of cargo's other variables, a compile gets
+`CARGO_MANIFEST_DIR`, `CARGO_PKG_*`, `CARGO_CRATE_NAME`, `OUT_DIR` (a package with a build script) and, for an integration test,
+`CARGO_BIN_EXE_<name>` and `CARGO_TARGET_TMPDIR`. A build script's run gets the variables `rules/rust/cargo_unit.bzl`'s header lists,
+and no `CARGO`.
 
 Refused at load (the rule `fail`s with the fix): a table whose `RUSTC` is neither a version of `rules/rust/pins.bzl`
 `RUST_VERSIONS` nor one the table records as pinned by the repository (`TOOLCHAIN.origin`, section 6), or whose recorded

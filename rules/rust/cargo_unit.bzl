@@ -16,6 +16,9 @@ the per-crate cache. Nothing in a key names the workspace member being edited.
                           `-D warnings`. The output is the metadata file; a type or borrow error fails the action, a clippy
                           warning does not (a rustc lint fails it only if the unit's `rustc_flags`, the member's `[lints.rust]`, deny it).
 
+Every compile (every mode but run-custom-build) is given `CARGO`, the pinned cargo of the unit's toolchain, made absolute by the launcher, as cargo
+names itself to every crate it compiles; the run of a test is given it too. The cargo directory is an input of both.
+
 `coverage = True` (modes build and test, a unit that runs on the target: not a build script or a proc-macro) compiles the unit with
 LLVM's coverage counters, `-C instrument-coverage -Z coverage-options=branch`, a member's `:coverage` (rules/rust/coverage.bzl);
 `coverage_branches = False` leaves out the branch counters (`-C instrument-coverage` alone).
@@ -223,6 +226,10 @@ def _flags(ctx, crate_type, test):
     f += list(a.rustc_flags)
     return f
 
+def _cargo(tc):
+    """The path of the toolchain's pinned cargo binary (`<cargo>/bin/cargo`); the cargo directory is an input of the action given it."""
+    return cmd_args(tc.cargo, "/bin/cargo", delimiter = "")
+
 def _rustc(ctx, crate_type, out, test = False, lint = False, typecheck = False, diag = False):
     """Runs the pinned rustc on this unit (clippy-driver when `lint`; metadata only when `lint` or `typecheck`; a diagnostics run, `out` being the
     diagnostics file, when `diag`). Returns (closure dict, run_dep or None)."""
@@ -277,6 +284,9 @@ def _rustc(ctx, crate_type, out, test = False, lint = False, typecheck = False, 
     cmd.add(cmd_args(hidden = [tc.version_ok, _inputs(ctx), closure.values(), natives] + ([bs.dir] if bs else []) + ([tc.clippy] if lint else []) + bin_exes.values()))
     env = _pkg_env(ctx)
     env["CARGO_MANIFEST_DIR"] = _manifest_dir(ctx)
+    # `env!("CARGO")`: the pinned cargo, as cargo names itself to every crate it compiles. The launcher makes it absolute (rustc_launch.zig). The
+    # cargo directory is an input of the compile: its path holds its content hash, so a path without the input cannot be named.
+    env["CARGO"] = _cargo(tc)
     env["BUILDRULES_NONCE"] = _NONCE
     if ctx.attrs.coverage and ctx.attrs.coverage_branches:
         # `-Z coverage-options=branch` on the pinned stable rustc: the launcher passes RUSTC_BOOTSTRAP to rustc only because it is named here.
@@ -347,8 +357,9 @@ def _build_impl(ctx):
 
 # The run, shared by the welded marker and `buck2 test`: the same pinned binary, the same environment, the working directory at the package. These
 # are the options of `check marker` and `check run` (rules/check) that start it: TMPDIR is the action's scratch directory; CARGO_MANIFEST_DIR (and
-# CARGO_TARGET_TMPDIR, made, for an integration test) is made absolute against the action's directory; the binary runs in CARGO_MANIFEST_DIR.
-_START = ["--tmpdir", "--abs", "CARGO_MANIFEST_DIR", "--cwd-env", "CARGO_MANIFEST_DIR"]
+# CARGO_TARGET_TMPDIR, made, for an integration test) is made absolute against the action's directory; the binary runs in CARGO_MANIFEST_DIR;
+# CARGO, the pinned cargo, is made absolute too.
+_START = ["--tmpdir", "--abs", "CARGO_MANIFEST_DIR", "--cwd-env", "CARGO_MANIFEST_DIR", "--abs", "CARGO"]
 _START_TARGET_TMPDIR = ["--abs", "CARGO_TARGET_TMPDIR", "--mkdir-env", "CARGO_TARGET_TMPDIR"]
 
 # The build action's marker is the test's own output (stdout, then stderr): it says how many tests passed. A failed run shows that output.
@@ -360,8 +371,11 @@ def _test_impl(ctx):
     name = ctx.attrs.crate_name
     exe = ctx.actions.declare_output(ctx.label.name + "_bin/" + name)
     _closure, bins = _rustc(ctx, "bin", exe, test = True)
+    tc = ctx.attrs.toolchain[RustToolchainInfo]
     env = _pkg_env(ctx)
     env["CARGO_MANIFEST_DIR"] = _manifest_dir(ctx)
+    # cargo runs a test with CARGO set too: the pinned cargo, an input of the run and made absolute (`_START`), as the compile's `env!("CARGO")` is.
+    env["CARGO"] = _cargo(tc)
     env["BUILDRULES_NONCE"] = _NONCE
     if ctx.attrs.target_kind == "test":
         env["CARGO_TARGET_TMPDIR"] = "cargo_target_tmp/" + ctx.attrs.crate_hash
@@ -369,7 +383,7 @@ def _test_impl(ctx):
         DefaultInfo(default_output = exe),
         TestUnitInfo(
             exe = exe,
-            hidden = _inputs(ctx) + list(ctx.attrs.run_data) + bins,
+            hidden = _inputs(ctx) + list(ctx.attrs.run_data) + bins + [tc.cargo],
             bins = list(bins),
             env = env,
             start = _START + (_START_TARGET_TMPDIR if "CARGO_TARGET_TMPDIR" in env else []),

@@ -198,18 +198,28 @@ def _unit_args(uid, u, row, kind_globs):
 # cargo's own output directory.
 _NOT_SOURCES = ["BUCK", "Cargo.toml", "coverage_floor.txt", "target/**"]
 
-def _globs_for(u):
+def globs_for(u):
+    """The globs, relative to the package directory, of the files table unit `u` of a member compiles from (its `srcs`; `_NOT_SOURCES` are left out).
+
+    A build script, compiled and run, has the whole package (`**`). Any other unit has the directory of its kind: an integration test `tests/**`,
+    every other target `src/**` (a library also `build.rs`). A target whose root is in another top directory of the package also has that
+    directory: a `[[bin]]` at `tests/bin/example_hook.rs` has `tests/**`, a `[[test]]` at `src/check.rs` has `src/**`, a `[[bin]]` at
+    `tools/lambda/canary/main.rs` has `tools/**`. A root at the top of the package (`path = "main.rs"`) adds nothing.
+    """
     kind = u["target_kind"][0]
 
     # A build script, compiled and run, has the whole package, as under cargo: it reads what it compiles from (`proto/`) and its `#[path]`
     # modules (`src/names.rs`) from there. A cargo `rerun-if-changed` would narrow that; it is recorded, not used (cargo_unit.bzl).
-    g = {"test": ["tests/**"], "custom-build": ["**"]}.get(kind, ["src/**"])
+    if kind == "custom-build":
+        return ["**"]
+    g = ["tests/**"] if kind == "test" else ["src/**"]
     if kind == "lib":
         g = g + ["build.rs"]
-    # A [[bin]] or [[test]] whose `path` is outside src/ and tests/ (tools/lambda/canary/main.rs): its directory is a source too.
-    rootdir = u["crate_root"].rsplit("/", 1)[0] if "/" in u["crate_root"] else ""
-    if kind != "custom-build" and rootdir and not (rootdir == "src" or rootdir.startswith("src/") or rootdir == "tests" or rootdir.startswith("tests/")):
-        g = g + [rootdir.split("/")[0] + "/**"]
+    root = u["crate_root"]
+    if "/" in root:
+        top = root.split("/", 1)[0] + "/**"
+        if top not in g:
+            g = g + [top]
     return g
 
 def _outside_globs(mine):
@@ -219,7 +229,7 @@ def _outside_globs(mine):
         if u["target_kind"] == ["custom-build"]:
             # A build script's whole package is its own input; a test run reads what its targets read.
             continue
-        for g in _globs_for(u):
+        for g in globs_for(u):
             if not (g.startswith("src/") or g.startswith("tests/") or g == "build.rs") and g not in out:
                 out.append(g)
     return out
@@ -318,7 +328,7 @@ def _coverage(name, row, mine, tests, units, ws, third_party, here, table, rustc
             u = mine[uid]
             if not ((instrumented(u) and uid in linked) or uid in tests):
                 continue
-            kw = _unit_args(uid, u, row, _globs_for(u))
+            kw = _unit_args(uid, u, row, globs_for(u))
             if extra_srcs:
                 kw["extra_srcs"] = list(extra_srcs)
             if u["mode"] == "test":
@@ -443,7 +453,7 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
     # 1. the member's units, one cargo_unit each (named by content id, as in third_party)
     for uid in sorted(mine):
         u = mine[uid]
-        kw = _unit_args(uid, u, row, _globs_for(u))
+        kw = _unit_args(uid, u, row, globs_for(u))
         if extra_srcs:
             kw["extra_srcs"] = list(extra_srcs)
         if u["mode"] == "test":
@@ -485,7 +495,7 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
     for mode in ["lint", "typecheck"]:
         for uid in lint_ids:
             u = mine[uid]
-            kw = _unit_args(uid, u, row, _globs_for(u))
+            kw = _unit_args(uid, u, row, globs_for(u))
             if extra_srcs:
                 kw["extra_srcs"] = list(extra_srcs)
             kw["mode"] = mode
