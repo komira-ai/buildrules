@@ -19,14 +19,17 @@ wrong; for `run` and `marker` the program's own status (127 not there, 126 not r
 ## Starting a program (`run`, `marker`, `expect`)
 
 The environment is built in this order: the process's own (nothing with `--clear-env`); each `--env NAME=VALUE`; each `--dir NAME=SUB` (the
-absolute path of SUB in the scratch directory, made); `--tmpdir` (TMPDIR is `$BUCK_SCRATCH_PATH` made absolute); `--ld-library-path DIR`
+absolute path of SUB in the scratch directory, made); `--tmpdir-link-in DIR` (TMPDIR is `DIR/br_tmp.<16 random hex>`, a fresh link to a fresh,
+empty directory of that name, readable by its owner only, in `$BUCK_SCRATCH_PATH` (made absolute), else `$TMPDIR`, else `/tmp`; both are removed after
+the run. With DIR `/tmp`, what a cargo test is given, a Unix socket path below TMPDIR fits its 107 bytes, and what the test writes lands in the scratch path,
+which has the room and is not `noexec`); `--ld-library-path DIR`
 (replaces, made absolute); each `--abs NAME` and `--abs-prefix PREFIX` (a relative value becomes absolute); each `--mkdir-env NAME` (the
 directory it names is made). `--scratch NAME` makes a private directory (`$BUCK_SCRATCH_PATH/NAME`, or `.buildrules_NAME` without one), emptied
 before the run and removed after. The program runs in `--cwd`, or the directory `--cwd-env NAME` names, or the working directory. It is never
 looked for in a `PATH`: its name must contain a `/`, and a relative one is made absolute first.
 
 `--private-scratch` makes a directory of the run's own, `buildrules_test.<random>` in `$BUCK_SCRATCH_PATH` (made absolute), else `$TMPDIR`, else `/tmp`
-(install_root.zig), and removes it after the run. TMPDIR and TEST_TMPDIR are an empty directory in it, HOME another; they are set after `--tmpdir` and replace
+(install_root.zig), and removes it after the run. TMPDIR and TEST_TMPDIR are an empty directory in it, HOME another; they are set after `--tmpdir-link-in` and replace
 what `--env` gave. It is how a Mojo test run is given its scratch (docs/contract.md, section 12.9), so two tests never share one. `--installed` (it needs
 `--private-scratch`) runs the program from a fresh root in that directory: the directory that holds the program is copied to `<root>/bin` (the program is
 `<root>/bin/<name>`, and its `lib/` is beside it), `--install-share DIR` copies a tree to `<root>/share` (which exists, empty, without it), `--share-env NAME` is
