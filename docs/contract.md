@@ -208,8 +208,24 @@ has the recorded sha256 and size, `sync` refuses it by name and leaves the file 
 out why). The generated `third_party/buildrules/BUCK` has one `crate_src` per repository and commit (`git-<owner>_<repository>-<rev>`,
 with `top`, the archive's one directory), and each git unit names it as `src` and its `subdir` as `src_dir`; the whole unpacked
 repository is the unit's input, as cargo's checkout is, so a build script or `include_str!` that reads a file of the repository
-outside the package works. `sync --check` reads the record and downloads nothing. `cargo_sync` (a sync as a farm action) cannot
-resolve a git source: cargo clones it, and a farm action has no network.
+outside the package works. `sync --check` reads the record and downloads nothing.
+
+**Sync without the network.** `sync --sources DIR` downloads nothing (`cli/src/sources.zig`): `DIR` holds every crates.io
+package of `Cargo.lock` as `<name>-<version>.crate`, which must have the sha256 `Cargo.lock` records, and every git commit as
+GitHub's archive `<owner>_<repository>_<commit>.tar.gz`, which must have the sha256 and size of its line in `git_archives.tsv`;
+a missing file or other bytes are refused with the package's name, before cargo runs. Each crate is unpacked to
+`buck-out/buildrules/vendor/registry/src/crates-io/<name>-<version>/` and each archive to cargo's checkout directory, and cargo's
+config (`buck-out/buildrules/cargo-home/config.toml`: `net.offline`, and `[source]` replacement of crates.io and of each git
+source by a directory source) points cargo at them, so every id it prints is crates.io's or the git source's and the files
+written are the ones a sync with the network writes. A git package is a directory of symbolic links to its files in the
+checkout (a directory source holds one package per directory) beside a link to the repository's root `Cargo.toml`, from which a
+member inherits workspace keys; the generator follows the links to the checkout. Only the packages `Cargo.lock` names can be
+resolved: a crate it does not name is refused by cargo, and a git commit without a line in the record by `sync`. A git package
+that only another platform uses has no line (no unit comes from it), so a workspace with one cannot be synced this way. A later `sync`
+without `--sources` removes the config. `sync --list-sources FILE` reads `Cargo.lock` and the record and writes the files
+`--sources` needs as JSON (`{"sources": [{"file", "url", "sha256", "size"}]}`, `size` null for a crate), refusing by name a package
+that cannot be fetched by hash; it runs nothing. `cargo_sync` (`rules/rust/sync.bzl`) is the two as farm actions: the list, a
+download of each file by its hash, then the sync in a copy of the workspace, whose output is every file the sync wrote or changed.
 
 A reader refuses a table whose `SCHEMA` is not the one it understands (`2`). `sync` first lets cargo resolve: `cargo fetch` creates
 `Cargo.lock` if there is none and changes it only as far as the manifests require (a new dependency adds its crates; nothing else is
@@ -411,7 +427,7 @@ limit (section 12.8). It is not `124`, which is a killed compiler deadlock that 
 | `cargo new PATH [--cargo C] [--lib]` | `cargo new --vcs none`, then adopt | the pinned cargo, if `--cargo` |
 | `cargo init [PATH] [--cargo C] [--lib]` | same for an existing directory | same |
 | `cargo adopt [PATH...]` | metadata table + BUCK + `members` for packages that already build with cargo; no PATH = every member | nothing |
-| `sync [--check] [--cargo C --rustc R --pins F] [--buck2 B]` | section 3 rows marked `sync`; with no tool flags builds `toolchains//:cargo_<v>`, `:sysroot_<v>` (the version of `rust-toolchain.toml`) and `buildrules//rules/rust:pins.bzl` through `buck2`; the generator is part of the program | cargo |
+| `sync [--check] [--cargo C --rustc R --pins F] [--buck2 B] [--sources D \| --list-sources F]` | section 3 rows marked `sync`; with no tool flags builds `toolchains//:cargo_<v>`, `:sysroot_<v>` (the version of `rust-toolchain.toml`) and `buildrules//rules/rust:pins.bzl` through `buck2`; the generator is part of the program; `--sources` and `--list-sources`: "Sync without the network", section 4 | cargo (nothing with `--list-sources`) |
 | `check [--dir D]` | read-only comparison, below | nothing |
 | `rust-project develop [--dir D] [--buck2 B] [--inputs I] [--project F]` | builds `//:rust_analyzer_inputs` into an emptied `buck-out/buildrules/ra` (`buck2 build --out`; with `--inputs I`, reads `I` and builds nothing) and writes `rust-project.json` (or `F`), below | `buck2` |
 | `rust-project check [--dir D] [--buck2 B] TARGET` | builds `TARGET` (a member's `:flycheck`) into an emptied `buck-out/buildrules/flycheck` and prints its diagnostics | `buck2` |

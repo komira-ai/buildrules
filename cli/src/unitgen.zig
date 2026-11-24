@@ -179,7 +179,13 @@ const Gen = struct {
     /// A git package: `git+<url>?<ref>#<name>@<version>` (or `#<version>` when the URL's last segment is the name), its target
     /// under cargo's checkout `<CARGO_HOME>/git/checkouts/<dir>/<short rev>/`. The package's directory is the nearest one above
     /// the target whose Cargo.toml names the package (a repository may hold a workspace of several).
-    fn gitPkg(g: *Gen, pid: []const u8, src: []const u8) Error!Pkg {
+    fn gitPkg(g: *Gen, pid: []const u8, src_path: []const u8) Error!Pkg {
+        // A sync without the network (sources.zig) gives cargo each package as a directory of links into the checkout: the
+        // target is where its link leads.
+        const src = if (std.mem.indexOf(u8, src_path, "/git/checkouts/") != null) src_path else std.fs.cwd().realpathAlloc(g.a, src_path) catch |e| switch (e) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => src_path,
+        };
         const hash = std.mem.indexOfScalar(u8, pid, '#') orelse return die(g.d, "{s}: no #version in the package id", .{pid});
         const id = pid[0..hash];
         const frag = pid[hash + 1 ..];

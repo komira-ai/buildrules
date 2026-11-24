@@ -1,17 +1,17 @@
-//! sync_stage: run `buildrules sync` on the farm, in a copy of a workspace, against a local copy of the registry.
+//! sync_stage: run `buildrules sync` on the farm, in a copy of a workspace, against the sources Cargo.lock pins, fetched by hash.
 //!
-//! usage: sync_stage --src DIR --out DIR --buildrules EXE --cargo DIR --sysroot DIR --pins FILE [--registry DIR] [--check]
+//! usage: sync_stage --src DIR --out DIR --buildrules EXE --cargo DIR --sysroot DIR --pins FILE [--sources DIR] [--check]
 //!
-//! A farm action has no network, so cargo cannot resolve against crates.io there. A cargo "local registry" is a directory of
-//! `index/<aa>/<bb>/<name>` files (the lines crates.io's index holds) and the `.crate` files; cargo reads it in place of crates.io
-//! (`[source.crates-io] replace-with`) and every id it prints is still crates.io's. This tool:
-//!   1. copies `--src` (a workspace: Cargo.toml, rust-toolchain.toml, the members, optionally Cargo.lock and the generated files)
-//!      into `--out`, which is the action's output directory, and writes a `.buckconfig` there if there is none;
-//!   2. with `--registry`: copies it to `<out>/registry`, writes `<out>/.cargo/config.toml` pointing cargo at it, and puts its crates
-//!      where `buildrules sync` looks for the sizes of the registry crates (cargo's own cache), so nothing is downloaded;
-//!   3. runs `buildrules sync --dir <out> [--check]` with the pinned cargo, rustc and Rust version table.
-//! With `--check` nothing under `<out>` changes but buck-out/: sync exits 1 unless the generated files in the copy are what it would write.
-//! Without it, `<out>` holds the files a sync writes, to be copied into the repository by whoever ran the action.
+//! A farm action has no network. rules/rust/sync.bzl downloads, before this action, every file `buildrules sync --list-sources` names
+//! (each crates.io package of Cargo.lock by the sha256 Cargo.lock records, each git commit's archive by the record's sha256 and size) into
+//! `--sources`, and `buildrules sync --sources` reads them in place of the network (cli/src/sources.zig). This tool:
+//!   1. copies `--src` (a workspace: Cargo.toml, rust-toolchain.toml, the members, Cargo.lock and the generated files) into a work directory
+//!      in the action's scratch directory (`$BUCK_SCRATCH_PATH`, which buck2 discards), and writes a `.buckconfig` there if there is none;
+//!   2. runs `buildrules sync --dir <work> [--sources DIR] [--check]` with the pinned cargo, rustc and Rust version table;
+//!   3. without `--check`, copies into `--out` every file sync wrote: each file of the work directory outside buck-out/ that `--src` does
+//!      not have or has with other bytes (not the `.buckconfig` of step 1). So `--out` holds exactly what the sync changed, and
+//!      `buck2 build //:sync --out .` puts it into the repository; a file the sync removed is named on standard error, to be deleted by hand.
+//!      With `--check`, `--out` is empty and the exit code is sync's: 1 unless the generated files of `--src` are what a sync writes.
 
 const std = @import("std");
 
@@ -22,7 +22,7 @@ pub const Args = struct {
     cargo: []const u8 = "",
     sysroot: []const u8 = "",
     pins: []const u8 = "",
-    registry: ?[]const u8 = null,
+    sources: ?[]const u8 = null,
     check: bool = false,
 };
 
@@ -38,7 +38,7 @@ pub fn parseArgs(argv: []const []const u8) !Args {
         if (i + 1 >= argv.len) return error.MissingValue;
         i += 1;
         const v = argv[i];
-        if (std.mem.eql(u8, k, "--src")) a.src = v else if (std.mem.eql(u8, k, "--out")) a.out = v else if (std.mem.eql(u8, k, "--buildrules")) a.buildrules = v else if (std.mem.eql(u8, k, "--cargo")) a.cargo = v else if (std.mem.eql(u8, k, "--sysroot")) a.sysroot = v else if (std.mem.eql(u8, k, "--pins")) a.pins = v else if (std.mem.eql(u8, k, "--registry")) a.registry = v else return error.UnknownFlag;
+        if (std.mem.eql(u8, k, "--src")) a.src = v else if (std.mem.eql(u8, k, "--out")) a.out = v else if (std.mem.eql(u8, k, "--buildrules")) a.buildrules = v else if (std.mem.eql(u8, k, "--cargo")) a.cargo = v else if (std.mem.eql(u8, k, "--sysroot")) a.sysroot = v else if (std.mem.eql(u8, k, "--pins")) a.pins = v else if (std.mem.eql(u8, k, "--sources")) a.sources = v else return error.UnknownFlag;
     }
     if (a.src.len == 0 or a.out.len == 0 or a.buildrules.len == 0 or a.cargo.len == 0 or a.sysroot.len == 0 or a.pins.len == 0) return error.MissingFlag;
     return a;
@@ -60,46 +60,69 @@ pub fn copyTree(a: std.mem.Allocator, from: std.fs.Dir, to: std.fs.Dir) !void {
     }
 }
 
-pub const config_toml =
-    "[source.crates-io]\n" ++
-    "replace-with = \"local\"\n\n" ++
-    "[source.local]\n" ++
-    "local-registry = \"registry\"\n";
-
-/// Where `buildrules sync` looks for the `.crate` files before it downloads any (`<cargo home>/registry/cache/<index>/`).
-pub const cache_dir = "buck-out/buildrules/cargo-home/registry/cache/local";
-
-/// Steps 1 and 2: the staged workspace.
-pub fn stage(a: std.mem.Allocator, args: Args) !void {
-    var src = try std.fs.cwd().openDir(args.src, .{ .iterate = true });
-    defer src.close();
-    try std.fs.cwd().makePath(args.out);
-    var out = try std.fs.cwd().openDir(args.out, .{});
-    defer out.close();
-    try copyTree(a, src, out);
-    out.access(".buckconfig", .{}) catch try out.writeFile(.{ .sub_path = ".buckconfig", .data = "[cells]\n" });
-    if (args.registry) |r| {
-        var reg = try std.fs.cwd().openDir(r, .{ .iterate = true });
-        defer reg.close();
-        try out.makePath("registry");
-        var dst = try out.openDir("registry", .{});
-        defer dst.close();
-        try copyTree(a, reg, dst);
-        try out.makePath(".cargo");
-        try out.writeFile(.{ .sub_path = ".cargo/config.toml", .data = config_toml });
-        try out.makePath(cache_dir);
-        var cache = try out.openDir(cache_dir, .{});
-        defer cache.close();
-        var it = reg.iterate();
-        while (try it.next()) |e| {
-            if (e.kind != .file and e.kind != .sym_link) continue;
-            if (!std.mem.endsWith(u8, e.name, ".crate")) continue;
-            try reg.copyFile(e.name, cache, e.name, .{});
-        }
-    }
+/// Step 1: the workspace copied into `work` (created). Whether a `.buckconfig` was added.
+pub fn stage(a: std.mem.Allocator, src: std.fs.Dir, work: std.fs.Dir) !bool {
+    try copyTree(a, src, work);
+    work.access(".buckconfig", .{}) catch {
+        try work.writeFile(.{ .sub_path = ".buckconfig", .data = "[cells]\n" });
+        return true;
+    };
+    return false;
 }
 
-fn real(a: std.mem.Allocator, p: []const u8) ![]u8 {
+/// The command line of step 2; every path absolute.
+pub fn syncArgv(a: std.mem.Allocator, args: Args, work: []const u8, real: *const fn (std.mem.Allocator, []const u8) anyerror![]u8) ![]const []const u8 {
+    var cmd = std.ArrayList([]const u8).empty;
+    try cmd.appendSlice(a, &.{
+        try real(a, args.buildrules), "sync",
+        "--dir",                      work,
+        "--cargo",                    try std.fmt.allocPrint(a, "{s}/bin/cargo", .{try real(a, args.cargo)}),
+        "--rustc",                    try std.fmt.allocPrint(a, "{s}/bin/rustc", .{try real(a, args.sysroot)}),
+        "--pins",                     try real(a, args.pins),
+    });
+    if (args.sources) |s| try cmd.appendSlice(a, &.{ "--sources", try real(a, s) });
+    if (args.check) try cmd.append(a, "--check");
+    return cmd.items;
+}
+
+/// Whether the file at `path` is one a sync may write: anything outside buck-out/ (its scratch).
+fn generated(path: []const u8) bool {
+    return !std.mem.startsWith(u8, path, "buck-out/");
+}
+
+/// Step 3: copies into `out` each file of `work` (outside buck-out/, and not the `.buckconfig` stage added) that `src` lacks or holds with
+/// other bytes. Returns the files of `src` that `work` no longer has.
+pub fn collect(a: std.mem.Allocator, src: std.fs.Dir, work: std.fs.Dir, out: std.fs.Dir, added_buckconfig: bool) ![]const []const u8 {
+    var w = try work.walk(a);
+    defer w.deinit();
+    while (try w.next()) |e| {
+        if (e.kind != .file or !generated(e.path)) continue;
+        if (added_buckconfig and std.mem.eql(u8, e.path, ".buckconfig")) continue;
+        const mine = try work.readFileAlloc(a, e.path, 1 << 30);
+        const before = src.readFileAlloc(a, e.path, 1 << 30) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        if (before != null and std.mem.eql(u8, before.?, mine)) continue;
+        if (std.fs.path.dirname(e.path)) |d| try out.makePath(d);
+        try out.writeFile(.{ .sub_path = e.path, .data = mine });
+    }
+    var removed = std.ArrayList([]const u8).empty;
+    var s = try src.walk(a);
+    defer s.deinit();
+    while (try s.next()) |e| {
+        if (e.kind == .directory or !generated(e.path)) continue;
+        work.access(e.path, .{}) catch try removed.append(a, try a.dupe(u8, e.path));
+    }
+    std.mem.sort([]const u8, removed.items, {}, lessPath);
+    return removed.items;
+}
+
+fn lessPath(_: void, x: []const u8, y: []const u8) bool {
+    return std.mem.lessThan(u8, x, y);
+}
+
+fn realPath(a: std.mem.Allocator, p: []const u8) anyerror![]u8 {
     return std.fs.cwd().realpathAlloc(a, p);
 }
 
@@ -109,20 +132,27 @@ pub fn main() !u8 {
     const a = arena.allocator();
     const argv = try std.process.argsAlloc(a);
     const args = parseArgs(argv[1..]) catch |e| {
-        std.debug.print("sync_stage: {s}\nusage: sync_stage --src DIR --out DIR --buildrules EXE --cargo DIR --sysroot DIR --pins FILE [--registry DIR] [--check]\n", .{@errorName(e)});
+        std.debug.print("sync_stage: {s}\nusage: sync_stage --src DIR --out DIR --buildrules EXE --cargo DIR --sysroot DIR --pins FILE [--sources DIR] [--check]\n", .{@errorName(e)});
         return 2;
     };
-    try stage(a, args);
-    const out = try real(a, args.out);
-    const cargo = try std.fmt.allocPrint(a, "{s}/bin/cargo", .{try real(a, args.cargo)});
-    const rustc = try std.fmt.allocPrint(a, "{s}/bin/rustc", .{try real(a, args.sysroot)});
-    var cmd = std.ArrayList([]const u8).empty;
-    try cmd.appendSlice(a, &.{ try real(a, args.buildrules), "sync", "--dir", out, "--cargo", cargo, "--rustc", rustc, "--pins", try real(a, args.pins) });
-    if (args.check) try cmd.append(a, "--check");
-    var child = std.process.Child.init(cmd.items, a);
-    const term = try child.spawnAndWait();
-    return switch (term) {
+    const scratch = std.process.getEnvVarOwned(a, "BUCK_SCRATCH_PATH") catch ".br_scratch";
+    const work_path = try std.fs.path.join(a, &.{ scratch, "workspace" });
+    try std.fs.cwd().deleteTree(work_path);
+    try std.fs.cwd().makePath(work_path);
+    var work = try std.fs.cwd().openDir(work_path, .{ .iterate = true });
+    defer work.close();
+    var src = try std.fs.cwd().openDir(args.src, .{ .iterate = true });
+    defer src.close();
+    const added = try stage(a, src, work);
+    try std.fs.cwd().makePath(args.out);
+    var child = std.process.Child.init(try syncArgv(a, args, try realPath(a, work_path), &realPath), a);
+    const code: u8 = switch (try child.spawnAndWait()) {
         .Exited => |c| c,
         else => 1,
     };
+    if (code != 0 or args.check) return code;
+    var out = try std.fs.cwd().openDir(args.out, .{});
+    defer out.close();
+    for (try collect(a, src, work, out, added)) |p| std.debug.print("sync_stage: the sync removed {s}: delete it from the repository\n", .{p});
+    return 0;
 }

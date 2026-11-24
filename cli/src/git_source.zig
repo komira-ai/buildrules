@@ -107,6 +107,12 @@ pub fn archiveUrl(a: std.mem.Allocator, g: Git) error{OutOfMemory}![]const u8 {
     return std.fmt.allocPrint(a, "https://{s}/archive/{s}.tar.gz", .{ g.repo, g.rev });
 }
 
+/// The archive's file name in the directory of `buildrules sync --sources` (sources.zig): `<owner>_<repository>_<commit>.tar.gz`.
+/// An owner has no `_`, so the first one ends it and two repositories never share a name.
+pub fn archiveFile(a: std.mem.Allocator, g: Git) error{OutOfMemory}![]const u8 {
+    return std.fmt.allocPrint(a, "{s}_{s}_{s}.tar.gz", .{ g.owner, g.name, g.rev });
+}
+
 /// `repo@rev`: one archive, shared by every crate of the repository at that commit.
 pub fn key(a: std.mem.Allocator, repo: []const u8, rev: []const u8) error{OutOfMemory}![]const u8 {
     return std.fmt.allocPrint(a, "{s}@{s}", .{ repo, rev });

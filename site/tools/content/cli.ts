@@ -46,7 +46,7 @@ export const cli: Page = {
     limit('All three refuse, with exit 1 and nothing written, unless the root `Cargo.toml` is a virtual workspace. `cargo init PATH` and `cargo adopt .` refuse the workspace root itself.'),
     p('The `BUCK` file is written once and never rewritten; other rules in it are kept.'),
     h2('sync'),
-    code('buildrules sync [--dir DIR] [--check] [--cargo CARGO --rustc RUSTC --pins FILE] [--buck2 BUCK2]', 'usage'),
+    code('buildrules sync [--dir DIR] [--check] [--cargo CARGO --rustc RUSTC --pins FILE]\n                [--buck2 BUCK2] [--sources DIR | --list-sources FILE]', 'usage'),
     p('Regenerates the table and the files built from it. See [the sync and check model](/concepts/#the-sync-and-check-model).'),
     table(
       ['Flag', 'Meaning'],
@@ -54,6 +54,8 @@ export const cli: Page = {
       ['`--check`', 'write nothing outside `buck-out/`; exit 1 unless every generated file is what a sync would write now'],
       ['`--cargo`, `--rustc`, `--pins`', 'the pinned Cargo and rustc binaries and the Rust version table (`rules/rust/pins.bzl`). Any that is absent is built from the buildrules cell with `buck2 build`.'],
       ['`--buck2 BUCK2`', 'the `buck2` binary used for that; default `buck2`'],
+      ['`--sources DIR`', 'download nothing: `DIR` holds every crates.io package of `Cargo.lock` as `<name>-<version>.crate` and every git commit as GitHub\'s archive `<owner>_<repository>_<commit>.tar.gz`, each with the sha256 `Cargo.lock` or `third_party/buildrules/git_archives.tsv` records; Cargo reads them in place of the network, so it resolves only the packages `Cargo.lock` names'],
+      ['`--list-sources FILE`', 'write the files `--sources` needs to `FILE` (JSON: file, url, sha256, size) and exit; reads `Cargo.lock` and the git record, runs nothing'],
     ),
     p('`sync` fails without a valid `rust-toolchain.toml`. Cargo resolves first: it creates `Cargo.lock` if there is none and changes it only as far as the manifests require. It then prints each member\'s unit graph for the build, test and release modes (nothing compiles), and the generator, which is part of the program, writes the files. Nothing needs an interpreter. The first sync needs the network to download crate sources and writes Cargo\'s cache under `buck-out/buildrules/`.'),
     p('Files written: `buildrules.lock.bzl`, `buildrules.bzl` (only if different), `third_party/buildrules/BUCK`, `third_party/buildrules/crate_sizes.tsv`, and the root `BUCK` only if it does not exist.'),

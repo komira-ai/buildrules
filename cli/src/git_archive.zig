@@ -85,6 +85,14 @@ pub fn parse(a: std.mem.Allocator, d: *Diag, text: []const u8) Error!Record {
 pub const Fetch = *const fn (a: std.mem.Allocator, url: []const u8) anyerror![]const u8;
 pub var fetcher: Fetch = &httpBody;
 
+/// Set by `buildrules sync --sources DIR`: the archives are read from DIR (named by git_source.archiveFile), never downloaded.
+pub var local_dir: ?[]const u8 = null;
+
+fn archiveBytes(a: std.mem.Allocator, g: git_source.Git, url: []const u8) anyerror![]const u8 {
+    const dir = local_dir orelse return fetcher(a, url);
+    return std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ dir, try git_source.archiveFile(a, g) }), max_bytes);
+}
+
 fn httpBody(a: std.mem.Allocator, url: []const u8) anyerror![]const u8 {
     var http = fetch.HttpFetcher{ .allocator = a };
     return bodyOf(a, http.fetcher(), url, max_bytes);
@@ -117,17 +125,33 @@ fn cargoOwn(rel: []const u8) bool {
     return std.mem.eql(u8, rel, ".cargo-ok") or std.mem.eql(u8, rel, ".git") or std.mem.startsWith(u8, rel, ".git/");
 }
 
+/// The bytes of the gzip stream `bytes`, inflated whole. The decompressor runs in its direct mode (no window of its own) into a
+/// writer that grows: its buffered mode reaches an unreachable rebase in the 0.15 standard library once a back-reference crosses
+/// the end of its window, which a real archive of some size does.
+pub fn gunzip(a: std.mem.Allocator, bytes: []const u8) error{ OutOfMemory, ReadFailed }![]const u8 {
+    var in: std.Io.Reader = .fixed(bytes);
+    var gz = std.compress.flate.Decompress.init(&in, .gzip, &.{});
+    var plain = std.Io.Writer.Allocating.init(a);
+    _ = gz.reader.streamRemaining(&plain.writer) catch |e| switch (e) {
+        error.WriteFailed => return error.OutOfMemory,
+        error.ReadFailed => return error.ReadFailed,
+    };
+    return plain.written();
+}
+
 /// Reads the gzip tar `bytes` and compares every file and symbolic link in it with the directory `checkout`, and every file and
 /// link of the checkout with it. Directories are not compared (git records none), nor file modes.
 fn compare(a: std.mem.Allocator, d: *Diag, what: []const u8, bytes: []const u8, checkout: []const u8) Error!Found {
     var dir = std.fs.cwd().openDir(checkout, .{ .iterate = true }) catch |e| return die(d, "{s}: cannot open cargo's checkout {s}: {s}", .{ what, checkout, @errorName(e) });
     defer dir.close();
-    var in: std.Io.Reader = .fixed(bytes);
-    const window = try a.alloc(u8, std.compress.flate.max_window_len);
-    var gz = std.compress.flate.Decompress.init(&in, .gzip, window);
+    const plain = gunzip(a, bytes) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return die(d, "{s}: the archive is not a gzip tar ({s})", .{ what, @errorName(e) }),
+    };
+    var in: std.Io.Reader = .fixed(plain);
     const name_buf = try a.alloc(u8, std.fs.max_path_bytes);
     const link_buf = try a.alloc(u8, std.fs.max_path_bytes);
-    var it = std.tar.Iterator.init(&gz.reader, .{ .file_name_buffer = name_buf, .link_name_buffer = link_buf });
+    var it = std.tar.Iterator.init(&in, .{ .file_name_buffer = name_buf, .link_name_buffer = link_buf });
     var found = Found{ .top = "", .diffs = .empty, .more = 0 };
     var seen = std.StringHashMap(void).init(a);
     var have_top = false;
@@ -241,7 +265,7 @@ pub fn recordFile(a: std.mem.Allocator, d: *Diag, checkouts: *const std.StringAr
         const g = c.git;
         const what = try std.fmt.allocPrint(a, "{s} at {s}", .{ g.repo, g.rev });
         const url = try git_source.archiveUrl(a, g);
-        const bytes = fetcher(a, url) catch |e| return die(d, "{s}: cannot download {s}: {s}", .{ what, url, @errorName(e) });
+        const bytes = archiveBytes(a, g, url) catch |e| return die(d, "{s}: cannot download {s}: {s}", .{ what, url, @errorName(e) });
         var dg: [32]u8 = undefined;
         std.crypto.hash.sha2.Sha256.hash(bytes, &dg, .{});
         const sha = try a.dupe(u8, &std.fmt.bytesToHex(dg, .lower));
