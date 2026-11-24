@@ -35,7 +35,8 @@ test "parse: every option of `run` lands in its field, and what follows `--` is 
     defer c.deinit();
     const s = try parseOk(&c, .run, &.{
         "--refuse",       "no such tool",
-        "--clear-env",    "--tmpdir",
+        "--clear-env",    "--tmpdir-link-in",
+        "tdir",
         "--scratch",      "scr",
         "--ld-library-path", "lib",
         "--macos-library-dirs", "/opt/a:/opt/b",
@@ -53,7 +54,8 @@ test "parse: every option of `run` lands in its field, and what follows `--` is 
         "--out",          "x",
     });
     try t.expectEqualStrings("no such tool", s.refuse.?);
-    try t.expect(s.clear_env and s.tmpdir);
+    try t.expect(s.clear_env);
+    try t.expectEqualStrings("tdir", s.tmpdir_link_in.?);
     try t.expectEqualStrings("scr", s.scratch.?);
     try t.expectEqualStrings("lib", s.ld_library_path.?);
     try t.expectEqualStrings("/opt/a:/opt/b", s.macos_library_dirs.?);
@@ -283,24 +285,109 @@ test "--scratch that cannot be made, and a --dir that cannot be made, are refuse
     try t.expect(!c.exists(".buildrules_scr"));
 }
 
-// ---- --tmpdir ---------------------------------------------------------------------------------------------------
+// ---- --tmpdir-link-in ------------------------------------------------------------------------------------------------
 
-test "--tmpdir: TMPDIR is the action's scratch path made absolute; with none, TMPDIR is kept, and /tmp when it is empty or not set" {
+/// The directory `name` of the case has nothing in it: what `ls` would print is empty.
+fn isEmpty(c: *kit.Case, name: []const u8) !bool {
+    var d = try c.tmp.dir.openDir(name, .{ .iterate = true });
+    defer d.close();
+    var it = d.iterate();
+    return (try it.next()) == null;
+}
+
+/// TMPDIR as `before -- toolbox printenv TMPDIR` sees it is `<parent>/br_tmp.<16 lowercase hexadecimal digits>`, with `parent` the real path.
+fn expectFreshTmp(v: []const u8, parent: []const u8) !void {
+    const name = std.fs.path.basename(v);
+    try t.expectEqualStrings(parent, std.fs.path.dirname(v).?);
+    try t.expect(std.mem.startsWith(u8, name, "br_tmp."));
+    try t.expectEqual(@as(usize, "br_tmp.".len + 16), name.len);
+    for (name["br_tmp.".len..]) |ch| try t.expect((ch >= '0' and ch <= '9') or (ch >= 'a' and ch <= 'f'));
+}
+
+/// The one entry of the directory `name` of the case is `only`.
+fn expectOnly(c: *kit.Case, name: []const u8, only: []const u8) !void {
+    var d = try c.tmp.dir.openDir(name, .{ .iterate = true });
+    defer d.close();
+    var it = d.iterate();
+    try t.expectEqualStrings(only, (try it.next()).?.name);
+    try t.expect((try it.next()) == null);
+}
+
+test "--tmpdir-link-in: TMPDIR is a fresh link in DIR to a directory of the run's own in the action's scratch path; each run its own; both are gone after the run" {
     var c = try kit.Case.init();
     defer c.deinit();
-    const here = try c.path(".");
-    c.environ = &.{ "BUCK_SCRATCH_PATH=rel/scratch", "TMPDIR=/old" };
-    try t.expectEqualStrings(try std.fmt.allocPrint(c.alloc(), "{s}/rel/scratch", .{here}), (try kit.valueOf(&c, &.{"--tmpdir"}, "TMPDIR")).?);
-    c.environ = &.{ "BUCK_SCRATCH_PATH=/abs/scratch", "TMPDIR=/old" };
-    try t.expectEqualStrings("/abs/scratch", (try kit.valueOf(&c, &.{"--tmpdir"}, "TMPDIR")).?);
-    c.environ = &.{"TMPDIR=/kept"};
-    try t.expectEqualStrings("/kept", (try kit.valueOf(&c, &.{"--tmpdir"}, "TMPDIR")).?);
-    c.environ = &.{"TMPDIR="};
-    try t.expectEqualStrings("/tmp", (try kit.valueOf(&c, &.{"--tmpdir"}, "TMPDIR")).?);
-    c.environ = &.{};
-    try t.expectEqualStrings("/tmp", (try kit.valueOf(&c, &.{"--tmpdir"}, "TMPDIR")).?);
-    // without the option nothing is set
-    try t.expect((try kit.valueOf(&c, &.{}, "TMPDIR")) == null);
+    c.environ = &.{ "BUCK_SCRATCH_PATH=scratch", "TMPDIR=/old" };
+    // A relative DIR that is not there: made, and made absolute against the working directory.
+    const first = (try kit.valueOf(&c, &.{ "--tmpdir-link-in", "parent/links" }, "TMPDIR")).?;
+    try expectFreshTmp(first, try c.path("parent/links"));
+    try t.expect(try isEmpty(&c, "parent/links") and try isEmpty(&c, "scratch"));
+    // Each run its own: a second run is given another name.
+    const second = (try kit.valueOf(&c, &.{ "--tmpdir-link-in", "parent/links" }, "TMPDIR")).?;
+    try expectFreshTmp(second, try c.path("parent/links"));
+    try t.expect(!std.mem.eql(u8, first, second));
+    try t.expect(try isEmpty(&c, "parent/links") and try isEmpty(&c, "scratch"));
+    // An absolute DIR, and one reached through a link: the link is made in the real path.
+    try c.tmp.dir.makePath("real");
+    try c.tmp.dir.symLink("real", "linked", .{});
+    try expectFreshTmp((try kit.valueOf(&c, &.{ "--tmpdir-link-in", try c.at("linked") }, "TMPDIR")).?, try c.path("real"));
+    try t.expect(try isEmpty(&c, "real"));
+    // The link leads into the scratch path: a test that runs in TMPDIR and makes `../seen` makes it beside its directory there, not beside the link.
+    try kit.expectResult(try c.runTool(&.{ "run", "--tmpdir-link-in", "links", "--cwd-env", "TMPDIR" }, &.{ "mkdir", "-p", "../seen" }), 0, "", "");
+    try expectOnly(&c, "scratch", "seen");
+    try t.expect(try isEmpty(&c, "links"));
+    // With no scratch path, the directory is in the process's TMPDIR.
+    c.environ = &.{try std.fmt.allocPrint(c.alloc(), "TMPDIR={s}", .{try c.at("ptmp")})};
+    try kit.expectResult(try c.runTool(&.{ "run", "--tmpdir-link-in", "links", "--cwd-env", "TMPDIR" }, &.{ "mkdir", "-p", "../seen" }), 0, "", "");
+    try expectOnly(&c, "ptmp", "seen");
+    try t.expect(try isEmpty(&c, "links"));
+    // DIR and the process's TMPDIR are one directory (`buck2 test` on a machine whose TMPDIR is /tmp): TMPDIR is a fresh directory there, no link.
+    c.environ = &.{try std.fmt.allocPrint(c.alloc(), "TMPDIR={s}", .{try c.at("same")})};
+    try expectFreshTmp((try kit.valueOf(&c, &.{ "--tmpdir-link-in", "same" }, "TMPDIR")).?, try c.path("same"));
+    try kit.expectResult(try c.runTool(&.{ "run", "--tmpdir-link-in", "same", "--cwd-env", "TMPDIR" }, &.{ "mkdir", "-p", "../seen" }), 0, "", "");
+    try expectOnly(&c, "same", "seen");
+    // Without the option, TMPDIR is the one the process had.
+    c.environ = &.{"TMPDIR=/old"};
+    try t.expectEqualStrings("/old", (try kit.valueOf(&c, &.{}, "TMPDIR")).?);
+}
+
+test "--tmpdir-link-in: the link and its directory are removed, with what the test left there, when the test passes, fails, cannot start, or a later step is refused" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    c.environ = &.{"BUCK_SCRATCH_PATH=scratch"};
+    // The test runs in its TMPDIR and leaves a tree there; the marker says it passed, and the link and the directory are gone.
+    try kit.expectResult(try c.runTool(&.{ "marker", "--out", "m", "--tmpdir-link-in", "links", "--cwd-env", "TMPDIR" }, &.{ "mkdir", "-p", "left/behind" }), 0, "", "");
+    try t.expectEqualStrings("passed\n", try c.read("m"));
+    try t.expect(try isEmpty(&c, "links") and try isEmpty(&c, "scratch"));
+    // A test that fails, in `run` and in `expect`.
+    try kit.expectResult(try c.runTool(&.{ "run", "--tmpdir-link-in", "links", "--cwd-env", "TMPDIR" }, &.{"false"}), 1, "", "");
+    try t.expect(try isEmpty(&c, "links") and try isEmpty(&c, "scratch"));
+    try kit.expectResult(try c.runTool(&.{ "expect", "--want", "x", "--out", "e", "--tmpdir-link-in", "links" }, &.{ "echo", "y" }), 1, "", null);
+    try t.expect(try isEmpty(&c, "links") and try isEmpty(&c, "scratch") and !c.exists("e"));
+    // A program that is not there.
+    try kit.expectFailure(try c.run(&.{ "run", "--tmpdir-link-in", "links", "--", "./not-there" }), 127, "cannot run ");
+    try t.expect(try isEmpty(&c, "links") and try isEmpty(&c, "scratch"));
+    // A step after the link was made is refused: nothing runs, and both are removed.
+    try kit.expectResult(try c.runTool(&.{ "run", "--tmpdir-link-in", "links", "--cwd-env", "UNSET" }, &.{"true"}), 2, "", "check run: --cwd-env UNSET: the variable is not set\n");
+    try t.expect(try isEmpty(&c, "links") and try isEmpty(&c, "scratch"));
+}
+
+test "--tmpdir-link-in: an empty or missing DIR is a usage error; a link or directory that cannot be made is refused with the reason, leaving nothing behind" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    try kit.expectResult(try c.runTool(&.{ "run", "--tmpdir-link-in", "" }, &.{"true"}), 2, "", "check run: --tmpdir-link-in is empty\n");
+    try kit.expectResult(try c.run(&.{ "marker", "--out", "m", "--tmpdir-link-in" }), 2, "", "check marker: --tmpdir-link-in needs a value\n");
+    try c.put("blocked", "a file where the parent goes");
+    // The link's parent cannot be made: the --scratch directory made before is removed, and the scratch path holds nothing.
+    c.environ = &.{"BUCK_SCRATCH_PATH=scratch"};
+    const r = try c.runTool(&.{ "marker", "--out", "m", "--scratch", "s", "--tmpdir-link-in", "blocked/inside" }, &.{"true"});
+    try kit.expectFailure(r, 1, try std.fmt.allocPrint(c.alloc(), "check marker: cannot make a private TMPDIR: a link in {s} to a directory in {s}: ", .{ try c.at("blocked/inside"), try c.at("scratch") }));
+    try t.expect(try isEmpty(&c, "scratch") and !c.exists("m"));
+    // The directory's parent cannot be made: no link is left.
+    c.environ = &.{"TMPDIR=blocked/inside"};
+    const r2 = try c.runTool(&.{ "run", "--scratch", "s", "--tmpdir-link-in", "links" }, &.{"true"});
+    try kit.expectFailure(r2, 1, try std.fmt.allocPrint(c.alloc(), "check run: cannot make a private TMPDIR: a link in {s} to a directory in {s}: ", .{ try c.at("links"), try c.at("blocked/inside") }));
+    try t.expect(!c.exists("links") and !c.exists(".buildrules_s"));
+    try t.expectEqualStrings("a file where the parent goes", try c.read("blocked"));
 }
 
 // ---- the working directory and the program ----------------------------------------------------------------------
@@ -449,14 +536,16 @@ test "--private-scratch: each run has a directory of its own, empty at the start
     try t.expect((try it.next()) == null);
 }
 
-test "--private-scratch: it replaces what --env and --tmpdir gave, and --dir and --cwd still work beside it" {
+test "--private-scratch: it replaces what --env and --tmpdir-link-in gave, and --dir and --cwd still work beside it" {
     var c = try kit.Case.init();
     defer c.deinit();
     c.environ = &.{"BUCK_SCRATCH_PATH=scratch"};
-    const before: kit.Args = &.{ "--env", "TMPDIR=/mine", "--env", "HOME=/mine", "--env", "TEST_TMPDIR=/mine", "--tmpdir" };
+    const before: kit.Args = &.{ "--env", "TMPDIR=/mine", "--env", "HOME=/mine", "--env", "TEST_TMPDIR=/mine", "--tmpdir-link-in", "tmps" };
     for ([_][]const u8{ "TMPDIR", "TEST_TMPDIR", "HOME" }) |name| {
         const v = (try private(&c, before, name)).?;
         try t.expect(std.mem.indexOf(u8, v, "/buildrules_test.") != null);
+        // The --tmpdir-link-in link and directory were made all the same, and are removed after the run (with the private directories).
+        try t.expect(try isEmpty(&c, "tmps") and try isEmpty(&c, "scratch"));
     }
     try t.expectEqualStrings("kept", (try private(&c, &.{ "--env", "OTHER=kept" }, "OTHER")).?);
 }
