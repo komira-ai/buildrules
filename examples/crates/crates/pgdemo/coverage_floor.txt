@@ -1,0 +1,4 @@
+# The floor every package holds (rules/rust/coverage.bzl): 99% of lines and of branch arms. Today's figures are 221/221 lines and 12/12 branch
+# arms under the unit tests (a fake server on a socket pair and a loopback TCP listener) and the integration test with the Postgres fixture.
+lines 99.00
+branches 99.00

@@ -7,6 +7,7 @@ test {
     _ = @import("beta.zig");
     _ = @import("gamma.zig");
     _ = @import("native.zig");
+    _ = @import("macos_farm.zig");
     _ = @import("stage.zig");
 }
 
@@ -424,4 +425,62 @@ test "gamma: a build stopped at the limit is red at once, is not built again, an
     try t.expectError(error.CommandHung, gammaCli(a, try gammaWork(a, &tmp), &fake));
     try t.expectEqual(@as(usize, 1), fake.count("buck2 build"));
     try t.expectEqual(@as(usize, 1), fake.count("git clone"));
+}
+
+// ---- stage farm-macos ---------------------------------------------------------------------------------------------------------------------
+
+test "stage farm-macos: the farm's config with its macOS set is written, the labelled targets built, and the summary line appended" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("root");
+    try tmp.dir.writeFile(.{ .sub_path = "farm.buckconfig", .data = "[buck2_re_client]\n  engine_address = grpc://example.invalid:1\n[" ++ "kom" ++ "ira_re]\n  linux_x86_64_properties = a=b\n  darwin_arm64_properties = os=macos\n  darwin_macos_hosts = h1\n" });
+    try tmp.dir.writeFile(.{ .sub_path = "summary", .data = "" });
+    const base = try tmp.dir.realpathAlloc(a, ".");
+    const p = struct {
+        fn at(al: std.mem.Allocator, b: []const u8, n: []const u8) ![]const u8 {
+            return std.fs.path.join(al, &.{ b, n });
+        }
+    };
+    const args = [_][]const u8{ "--root", try p.at(a, base, "root"), "--buck2", "/b/buck2", "--farm-config", try p.at(a, base, "farm.buckconfig"), "--summary", try p.at(a, base, "summary") };
+    var rules = [_]beta.Fake.Rule{
+        .{ .needle = "uquery", .out = beta.okOut("root//tools/bootstrap:paths_macos\n", "") },
+        .{ .needle = " build ", .out = beta.okOut("", "Commands: 5 (cached: 0, remote: 5, local: 0)\nBUILD SUCCEEDED\n") },
+        .{ .needle = " kill" },
+    };
+    var fake = beta.Fake{ .a = a, .rules = &rules };
+    try t.expectEqual(@as(u8, 0), try stage.farmMacosCommand(a, fake.io(), try stage.parseArgs(a, &args, &stage.farm_macos_flags)));
+    try t.expectEqualStrings(
+        "- farm-macos: 1 target(s) built on the farm; `Commands: 5 (cached: 0, remote: 5, local: 0)`\n  - `root//tools/bootstrap:paths_macos`\n",
+        try tmp.dir.readFileAlloc(a, "summary", 1 << 12),
+    );
+    try t.expect(std.mem.indexOf(u8, try tmp.dir.readFileAlloc(a, "root/.buckconfig.local", 1 << 12), "  macos_aarch64_properties = os=macos\n") != null);
+}
+
+test "stage farm-macos: no farm config, one that names no farm, or a missing flag is red before anything runs" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "empty.buckconfig", .data = "[buildrules_re]\n  darwin_arm64_properties = os=macos\n" });
+    const base = try tmp.dir.realpathAlloc(a, ".");
+    const none = try std.fs.path.join(a, &.{ base, "missing.buckconfig" });
+    const empty = try std.fs.path.join(a, &.{ base, "empty.buckconfig" });
+    try t.expectError(error.FarmNotConfigured, stage_run(a, &.{ "--root", base, "--buck2", "/b/buck2", "--farm-config", none }));
+    try t.expectError(error.FarmNotConfigured, stage_run(a, &.{ "--root", base, "--buck2", "/b/buck2", "--farm-config", empty }));
+    try t.expectError(error.Usage, stage_run(a, &.{ "--root", base, "--buck2", "/b/buck2" }));
+    try t.expectError(error.Usage, stage_run(a, &.{ "--root", base, "--farm-config", empty }));
+    try t.expectError(error.Usage, stage_run(a, &.{ "--root", base, "--exec", "farm" }));
+    // nothing was written in the checkout
+    try t.expectError(error.FileNotFound, tmp.dir.access(".buckconfig.local", .{}));
+}
+
+/// `stage farm-macos` through the parser, with an Io that runs nothing: each case is red before a command.
+fn stage_run(a: std.mem.Allocator, argv: []const []const u8) !u8 {
+    var rules = [_]beta.Fake.Rule{};
+    var fake = beta.Fake{ .a = a, .rules = &rules };
+    return stage.farmMacosCommand(a, fake.io(), try stage.parseArgs(a, argv, &stage.farm_macos_flags));
 }

@@ -1,0 +1,20 @@
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("//:buildrules.bzl", "cargo_package")
+
+cargo_package(path = ".")
+
+# A fixture crate under its floor. `:coverage_floor` (coverage_floor.txt, 99% of lines and of branch arms) is red on purpose: covdemo's tests do not
+# run `untested`. The other known defect of `:coverage_floor`, written by hand after the targets cargo_package makes, is the same check over the
+# same `:coverage` held to a floor file with no `branches` figure. Both are excluded from the wildcard build (ci/all.bzl), and
+# //ci:completeness.bxl:check builds each and requires its reason (ci/negative.bzl, COVERAGE_REDS).
+zig_coverage_floor_rule(
+    name = "coverage_floor_without_branches",
+    coverage = ":coverage",
+    floor = "floor_without_branches.txt",
+    exec_compatible_with = LINUX_X86_64,
+    visibility = ["//ci:"],
+)
+
+scrub_files()

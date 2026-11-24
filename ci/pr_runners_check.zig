@@ -19,6 +19,7 @@ const workflows = [_][]const u8{
     "apt-rotation.yml",
     "beta.yml",
     "ci.yml",
+    "farm-macos.yml",
     "lintian.yml",
     "mopm-pin.yml",
     "publish-unpack.yml",
@@ -113,6 +114,8 @@ test "the real workflows: a pull request runs on linux x86_64 alone" {
         }
         try t.expect(!std.mem.eql(u8, n, "release.yml"));
         try t.expect(!std.mem.eql(u8, n, "beta.yml"));
+        // the build on the farm's macOS workers runs after the merge, like the beta stage
+        try t.expect(!std.mem.eql(u8, n, "farm-macos.yml"));
     }
     for (seen) |s| try t.expect(s);
     const f = try check(a, all);

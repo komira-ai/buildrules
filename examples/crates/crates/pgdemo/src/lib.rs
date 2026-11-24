@@ -90,26 +90,10 @@ impl Url {
     }
 }
 
-enum Stream {
-    Unix(UnixStream),
-    Tcp(TcpStream),
-}
+/// A connection to the server: a Unix socket or a TCP stream.
+pub trait Stream: Read + Write {}
 
-impl Stream {
-    fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
-        match self {
-            Stream::Unix(s) => s.read_exact(buf),
-            Stream::Tcp(s) => s.read_exact(buf),
-        }
-    }
-
-    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        match self {
-            Stream::Unix(s) => s.write_all(buf),
-            Stream::Tcp(s) => s.write_all(buf),
-        }
-    }
-}
+impl<T: Read + Write> Stream for T {}
 
 /// One message as the protocol frames it: a type byte, then a length that counts itself and the body.
 pub fn message(kind: u8, body: &[u8]) -> Vec<u8> {
@@ -161,18 +145,23 @@ pub fn data_row(body: &[u8]) -> Result<Vec<Option<String>>, Error> {
 
 /// A session with the server.
 pub struct Session {
-    stream: Stream,
+    stream: Box<dyn Stream>,
 }
 
 impl Session {
     /// Connects and starts a session as the URL's user on its database (the fixture's server trusts its local user).
     pub fn connect(url: &Url) -> Result<Session, Error> {
-        let stream = match &url.host {
-            Host::Socket(dir) => Stream::Unix(UnixStream::connect(format!("{dir}/.s.PGSQL.{}", url.port))?),
-            Host::Tcp(host) => Stream::Tcp(TcpStream::connect((host.as_str(), url.port))?),
+        let stream: Box<dyn Stream> = match &url.host {
+            Host::Socket(dir) => Box::new(UnixStream::connect(format!("{dir}/.s.PGSQL.{}", url.port))?),
+            Host::Tcp(host) => Box::new(TcpStream::connect((host.as_str(), url.port))?),
         };
+        Session::start(stream, &url.user, &url.dbname)
+    }
+
+    /// Starts a session over a connection already made: the startup message, then the server's answers until it is ready for a query.
+    pub fn start(stream: Box<dyn Stream>, user: &str, dbname: &str) -> Result<Session, Error> {
         let mut session = Session { stream };
-        session.stream.write_all(&startup(&url.user, &url.dbname))?;
+        session.stream.write_all(&startup(user, dbname))?;
         loop {
             let (kind, body) = session.next()?;
             match kind {
@@ -245,17 +234,20 @@ mod tests {
 
     #[test]
     fn a_malformed_url_is_refused_saying_why() {
-        let text = |r: Result<Url, Error>| match r {
-            Err(Error::Url(t)) => t,
-            other => panic!("not a URL refusal: {other:?}"),
-        };
-        assert_eq!(text(Url::parse("mysql://a@h:1/d")), "'mysql://a@h:1/d' does not start with postgresql://");
-        assert_eq!(text(Url::parse("postgresql://a@h:1")), "'postgresql://a@h:1' names no database");
-        assert_eq!(text(Url::parse("postgresql://h:1/d")), "'postgresql://h:1/d' names no user");
-        assert_eq!(text(Url::parse("postgresql://a@h/d")), "'postgresql://a@h/d' names no port");
-        assert_eq!(text(Url::parse("postgresql://a@h:x/d")), "'postgresql://a@h:x/d' has the port 'x', which is not a number");
-        assert_eq!(text(Url::parse("postgresql://a@%2:1/d")), "'%2' has a '%' that is not followed by two hex digits");
-        assert_eq!(text(Url::parse("postgresql://a@%FF:1/d")), "'%FF' does not decode to UTF-8");
+        let refused = |text: &str| format!("Url({text:?})");
+        assert_eq!(why(Url::parse("mysql://a@h:1/d")), refused("'mysql://a@h:1/d' does not start with postgresql://"));
+        assert_eq!(why(Url::parse("postgresql://a@h:1")), refused("'postgresql://a@h:1' names no database"));
+        assert_eq!(why(Url::parse("postgresql://h:1/d")), refused("'postgresql://h:1/d' names no user"));
+        assert_eq!(why(Url::parse("postgresql://a@h/d")), refused("'postgresql://a@h/d' names no port"));
+        assert_eq!(why(Url::parse("postgresql://a@h:x/d")), refused("'postgresql://a@h:x/d' has the port 'x', which is not a number"));
+        assert_eq!(why(Url::parse("postgresql://a@%2:1/d")), refused("'%2' has a '%' that is not followed by two hex digits"));
+        assert_eq!(why(Url::parse("postgresql://a@%FF:1/d")), refused("'%FF' does not decode to UTF-8"));
+        assert_eq!(why(Url::parse("postgresql://a@%2g:1/d")), refused("'%2g' has a '%' that is not followed by two hex digits"));
+    }
+
+    #[test]
+    fn every_case_of_hex_digit_is_decoded() {
+        assert_eq!(percent_decode("%2f%2F%41").unwrap(), "//A");
     }
 
     #[test]
@@ -273,6 +265,86 @@ mod tests {
     #[test]
     fn a_data_row_holds_values_and_nulls() {
         assert_eq!(data_row(b"\0\x02\0\0\0\x02hi\xff\xff\xff\xff").unwrap(), vec![Some("hi".to_owned()), None]);
-        assert!(matches!(data_row(b"\0\x01\0\0\0\x05hi"), Err(Error::Protocol(m)) if m == "a DataRow shorter than it says"));
+        assert_eq!(why(data_row(b"\0\x01\0\0\0\x05hi")), "Protocol(\"a DataRow shorter than it says\")");
+    }
+
+    /// The error of a result that must be one, as `Debug` writes it (its variant and its text); empty for a success.
+    fn why<T>(r: Result<T, Error>) -> String {
+        r.err().map_or_else(String::new, |e| format!("{e:?}"))
+    }
+
+    /// A session over one end of a socket pair (no socket path, no network), the other end answering as a server: it reads the startup
+    /// message, writes `replies` and closes its side, and returns what it read once the client is done.
+    fn served(replies: Vec<u8>) -> (Result<Session, Error>, std::thread::JoinHandle<Vec<u8>>) {
+        let (client, mut server) = UnixStream::pair().unwrap();
+        let peer = std::thread::spawn(move || {
+            let mut len = [0u8; 4];
+            server.read_exact(&mut len).unwrap();
+            let mut got = len.to_vec();
+            got.resize(u32::from_be_bytes(len) as usize, 0);
+            server.read_exact(&mut got[4..]).unwrap();
+            server.write_all(&replies).unwrap();
+            server.shutdown(std::net::Shutdown::Write).unwrap();
+            let mut rest = Vec::new();
+            server.read_to_end(&mut rest).unwrap();
+            got.extend(rest);
+            got
+        });
+        (Session::start(Box::new(client), "u", "d"), peer)
+    }
+
+    fn ready() -> Vec<u8> {
+        [message(b'R', &[0, 0, 0, 0]), message(b'S', b"a\0b\0"), message(b'Z', b"I")].concat()
+    }
+
+    #[test]
+    fn a_session_under_trust_answers_a_querys_rows_in_order_and_ends_with_terminate() {
+        let (session, peer) = served([ready(), message(b'D', b"\0\x01\0\0\0\x01x"), message(b'D', b"\0\x01\xff\xff\xff\xff"), message(b'Z', b"I")].concat());
+        let mut session = session.unwrap();
+        assert_eq!(session.query("SELECT x").unwrap(), vec![vec![Some("x".to_owned())], vec![None]]);
+        drop(session);
+        assert_eq!(peer.join().unwrap(), [startup("u", "d"), message(b'Q', b"SELECT x\0"), message(b'X', &[])].concat());
+    }
+
+    #[test]
+    fn a_query_the_server_refuses_is_its_message() {
+        let (session, _peer) = served([ready(), message(b'E', b"SERROR\0Mno such table\0\0"), message(b'Z', b"I")].concat());
+        assert_eq!(why(session.unwrap().query("SELECT * FROM t")), "Server(\"no such table\")");
+    }
+
+    #[test]
+    fn a_server_that_asks_for_a_password_refuses_or_sends_a_short_frame_ends_the_start_saying_which() {
+        assert_eq!(
+            why(served(message(b'R', &[0, 0, 0, 3])).0),
+            "Protocol(\"the server asks for authentication Some([0, 0, 0, 3]); only trust is spoken here\")"
+        );
+        assert_eq!(why(served(message(b'E', b"SFATAL\0Mrole \"u\" does not exist\0\0")).0), "Server(\"role \\\"u\\\" does not exist\")");
+        assert_eq!(why(served(b"Z\0\0\0\x02".to_vec()).0), "Protocol(\"a message of length 2\")");
+    }
+
+    #[test]
+    fn a_tcp_host_is_connected_to_over_tcp() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = std::thread::spawn(move || {
+            let (mut server, _) = listener.accept().unwrap();
+            let mut len = [0u8; 4];
+            server.read_exact(&mut len).unwrap();
+            let mut got = len.to_vec();
+            got.resize(u32::from_be_bytes(len) as usize, 0);
+            server.read_exact(&mut got[4..]).unwrap();
+            server.write_all(&ready()).unwrap();
+            got
+        });
+        let url = Url::parse(&format!("postgresql://u@127.0.0.1:{port}/d")).unwrap();
+        assert_eq!(url.host, Host::Tcp("127.0.0.1".to_owned()));
+        let session = Session::connect(&url).unwrap();
+        assert_eq!(peer.join().unwrap(), startup("u", "d"));
+        drop(session);
+    }
+
+    #[test]
+    fn a_server_that_closes_before_it_is_ready_is_an_io_error() {
+        assert_eq!(why(served(Vec::new()).0), "Io(Error { kind: UnexpectedEof, message: \"failed to fill whole buffer\" })");
     }
 }

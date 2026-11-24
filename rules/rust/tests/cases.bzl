@@ -1,7 +1,7 @@
 """Tables and the recorder the toolchain-refusal targets of BUCK are made from, the inputs of the `:fmt` plan cases and of the dependency-edge cases
 (a BUCK file may not define functions)."""
 
-load("//rules/rust:cargo.bzl", "check_toolchain", "unit_deps")
+load("//rules/rust:cargo.bzl", "check_coverage_toolchain", "check_toolchain", "unit_deps")
 load("//rules/rust:fmt.bzl", "fmt_plan", "workspace_fmt_config")
 load("//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_VERSIONS")
 load("//rules/rust:refusal.bzl", "recording")
@@ -18,6 +18,12 @@ def refused(tbl):
     """What `check_toolchain` says about `tbl`: a list of reasons, empty if it accepts."""
     got, refuse = recording()
     check_toolchain(tbl, refuse)
+    return got
+
+def coverage_refused(rustc):
+    """What `check_coverage_toolchain` says about a table of rustc `rustc`: a list of reasons, empty if it accepts."""
+    got, refuse = recording()
+    check_coverage_toolchain(rustc, refuse)
     return got
 
 def same(what, got, want):

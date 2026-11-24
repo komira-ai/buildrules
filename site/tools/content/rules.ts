@@ -91,7 +91,7 @@ export const rust: Page = {
       '`:rust_analyzer_inputs`, what rust-analyzer needs that only a build makes (registry sources, build-script output, proc-macros as shared objects, the pinned sysroot, standard library sources and rust-analyzer), as one directory with an `index.json`; `buildrules rust-project develop` builds it and writes `rust-project.json` from it ([CLI](/cli/#rust-project)). It is refused by name for a Rust version whose row in `rules/rust/pins.bzl` does not pin `rust_src` and `rust_analyzer`.',
     ),
     h2('cargo_package'),
-    code('cargo_package(path = ".", table, third_party, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {})', 'signature'),
+    code('cargo_package(path = ".", table, third_party, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {}, coverage_branches = True)', 'signature'),
     p('Called once per workspace member, in the member\'s own package. Through `//:buildrules.bzl` the call is `cargo_package(path = ".")`.'),
     table(
       ['Argument', 'Meaning'],
@@ -103,6 +103,7 @@ export const rust: Page = {
       ['`refuse`', 'what a refused table calls with the reason; the default, `fail`, stops the load. Only tests of the refusal pass anything else (`rules/rust/refusal.bzl`)'],
       ['`stamp_env`', 'a variable name and the label of a text file (`stamp_file`): the runs of the package\'s build script get the variable set to the file\'s text. A commit given this way replaces asking `git`, which a build script cannot run here'],
       ['`stamp_rustc_env`', 'a `rustc-env` name and the label of a text file: the value the build script prints for that name is replaced by the file\'s text'],
+      ['`coverage_branches`', 'build `:coverage` with branch counters (the default); `False` is lines only, for a member whose branch records the pinned llvm-cov cannot read, and its floor is then `lines` alone'],
     ),
     h3('Targets of a member'),
     table(
@@ -115,10 +116,11 @@ export const rust: Page = {
       ['`:typecheck`', 'the pinned rustc over the units `:lint` checks, to metadata only, as `cargo check --all-targets`: no clippy and no `-D warnings`, so a type or borrow error is red and a clippy warning is not; the member\'s `[lints.rust]` levels apply, as under `cargo check`'],
       ['`:fmt`', 'the pinned `rustfmt --check` over the files `cargo fmt --check -p` reads (every target root, and the modules they reach), with the member\'s own `rustfmt.toml` or the workspace\'s; red on any difference, showing it'],
       ['`:flycheck`', 'the same clippy runs as diagnostics: one directory of `<unit>.json` files, rustc\'s diagnostics as JSON lines, built even when the code has errors. What `buildrules rust-project check` builds for an editor\'s check on save.'],
-      ['`:coverage`', 'refuses; coverage is not built'],
+      ['`:coverage`', 'llvm-cov\'s line and branch figures of the member\'s own sources under its own tests, each test built again with coverage counters: `coverage.txt`, a row per source file (those under `tests/` not counted), a total of lines and one of branch arms; `[lcov]` is llvm-cov\'s report'],
+      ['`:coverage_floor`', 'only with a `coverage_floor.txt` beside the member\'s BUCK file: the figures of `:coverage` held to it, red when one fell below its floor'],
       ['one per action', 'each action in `[workspace.metadata.buildrules.actions]`, such as `ci = ["lint", "test"]`'],
     ),
-    p('`:debug`, `:release`, `:test`, `:lint`, `:typecheck`, `:fmt` and `:flycheck` carry the workspace `:check` as a validation. The unit targets themselves are named by content id (`<crate>-<version>_<hash>`) and live in `third_party/buildrules` and the member packages.'),
+    p('`:debug`, `:release`, `:test`, `:lint`, `:typecheck`, `:fmt`, `:flycheck` and `:coverage` carry the workspace `:check` as a validation. The unit targets themselves are named by content id (`<crate>-<version>_<hash>`) and live in `third_party/buildrules` and the member packages.'),
     h3('The policy'),
     p('Policy goes in `[workspace.metadata.buildrules]` and, overriding it per key, in `[package.metadata.buildrules]`. Any other key is refused by `sync`, naming the key and the file. Profiles, lints, features and dependencies stay in Cargo\'s own tables.'),
     table(
@@ -128,7 +130,7 @@ export const rust: Page = {
       ['`lint.deny-warnings`', 'bool', 'clippy `-D warnings` for `:lint`'],
       ['`postgres`', 'table `{ url-env = "NAME" }`', 'every test of the package runs with a private Postgres, started for that run and stopped after it, its URL in `NAME`; a package\'s replaces the workspace\'s'],
     ),
-    p('The steps are `fmt`, `lint`, `typecheck`, `debug`, `test`, `release` and `coverage`; `coverage` refuses.'),
+    p('The steps are `fmt`, `lint`, `typecheck`, `debug`, `test`, `release` and `coverage`; `coverage` is the measurement, and the floor is the member\'s own `:coverage_floor`.'),
     h3('Refused when the package loads'),
     ul(
       'a table whose compiler is not in the version table, or whose hashes differ from the table\'s;',
@@ -146,7 +148,7 @@ export const rust: Page = {
       '`patch`: copy, substitute or add files in the unpacked crate.',
     ),
     p('The example `examples/crates` has a crate whose `cc` build script compiles zstd; the script runs as an action, with no override. The override keys are exercised by the unit tests of the generator, and no shipped example uses `drop_build_script` or `native_deps`. The C libraries that the [C/C++ rules](/rules/cxx/) can build, such as AWS-LC, are not yet wired to any Rust crate.'),
-    limit('crates.io, and git repositories on github.com pinned by commit; alternate registries, branches and tags are refused. Doctests and coverage are out. Linux x86_64 only.'),
+    limit('crates.io, and git repositories on github.com pinned by commit; alternate registries, branches and tags are refused. Doctests are out (of `:coverage` too). Linux x86_64 only.'),
     h2('Toolchains'),
     p('The version table, `RUST_VERSIONS` in `rules/rust/pins.bzl`, maps an exact release to the sha256 and size of the `.tar.gz` of `rustc`, `rust_std`, `cargo` and `clippy`, fetched from their versioned URLs (`static.rust-lang.org/dist/rustc-1.95.0-x86_64-unknown-linux-gnu.tar.gz`, no date in them). Nothing is fetched without a hash, and the toolchain refuses to exist if `rustc --version` and `cargo --version` do not start with `rustc <version> (` and `cargo <version> (`.'),
     table(

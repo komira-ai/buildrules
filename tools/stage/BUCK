@@ -14,6 +14,7 @@ _SRCS = [
     "beta.zig",
     "gamma.zig",
     "native.zig",
+    "macos_farm.zig",
     "stage.zig",
 ]
 
@@ -47,6 +48,7 @@ zig_exe(
         "beta.zig",
         "gamma.zig",
         "native.zig",
+        "macos_farm.zig",
     ],
     busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
@@ -75,6 +77,7 @@ _NATIVE = {
             "beta.zig",
             "gamma.zig",
             "native.zig",
+            "macos_farm.zig",
         ],
         busybox = "buildrules//rules/pins:busybox",
         zig = "buildrules//rules/pins:zig_next",

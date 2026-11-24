@@ -79,6 +79,16 @@ TestUnitInfo = provider(fields = {
     # True when the unit is a `buck2 test` target as well (a `check run` of the same binary, no marker).
     "cli": provider_field(bool, default = False),
     "labels": provider_field(list, default = []),
+    # The package's binaries the test runs (CARGO_BIN_EXE_<name>): for a coverage run, the other instrumented programs whose profiles it writes.
+    "bins": provider_field(list, default = []),
+})
+
+# The run of an instrumented test (test_run.bzl `cov_run`): the directory of the `.profraw` files it and the programs it started wrote, and the
+# instrumented programs those profiles are of (the test binary first). A member's `:coverage` (coverage.bzl) reads them with llvm-cov.
+RustCovRunInfo = provider(fields = {
+    "profiles": provider_field(typing.Any),
+    "objects": provider_field(list),
+    "marker": provider_field(typing.Any),
 })
 
 # The ISA level the execution platform of a rule reports (rules/rust/exec_isa.bzl): "x86-64" when it has none.
