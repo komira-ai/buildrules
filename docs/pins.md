@@ -104,6 +104,14 @@ linux-aarch64 and osx-arm64: `[package] mojo` may list them, `mopm lock` records
 unit graph format, `lock_version` and `mopm stage` are those of 0.0.113, so `rules/mojo` and `buildrules mojo sync` read it unchanged. Its standard library list adds `hash`, `net` and `simd`,
 which mopm refuses as import names; buildrules keeps no such list of its own. No example names it yet.
 
+## mopm 0.0.138
+
+mopm 0.0.138 is the published release, https://github.com/komira-ai/mopm/releases/tag/v0.0.138, pinned for all three hosts beside 0.0.135 in the same two tables, with the sizes and digests of its assets
+as in the release's `SHA256SUMS` (downloaded and `sha256sum -c` checked, and each tarball's Sigstore bundle checked with `cosign verify-blob` against the signer `mopm-pin / verify` requires, 2026-11-24).
+It repeats a request whose TLS handshake or TLS read fails, as it repeated one whose connection broke (the uploads and polls of `mopm publish --staged` among them), and names a
+rejected server certificate instead of `TlsInitializationFailed`. It also lets one package version carry a build per Mojo compiler (`mopm stage --artifacts <mojo>=<dir>`).
+Its unit graph format, `lock_version` and `plan.json` version are those of 0.0.135, so `rules/mojo` and `buildrules mojo sync` read it unchanged. No example names it yet.
+
 ## Postgres 17.12 (the fixture of the Rust tests)
 
 `rules/postgres/pins.bzl` `POSTGRES_PACKAGES`: conda-forge's `postgresql 17.12` for linux-64 (`hfefc96f_0`) and every package of its run closure but one, one build per name, 27 packages and 41267099 bytes.
