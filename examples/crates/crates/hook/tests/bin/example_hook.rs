@@ -10,7 +10,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         None => {
-            eprintln!("usage: example_hook <event>");
+            eprint!("{}", hook::USAGE);
             ExitCode::from(2)
         }
     }

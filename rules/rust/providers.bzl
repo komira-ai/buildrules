@@ -44,7 +44,7 @@ RustCrateInfo = provider(fields = {
     "build_script": provider_field(typing.Any, default = None),
     # A registry crate's unpacked (and patched) sources, its `crate_src` (whose target the generated package does not make visible), or None.
     "src": provider_field(typing.Any, default = None),
-    # The paths (from the cell root) of the files outside the package its sources read (`extra_srcs`: a `#[path]` module, an `include_str!`).
+    # The paths (from the cell root) of the files its sources read that are not its `srcs` (`extra_srcs`: a `#[path]` module, an `include_str!`).
     "extra_srcs": provider_field(list, default = []),
 })
 

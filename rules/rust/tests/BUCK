@@ -138,8 +138,8 @@ refusal_test(
 # ---- the sources of a member's unit (rules/rust/cargo.bzl, `globs_for`) -------------------------------------------------------------------------------
 # examples/crates/crates/hook builds the first case through the front door: a `[[bin]]` at tests/bin/example_hook.rs, which its integration test runs.
 
-# A target whose root is in another top directory than its kind's has that directory too: a `[[bin]]` under tests/ (before, it had src/ alone and
-# rustc could not read its root), a `[[test]]` under src/, and a `[[bin]]` outside both, which had its directory already.
+# A target whose root is in another top directory than its kind's has that directory too: a `[[bin]]` under tests/, a `[[test]]` under src/, a
+# `[[bin]]` outside both, a library whose root is outside src/.
 refusal_test(
     name = "globs_give_a_target_the_top_directory_of_its_root",
     refusals = globs_mismatch([

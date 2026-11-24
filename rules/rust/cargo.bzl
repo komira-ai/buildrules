@@ -409,9 +409,10 @@ def cargo_package(path = ".", table = None, third_party = None, check = None, ex
         table: the generated table as a dict (`UNITS`, `MEMBERS`, `PACKAGES`, `WORKSPACE`, `RUSTC`, ...).
         third_party: the package holding the registry and git units, e.g. `//third_party/buildrules`.
         check: the workspace's `:check` target (a label string) carried as a validation; default `//<workspace package>:check`.
-        extra_srcs: files or directories of the source tree outside this package that the sources read at compile time
-            (`include_str!("../../../api/golden.json")`), as labels (`//service/api:golden.json`, `//:tests/corpus`): inputs of
-            every unit of the package, and of its test runs. Cargo needs them at those same paths, so a build that works
+        extra_srcs: files or directories of the source tree that the sources read and a unit does not see by itself (`globs_for`): outside
+            this package (`include_str!("../../../api/golden.json")`), as labels (`//service/api:golden.json`, `//:tests/corpus`), or in it
+            outside a unit's own files (a library's `include_str!("../tests/fixtures/a.json")`), by their path (`tests/fixtures/a.json`):
+            inputs of every unit of the package, and of its test runs. Cargo needs them at those same paths, so a build that works
             under cargo works here. Each must be a file (or directory) of the tree, not a copy: `export_file(mode = "reference")`.
         stamp_env: variable name -> label of a text file (`stamp_file`), for the runs of the package's build script: the variable is set to
             the file's text, trimmed. A script that reads a commit from a variable it prefers to `git` gets it this way.

@@ -38,7 +38,7 @@ The build-script contract (decision.md 6.1) is implemented by `bs_runner.zig`; t
   stamp     `stamp_env` / `stamp_rustc_env`: a file's text fed to the script's environment, or into a rustc-env value.
   inputs    a registry script: the unpacked crate. A git script: the whole unpacked repository (`src_dir` is the package in it).
             A first-party script: the whole package directory but BUCK, Cargo.toml and target/ (generated
-            `srcs`), compiled and run, and the package's `extra_srcs` (files outside it, which must be files of the tree).
+            `srcs`), compiled and run, and the package's `extra_srcs` (files a unit does not see by itself, which must be files of the tree).
   not yet   `rerun-if-*` narrowing of the input set.
 """
 
@@ -281,7 +281,7 @@ def _rustc(ctx, crate_type, out, test = False, lint = False, typecheck = False, 
     if not diag:
         cmd.add("-o", out.as_output())
     cmd.add(_root(ctx))
-    cmd.add(cmd_args(hidden = [tc.version_ok, _inputs(ctx), closure.values(), natives] + ([bs.dir] if bs else []) + ([tc.clippy] if lint else []) + bin_exes.values()))
+    cmd.add(cmd_args(hidden = [tc.version_ok, tc.cargo, _inputs(ctx), closure.values(), natives] + ([bs.dir] if bs else []) + ([tc.clippy] if lint else []) + bin_exes.values()))
     env = _pkg_env(ctx)
     env["CARGO_MANIFEST_DIR"] = _manifest_dir(ctx)
     # `env!("CARGO")`: the pinned cargo, as cargo names itself to every crate it compiles. The launcher makes it absolute (rustc_launch.zig). The
@@ -531,7 +531,7 @@ _cargo_unit = rule(
         "coverage": attrs.bool(default = False),
         # With `coverage`: branch counters too (`-Z coverage-options=branch`); False is lines only (cargo.bzl `coverage_branches`).
         "coverage_branches": attrs.bool(default = True),
-        # Files (or directories) of the source tree outside this package that `include_str!` and friends read: inputs only.
+        # Files (or directories) of the source tree that `include_str!` and friends read, outside this package or outside the unit's `srcs`: inputs only.
         "extra_srcs": attrs.list(attrs.source(allow_directory = True), default = []),
         # Targets whose default output is a static archive a binary or test links (a buildrules C library replacing a build script).
         "native_deps": attrs.list(attrs.dep(), default = []),

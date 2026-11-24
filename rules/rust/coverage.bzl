@@ -75,7 +75,7 @@ rust_coverage = rule(
         "check": attrs.option(attrs.dep(), default = None),
         # Directories of members nested in this one's, relative to it: their sources are theirs.
         "exclude": attrs.list(attrs.string(), default = []),
-        # The member's `extra_srcs`: sources outside its directory that it compiles, counted as its own.
+        # The member's `extra_srcs`: files it compiles that its units do not see by themselves (outside its directory, or in it), counted as its own.
         "extra": attrs.list(attrs.source(allow_directory = True), default = []),
         # The unpacked llvm-tools of the Rust release the member compiles with (its llvm-profdata and llvm-cov read that rustc's profiles).
         "llvm_tools": attrs.option(attrs.exec_dep(), default = None),

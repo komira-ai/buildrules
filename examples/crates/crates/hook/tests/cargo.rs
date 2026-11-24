@@ -4,9 +4,11 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-/// Runs the cargo at `path` with `args`. cargo needs a home directory; the test's scratch directory is its home, so the host's is never read.
+/// Runs the cargo at `path` with `args`. cargo needs a home directory, and reads `.cargo/config.toml` up from where it runs: the test's scratch
+/// directory is both, so neither the host's home nor the checkout is read.
 fn cargo(path: &str, args: &[&str]) -> Output {
-    Command::new(path).args(args).env("CARGO_HOME", env!("CARGO_TARGET_TMPDIR")).output().expect("cargo runs")
+    let scratch = env!("CARGO_TARGET_TMPDIR");
+    Command::new(path).args(args).env("CARGO_HOME", scratch).current_dir(scratch).output().expect("cargo runs")
 }
 
 fn version(path: &str) -> String {
@@ -19,6 +21,7 @@ fn version(path: &str) -> String {
 fn cargo_at_compile_time_is_the_pinned_cargo_by_an_absolute_path() {
     assert!(Path::new(env!("CARGO")).is_absolute(), "env!(\"CARGO\") is {}, not an absolute path", env!("CARGO"));
     let v = version(env!("CARGO"));
+    // The pinned version: examples/crates/rust-toolchain.toml names it, and a bump of the pin changes this line with it.
     assert!(v.starts_with("cargo 1.95.0 ("), "{} --version says {v:?}", env!("CARGO"));
 }
 

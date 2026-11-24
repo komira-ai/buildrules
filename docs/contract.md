@@ -67,8 +67,8 @@ a target that fails naming why when built, and that a wildcard skips. `buildrule
 ### `cargo_package(path = ".", table, third_party, check = None, extra_srcs = [], refuse = fail, stamp_env = {}, stamp_rustc_env = {}, coverage_branches = True)` **[p7]**
 Called once per member, in the member's own package. `path` is the member directory relative to the BUCK
 file (`.`). `table` is the generated table as a dict; `third_party` is the package holding registry
-units; `check` overrides the label of the workspace `:check` (default `//:check`); `extra_srcs` are files or directories outside the package that its sources (`#[path]`,
-`include_str!`) or its build script read, inputs of every unit of the package; each must be a file of the tree at its own path,
+units; `check` overrides the label of the workspace `:check` (default `//:check`); `extra_srcs` are files or directories that its sources (`#[path]`,
+`include_str!`) or its build script read and a unit does not see by itself, outside the package or in it (below), inputs of every unit of the package; each must be a file of the tree at its own path,
 `export_file(mode = "reference")`, and a copy made by a rule is refused at analysis naming that fix. `stamp_env` and `stamp_rustc_env` map a name
 to the label of a text file (`stamp_file`), an input of the runs of the package's build script only: `stamp_env` sets the variable to the
 file's trimmed text, `stamp_rustc_env` replaces the value the script prints for that `rustc-env` name (or sets it). They give a commit in place

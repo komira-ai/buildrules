@@ -6,7 +6,7 @@
 //! remapped to `.`, `-C linker-features=-lld` (since 1.90 rustc links x86_64 linux with its
 //! own rust-lld unless told not to; older compilers do not know the option, so it is passed only when
 //! `<sysroot>/.rustc_version`, written by the sysroot action, names 1.90 or newer) and `-C linker=<scratch>/cc/cc`. The environment is
-//! rebuilt from nothing (plus `CARGO_*`, `CARGO` made absolute, `OUT_DIR` and `BR_PASSTHROUGH` names, see `passThrough`): an empty PATH, and HOME, TMPDIR and the zig caches private to the
+//! rebuilt from nothing (plus `CARGO_*`, `CARGO` made absolute, `OUT_DIR`, `CLIPPY_CONF_DIR` and `BR_PASSTHROUGH` names, see `passThrough`): an empty PATH, and HOME, TMPDIR and the zig caches private to the
 //! action. Nothing is searched for on the worker.
 //!
 //! The linker is this same program under the name `cc` (a symlink in the action's scratch
@@ -50,8 +50,8 @@ fn privateEnv(a: std.mem.Allocator, dir: []const u8) !std.process.EnvMap {
 }
 
 /// The environment a crate sees at compile time comes from the action, not the worker: `CARGO_*` (package
-/// metadata for `env!`), `OUT_DIR` (build-script output) and every name listed in `BR_PASSTHROUGH` (colon
-/// separated; a build script's `rustc-env` directives). Nothing else crosses.
+/// metadata for `env!`), `CARGO` (the pinned cargo, made absolute), `OUT_DIR` (build-script output), `CLIPPY_CONF_DIR`
+/// and every name listed in `BR_PASSTHROUGH` (colon separated; a build script's `rustc-env` directives). Nothing else crosses.
 fn passThrough(a: std.mem.Allocator, cwd: []const u8, env: *std.process.EnvMap) !void {
     var mine = try std.process.getEnvMap(a);
     try passFrom(a, &mine, cwd, env);
@@ -289,38 +289,36 @@ test "the variables a compile sees: CARGO_*, OUT_DIR, CLIPPY_CONF_DIR, the BR_PA
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const x = arena.allocator();
-    var mine = std.process.EnvMap.init(x);
-    try mine.put("CARGO", "buck-out/v2/gen/cargo/bin/cargo");
-    try mine.put("CARGO_PKG_NAME", "hook");
-    try mine.put("OUT_DIR", "o");
-    try mine.put("CLIPPY_CONF_DIR", "c");
-    try mine.put("RUSTC_BOOTSTRAP", "1");
-    try mine.put("BR_PASSTHROUGH", "::RUSTC_BOOTSTRAP");
-    try mine.put("HOME", "/home/worker");
-    var env = std.process.EnvMap.init(x);
-    try passFrom(x, &mine, "/root", &env);
-    try std.testing.expectEqualStrings("/root/buck-out/v2/gen/cargo/bin/cargo", env.get("CARGO").?);
-    try std.testing.expectEqualStrings("hook", env.get("CARGO_PKG_NAME").?);
-    try std.testing.expectEqualStrings("o", env.get("OUT_DIR").?);
-    try std.testing.expectEqualStrings("c", env.get("CLIPPY_CONF_DIR").?);
-    try std.testing.expectEqualStrings("1", env.get("RUSTC_BOOTSTRAP").?);
-    try std.testing.expect(env.get("HOME") == null);
-    try std.testing.expect(env.get("BR_PASSTHROUGH") == null);
-    try std.testing.expectEqual(@as(usize, 5), env.count());
+    const Case = struct { given: []const [2][]const u8, want: []const [2][]const u8 };
+    const cases = [_]Case{
+        // CARGO relative to the execution root is made absolute; HOME and BR_PASSTHROUGH itself do not cross (an empty name in the list matches nothing).
+        .{
+            .given = &.{ .{ "CARGO", "buck-out/cargo/bin/cargo" }, .{ "CARGO_PKG_NAME", "hook" }, .{ "OUT_DIR", "o" }, .{ "CLIPPY_CONF_DIR", "c" }, .{ "RUSTC_BOOTSTRAP", "1" }, .{ "BR_PASSTHROUGH", "::RUSTC_BOOTSTRAP" }, .{ "HOME", "elsewhere" } },
+            .want = &.{ .{ "CARGO", "/root/buck-out/cargo/bin/cargo" }, .{ "CARGO_PKG_NAME", "hook" }, .{ "OUT_DIR", "o" }, .{ "CLIPPY_CONF_DIR", "c" }, .{ "RUSTC_BOOTSTRAP", "1" } },
+        },
+        // An absolute CARGO is kept as it is; an empty or absent one is not set.
+        .{ .given = &.{.{ "CARGO", "/opt/cargo/bin/cargo" }}, .want = &.{.{ "CARGO", "/opt/cargo/bin/cargo" }} },
+        .{ .given = &.{.{ "CARGO", "" }}, .want = &.{} },
+        .{ .given = &.{}, .want = &.{} },
+    };
+    for (cases) |c| {
+        var mine = std.process.EnvMap.init(x);
+        for (c.given) |kv| try mine.put(kv[0], kv[1]);
+        var env = std.process.EnvMap.init(x);
+        try passFrom(x, &mine, "/root", &env);
+        try std.testing.expectEqual(c.want.len, env.count());
+        for (c.want) |kv| try std.testing.expectEqualStrings(kv[1], env.get(kv[0]) orelse "(not set)");
+    }
 
-    // An absolute CARGO is kept as it is; an empty or absent one is not set.
-    var abs = std.process.EnvMap.init(x);
-    try abs.put("CARGO", "/opt/cargo/bin/cargo");
-    var env_abs = std.process.EnvMap.init(x);
-    try passFrom(x, &abs, "/root", &env_abs);
-    try std.testing.expectEqualStrings("/opt/cargo/bin/cargo", env_abs.get("CARGO").?);
-    var empty = std.process.EnvMap.init(x);
-    try empty.put("CARGO", "");
-    var env_empty = std.process.EnvMap.init(x);
-    try passFrom(x, &empty, "/root", &env_empty);
-    try std.testing.expectEqual(@as(usize, 0), env_empty.count());
-    const none = std.process.EnvMap.init(x);
-    var env_none = std.process.EnvMap.init(x);
-    try passFrom(x, &none, "/root", &env_none);
-    try std.testing.expectEqual(@as(usize, 0), env_none.count());
+    // Every allocation that fails is an error, not a half-made environment: a kept variable, an absolute CARGO, and the join that makes one absolute.
+    var buf: [0]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    for ([_][]const u8{ "OUT_DIR", "CARGO" }) |name| {
+        for ([_][]const u8{ "/abs", "rel" }) |value| {
+            var mine = std.process.EnvMap.init(x);
+            try mine.put(name, value);
+            var env = std.process.EnvMap.init(fba.allocator());
+            try std.testing.expectError(error.OutOfMemory, passFrom(fba.allocator(), &mine, "/root", &env));
+        }
+    }
 }
