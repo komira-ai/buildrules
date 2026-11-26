@@ -63,11 +63,14 @@ pub fn runTee(_: *anyopaque, a: std.mem.Allocator, argv: []const []const u8, log
     tee(poller.reader(.stderr), &file, &write_error);
     const term = try child.wait();
     if (write_error) |e| return e;
+    return endOf(term);
+}
+
+/// How a child's end reads here: its exit code, or the signal (or status) that ended it.
+pub fn endOf(term: std.process.Child.Term) End {
     return switch (term) {
         .Exited => |c| .{ .exited = c },
-        .Signal => |s| .{ .signal = s },
-        .Stopped => |s| .{ .signal = s },
-        .Unknown => |s| .{ .signal = s },
+        .Signal, .Stopped, .Unknown => |s| .{ .signal = s },
     };
 }
 

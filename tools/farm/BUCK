@@ -31,7 +31,6 @@ zig_test(
     data = {
         ".github/actions/farm-connect/action.yml": "//:farm-connect-action.yml",
     },
-    busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
 )
 
@@ -40,7 +39,6 @@ zig_exe(
     exec_compatible_with = LINUX_X86_64,
     src = "farm.zig",
     imports = _SRCS,
-    busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
     unit_tests = [":farm_unit", "buildrules//rules/pins:zig_next_version"],
     visibility = ["PUBLIC"],

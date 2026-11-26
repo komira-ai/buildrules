@@ -737,7 +737,7 @@ test "farm connect: a missing flag, an unknown one or a wrong wait prints why an
 
 // ---- the real runner, the real wait, and the verbs ---------------------------------------------------------------------------------
 
-test "the real runner copies what the command prints to its log, keeps its exit code, and reports a signal" {
+test "the real runner copies what the command prints to its log, keeps its exit code, and fails on a program or log it cannot open" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -754,11 +754,16 @@ test "the real runner copies what the command prints to its log, keeps its exit 
     const failed = try run.runTee(&none, a, &.{ "ls", "no-such-file" }, log);
     try t.expect(failed == .exited and failed.exited != 0);
     try t.expect(std.mem.indexOf(u8, try tmp.dir.readFileAlloc(a, "run.log", 1 << 20), "no-such-file") != null);
-    // a command ended by a signal
-    try t.expectEqualDeep(run.End{ .signal = 15 }, try run.runTee(&none, a, &.{ "sh", "-c", "kill -TERM $$" }, log));
     // a program that does not exist, and a log that cannot be created
     try t.expectError(error.FileNotFound, run.runTee(&none, a, &.{"no-such-program-of-this-test"}, log));
     try t.expectError(error.FileNotFound, run.runTee(&none, a, &.{ "cat", src }, try std.fs.path.join(a, &.{ dir, "no-such-dir", "run.log" })));
+}
+
+test "a child's end reads as its exit code, or as the signal or status that ended it" {
+    try t.expectEqualDeep(run.End{ .exited = 3 }, run.endOf(.{ .Exited = 3 }));
+    try t.expectEqualDeep(run.End{ .signal = 15 }, run.endOf(.{ .Signal = 15 }));
+    try t.expectEqualDeep(run.End{ .signal = 19 }, run.endOf(.{ .Stopped = 19 }));
+    try t.expectEqualDeep(run.End{ .signal = 7 }, run.endOf(.{ .Unknown = 7 }));
 }
 
 test "farm: the verbs are connect and run; anything else is the usage" {
