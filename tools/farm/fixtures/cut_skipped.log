@@ -1,0 +1,125 @@
+[2026-11-26T20:07:39.794+00:00] Build ID: 00000000-0000-0000-0000-000000000000
+[2026-11-26T20:07:40.831+00:00] Build ID: 00000000-0000-0000-0000-000000000000
+[2026-11-26T20:07:41.680+00:00] RE Session: GRPC-SESSION-ID
+[2026-11-26T20:07:48.730+00:00] Waiting on mopm//third_party/buildrules:src-aws-sdk-secretsmanager-1.78.0 (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `aws-sdk-secretsmanager-1.78.0`, and 1612 other actions
+[2026-11-26T20:07:55.830+00:00] Waiting on mopm//third_party/buildrules:src-tracing-0.1.44 (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `tracing-0.1.44`, and 2204 other actions
+[2026-11-26T20:08:02.830+00:00] Waiting on mopm//third_party/buildrules:src-aws-sdk-dynamodb-1.82.0 (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `aws-sdk-dynamodb-1.82.0`, and 2236 other actions
+[2026-11-26T20:08:09.930+00:00] Waiting on mopm//:hygiene (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- zig_test [re_upload], and 2139 other actions
+[2026-11-26T20:08:16.930+00:00] Waiting on mopm//tools/node:node (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node`, and 1805 other actions
+[2026-11-26T20:08:23.930+00:00] Waiting on mopm//tools/node:node (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node`, and 1399 other actions
+[2026-11-26T20:08:31.030+00:00] Waiting on mopm//third_party/buildrules:ryu-1.0.23_b6e93ebebd (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `ryu-1.0.23_b6e93ebebd/libryu.rlib`, and 1089 other actions
+[2026-11-26T20:08:38.030+00:00] Waiting on mopm//third_party/buildrules:regex-automata-0.4.18_4b8cc2843b (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `regex-automata-0.4.18_4b8cc2843b/libregex_automata.rlib`, and 852 other actions
+[2026-11-26T20:08:45.130+00:00] Waiting on mopm//third_party/buildrules:serde_core-1.0.229_7b8513babf (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `serde_core-1.0.229_7b8513babf/libserde_core.rlib`, and 762 other actions
+[2026-11-26T20:08:52.230+00:00] Waiting on mopm//service/infra/access:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 759 other actions
+[2026-11-26T20:08:59.230+00:00] Waiting on mopm//service/infra/access:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 759 other actions
+[2026-11-26T20:09:06.330+00:00] Waiting on mopm//service/infra/access:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 750 other actions
+[2026-11-26T20:09:13.430+00:00] Waiting on mopm//service/infra/access:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 721 other actions
+[2026-11-26T20:09:20.530+00:00] Waiting on mopm//service/infra/dns:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 720 other actions
+[2026-11-26T20:09:27.630+00:00] Waiting on mopm//service/infra/dns:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 720 other actions
+[2026-11-26T20:09:34.730+00:00] Waiting on mopm//service/infra/dns:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 720 other actions
+[2026-11-26T20:09:41.730+00:00] Waiting on mopm//service/infra/dns:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 712 other actions
+[2026-11-26T20:09:48.830+00:00] Waiting on mopm//tutorial/template:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 701 other actions
+[2026-11-26T20:09:55.930+00:00] Waiting on mopm//tutorial/template:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 682 other actions
+[2026-11-26T20:10:02.930+00:00] Waiting on mopm//third_party/buildrules:syn-2.0.119_32a1569aa4 (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `syn-2.0.119_32a1569aa4/libsyn.rlib`, and 675 other actions
+[2026-11-26T20:10:10.030+00:00] Waiting on mopm//service/infra/stacks:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 674 other actions
+[2026-11-26T20:10:17.130+00:00] Waiting on mopm//service/infra/stacks:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 674 other actions
+[2026-11-26T20:10:24.230+00:00] Waiting on mopm//service/infra/stacks:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 674 other actions
+[2026-11-26T20:10:31.330+00:00] Waiting on mopm//service/infra/stacks:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 651 other actions
+[2026-11-26T20:10:38.330+00:00] Waiting on mopm//service/infra/stacks:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 579 other actions
+[2026-11-26T20:10:45.430+00:00] Waiting on mopm//service/infra/stacks:modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 560 other actions
+[2026-11-26T20:10:52.430+00:00] Waiting on mopm//site:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 524 other actions
+[2026-11-26T20:10:59.530+00:00] Waiting on mopm//service/api:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 521 other actions
+[2026-11-26T20:11:06.530+00:00] Waiting on mopm//service/api:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 435 other actions
+[2026-11-26T20:11:13.630+00:00] Waiting on mopm//service/api:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 375 other actions
+[2026-11-26T20:11:20.729+00:00] Waiting on mopm//service/api:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 345 other actions
+[2026-11-26T20:11:27.730+00:00] Waiting on mopm//service/api:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 316 other actions
+[2026-11-26T20:11:34.730+00:00] Waiting on mopm//service/api:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 258 other actions
+[2026-11-26T20:11:41.830+00:00] Waiting on mopm//service/api:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 203 other actions
+[2026-11-26T20:11:48.830+00:00] Waiting on mopm//service/api:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 145 other actions
+[2026-11-26T20:11:55.830+00:00] Waiting on mopm//service/api:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 107 other actions
+[2026-11-26T20:12:02.830+00:00] Waiting on mopm//service/api:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 83 other actions
+[2026-11-26T20:12:09.930+00:00] Waiting on mopm//service/api:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 72 other actions
+[2026-11-26T20:12:17.030+00:00] Waiting on mopm//service/api:node_modules (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `node_modules`, and 62 other actions
+[2026-11-26T20:12:24.131+00:00] Waiting on mopm//third_party/buildrules:aws-sdk-sqs-1.74.0_f89cdeabf4 (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `aws-sdk-sqs-1.74.0_f89cdeabf4/libaws_sdk_sqs.rlib`, and 48 other actions
+[2026-11-26T20:12:31.230+00:00] Waiting on mopm//third_party/buildrules:aws-sdk-cloudfront-1.81.0_70d6dd660f (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `aws-sdk-cloudfront-1.81.0_70d6dd660f/libaws_sdk_cloudfront.rlib`, and 34 other actions
+[2026-11-26T20:12:38.330+00:00] Waiting on mopm//third_party/buildrules:aws-sdk-cloudfront-1.81.0_70d6dd660f (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `aws-sdk-cloudfront-1.81.0_70d6dd660f/libaws_sdk_cloudfront.rlib`, and 30 other actions
+[2026-11-26T20:12:45.430+00:00] Waiting on mopm//third_party/buildrules:aws-sdk-cloudfront-1.81.0_70d6dd660f (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `aws-sdk-cloudfront-1.81.0_70d6dd660f/libaws_sdk_cloudfront.rlib`, and 25 other actions
+[2026-11-26T20:12:52.430+00:00] Waiting on mopm//third_party/buildrules:aws-sdk-cloudfront-1.81.0_70d6dd660f (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `aws-sdk-cloudfront-1.81.0_70d6dd660f/libaws_sdk_cloudfront.rlib`, and 16 other actions
+[2026-11-26T20:12:59.430+00:00] Waiting on mopm//third_party/buildrules:aws-sdk-dynamodb-1.82.0_562dce1d4e (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- materializing `aws-sdk-dynamodb-1.82.0_562dce1d4e/libaws_sdk_dynamodb.rlib`, and 12 other actions
+[2026-11-26T20:13:06.530+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_queued], and 9 other actions
+[2026-11-26T20:13:13.630+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_queued], and 9 other actions
+[2026-11-26T20:13:20.730+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_queued], and 9 other actions
+[2026-11-26T20:13:27.830+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_queued], and 9 other actions
+[2026-11-26T20:13:34.830+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_queued], and 9 other actions
+[2026-11-26T20:13:41.930+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_queued], and 9 other actions
+[2026-11-26T20:13:49.030+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_queued], and 9 other actions
+[2026-11-26T20:13:56.130+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_queued], and 9 other actions
+[2026-11-26T20:14:03.230+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_queued], and 9 other actions
+[2026-11-26T20:14:10.330+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_queued], and 9 other actions
+[2026-11-26T20:14:17.330+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 9 other actions
+[2026-11-26T20:14:24.330+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 9 other actions
+[2026-11-26T20:14:31.330+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 9 other actions
+[2026-11-26T20:14:38.430+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 8 other actions
+[2026-11-26T20:14:45.430+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 7 other actions
+[2026-11-26T20:14:52.530+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 4 other actions
+[2026-11-26T20:14:59.630+00:00] Waiting on mopm//site:test.run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 2 other actions
+[2026-11-26T20:15:06.730+00:00] Waiting on mopm//site:coverage_run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 1 other actions
+[2026-11-26T20:15:13.730+00:00] Waiting on mopm//site:coverage_run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 1 other actions
+[2026-11-26T20:15:20.830+00:00] Waiting on mopm//site:coverage_run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 1 other actions
+[2026-11-26T20:15:27.930+00:00] Waiting on mopm//site:coverage_run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 1 other actions
+[2026-11-26T20:15:34.930+00:00] Waiting on mopm//site:coverage_run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 1 other actions
+[2026-11-26T20:15:42.030+00:00] Waiting on mopm//site:coverage_run (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute], and 1 other actions
+[2026-11-26T20:15:49.130+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:15:56.230+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:16:03.330+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:16:10.330+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:16:17.430+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:16:24.530+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:16:31.630+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:16:38.630+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:16:45.730+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:16:52.830+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:16:59.930+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:17:07.030+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:17:14.130+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:17:21.130+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:17:28.230+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:17:35.230+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:17:42.330+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:17:49.430+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:17:56.430+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:18:03.530+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:18:10.630+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:18:17.730+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:18:24.730+00:00] Waiting on mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) -- node_tree [re_execute]
+[2026-11-26T20:18:27.975+00:00] Action failed: mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) (node_tree)
+[2026-11-26T20:18:27.975+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 95f5059183bd5e49df0f43a2fd7f7dcd1b6ad2019a327c02c56fde5b706394d7:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T20:18:27.975+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T20:18:27.975+00:00] Remote action digest: '95f5059183bd5e49df0f43a2fd7f7dcd1b6ad2019a327c02c56fde5b706394d7:141'
+[2026-11-26T20:18:27.975+00:00] Stdout: <empty>
+[2026-11-26T20:18:27.975+00:00] Stderr: <empty>
+
+[2026-11-26T20:18:27.976+00:00] Skipped 27 incompatible targets:
+[2026-11-26T20:18:27.976+00:00]   mopm//:cli_test_macos (mopm//platforms:linux_x86_64#fc5c3458a61941da)
+[2026-11-26T20:18:27.976+00:00]   mopm//:cli_test_macos_bin (mopm//platforms:linux_x86_64#fc5c3458a61941da)
+[2026-11-26T20:18:27.976+00:00]   mopm//:core_test_macos (mopm//platforms:linux_x86_64#fc5c3458a61941da)
+[2026-11-26T20:18:27.976+00:00]   ...
+[2026-11-26T20:18:27.976+00:00]   mopm//tutorial/template:build (mopm//platforms:linux_x86_64#fc5c3458a61941da)
+[2026-11-26T20:18:27.976+00:00]   mopm//tutorial/template:dist (mopm//platforms:linux_x86_64#fc5c3458a61941da)
+[2026-11-26T20:18:27.976+00:00]   mopm//tutorial/template:lint (mopm//platforms:linux_x86_64#fc5c3458a61941da)
+[2026-11-26T20:18:28.011+00:00] Cache hits: 99%
+[2026-11-26T20:18:28.011+00:00] Commands: 3139 (cached: 3129, remote: 10, local: 0)
+[2026-11-26T20:18:28.011+00:00] Network: up 12MiB  down 5.5GiB  session GRPC-SESSION-ID
+[2026-11-26T20:18:28.020+00:00]
+[2026-11-26T20:18:28.020+00:00] BUILD ERRORS (1)
+[2026-11-26T20:18:28.020+00:00] The following actions failed during the execution of this command:
+[2026-11-26T20:18:28.020+00:00] Action failed: mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da) (node_tree)
+[2026-11-26T20:18:28.020+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 95f5059183bd5e49df0f43a2fd7f7dcd1b6ad2019a327c02c56fde5b706394d7:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T20:18:28.020+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T20:18:28.020+00:00] Remote action digest: '95f5059183bd5e49df0f43a2fd7f7dcd1b6ad2019a327c02c56fde5b706394d7:141'
+[2026-11-26T20:18:28.020+00:00] Stdout: <empty>
+[2026-11-26T20:18:28.020+00:00] Stderr: <empty>
+
+[2026-11-26T20:18:28.020+00:00]
+BUILD FAILED
+Failed to build 'mopm//service/infra/stacks:test (mopm//platforms:linux_x86_64#fc5c3458a61941da)'

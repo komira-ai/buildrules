@@ -1,0 +1,68 @@
+# Connects a GitHub-hosted job to the farm, for every repository that builds with buildrules (tools/farm/README.md): builds the `farm` tool
+# on the runner, waits for a bounded time (20 minutes by default) until the farm answers on its port, and writes the buckconfig that sends
+# the job's builds there. The job joins the farm's network in a step of its own before this one. Its build step then runs
+# `"$RUNNER_TEMP/buildrules-farm" run ... -- <buck2> build ...`, which runs the build once more, after the farm answers again, when every
+# failure in its output is a cut connection to the farm.
+#
+# Nothing here names the farm: its address, instance name and worker property set arrive as inputs, which a workflow takes from repository
+# variables. A pull request from a fork gets no repository variables, so the caller skips a fork's job (a composite action cannot see the
+# event). Each step is one command and no other action is used; tools/farm/action_test.zig holds the steps to the tool's command line.
+name: farm-connect
+description: Build the farm tool, wait (bounded) until the farm answers, and write the farm's buckconfig.
+
+inputs:
+  buck2:
+    description: The path of the buck2 the job builds with (the release buildrules pins in tools/buck2). It builds the farm tool on the runner, before the farm is joined.
+    required: true
+  farm-address:
+    description: The remote-execution service as a URL with a port (the repository variable FARM_ADDRESS).
+    required: true
+  farm-instance:
+    description: The remote-execution instance name (the repository variable FARM_INSTANCE).
+    required: true
+  farm-properties:
+    description: The linux x86_64 worker property set (the repository variable FARM_LINUX_X86_64_PROPERTIES), written as [buildrules_re] linux_x86_64_properties.
+    required: true
+  tls:
+    description: Whether the remote-execution service is reached over TLS, `true` or `false`.
+    required: false
+    default: "false"
+  wait-minutes:
+    description: How long to wait for the farm to answer, in whole minutes from 0 to 120.
+    required: false
+    default: "20"
+  config:
+    description: The buckconfig to write, relative to the checkout; it must not exist yet. The default, the checkout's .buckconfig.local, overrides the repository's .buckconfig.
+    required: false
+    default: .buckconfig.local
+
+runs:
+  using: composite
+  steps:
+    # The tool is built from this action's own commit, on the runner: there is no farm yet to build it on.
+    - name: build the farm tool on this runner
+      shell: bash
+      working-directory: ${{ github.action_path }}/../../..
+      env:
+        BUCK2: ${{ inputs.buck2 }}
+      run: '"$BUCK2" build --console simple -c buildrules_re.mode=local --out "$RUNNER_TEMP/buildrules-farm" //tools/farm:farm'
+
+    - name: stop the buck2 of that build
+      shell: bash
+      working-directory: ${{ github.action_path }}/../../..
+      env:
+        BUCK2: ${{ inputs.buck2 }}
+      run: '"$BUCK2" kill'
+
+    # Refuses an empty or malformed value, masks the address, waits until the farm answers (the job summary says how long, when it waited),
+    # and writes the buckconfig. A farm that does not answer within the wait fails the step: with no farm buck2 would build on the runner.
+    - name: wait until the farm answers, and write its buckconfig
+      shell: bash
+      env:
+        FARM_ADDRESS: ${{ inputs.farm-address }}
+        FARM_INSTANCE: ${{ inputs.farm-instance }}
+        FARM_PROPERTIES: ${{ inputs.farm-properties }}
+        TLS: ${{ inputs.tls }}
+        WAIT_MINUTES: ${{ inputs.wait-minutes }}
+        CONFIG: ${{ inputs.config }}
+      run: '"$RUNNER_TEMP/buildrules-farm" connect --address "$FARM_ADDRESS" --instance "$FARM_INSTANCE" --properties "$FARM_PROPERTIES" --tls "$TLS" --wait-minutes "$WAIT_MINUTES" --out "$CONFIG" --summary "$GITHUB_STEP_SUMMARY"'

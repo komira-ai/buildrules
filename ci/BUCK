@@ -990,6 +990,7 @@ _PACKAGES = [
     "//tools/release:scrub_files",
     "//tools/scrub:scrub_files",
     "//tools/stage:scrub_files",
+    "//tools/farm:scrub_files",
     "crates//:scrub_files",
     "crates//crates/covdemo:scrub_files",
     "crates//crates/hook:scrub_files",
@@ -1107,6 +1108,7 @@ group(name = "floors", deps = [
     "//tools/release:coverage_floor",
     "//tools/scrub:coverage_floor",
     "//tools/stage:coverage_floor",
+    "//tools/farm:coverage_floor",
     "//site:coverage_floor",
     "//infra/site:coverage_floor",
 ])
@@ -1238,6 +1240,7 @@ group(name = "all", deps = [
     "//tools/held:publish_unpack",
     "//tools/release:release",
     "//tools/stage:stage",
+    "//tools/farm:farm",
     "//tools/channels:channels",
     "//tools/channels:channels_cli",
     "//tools/deploy:apt_publish",

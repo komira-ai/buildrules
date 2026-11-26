@@ -1,0 +1,800 @@
+[2026-11-26T17:36:51.440+00:00] Build ID: 00000000-0000-0000-0000-000000000000
+[2026-11-26T17:36:53.570+00:00] RE Session: GRPC-SESSION-ID
+[2026-11-26T17:37:00.641+00:00] Waiting on tierstore//third_party/buildrules:rustix-1.1.6_15ab292fc9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 41 other actions
+[2026-11-26T17:37:07.740+00:00] Waiting on tierstore//third_party/buildrules:rustix-1.1.6_15ab292fc9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 41 other actions
+[2026-11-26T17:37:14.740+00:00] Waiting on tierstore//third_party/buildrules:rustix-1.1.6_15ab292fc9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 41 other actions
+[2026-11-26T17:37:21.741+00:00] Waiting on tierstore//third_party/buildrules:rustix-1.1.6_15ab292fc9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 41 other actions
+[2026-11-26T17:37:28.841+00:00] Waiting on tierstore//third_party/buildrules:rustix-1.1.6_15ab292fc9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 41 other actions
+[2026-11-26T17:37:35.940+00:00] Waiting on tierstore//third_party/buildrules:rustix-1.1.6_15ab292fc9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 41 other actions
+[2026-11-26T17:37:42.940+00:00] Waiting on tierstore//third_party/buildrules:rustix-1.1.6_15ab292fc9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 41 other actions
+[2026-11-26T17:37:50.041+00:00] Waiting on tierstore//third_party/buildrules:rustix-1.1.6_15ab292fc9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 41 other actions
+[2026-11-26T17:37:57.141+00:00] Waiting on tierstore//third_party/buildrules:rustix-1.1.6_15ab292fc9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 41 other actions
+[2026-11-26T17:38:04.241+00:00] Waiting on tierstore//third_party/buildrules:rustix-1.1.6_15ab292fc9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 41 other actions
+[2026-11-26T17:38:11.340+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:38:18.341+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:38:25.441+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:38:32.541+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:38:39.640+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:38:46.641+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:38:53.741+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:39:00.841+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:39:07.841+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:39:14.941+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:39:22.040+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:39:29.041+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:39:36.140+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:39:43.141+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:39:50.241+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:39:57.241+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:40:04.341+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:40:11.440+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:40:18.440+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:40:25.441+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:40:32.540+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:40:39.540+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:40:46.640+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 41 other actions
+[2026-11-26T17:40:53.640+00:00] Waiting on tierstore//third_party/buildrules:aws-smithy-http-0.64.3_0087e00cce (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 41 other actions
+[2026-11-26T17:41:00.740+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 41 other actions
+[2026-11-26T17:41:07.741+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 51 other actions
+[2026-11-26T17:41:14.840+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:41:21.840+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:41:28.841+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:41:35.941+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:41:43.040+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:41:50.141+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:41:57.241+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:42:04.341+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:42:11.341+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:42:18.440+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:42:25.441+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:42:32.540+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:42:39.540+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 65 other actions
+[2026-11-26T17:42:44.612+00:00] Action failed: tierstore//third_party/buildrules:rustix-1.1.6_647baab286 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc rustix-1.1.6_647baab286)
+[2026-11-26T17:42:44.612+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 68f3b347329f47417e9dde004fd2bf9fcaa15d76f0054f2d836f184f16b18602:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:44.612+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:44.612+00:00] Remote action digest: '68f3b347329f47417e9dde004fd2bf9fcaa15d76f0054f2d836f184f16b18602:141'
+[2026-11-26T17:42:44.612+00:00] Stdout: <empty>
+[2026-11-26T17:42:44.612+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:44.612+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_ff89c6b138 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_ff89c6b138)
+[2026-11-26T17:42:44.612+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 1d2676e03745dfd2f69ff725d35fd478f3992f080a194ea3002201a3c155a13c:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:44.612+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:44.612+00:00] Remote action digest: '1d2676e03745dfd2f69ff725d35fd478f3992f080a194ea3002201a3c155a13c:142'
+[2026-11-26T17:42:44.612+00:00] Stdout: <empty>
+[2026-11-26T17:42:44.612+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:44.612+00:00] Action failed: tierstore//crates/tierstore-mount-client:tierstore-mount-client-0.1.0_28acf6094e (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-mount-client-0.1.0_28acf6094e)
+[2026-11-26T17:42:44.612+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 236dfb3f079e25a2e67d70f79cec32eecb6169be405284f61917fc0a0eddf04d:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:44.612+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:44.612+00:00] Remote action digest: '236dfb3f079e25a2e67d70f79cec32eecb6169be405284f61917fc0a0eddf04d:142'
+[2026-11-26T17:42:44.612+00:00] Stdout: <empty>
+[2026-11-26T17:42:44.612+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:44.612+00:00] Action failed: tierstore//third_party/buildrules:rustix-1.1.6_6787be8b69 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc rustix-1.1.6_6787be8b69)
+[2026-11-26T17:42:44.612+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 73ba94826cd52739795755d5430ef0a2bfdd1b0c1a96b33df40a4c94190b5132:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:44.612+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:44.612+00:00] Remote action digest: '73ba94826cd52739795755d5430ef0a2bfdd1b0c1a96b33df40a4c94190b5132:141'
+[2026-11-26T17:42:44.612+00:00] Stdout: <empty>
+[2026-11-26T17:42:44.612+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:44.612+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_d057ecd32c (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_d057ecd32c)
+[2026-11-26T17:42:44.612+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 545063d4d19f0e8944986416929663b529b1763b25d6a906264bf2a539916055:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:44.612+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:44.612+00:00] Remote action digest: '545063d4d19f0e8944986416929663b529b1763b25d6a906264bf2a539916055:142'
+[2026-11-26T17:42:44.612+00:00] Stdout: <empty>
+[2026-11-26T17:42:44.612+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:44.612+00:00] Action failed: tierstore//third_party/buildrules:aws-smithy-xml-0.64.1_98e04b1902 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc aws-smithy-xml-0.64.1_98e04b1902)
+[2026-11-26T17:42:44.612+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest d98a87dc2097c51fc7f514a2c13e0804e1b42fd8d530fec7fac75e97c65e88ea:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:44.612+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:44.612+00:00] Remote action digest: 'd98a87dc2097c51fc7f514a2c13e0804e1b42fd8d530fec7fac75e97c65e88ea:141'
+[2026-11-26T17:42:44.612+00:00] Stdout: <empty>
+[2026-11-26T17:42:44.612+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:44.612+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_03701625a0 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_03701625a0)
+[2026-11-26T17:42:44.612+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest d92bc67ca8c2cfa0c55bebbaaae5d9853c788f5e0e3e1037343893ceb00dacef:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:44.612+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:44.612+00:00] Remote action digest: 'd92bc67ca8c2cfa0c55bebbaaae5d9853c788f5e0e3e1037343893ceb00dacef:142'
+[2026-11-26T17:42:44.612+00:00] Stdout: <empty>
+[2026-11-26T17:42:44.612+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:44.612+00:00] Action failed: tierstore//crates/tierstore-mount-client:tierstore-mount-client-0.1.0_537b14de2f_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-mount-client-0.1.0_537b14de2f_lint)
+[2026-11-26T17:42:44.612+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest d1c26d5b1a2078d13d102cbfe12598658cab06ba362e340e94742c0f3334bd02:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:44.612+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:44.612+00:00] Remote action digest: 'd1c26d5b1a2078d13d102cbfe12598658cab06ba362e340e94742c0f3334bd02:142'
+[2026-11-26T17:42:44.612+00:00] Stdout: <empty>
+[2026-11-26T17:42:44.612+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:44.612+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_955c963731 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_955c963731)
+[2026-11-26T17:42:44.612+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest e816cd1f2291d31f75b5dc23cdc09b2913adfdfe1ff668f0209c0d1f6b467c50:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:44.612+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:44.612+00:00] Remote action digest: 'e816cd1f2291d31f75b5dc23cdc09b2913adfdfe1ff668f0209c0d1f6b467c50:142'
+[2026-11-26T17:42:44.612+00:00] Stdout: <empty>
+[2026-11-26T17:42:44.612+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:44.612+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_4a734e7bc6 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_4a734e7bc6)
+[2026-11-26T17:42:44.612+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 16917c5063cb15a2d3d61893058eb86b264ad5417bcbc3f9f86c84f0a53c02eb:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:44.612+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:44.612+00:00] Remote action digest: '16917c5063cb15a2d3d61893058eb86b264ad5417bcbc3f9f86c84f0a53c02eb:142'
+[2026-11-26T17:42:44.612+00:00] Stdout: <empty>
+[2026-11-26T17:42:44.612+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:44.640+00:00] [2m2026-11-26T17:42:44.608949Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 1/5), retrying in 123ms: code: 'The service is currently unavailable', message: "http2 error", source: tonic::transport::Error(Transport, hyper::Error(Http2, KeepAliveTimedOut)): transport error: http2 error: keep-alive timed out: operation timed out
+[2026-11-26T17:42:44.640+00:00] [2m2026-11-26T17:42:44.608974Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 1/5), retrying in 146ms: Error writing chunk of: 124498e28323f2cd2b30d3ba29b39f4f06d54678ea00499a474c12da199af3d6:6844198: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe
+[2026-11-26T17:42:44.640+00:00] [2m2026-11-26T17:42:44.609018Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 1/5), retrying in 101ms: code: 'The service is currently unavailable', message: "http2 error", source: tonic::transport::Error(Transport, hyper::Error(Http2, KeepAliveTimedOut)): transport error: http2 error: keep-alive timed out: operation timed out
+[2026-11-26T17:42:44.640+00:00] [2m2026-11-26T17:42:44.608971Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 1/5), retrying in 138ms: code: 'The service is currently unavailable', message: "http2 error", source: tonic::transport::Error(Transport, hyper::Error(Http2, KeepAliveTimedOut)): transport error: http2 error: keep-alive timed out: operation timed out
+[2026-11-26T17:42:44.640+00:00] [2m2026-11-26T17:42:44.609534Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 1/5), retrying in 101ms: code: 'The service is currently unavailable', message: "http2 error", source: tonic::transport::Error(Transport, hyper::Error(Http2, KeepAliveTimedOut)): transport error: http2 error: keep-alive timed out: operation timed out
+[2026-11-26T17:42:47.148+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_01553922a7 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_01553922a7)
+[2026-11-26T17:42:47.148+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 7019b27fcf7c703776a912445e8b27f7a3aa5fbfefc2f8abaaccefa99f0492fa:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.148+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.148+00:00] Remote action digest: '7019b27fcf7c703776a912445e8b27f7a3aa5fbfefc2f8abaaccefa99f0492fa:142'
+[2026-11-26T17:42:47.148+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.148+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.148+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_2f3544abdd (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_2f3544abdd)
+[2026-11-26T17:42:47.148+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 8fe21827efd72ad5b03e005e66de3f9ad621eb56d2116d8baf5cc49ce3f69941:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.148+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.148+00:00] Remote action digest: '8fe21827efd72ad5b03e005e66de3f9ad621eb56d2116d8baf5cc49ce3f69941:142'
+[2026-11-26T17:42:47.148+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.148+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.148+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_b61eaee9f8 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_b61eaee9f8)
+[2026-11-26T17:42:47.148+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 448bda51a3b03dfdf9f47f6c9b25f5406e4f30765d2d0db6e16dd4820d5da13e:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.148+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.148+00:00] Remote action digest: '448bda51a3b03dfdf9f47f6c9b25f5406e4f30765d2d0db6e16dd4820d5da13e:142'
+[2026-11-26T17:42:47.148+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.148+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.148+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_5b1c3ec236 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_5b1c3ec236)
+[2026-11-26T17:42:47.148+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest e9e141a5c7d340b93f20bdc21ca80e5ff699867c45c955be7ab40417e445b523:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.148+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.148+00:00] Remote action digest: 'e9e141a5c7d340b93f20bdc21ca80e5ff699867c45c955be7ab40417e445b523:142'
+[2026-11-26T17:42:47.148+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.148+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.148+00:00] Action failed: tierstore//third_party/buildrules:tempfile-3.27.0_60d66c02fe (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tempfile-3.27.0_60d66c02fe)
+[2026-11-26T17:42:47.148+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 194c9493144b12856b17aefce14cce1cb93b43dfdcf75383c20fdbf17a7c65fb:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.148+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.148+00:00] Remote action digest: '194c9493144b12856b17aefce14cce1cb93b43dfdcf75383c20fdbf17a7c65fb:141'
+[2026-11-26T17:42:47.148+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.148+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.148+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_87e253e94a (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_87e253e94a)
+[2026-11-26T17:42:47.148+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest bb43a59dd011b64beb7fa76a6d367b5f1c41add4530906d498d6bb2a18d0c706:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.148+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.148+00:00] Remote action digest: 'bb43a59dd011b64beb7fa76a6d367b5f1c41add4530906d498d6bb2a18d0c706:141'
+[2026-11-26T17:42:47.148+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.148+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.148+00:00] Action failed: tierstore//crates/tierstore-mount-server:tierstore-mount-server-0.1.0_9f2a46a3d5_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-mount-server-0.1.0_9f2a46a3d5_lint)
+[2026-11-26T17:42:47.148+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest b88314a22f443f7fb64ee3f73e2338f22cff8d5c61fccbe68f322634ba086ab1:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.148+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.148+00:00] Remote action digest: 'b88314a22f443f7fb64ee3f73e2338f22cff8d5c61fccbe68f322634ba086ab1:142'
+[2026-11-26T17:42:47.148+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.148+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_4b14aa6e65 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_4b14aa6e65)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 558839b678693656c671ba48284abac40a3e51567b6c75b3abef13bfc4bee5d8:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '558839b678693656c671ba48284abac40a3e51567b6c75b3abef13bfc4bee5d8:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_07fabc3b89 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_07fabc3b89)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 3732c9d8035889d7d44df0db099df10d5b186f3acb9bcb29ba346f942cf11c54:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '3732c9d8035889d7d44df0db099df10d5b186f3acb9bcb29ba346f942cf11c54:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_06f2721654 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_06f2721654)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 14912660ac1529d14f0fa55c988c5c921cd85269433c8cda64db1802df226a04:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '14912660ac1529d14f0fa55c988c5c921cd85269433c8cda64db1802df226a04:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//third_party/buildrules:tempfile-3.27.0_7ab9cf0e06 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tempfile-3.27.0_7ab9cf0e06)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 1e7f7e5e6c59912dff423473391adc34fd837c06c38016a0fd07110945832ed6:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '1e7f7e5e6c59912dff423473391adc34fd837c06c38016a0fd07110945832ed6:141'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_2c094813eb (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_2c094813eb)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 86ab0d85e3ff895d960044a3967f58e50140fbf5c76e77aec4649fcb908ae0d1:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '86ab0d85e3ff895d960044a3967f58e50140fbf5c76e77aec4649fcb908ae0d1:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_fff9e7a7ac (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_fff9e7a7ac)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 4bed48529fb438aab0bbb0290fdea45cf4cb64b1efe6b5cf79f7608f45040248:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '4bed48529fb438aab0bbb0290fdea45cf4cb64b1efe6b5cf79f7608f45040248:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_363ef86f72 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_363ef86f72)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest d3c24bfb567c9f15afb4b88a690bee924415b93e238304fe1864ab691b19d7c7:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: 'd3c24bfb567c9f15afb4b88a690bee924415b93e238304fe1864ab691b19d7c7:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_1c1d512266 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_1c1d512266)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest ce75314457718cf451d3a6275b4ac1f14fdc8298f8631901b9cb4b0aebd44d2d:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: 'ce75314457718cf451d3a6275b4ac1f14fdc8298f8631901b9cb4b0aebd44d2d:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_5cd1177763 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_5cd1177763)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest f89b3b187d55131b0c41bc861ca8fccc88b39a666fe3d45ef1b21a46e29108b2:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: 'f89b3b187d55131b0c41bc861ca8fccc88b39a666fe3d45ef1b21a46e29108b2:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tierstore-mount-client:tierstore-mount-client-0.1.0_93d41ddd43 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-mount-client-0.1.0_93d41ddd43)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 739c4f678ca1d15cb833e3490c869e6a02c1d6a156a729ad559c03d3a0c582a7:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '739c4f678ca1d15cb833e3490c869e6a02c1d6a156a729ad559c03d3a0c582a7:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_5f42a2d9f3 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_5f42a2d9f3)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 4893753feb9dd1714b4c081c349fbd58ec531d660aa8d4277479a68dfe46d3ee:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '4893753feb9dd1714b4c081c349fbd58ec531d660aa8d4277479a68dfe46d3ee:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//third_party/buildrules:keeper-steps-0.1.0_c9362deee4 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc keeper-steps-0.1.0_c9362deee4)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest dff037b1c7cfa498a4256f8bd15de786325576167e3fcc7e9198e4dafdfba58a:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: 'dff037b1c7cfa498a4256f8bd15de786325576167e3fcc7e9198e4dafdfba58a:141'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_76a562d82b (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_76a562d82b)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 64ef29033296e577881446858e913a56e4a7755542ad34766c686524ae4f6b24:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '64ef29033296e577881446858e913a56e4a7755542ad34766c686524ae4f6b24:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//third_party/buildrules:tempfile-3.27.0_12c06cc972 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tempfile-3.27.0_12c06cc972)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 6fac023a403331aab7fd8d813fe3bd80ab1edb04990addbeabd40ee438eca75d:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '6fac023a403331aab7fd8d813fe3bd80ab1edb04990addbeabd40ee438eca75d:141'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tierstore-mount-server:tierstore-mount-server-0.1.0_f8a93250cf (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-mount-server-0.1.0_f8a93250cf)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest eebfefb31f6d409168fabab227e228bee2878121abcf2b1d5ecf66a87e611eaf:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: 'eebfefb31f6d409168fabab227e228bee2878121abcf2b1d5ecf66a87e611eaf:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tierstore-mount-server:tierstore-mount-server-0.1.0_9f2a46a3d5 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-mount-server-0.1.0_9f2a46a3d5)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest d429b3ffcf2765f0c56e245eabf9918441c20f0cc701909a9ca8fbff05a5309b:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: 'd429b3ffcf2765f0c56e245eabf9918441c20f0cc701909a9ca8fbff05a5309b:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_bb9d840900 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_bb9d840900)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest d1d5a046ee49d4081a2a1a32d6dc33b91184bba473ad9bb2524db7987253f6d0:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: 'd1d5a046ee49d4081a2a1a32d6dc33b91184bba473ad9bb2524db7987253f6d0:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_3455fad7a6 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_3455fad7a6)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 639b208e8785f5ddc2dfc09d524eaa168ca34ceeea86dbbcde7ac8fbc4485385:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '639b208e8785f5ddc2dfc09d524eaa168ca34ceeea86dbbcde7ac8fbc4485385:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_cd4baddcc5 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_cd4baddcc5)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 2da58f9a7e6415b89f1a986ce065dd57b09e5624259f67e20172626948cbfa0b:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '2da58f9a7e6415b89f1a986ce065dd57b09e5624259f67e20172626948cbfa0b:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tierstore:tierstore-0.3.0_bc7b3486a3 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-0.3.0_bc7b3486a3)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest e923fa0b142beccd1b0fab4d3d42ef7cb84a4f79fa7461ba299e29ccf1cc5ce8:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: 'e923fa0b142beccd1b0fab4d3d42ef7cb84a4f79fa7461ba299e29ccf1cc5ce8:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-0.3.0_c1980509a2)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 5e8efcbcf62bd95c1bdf4ec076ade8dc0d9a0368f767e234cf5b9dab5514446b:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '5e8efcbcf62bd95c1bdf4ec076ade8dc0d9a0368f767e234cf5b9dab5514446b:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.149+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_c9be40f070_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_c9be40f070_lint)
+[2026-11-26T17:42:47.149+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 124fd44c7d128bde55c633de196f6b39e23156e6bb693c4f00bc8db841ce8bca:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.149+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.149+00:00] Remote action digest: '124fd44c7d128bde55c633de196f6b39e23156e6bb693c4f00bc8db841ce8bca:142'
+[2026-11-26T17:42:47.149+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.149+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.242+00:00] [2m2026-11-26T17:42:47.144235Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 2/5), retrying in 231ms: code: 'The service is currently unavailable', message: "http2 error", source: tonic::transport::Error(Transport, hyper::Error(Http2, KeepAliveTimedOut)): transport error: http2 error: keep-alive timed out: operation timed out
+[2026-11-26T17:42:47.242+00:00] [2m2026-11-26T17:42:47.145142Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 2/5), retrying in 244ms: code: 'The service is currently unavailable', message: "http2 error", source: tonic::transport::Error(Transport, hyper::Error(Http2, KeepAliveTimedOut)): transport error: http2 error: keep-alive timed out: operation timed out
+[2026-11-26T17:42:47.258+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_703dbc2904 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_703dbc2904)
+[2026-11-26T17:42:47.258+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest adac0cba608abdf9c5e7e885319934c34fbf20e69911edc509787b0cb8a18720:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.258+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.258+00:00] Remote action digest: 'adac0cba608abdf9c5e7e885319934c34fbf20e69911edc509787b0cb8a18720:142'
+[2026-11-26T17:42:47.258+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.258+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.258+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_10b6bb7164 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_10b6bb7164)
+[2026-11-26T17:42:47.258+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 8f67e218bd6cdba4d915a601936da68ca9541f997d3697e66c38f99ca7701fe3:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.258+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.258+00:00] Remote action digest: '8f67e218bd6cdba4d915a601936da68ca9541f997d3697e66c38f99ca7701fe3:142'
+[2026-11-26T17:42:47.258+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.258+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.258+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_d7afaa69a3 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_d7afaa69a3)
+[2026-11-26T17:42:47.258+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 71585132de09f97466dc869eaac7893104af99b3faa0f3aa1220b9598638273d:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.258+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.258+00:00] Remote action digest: '71585132de09f97466dc869eaac7893104af99b3faa0f3aa1220b9598638273d:142'
+[2026-11-26T17:42:47.258+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.258+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.258+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_1b7130a731 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_1b7130a731)
+[2026-11-26T17:42:47.258+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest aaacde69f9564328d032d3d06c3f172ec9b82fda2b6cf611330bc263addf2997:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.258+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.258+00:00] Remote action digest: 'aaacde69f9564328d032d3d06c3f172ec9b82fda2b6cf611330bc263addf2997:142'
+[2026-11-26T17:42:47.258+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.258+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.258+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_d4560098de_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_d4560098de_lint)
+[2026-11-26T17:42:47.258+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 300fd7d4098dfbd74b188c3a60c5641b5ce804001e90f933666170865c38cbad:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.258+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.258+00:00] Remote action digest: '300fd7d4098dfbd74b188c3a60c5641b5ce804001e90f933666170865c38cbad:142'
+[2026-11-26T17:42:47.258+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.258+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.258+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_f1fe556ff9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_f1fe556ff9)
+[2026-11-26T17:42:47.258+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 22e1133b9556bf5570f09647337c7d4ad1f1b3ae3657d6c9c15809c0203e5b30:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.258+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.258+00:00] Remote action digest: '22e1133b9556bf5570f09647337c7d4ad1f1b3ae3657d6c9c15809c0203e5b30:142'
+[2026-11-26T17:42:47.258+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.258+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.258+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_25e43af082 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_25e43af082)
+[2026-11-26T17:42:47.258+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 06a63faca36f212d607a5320e7240debcd193f80cf57ae1cfb08bb687cbb2269:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.258+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.258+00:00] Remote action digest: '06a63faca36f212d607a5320e7240debcd193f80cf57ae1cfb08bb687cbb2269:142'
+[2026-11-26T17:42:47.258+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.258+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.259+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_c9be40f070 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_c9be40f070)
+[2026-11-26T17:42:47.259+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest dbfef91dafe9e62a33fd4d3f6fab610e473a7ddb5a8c9c8fb35569f871c6ae1f:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:42:47.259+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:42:47.259+00:00] Remote action digest: 'dbfef91dafe9e62a33fd4d3f6fab610e473a7ddb5a8c9c8fb35569f871c6ae1f:142'
+[2026-11-26T17:42:47.259+00:00] Stdout: <empty>
+[2026-11-26T17:42:47.259+00:00] Stderr: <empty>
+
+[2026-11-26T17:42:47.441+00:00] [2m2026-11-26T17:42:47.256742Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 1/5), retrying in 134ms: code: 'The service is currently unavailable', message: "http2 error", source: tonic::transport::Error(Transport, hyper::Error(Http2, KeepAliveTimedOut)): transport error: http2 error: keep-alive timed out: operation timed out
+[2026-11-26T17:42:47.441+00:00] [2m2026-11-26T17:42:47.256833Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 2/5), retrying in 216ms: Failed to read app/blobs/124498e28323f2cd2b30d3ba29b39f4f06d54678ea00499a474c12da199af3d6/6844198 from Bytestream service: code: 'The service is currently unavailable', message: "http2 error", source: tonic::transport::Error(Transport, hyper::Error(Http2, KeepAliveTimedOut)): transport error: http2 error: keep-alive timed out: operation timed out
+[2026-11-26T17:42:54.441+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:43:01.540+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:43:08.640+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:43:15.740+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:43:22.840+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:43:29.940+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:43:37.041+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:43:44.140+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:43:51.141+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:43:58.141+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:44:05.241+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:44:12.341+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:44:19.441+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:44:26.540+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:44:33.541+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:44:40.640+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:44:47.640+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:44:54.641+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:45:00.640+00:00] [2m2026-11-26T17:45:00.559468Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 2/5), retrying in 237ms: code: 'The service is currently unavailable', message: "tcp connect error", source: tonic::transport::Error(Transport, ConnectError(ConnectError("tcp connect error", 192.0.2.10:50051, Os { code: 110, kind: TimedOut, message: "Connection timed out" }))): transport error: tcp connect error: tcp connect error: Connection timed out (os error 110)
+[2026-11-26T17:45:00.640+00:00] [2m2026-11-26T17:45:00.559456Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 3/5), retrying in 405ms: code: 'The service is currently unavailable', message: "tcp connect error", source: tonic::transport::Error(Transport, ConnectError(ConnectError("tcp connect error", 192.0.2.10:50051, Os { code: 110, kind: TimedOut, message: "Connection timed out" }))): transport error: tcp connect error: tcp connect error: Connection timed out (os error 110)
+[2026-11-26T17:45:00.640+00:00] [2m2026-11-26T17:45:00.559456Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 3/5), retrying in 411ms: Failed to read app/blobs/124498e28323f2cd2b30d3ba29b39f4f06d54678ea00499a474c12da199af3d6/6844198 from Bytestream service: code: 'The service is currently unavailable', message: "tcp connect error", source: tonic::transport::Error(Transport, ConnectError(ConnectError("tcp connect error", 192.0.2.10:50051, Os { code: 110, kind: TimedOut, message: "Connection timed out" }))): transport error: tcp connect error: tcp connect error: Connection timed out (os error 110)
+[2026-11-26T17:45:00.640+00:00] [2m2026-11-26T17:45:00.559483Z[0m [33m WARN[0m [2mremote_execution::client[0m[2m:[0m Transient error (attempt 2/5), retrying in 217ms: code: 'The service is currently unavailable', message: "tcp connect error", source: tonic::transport::Error(Transport, ConnectError(ConnectError("tcp connect error", 192.0.2.10:50051, Os { code: 110, kind: TimedOut, message: "Connection timed out" }))): transport error: tcp connect error: tcp connect error: Connection timed out (os error 110)
+[2026-11-26T17:45:07.640+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:45:14.740+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:45:21.741+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:45:28.840+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:45:35.840+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:45:42.841+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:45:49.940+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:45:56.940+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:46:03.940+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:46:10.941+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:46:18.040+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_035e17c762_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tierstore-0.3.0_035e17c762_lint/tierstore.rmeta`, and 4 other actions
+[2026-11-26T17:46:25.041+00:00] Waiting on tierstore//crates/tsfuse:tsfuse-0.1.0_76a562d82b_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 1 other actions
+[2026-11-26T17:46:32.140+00:00] Waiting on tierstore//crates/tsfuse:tsfuse-0.1.0_76a562d82b_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- materializing `tsfuse-0.1.0_76a562d82b_lint/tsfuse.rmeta`, and 1 other actions
+[2026-11-26T17:46:39.141+00:00] Waiting on tierstore//crates/tierstore-tree:tierstore-tree-0.1.0_7fb85c55a2_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued]
+[2026-11-26T17:46:46.240+00:00] Waiting on tierstore//crates/tierstore-tree:tierstore-tree-0.1.0_7fb85c55a2_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute]
+[2026-11-26T17:46:46.859+00:00] Cache hits: 94%
+[2026-11-26T17:46:46.859+00:00] Commands: 1551 (cached: 1462, remote: 89, local: 0)
+[2026-11-26T17:46:46.859+00:00] Network: up 3.8MiB  down 27MiB  session GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00]
+[2026-11-26T17:46:46.859+00:00] BUILD ERRORS (47)
+[2026-11-26T17:46:46.859+00:00] The following actions failed during the execution of this command:
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:rustix-1.1.6_647baab286 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc rustix-1.1.6_647baab286)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 68f3b347329f47417e9dde004fd2bf9fcaa15d76f0054f2d836f184f16b18602:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '68f3b347329f47417e9dde004fd2bf9fcaa15d76f0054f2d836f184f16b18602:141'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_ff89c6b138 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_ff89c6b138)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 1d2676e03745dfd2f69ff725d35fd478f3992f080a194ea3002201a3c155a13c:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '1d2676e03745dfd2f69ff725d35fd478f3992f080a194ea3002201a3c155a13c:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//crates/tierstore-mount-client:tierstore-mount-client-0.1.0_28acf6094e (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-mount-client-0.1.0_28acf6094e)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 236dfb3f079e25a2e67d70f79cec32eecb6169be405284f61917fc0a0eddf04d:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '236dfb3f079e25a2e67d70f79cec32eecb6169be405284f61917fc0a0eddf04d:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:rustix-1.1.6_6787be8b69 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc rustix-1.1.6_6787be8b69)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 73ba94826cd52739795755d5430ef0a2bfdd1b0c1a96b33df40a4c94190b5132:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '73ba94826cd52739795755d5430ef0a2bfdd1b0c1a96b33df40a4c94190b5132:141'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_d057ecd32c (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_d057ecd32c)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 545063d4d19f0e8944986416929663b529b1763b25d6a906264bf2a539916055:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '545063d4d19f0e8944986416929663b529b1763b25d6a906264bf2a539916055:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:aws-smithy-xml-0.64.1_98e04b1902 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc aws-smithy-xml-0.64.1_98e04b1902)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest d98a87dc2097c51fc7f514a2c13e0804e1b42fd8d530fec7fac75e97c65e88ea:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: 'd98a87dc2097c51fc7f514a2c13e0804e1b42fd8d530fec7fac75e97c65e88ea:141'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_03701625a0 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_03701625a0)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest d92bc67ca8c2cfa0c55bebbaaae5d9853c788f5e0e3e1037343893ceb00dacef:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: 'd92bc67ca8c2cfa0c55bebbaaae5d9853c788f5e0e3e1037343893ceb00dacef:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//crates/tierstore-mount-client:tierstore-mount-client-0.1.0_537b14de2f_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-mount-client-0.1.0_537b14de2f_lint)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest d1c26d5b1a2078d13d102cbfe12598658cab06ba362e340e94742c0f3334bd02:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: 'd1c26d5b1a2078d13d102cbfe12598658cab06ba362e340e94742c0f3334bd02:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_955c963731 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_955c963731)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest e816cd1f2291d31f75b5dc23cdc09b2913adfdfe1ff668f0209c0d1f6b467c50:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: 'e816cd1f2291d31f75b5dc23cdc09b2913adfdfe1ff668f0209c0d1f6b467c50:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_4a734e7bc6 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_4a734e7bc6)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 16917c5063cb15a2d3d61893058eb86b264ad5417bcbc3f9f86c84f0a53c02eb:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '16917c5063cb15a2d3d61893058eb86b264ad5417bcbc3f9f86c84f0a53c02eb:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_01553922a7 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_01553922a7)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 7019b27fcf7c703776a912445e8b27f7a3aa5fbfefc2f8abaaccefa99f0492fa:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '7019b27fcf7c703776a912445e8b27f7a3aa5fbfefc2f8abaaccefa99f0492fa:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_2f3544abdd (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_2f3544abdd)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 8fe21827efd72ad5b03e005e66de3f9ad621eb56d2116d8baf5cc49ce3f69941:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '8fe21827efd72ad5b03e005e66de3f9ad621eb56d2116d8baf5cc49ce3f69941:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_b61eaee9f8 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_b61eaee9f8)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 448bda51a3b03dfdf9f47f6c9b25f5406e4f30765d2d0db6e16dd4820d5da13e:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '448bda51a3b03dfdf9f47f6c9b25f5406e4f30765d2d0db6e16dd4820d5da13e:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_5b1c3ec236 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_5b1c3ec236)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest e9e141a5c7d340b93f20bdc21ca80e5ff699867c45c955be7ab40417e445b523:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: 'e9e141a5c7d340b93f20bdc21ca80e5ff699867c45c955be7ab40417e445b523:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:tempfile-3.27.0_60d66c02fe (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tempfile-3.27.0_60d66c02fe)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 194c9493144b12856b17aefce14cce1cb93b43dfdcf75383c20fdbf17a7c65fb:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '194c9493144b12856b17aefce14cce1cb93b43dfdcf75383c20fdbf17a7c65fb:141'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_87e253e94a (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_87e253e94a)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest bb43a59dd011b64beb7fa76a6d367b5f1c41add4530906d498d6bb2a18d0c706:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: 'bb43a59dd011b64beb7fa76a6d367b5f1c41add4530906d498d6bb2a18d0c706:141'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//crates/tierstore-mount-server:tierstore-mount-server-0.1.0_9f2a46a3d5_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-mount-server-0.1.0_9f2a46a3d5_lint)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest b88314a22f443f7fb64ee3f73e2338f22cff8d5c61fccbe68f322634ba086ab1:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: 'b88314a22f443f7fb64ee3f73e2338f22cff8d5c61fccbe68f322634ba086ab1:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_4b14aa6e65 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_4b14aa6e65)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 558839b678693656c671ba48284abac40a3e51567b6c75b3abef13bfc4bee5d8:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '558839b678693656c671ba48284abac40a3e51567b6c75b3abef13bfc4bee5d8:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_07fabc3b89 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_07fabc3b89)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 3732c9d8035889d7d44df0db099df10d5b186f3acb9bcb29ba346f942cf11c54:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '3732c9d8035889d7d44df0db099df10d5b186f3acb9bcb29ba346f942cf11c54:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_06f2721654 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_06f2721654)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 14912660ac1529d14f0fa55c988c5c921cd85269433c8cda64db1802df226a04:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '14912660ac1529d14f0fa55c988c5c921cd85269433c8cda64db1802df226a04:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:tempfile-3.27.0_7ab9cf0e06 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tempfile-3.27.0_7ab9cf0e06)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 1e7f7e5e6c59912dff423473391adc34fd837c06c38016a0fd07110945832ed6:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '1e7f7e5e6c59912dff423473391adc34fd837c06c38016a0fd07110945832ed6:141'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_2c094813eb (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_2c094813eb)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 86ab0d85e3ff895d960044a3967f58e50140fbf5c76e77aec4649fcb908ae0d1:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '86ab0d85e3ff895d960044a3967f58e50140fbf5c76e77aec4649fcb908ae0d1:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_fff9e7a7ac (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_fff9e7a7ac)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 4bed48529fb438aab0bbb0290fdea45cf4cb64b1efe6b5cf79f7608f45040248:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '4bed48529fb438aab0bbb0290fdea45cf4cb64b1efe6b5cf79f7608f45040248:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_363ef86f72 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_363ef86f72)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest d3c24bfb567c9f15afb4b88a690bee924415b93e238304fe1864ab691b19d7c7:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: 'd3c24bfb567c9f15afb4b88a690bee924415b93e238304fe1864ab691b19d7c7:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_1c1d512266 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_1c1d512266)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest ce75314457718cf451d3a6275b4ac1f14fdc8298f8631901b9cb4b0aebd44d2d:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: 'ce75314457718cf451d3a6275b4ac1f14fdc8298f8631901b9cb4b0aebd44d2d:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_5cd1177763 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_5cd1177763)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest f89b3b187d55131b0c41bc861ca8fccc88b39a666fe3d45ef1b21a46e29108b2:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: 'f89b3b187d55131b0c41bc861ca8fccc88b39a666fe3d45ef1b21a46e29108b2:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//crates/tierstore-mount-client:tierstore-mount-client-0.1.0_93d41ddd43 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-mount-client-0.1.0_93d41ddd43)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 739c4f678ca1d15cb833e3490c869e6a02c1d6a156a729ad559c03d3a0c582a7:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '739c4f678ca1d15cb833e3490c869e6a02c1d6a156a729ad559c03d3a0c582a7:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.859+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_5f42a2d9f3 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_5f42a2d9f3)
+[2026-11-26T17:46:46.859+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 4893753feb9dd1714b4c081c349fbd58ec531d660aa8d4277479a68dfe46d3ee:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.859+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.859+00:00] Remote action digest: '4893753feb9dd1714b4c081c349fbd58ec531d660aa8d4277479a68dfe46d3ee:142'
+[2026-11-26T17:46:46.859+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.859+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//third_party/buildrules:keeper-steps-0.1.0_c9362deee4 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc keeper-steps-0.1.0_c9362deee4)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest dff037b1c7cfa498a4256f8bd15de786325576167e3fcc7e9198e4dafdfba58a:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: 'dff037b1c7cfa498a4256f8bd15de786325576167e3fcc7e9198e4dafdfba58a:141'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_76a562d82b (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_76a562d82b)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 64ef29033296e577881446858e913a56e4a7755542ad34766c686524ae4f6b24:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: '64ef29033296e577881446858e913a56e4a7755542ad34766c686524ae4f6b24:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//third_party/buildrules:tempfile-3.27.0_12c06cc972 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tempfile-3.27.0_12c06cc972)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 6fac023a403331aab7fd8d813fe3bd80ab1edb04990addbeabd40ee438eca75d:141 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: '6fac023a403331aab7fd8d813fe3bd80ab1edb04990addbeabd40ee438eca75d:141'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tierstore-mount-server:tierstore-mount-server-0.1.0_f8a93250cf (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-mount-server-0.1.0_f8a93250cf)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest eebfefb31f6d409168fabab227e228bee2878121abcf2b1d5ecf66a87e611eaf:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: 'eebfefb31f6d409168fabab227e228bee2878121abcf2b1d5ecf66a87e611eaf:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tierstore-mount-server:tierstore-mount-server-0.1.0_9f2a46a3d5 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-mount-server-0.1.0_9f2a46a3d5)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest d429b3ffcf2765f0c56e245eabf9918441c20f0cc701909a9ca8fbff05a5309b:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: 'd429b3ffcf2765f0c56e245eabf9918441c20f0cc701909a9ca8fbff05a5309b:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_bb9d840900 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_bb9d840900)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest d1d5a046ee49d4081a2a1a32d6dc33b91184bba473ad9bb2524db7987253f6d0:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: 'd1d5a046ee49d4081a2a1a32d6dc33b91184bba473ad9bb2524db7987253f6d0:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_3455fad7a6 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_3455fad7a6)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 639b208e8785f5ddc2dfc09d524eaa168ca34ceeea86dbbcde7ac8fbc4485385:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: '639b208e8785f5ddc2dfc09d524eaa168ca34ceeea86dbbcde7ac8fbc4485385:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_cd4baddcc5 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_cd4baddcc5)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 2da58f9a7e6415b89f1a986ce065dd57b09e5624259f67e20172626948cbfa0b:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: '2da58f9a7e6415b89f1a986ce065dd57b09e5624259f67e20172626948cbfa0b:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tierstore:tierstore-0.3.0_bc7b3486a3 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-0.3.0_bc7b3486a3)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest e923fa0b142beccd1b0fab4d3d42ef7cb84a4f79fa7461ba299e29ccf1cc5ce8:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: 'e923fa0b142beccd1b0fab4d3d42ef7cb84a4f79fa7461ba299e29ccf1cc5ce8:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-0.3.0_c1980509a2)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 5e8efcbcf62bd95c1bdf4ec076ade8dc0d9a0368f767e234cf5b9dab5514446b:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: '5e8efcbcf62bd95c1bdf4ec076ade8dc0d9a0368f767e234cf5b9dab5514446b:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_c9be40f070_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_c9be40f070_lint)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 124fd44c7d128bde55c633de196f6b39e23156e6bb693c4f00bc8db841ce8bca:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: '124fd44c7d128bde55c633de196f6b39e23156e6bb693c4f00bc8db841ce8bca:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_703dbc2904 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_703dbc2904)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest adac0cba608abdf9c5e7e885319934c34fbf20e69911edc509787b0cb8a18720:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: 'adac0cba608abdf9c5e7e885319934c34fbf20e69911edc509787b0cb8a18720:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_10b6bb7164 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_10b6bb7164)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 8f67e218bd6cdba4d915a601936da68ca9541f997d3697e66c38f99ca7701fe3:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: '8f67e218bd6cdba4d915a601936da68ca9541f997d3697e66c38f99ca7701fe3:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_d7afaa69a3 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_d7afaa69a3)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 71585132de09f97466dc869eaac7893104af99b3faa0f3aa1220b9598638273d:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: '71585132de09f97466dc869eaac7893104af99b3faa0f3aa1220b9598638273d:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_1b7130a731 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_1b7130a731)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest aaacde69f9564328d032d3d06c3f172ec9b82fda2b6cf611330bc263addf2997:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: 'aaacde69f9564328d032d3d06c3f172ec9b82fda2b6cf611330bc263addf2997:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_d4560098de_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_d4560098de_lint)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 300fd7d4098dfbd74b188c3a60c5641b5ce804001e90f933666170865c38cbad:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: '300fd7d4098dfbd74b188c3a60c5641b5ce804001e90f933666170865c38cbad:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tsfuse:tsfuse-0.1.0_f1fe556ff9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tsfuse-0.1.0_f1fe556ff9)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 22e1133b9556bf5570f09647337c7d4ad1f1b3ae3657d6c9c15809c0203e5b30:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: '22e1133b9556bf5570f09647337c7d4ad1f1b3ae3657d6c9c15809c0203e5b30:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//third_party/buildrules:reqwest-0.13.5_25e43af082 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc reqwest-0.13.5_25e43af082)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest 06a63faca36f212d607a5320e7240debcd193f80cf57ae1cfb08bb687cbb2269:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: '06a63faca36f212d607a5320e7240debcd193f80cf57ae1cfb08bb687cbb2269:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00] Action failed: tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_c9be40f070 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-journal-0.1.0_c9be40f070)
+[2026-11-26T17:46:46.860+00:00] Internal error (stage: remote_call_error): Remote Execution Error on Execute with digest dbfef91dafe9e62a33fd4d3f6fab610e473a7ddb5a8c9c8fb35569f871c6ae1f:142 for ReSession GRPC-SESSION-ID
+[2026-11-26T17:46:46.860+00:00] Error: (Error was returned on the stream by RE: RE channel error: code: 'Unknown error', message: "h2 protocol error: error reading a body from connection", source: hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) }): error reading a body from connection: stream closed because of a broken pipe)
+[2026-11-26T17:46:46.860+00:00] Remote action digest: 'dbfef91dafe9e62a33fd4d3f6fab610e473a7ddb5a8c9c8fb35569f871c6ae1f:142'
+[2026-11-26T17:46:46.860+00:00] Stdout: <empty>
+[2026-11-26T17:46:46.860+00:00] Stderr: <empty>
+
+[2026-11-26T17:46:46.860+00:00]
+BUILD FAILED
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_fff9e7a7ac (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tsfuse:tsfuse-0.1.0_76a562d82b (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tsfuse:tsfuse-0.1.0_f1fe556ff9 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_ff89c6b138 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_d057ecd32c (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_955c963731 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_03701625a0 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tsfuse:tsfuse-0.1.0_07fabc3b89 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tierstore:tierstore-0.3.0_bc7b3486a3 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_06f2721654 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tierstore-mount-client:tierstore-mount-client-0.1.0_28acf6094e (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tsfuse:tsfuse-0.1.0_363ef86f72 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tsfuse:tsfuse-0.1.0_cd4baddcc5 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_1c1d512266 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_d7afaa69a3 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_703dbc2904 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_4a734e7bc6 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tsfuse:tsfuse-0.1.0_b61eaee9f8 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tsfuse:tsfuse-0.1.0_5b1c3ec236 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:tempfile-3.27.0_12c06cc972 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:tempfile-3.27.0_7ab9cf0e06 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_1b7130a731 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_c9be40f070_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_d4560098de_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_4b14aa6e65 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:rustix-1.1.6_6787be8b69 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tierstore-mount-client:tierstore-mount-client-0.1.0_537b14de2f_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_5f42a2d9f3 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tierstore-mount-server:tierstore-mount-server-0.1.0_9f2a46a3d5 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tierstore-mount-server:tierstore-mount-server-0.1.0_9f2a46a3d5_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_3455fad7a6 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_87e253e94a (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tierstore-journal:tierstore-journal-0.1.0_01553922a7 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:tempfile-3.27.0_60d66c02fe (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//crates/tsfuse:tsfuse-0.1.0_2f3544abdd (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:reqwest-0.13.5_25e43af082 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
+Failed to build 'tierstore//third_party/buildrules:rustix-1.1.6_647baab286 (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
