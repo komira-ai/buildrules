@@ -13,7 +13,7 @@ const posix = std.posix;
 /// The remote-execution service's host and port, from its address.
 pub const HostPort = struct { host: []const u8, port: u16 };
 
-/// `grpc://host:port`, `grpcs://host:port/...` or `host:port` (an IPv6 host in brackets) as its host and port, or null when there is no
+/// `grpc://<host>:<port>`, `grpcs://<host>:<port>/...` or `<host>:<port>` (an IPv6 host in brackets) as its host and port, or null when there is no
 /// host or no port from 1 to 65535.
 pub fn hostPort(address: []const u8) ?HostPort {
     var rest = address;

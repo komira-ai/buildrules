@@ -85,8 +85,9 @@ test "the local-0 verdict says why, for the job log" {
 
 test "the farm's host and port are read from its address, and an address without them is refused" {
     const ok = [_]struct { in: []const u8, host: []const u8, port: u16 }{
-        .{ .in = "grpc://192.0.2.1:8980", .host = "192.0.2.1", .port = 8980 },
-        .{ .in = "grpcs://farm.example:443/instance", .host = "farm.example", .port = 443 },
+        .{ .in = "grpc://example.farm:8980", .host = "example.farm", .port = 8980 },
+        .{ .in = "192.0.2.1:8980", .host = "192.0.2.1", .port = 8980 },
+        .{ .in = "grpcs://example.farm:443/instance", .host = "example.farm", .port = 443 },
         .{ .in = "farm.example:1", .host = "farm.example", .port = 1 },
         .{ .in = "grpc://[::1]:65535", .host = "::1", .port = 65535 },
     };
@@ -95,13 +96,13 @@ test "the farm's host and port are read from its address, and an address without
         try t.expectEqualStrings(c.host, hp.host);
         try t.expectEqual(c.port, hp.port);
     }
-    for ([_][]const u8{ "grpc://farm.example", "farm.example:0", "farm.example:65536", ":80", "grpc://:80", "farm.example:x", "[]:5", "farm example:5", "grpc://a]b:5", "" }) |bad| {
+    for ([_][]const u8{ "grpc://example.farm", "farm.example:0", "farm.example:65536", ":80", "farm.example:x", "[]:5", "farm example:5", "a]b:5", "" }) |bad| {
         try t.expect(wait.hostPort(bad) == null);
     }
 }
 
 test "the engine address is read from a buckconfig, and a buckconfig without one has none" {
-    try t.expectEqualStrings("grpc://192.0.2.1:8980", wait.engineAddress("[buck2_re_client]\n  engine_address = grpc://192.0.2.1:8980\r\n  cas_address = x\n").?);
+    try t.expectEqualStrings("grpc://example.farm:8980", wait.engineAddress("[buck2_re_client]\n  engine_address = grpc://example.farm:8980\r\n  cas_address = x\n").?);
     try t.expectEqualStrings("a:1", wait.engineAddress("engine_address_v2 = b:2\nengine_address=a:1\n").?);
     try t.expect(wait.engineAddress("") == null);
     try t.expect(wait.engineAddress("  engine_address =  \n  engine_address\n  cas_address = a:1\n") == null);
@@ -281,7 +282,7 @@ const FakeWaiter = struct {
     }
 };
 
-const farm_config = "[buck2_re_client]\n  engine_address = grpc://192.0.2.1:8980\n[buildrules_re]\n  linux_x86_64_properties = a=b\n";
+const farm_config = "[buck2_re_client]\n  engine_address = grpc://example.farm:8980\n[buildrules_re]\n  linux_x86_64_properties = a=b\n";
 
 /// One `farm run` in a scratch directory: its config, log and summary there.
 const RunCase = struct {
@@ -367,7 +368,7 @@ test "farm run: a cut build waits for the farm, runs once more, passes, and the 
     try t.expectEqual(@as(u8, 0), try c.go(&r, &w, &.{}, &build_cmd));
     try t.expectEqual(@as(usize, 2), r.calls);
     try t.expectEqual(@as(usize, 1), w.calls);
-    try t.expectEqualStrings("192.0.2.1", w.host());
+    try t.expectEqualStrings("example.farm", w.host());
     try t.expectEqual(@as(u16, 8980), w.port);
     try t.expectEqual(@as(u64, 20 * min), w.limit_ms);
     const note = "farm run: `build` ran again after a cut connection to the farm (buck2's `RE channel error` in each of 4 failed block(s)), once the farm answered after a wait of 2m05s; the first run's log is build.first.log";
@@ -494,7 +495,7 @@ test "farm run: a command that cannot start, a log that cannot be read or kept, 
 }
 
 test "farm run: a buckconfig that cannot be read or names no farm is refused before anything runs" {
-    for ([_]?[]const u8{ null, "[buck2_re_client]\n  cas_address = grpc://192.0.2.1:8980\n", "[buck2_re_client]\n  engine_address = grpc://192.0.2.1\n" }) |cfg| {
+    for ([_]?[]const u8{ null, "[buck2_re_client]\n  cas_address = grpc://example.farm:8980\n", "[buck2_re_client]\n  engine_address = grpc://example.farm\n" }) |cfg| {
         const c = try RunCase.init();
         defer c.deinit();
         if (cfg) |text| {
@@ -592,14 +593,14 @@ const ConnectCase = struct {
     }
 };
 
-const masks = "::add-mask::grpc://192.0.2.1:8980\n::add-mask::192.0.2.1\n";
+const masks = "::add-mask::grpc://example.farm:8980\n::add-mask::example.farm\n";
 
 const written_config =
     \\# Written by `farm connect` (buildrules, tools/farm): the farm this job builds on.
     \\[buck2_re_client]
-    \\  engine_address = grpc://192.0.2.1:8980
-    \\  action_cache_address = grpc://192.0.2.1:8980
-    \\  cas_address = grpc://192.0.2.1:8980
+    \\  engine_address = grpc://example.farm:8980
+    \\  action_cache_address = grpc://example.farm:8980
+    \\  cas_address = grpc://example.farm:8980
     \\  instance_name = ci
     \\  tls = false
     \\  execution_concurrency_limit = 256
@@ -614,10 +615,10 @@ test "farm connect: a farm that answers at once gets its buckconfig written, its
     const c = try ConnectCase.init();
     defer c.deinit();
     var w = FakeWaiter{};
-    try t.expectEqual(@as(u8, 0), try c.go(&w, "grpc://192.0.2.1:8980", &.{}));
+    try t.expectEqual(@as(u8, 0), try c.go(&w, "grpc://example.farm:8980", &.{}));
     try t.expectEqualStrings(written_config, try c.read(".buckconfig.local"));
     try t.expectEqual(@as(u64, 20 * min), w.limit_ms);
-    try t.expectEqualStrings("192.0.2.1", w.host());
+    try t.expectEqualStrings("example.farm", w.host());
     try t.expectEqual(@as(u16, 8980), w.port);
     const said = try std.fmt.allocPrint(c.arena.allocator(), masks ++ "farm connect: the farm answers; wrote {s}\n", .{c.out_path});
     try t.expectEqualStrings(said, c.out.written());
@@ -629,7 +630,7 @@ test "farm connect: a farm that answered after a wait gets the wait in the job s
     const c = try ConnectCase.init();
     defer c.deinit();
     var w = FakeWaiter{ .result = .{ .answered = 185_000 } };
-    try t.expectEqual(@as(u8, 0), try c.go(&w, "grpc://192.0.2.1:8980", &.{ "--tls", "true", "--wait-minutes", "30" }));
+    try t.expectEqual(@as(u8, 0), try c.go(&w, "grpc://example.farm:8980", &.{ "--tls", "true", "--wait-minutes", "30" }));
     try t.expectEqual(@as(u64, 30 * min), w.limit_ms);
     const note = "farm connect: the farm answered after a wait of 3m05s (the connection to it was down when the job joined its network)";
     try t.expectEqualStrings(note ++ "\n", try c.read("summary.md"));
@@ -642,7 +643,7 @@ test "farm connect: a farm that does not answer within the wait fails the step a
     const c = try ConnectCase.init();
     defer c.deinit();
     var w = FakeWaiter{ .result = .{ .gave_up = 20 * min } };
-    try t.expectEqual(@as(u8, 1), try c.go(&w, "grpc://192.0.2.1:8980", &.{}));
+    try t.expectEqual(@as(u8, 1), try c.go(&w, "grpc://example.farm:8980", &.{}));
     try t.expectError(error.FileNotFound, c.tmp.dir.access(".buckconfig.local", .{}));
     try t.expectEqualStrings("::error title=farm connect::the farm did not answer on its port within 20m00s of joining its network. Not building: with no farm buck2 would build on this runner. Look at whether the farm is up, the network policy between this job and the farm, and the trust of this job's token.\n", c.err.written());
 }
@@ -652,11 +653,11 @@ test "farm connect: an empty value, a line break, a tls other than true or false
     const line_break = "::error title=farm connect::a value holds a line break; each value must be one line of the buckconfig\n";
     const cases = [_]struct { address: []const u8, extra: []const []const u8, says: []const u8, masked: bool }{
         .{ .address = "", .extra = &.{}, .says = empty, .masked = false },
-        .{ .address = "grpc://192.0.2.1:8980", .extra = &.{ "--properties", "" }, .says = empty, .masked = true },
-        .{ .address = "grpc://192.0.2.1:8980\n", .extra = &.{}, .says = line_break, .masked = false },
-        .{ .address = "grpc://192.0.2.1:8980", .extra = &.{ "--tls", "true\r" }, .says = line_break, .masked = true },
-        .{ .address = "grpc://192.0.2.1:8980", .extra = &.{ "--tls", "yes" }, .says = "::error title=farm connect::--tls is neither true nor false\n", .masked = true },
-        .{ .address = "grpc://192.0.2.1", .extra = &.{}, .says = "::error title=farm connect::the farm's address has no host and port (host:port, after an optional scheme)\n", .masked = true },
+        .{ .address = "grpc://example.farm:8980", .extra = &.{ "--properties", "" }, .says = empty, .masked = true },
+        .{ .address = "grpc://example.farm:8980\n", .extra = &.{}, .says = line_break, .masked = false },
+        .{ .address = "grpc://example.farm:8980", .extra = &.{ "--tls", "true\r" }, .says = line_break, .masked = true },
+        .{ .address = "grpc://example.farm:8980", .extra = &.{ "--tls", "yes" }, .says = "::error title=farm connect::--tls is neither true nor false\n", .masked = true },
+        .{ .address = "grpc://example.farm", .extra = &.{}, .says = "::error title=farm connect::the farm's address has no host and port (host:port, after an optional scheme)\n", .masked = true },
     };
     for (cases) |k| {
         const c = try ConnectCase.init();
@@ -683,7 +684,7 @@ test "farm connect: an existing buckconfig, one that cannot be written, or a sum
         defer c.deinit();
         try c.tmp.dir.writeFile(.{ .sub_path = ".buckconfig.local", .data = "[x]\n" });
         var w = FakeWaiter{};
-        try t.expectEqual(@as(u8, 2), try c.go(&w, "grpc://192.0.2.1:8980", &.{}));
+        try t.expectEqual(@as(u8, 2), try c.go(&w, "grpc://example.farm:8980", &.{}));
         try t.expectEqual(@as(usize, 0), w.calls);
         try t.expectEqualStrings("[x]\n", try c.read(".buckconfig.local"));
         try t.expect(std.mem.indexOf(u8, c.err.written(), " exists already;") != null);
@@ -693,7 +694,7 @@ test "farm connect: an existing buckconfig, one that cannot be written, or a sum
         defer c.deinit();
         c.out_path = try std.fs.path.join(c.arena.allocator(), &.{ std.fs.path.dirname(c.summary).?, "no-such-dir", ".buckconfig.local" });
         var w = FakeWaiter{};
-        try t.expectEqual(@as(u8, 2), try c.go(&w, "grpc://192.0.2.1:8980", &.{}));
+        try t.expectEqual(@as(u8, 2), try c.go(&w, "grpc://example.farm:8980", &.{}));
         try t.expect(std.mem.indexOf(u8, c.err.written(), "farm connect: cannot write ") != null);
     }
     {
@@ -702,7 +703,7 @@ test "farm connect: an existing buckconfig, one that cannot be written, or a sum
         try c.tmp.dir.deleteFile("summary.md");
         try c.tmp.dir.makeDir("summary.md");
         var w = FakeWaiter{ .result = .{ .answered = 61_000 } };
-        try t.expectEqual(@as(u8, 2), try c.go(&w, "grpc://192.0.2.1:8980", &.{}));
+        try t.expectEqual(@as(u8, 2), try c.go(&w, "grpc://example.farm:8980", &.{}));
         try t.expect(std.mem.indexOf(u8, c.err.written(), "farm connect: cannot write the job summary ") != null);
     }
 }
