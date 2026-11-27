@@ -201,9 +201,9 @@ const Fake = struct {
     }
     pub fn affinity(f: *Fake, set: *linux.cpu_set_t) usize {
         if (f.call("affinity", .{})) |rc| return rc;
-        set.* = std.mem.zeroes(linux.cpu_set_t);
+        // As the kernel does: only the bytes of its own mask (one word here) are written, and their number returned.
         set[0] = (@as(usize, 1) << @intCast(f.cpus)) - 1;
-        return @sizeOf(linux.cpu_set_t);
+        return @sizeOf(usize);
     }
     pub fn getcwd(f: *Fake, buf: []u8) usize {
         if (f.call("getcwd", .{})) |rc| return rc;
@@ -359,6 +359,8 @@ const full_report =
     \\userns.write_own_file ok
     \\userns.unshare_mount ok
     \\userns.mount_tmpfs ok
+    \\userns.umount ok
+    \\userns.rmdir ok
     \\
 ;
 
@@ -486,7 +488,7 @@ test "egress: not asked for, refused at once, connected at once, timed out, or f
     try reportLines(.{}, &.{"test"}, "egress", "egress not tried (no --egress)\n");
     try reportLines(.{ .fails = &.{.{ .key = "connect nonblocking", .e = .NETUNREACH }} }, &e, "egress", "egress 192.0.2.1:443 failed at=connect ENETUNREACH\n");
     try reportLines(.{ .fails = &.{.{ .key = "poll", .e = .INTR }} }, &e, "egress", "egress 192.0.2.1:443 failed at=poll EINTR\n");
-    try reportLines(.{ .ready = 0 }, &e, "egress", "egress 192.0.2.1:443 failed at=timeout ETIMEDOUT\n");
+    try reportLines(.{ .ready = 0 }, &e, "egress", "egress 192.0.2.1:443 timeout after 5000 ms (no answer)\n");
     try reportLines(.{ .fails = &.{.{ .key = "getsockopt", .e = .BADF }} }, &e, "egress", "egress 192.0.2.1:443 failed at=getsockopt EBADF\n");
     try reportLines(.{ .so_error = @intFromEnum(linux.E.CONNREFUSED) }, &e, "egress", "egress 192.0.2.1:443 failed at=connect ECONNREFUSED\n");
 }
@@ -507,8 +509,25 @@ test "user namespace: each later step is reported, or not tried when the one bef
         \\userns.unshare_mount EPERM
         \\
     );
-    try reportLines(.{ .fails = &.{.{ .key = "mkdir farm_probe_7_mnt", .e = .ACCES }} }, &argv, "userns.mount", "userns.mount_tmpfs EACCES\n");
-    try reportLines(.{ .fails = &.{.{ .key = "mount farm_probe_7_mnt", .e = .PERM }} }, &argv, "userns.mount", "userns.mount_tmpfs EPERM\n");
+    try reportLines(.{ .fails = &.{.{ .key = "mkdir farm_probe_7_mnt", .e = .ACCES }} }, &argv, "userns.m", "userns.mount_tmpfs EACCES\n");
+    try reportLines(.{ .fails = &.{.{ .key = "mount farm_probe_7_mnt", .e = .PERM }} }, &argv, "userns.m", "userns.mount_tmpfs EPERM\n");
+    // A mount that cannot be taken down is reported, and so is the directory it leaves behind.
+    try reportLines(.{ .fails = &.{
+        .{ .key = "umount farm_probe_7_mnt", .e = .BUSY },
+        .{ .key = "rmdir farm_probe_7_mnt", .e = .BUSY },
+    } }, &argv, "userns.", 
+        \\userns.unshare ok
+        \\userns.setgroups ok
+        \\userns.uid_map ok
+        \\userns.gid_map ok
+        \\userns.uid 1000
+        \\userns.write_own_file ok
+        \\userns.unshare_mount ok
+        \\userns.mount_tmpfs ok
+        \\userns.umount EBUSY
+        \\userns.rmdir EBUSY
+        \\
+    );
     try reportLines(.{ .fails = &.{
         .{ .key = "open /proc/self/setgroups", .e = .NOENT },
         .{ .key = "write /proc/self/uid_map", .e = .PERM },
@@ -523,6 +542,8 @@ test "user namespace: each later step is reported, or not tried when the one bef
         \\userns.write_own_file ok
         \\userns.unshare_mount ok
         \\userns.mount_tmpfs ok
+        \\userns.umount ok
+        \\userns.rmdir ok
         \\
     );
 }

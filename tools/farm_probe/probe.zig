@@ -1,7 +1,8 @@
 //! farm_probe: what an action may do where it runs. It prints one `<name> <value>` line per fact (tools/farm_probe/README.md lists
-//! them) and never fails because of what it finds: a refused call is a value (`EPERM`), not an error. It only reads its own status and
-//! makes the system calls a build might make; every file and directory it creates is in its working directory, named
-//! `farm_probe_<pid>...`, and removed again; its one mount is in a mount namespace of its own, which ends with the process.
+//! them) and never fails because of what it finds: a refused call is a value (`EPERM`), not an error (it exits 1 only when it cannot
+//! write its report). It only reads its own status and makes the system calls a build might make. Apart from the `--out` file it is
+//! given, every file and directory it creates is in its working directory, named `farm_probe_<pid>...`, and removed again; its one
+//! mount is in a mount namespace of its own, which ends with the process.
 //!
 //! Every system call goes through `os`, a value with one method per call that returns the kernel's raw result (main.zig: the kernel;
 //! probe_test.zig: a fake), so each outcome of each step is driven by the unit tests.
@@ -270,7 +271,8 @@ fn limits(os: anytype, out: *Text) void {
 }
 
 fn cpus(os: anytype, out: *Text) void {
-    var set: linux.cpu_set_t = undefined;
+    // The kernel writes only its own mask's bytes (the rc) and leaves the rest of the set as it was.
+    var set = std.mem.zeroes(linux.cpu_set_t);
     const rc = os.affinity(&set);
     if (failed(rc)) return resultLine(out, "cpus", rc);
     var n: u64 = 0;
@@ -300,7 +302,8 @@ fn cgroup(os: anytype, out: *Text) void {
     };
     const path = cgroupPath(text) orelse return line(out, "cgroup", "no v2 line");
     line(out, "cgroup", path);
-    // A path of "/" is the cgroup namespace's root: the action's own cgroup is the whole of /sys/fs/cgroup.
+    // A path of "/" is the root of the cgroup tree this process sees (in a cgroup namespace, its own cgroup): its files are those of
+    // /sys/fs/cgroup itself.
     const dir = if (std.mem.eql(u8, path, "/")) "" else path;
     for (cgroup_files) |file| {
         var full: [1100]u8 = undefined;
@@ -457,14 +460,18 @@ fn loopbackSteps(os: anytype, fds: *[3]i32) struct { []const u8, usize } {
 /// How long the outside connect may wait for an answer, in milliseconds: a dropped SYN is reported as a timeout, not waited out.
 pub const egress_wait_ms = 5000;
 
-/// One TCP connect to the address of `--egress`: `connected`, the error (`ENETUNREACH`, `ECONNREFUSED`), or a timeout.
+/// One TCP connect to the address of `--egress`: `connected`, the error (`ENETUNREACH`, `ECONNREFUSED`), or no answer within the wait.
 fn egress(os: anytype, out: *Text, args: Args) void {
     const addr = args.egress orelse return line(out, "egress", "not tried (no --egress)");
     out.put("egress ");
     out.put(args.egress_text);
     out.put(" ");
     const step, const rc = egressSteps(os, &addr);
-    if (!failed(rc)) {
+    if (std.mem.eql(u8, step, "timeout")) {
+        out.put("timeout after ");
+        out.num(egress_wait_ms);
+        out.put(" ms (no answer)");
+    } else if (!failed(rc)) {
         out.put(step);
     } else {
         out.put("failed at=");
@@ -475,7 +482,8 @@ fn egress(os: anytype, out: *Text, args: Args) void {
     out.put("\n");
 }
 
-/// The step that ended the connect and its raw result: `connected` and 0, `timeout` and ETIMEDOUT, or the step that failed.
+/// The step that ended the connect and its raw result: `connected` and 0, `timeout` and 0 (no answer within the wait), or the step
+/// that failed.
 fn egressSteps(os: anytype, addr: *const linux.sockaddr.in) struct { []const u8, usize } {
     const s = os.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC, 0);
     if (failed(s)) return .{ "socket", s };
@@ -487,7 +495,7 @@ fn egressSteps(os: anytype, addr: *const linux.sockaddr.in) struct { []const u8,
     var pfd = [1]linux.pollfd{.{ .fd = fd, .events = linux.POLL.OUT, .revents = 0 }};
     const ready = os.poll(&pfd, egress_wait_ms);
     if (failed(ready)) return .{ "poll", ready };
-    if (ready == 0) return .{ "timeout", errRc(@intFromEnum(linux.E.TIMEDOUT)) };
+    if (ready == 0) return .{ "timeout", 0 };
     var err: i32 = 0;
     const got = os.sockError(fd, &err);
     if (failed(got)) return .{ "getsockopt", got };
@@ -529,8 +537,8 @@ fn userns(os: anytype, out: *Text, pid: i32) void {
     if (failed(made)) return resultLine(out, "userns.mount_tmpfs", made);
     const mounted = os.mount("tmpfs", dir, "tmpfs", linux.MS.NOSUID | linux.MS.NODEV, "size=1m");
     resultLine(out, "userns.mount_tmpfs", mounted);
-    if (!failed(mounted)) _ = os.umount(dir);
-    _ = os.rmdir(dir);
+    if (!failed(mounted)) resultLine(out, "userns.umount", os.umount(dir));
+    resultLine(out, "userns.rmdir", os.rmdir(dir));
 }
 
 /// `0 <id> 1`: id 0 of the namespace is `id` outside it.

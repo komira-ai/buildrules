@@ -29,6 +29,7 @@ zig_exe(
     imports = ["probe.zig"],
     zig = "buildrules//rules/pins:zig_next",
     unit_tests = [":probe_unit"],
+    visibility = ["//ci:"],
 )
 
 # `buck2 build //tools/farm_probe:probe -c farm_probe.run=<any new text> --show-output` runs the probe as a build action;

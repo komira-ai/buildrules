@@ -13,14 +13,15 @@ buck2 test //tools/farm_probe:probe                                             
 ```
 
 Both run as ordinary actions on the linux x86_64 execution platform, with no extra properties. `-c farm_probe.run` changes the command
-line, so the build action runs again instead of being a cache hit. A test result is never cached. `-c farm_probe.egress=A.B.C.D:PORT`
+line, so the build action runs again instead of being a cache hit. `buck2 test` ran the test again on every invocation here. `-c farm_probe.egress=A.B.C.D:PORT`
 adds one TCP connect to that address (a public address by number; the repository names none). Without it there is no outside connect.
 
 What the probe does to the machine: it reads its own `/proc/self` files, its cgroup's files, `/proc/net/dev` and three sysctls. It
 checks `/` and its working directory with `access(W_OK)`, which creates nothing. It makes one file in its working directory, writes a
 byte and removes it. It opens `/dev/fuse` and closes it. It listens on 127.0.0.1 port 0 and connects to itself. At the end it makes a
 user namespace and, in it, a file and a tmpfs mount on a directory of its working directory, then takes both down again. The mount is
-in a mount namespace of its own, which ends with the process. Every name it makes is `farm_probe_<pid>...`.
+in a mount namespace of its own, which ends with the process. Every name it makes there is `farm_probe_<pid>...`. A build action also
+writes its report to its one declared output.
 
 ## The report
 
@@ -42,17 +43,17 @@ One `name value` line per fact. A refused call is its error name (`EPERM`). `ok`
 | `dev.fuse.exists`, `dev.fuse.open` | `access(F_OK)` and `open(O_RDWR)` of `/dev/fuse` |
 | `net.interfaces`, `lo.flags` | the interfaces of `/proc/net/dev`, and whether `lo` is up and running |
 | `loopback` | listen on 127.0.0.1 port 0, connect, accept, move one byte; `ok` or the step that failed |
-| `egress` | the one outside connect: `connected`, the error, or a timeout after 5 s |
+| `egress` | the one outside connect: `connected`, the error, or no answer within 5 s |
 | `sysctl.*` | `user.max_user_namespaces`, `kernel.unprivileged_userns_clone`, `kernel.apparmor_restrict_unprivileged_userns` |
-| `userns.*` | `unshare(CLONE_NEWUSER)`; `deny` to `setgroups`; `0 <uid> 1` to `uid_map` and `gid_map`; the uid inside; a file of its own written; `unshare(CLONE_NEWNS)`; a tmpfs mounted |
+| `userns.*` | `unshare(CLONE_NEWUSER)`; `deny` to `setgroups`; `0 <uid> 1` to `uid_map` and `gid_map`; the uid inside; a file of its own written; `unshare(CLONE_NEWNS)`; a tmpfs mounted, unmounted, its directory removed |
 
 ## Measured on 2026-11-27
 
-Four runs on the farm: two build actions and two test actions. Each ran on the remote executor (`buck2 log what-ran` shows `re(...)`
-for each; the build summaries say `local: 0`). At least three workers ran them: the runs saw three kernels, 7.0.0-42, 7.0.0-43 and
-7.0.0-44. The outside connect was tried in three of the runs (the second build action and both test actions). Every line below was
-the same in every run that had it, apart from the kernel, the `NPROC` limit (between 962001 and 962339), and the variable
-`BUCK_SCRATCH_PATH`, which buck2 sets for a build action and not for a test.
+Six runs on the farm: three build actions and three test actions. `buck2 log what-ran` showed each on the remote executor (`re(...)`),
+and each build summary said `local: 0`. The runs saw three kernels, 7.0.0-42, 7.0.0-43 and 7.0.0-44, so at least three workers ran
+them. The outside connect was tried in five of the runs: two build actions and the three test actions, each a TCP connect to one public
+address on port 443. Every line below was the same in every run that had it. The exceptions were the kernel, the `NPROC` limit (between
+962001 and 962339), and the variable `BUCK_SCRATCH_PATH`, which buck2 sets for a build action and not for a test.
 
 | | build action | test action |
 |---|---|---|
@@ -65,28 +66,31 @@ the same in every run that had it, apart from the kernel, the `NPROC` limit (bet
 | working directory writable | `access(W_OK)` ok; a file made, written and removed | the same |
 | network | only `lo`, up and running | the same |
 | loopback | listen on 127.0.0.1, connect to itself, one byte across: ok | the same |
-| outside connect (TCP to a public address, port 443) | `ENETUNREACH` at once: no route out | the same |
+| outside connect (TCP to one public address, port 443) | `ENETUNREACH`: no route out, as `lo` is the only interface | the same |
 | user namespace of its own | `unshare(CLONE_NEWUSER)` ok; setgroups, uid_map, gid_map written; uid 0 inside | the same |
 | uid 0 in it writes a file it owns | ok | the same |
-| tmpfs mount in it | `unshare(CLONE_NEWNS)` ok, `mount` of a tmpfs ok | the same |
+| tmpfs mount in it | `unshare(CLONE_NEWNS)` ok, `mount` of a tmpfs ok, unmounted and its directory removed | the same |
 | userns sysctls | max_user_namespaces 2147483647, unprivileged_userns_clone 1, apparmor_restrict_unprivileged_userns 1 | the same |
 | `/dev/fuse` | absent: `ENOENT` for both access and open | the same |
-| cgroup | its own (`/` in a cgroup namespace): memory.max, memory.high and memory.swap.max `max`; pids.max 32768; cpu.max `max 100000` | the same |
+| cgroup | path `/`; memory.max, memory.high and memory.swap.max `max`; pids.max 32768; cpu.max `max 100000` | the same |
 | rlimits | CPU, AS, FSIZE unlimited; NOFILE 65536; CORE 0 | the same |
 | CPUs | 88 in the affinity mask | the same |
-| time limit | none in the action: the rule sets no timeout, so buck2 sends the action without one; RLIMIT_CPU unlimited | 600 s: buck2's test runner gives each test a 600 s timeout unless `--timeout` says otherwise, and sends it with the action (read in buck2's source, not measured); RLIMIT_CPU unlimited |
+| time limit | buck2 sends the action with no timeout, as the rule sets none (read in buck2's source). A limit the farm applies itself is not visible from inside and was not measured. RLIMIT_CPU unlimited | 600 s: buck2's test runner gives each test a 600 s timeout unless `--timeout` says otherwise, and sends it with the action (read in buck2's source, not measured). RLIMIT_CPU unlimited |
 
-So a build action and a test action get the same sandbox. The only difference measured is the time limit and one variable.
+So a build action and a test action get the same sandbox. The only differences found are the time limit and one variable. The runs
+cover the linux x86_64 platform with no extra properties, and one outside address.
 
 What this settles for the two descriptions it was run to decide between:
 
-- "A farm action has no network, no PATH, and is not root": **right**, for build actions and for test actions. There is no route out,
-  PATH is unset (the rules set their own), and the action is uid 1000 with no capabilities. The same description also says TMPDIR is
-  about 98 bytes deep, too deep for a Unix socket's path; that part is out of date, as TMPDIR is now 21 bytes.
-- "A test action runs as uid 0 and can reach the outside, and has loopback": **wrong** today on uid 0 and the outside connect, for
-  both kinds of action. Loopback does work.
+- "A farm action has its declared inputs and nothing else: no network, no PATH but the busybox directory, no checkout, not root, and a
+  TMPDIR about 98 bytes deep". **Right** on the parts measured, for build actions and for test actions: there is no route out, PATH
+  is unset in the action, and the action is uid 1000 with no capabilities. Not settled here: whether the action sees only its
+  declared inputs or a checkout, which the probe does not look for. The 98 bytes are the depth of the action's scratch path
+  (docs/contract.md), which the probe does not print. The bare action's TMPDIR is 21 bytes.
+- "A test action runs as uid 0, can reach the outside, and has loopback". **Wrong** on uid 0 and on the outside connect, for both
+  kinds of action, in every run here. Loopback does work.
 
-Beyond both: loopback works, an unprivileged user namespace with a tmpfs mount in it works, and there is no `/dev/fuse`.
+Beyond both: an unprivileged user namespace with a tmpfs mount in it works, and there is no `/dev/fuse`.
 
 ## Tests
 
