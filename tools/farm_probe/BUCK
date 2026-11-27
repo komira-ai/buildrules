@@ -1,0 +1,45 @@
+# farm_probe (README.md): what a build action and a test action may do where they run, measured from inside them.
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load(":defs.bzl", "farm_probe_run")
+
+zig_test(
+    name = "probe_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "probe_test.zig",
+    imports = ["probe.zig"],
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+# The package's coverage (rules/coverage/README.md, "Zig coverage") and the floor it is held to. main.zig is left out of `expect`: it is the
+# entry point no test imports, and each of its methods is one system call returning the kernel's raw result, with no decision; every
+# decision is in probe.zig, whose tests drive each outcome through a fake. Running it under a unit test would make real system calls
+# (a user namespace, a mount, an outside connect) that a unit test must not make.
+zig_coverage(
+    test_targets = [":probe_unit"],
+    expect = ["tools/farm_probe/probe.zig"],
+)
+
+zig_exe(
+    name = "farm_probe",
+    exec_compatible_with = LINUX_X86_64,
+    src = "main.zig",
+    imports = ["probe.zig"],
+    zig = "buildrules//rules/pins:zig_next",
+    unit_tests = [":probe_unit"],
+)
+
+# `buck2 build //tools/farm_probe:probe -c farm_probe.run=<any new text> --show-output` runs the probe as a build action;
+# `buck2 test //tools/farm_probe:probe` runs it as a test action and prints its report. `-c farm_probe.egress=A.B.C.D:PORT` adds the one
+# outside connect. A measurement, run by hand: //ci:all leaves it out (ci/all.bzl says why).
+farm_probe_run(
+    name = "probe",
+    exec_compatible_with = LINUX_X86_64,
+    probe = ":farm_probe",
+    egress = read_config("farm_probe", "egress", ""),
+    run = read_config("farm_probe", "run", ""),
+)
+
+scrub_files()
