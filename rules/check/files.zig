@@ -6,15 +6,17 @@ const Io = common.Io;
 const Alloc = common.Alloc;
 const Oom = common.Oom;
 
-/// The options `same` and `digest` share, which come first: where the success stamp goes and what it says.
+/// The options `same` and `digest` share, which come first: where the success stamp goes and what it says, and a line to say once after a
+/// failure (what it means, for the reader of the build log).
 const Stamped = struct {
     out: ?[]const u8 = null,
     stamp: []const u8,
+    note: ?[]const u8 = null,
     /// The arguments after the options.
     rest: []const []const u8,
 };
 
-/// Reads `--out FILE` and `--stamp TEXT`, in any order, from the front of `args`. Null, with the reason said, for an option that is not one of
+/// Reads `--out FILE`, `--stamp TEXT` and `--note TEXT`, in any order, from the front of `args`. Null, with the reason said, for an option that is not one of
 /// those or has no value.
 fn stamped(io: Io, sub: []const u8, args: []const []const u8, default_stamp: []const u8) ?Stamped {
     var s = Stamped{ .stamp = default_stamp, .rest = args };
@@ -27,6 +29,8 @@ fn stamped(io: Io, sub: []const u8, args: []const []const u8, default_stamp: []c
             s.out = s.rest[1];
         } else if (std.mem.eql(u8, s.rest[0], "--stamp")) {
             s.stamp = s.rest[1];
+        } else if (std.mem.eql(u8, s.rest[0], "--note")) {
+            s.note = s.rest[1];
         } else {
             io.say(sub, &.{ "unknown option ", s.rest[0] });
             return null;
@@ -47,10 +51,11 @@ const Difference = union(enum) {
     second_ends: u64,
 };
 
-const same_usage = "usage: check same --out FILE [--stamp TEXT] A B";
+const same_usage = "usage: check same --out FILE [--stamp TEXT] [--note TEXT] A B";
 
-/// `check same --out FILE [--stamp TEXT] A B`: the two files are the same bytes. Then FILE is written (`same` and a newline, or TEXT) and the
-/// status is 0; otherwise the first difference is said, FILE is not written and the status is 1 (2 when a file cannot be read).
+/// `check same --out FILE [--stamp TEXT] [--note TEXT] A B`: the two files are the same bytes. Then FILE is written (`same` and a newline, or
+/// TEXT) and the status is 0; otherwise the first difference is said (and then the note), FILE is not written and the status is 1 (2 when a
+/// file cannot be read).
 pub fn same(_: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     const s = stamped(io, "same", args, "same\n") orelse return 2;
     const out = s.out orelse {
@@ -77,6 +82,7 @@ pub fn same(_: Alloc, io: Io, args: []const []const u8) Oom!u8 {
             .second_ends => |n| try endsAfter(io, names[1], n),
         };
         io.say("same", &.{ names[0], " and ", names[1], " ", where });
+        if (s.note) |n| io.say("same", &.{n});
         return 1;
     }
     return if (common.writeFile(io, "same", out, s.stamp)) 0 else 1;
@@ -179,20 +185,24 @@ fn hashInto(comptime H: type, file: std.fs.File, raw: *[64]u8) !void {
     h.final(raw[0..H.digest_length]);
 }
 
-/// `check digest [--out FILE] [--stamp TEXT] (EXPECTED FILE NAME)...`: each FILE hashes to its EXPECTED digest (`sha256:<hex>`, `sha512:<hex>`,
-/// or an integrity string `sha512-<base64>`). Every mismatch is said, by NAME, with the digest the file has, and the status is 1, as it is for a
-/// file that cannot be read; an EXPECTED that is none of those forms is status 2. When all match, FILE is written if given (`ok` and a
+/// `check digest [--out FILE] [--stamp TEXT] [--note TEXT] (EXPECTED FILE NAME)...`: each FILE hashes to its EXPECTED digest (`sha256:<hex>`,
+/// `sha512:<hex>`, or an integrity string `sha512-<base64>`). Every mismatch is said, by NAME, with the digest the file has, and the status is 1,
+/// as it is for a file that cannot be read; then TEXT is said once. An EXPECTED that is none of those forms is status 2 (and no TEXT). When all match, FILE is written if given (`ok` and a
 /// newline, or TEXT).
 pub fn digest(_: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     const s = stamped(io, "digest", args, "ok\n") orelse return 2;
     if (s.rest.len == 0 or s.rest.len % 3 != 0) {
-        io.say("digest", &.{"usage: check digest [--out FILE] [--stamp TEXT] (EXPECTED FILE NAME)..."});
+        io.say("digest", &.{"usage: check digest [--out FILE] [--stamp TEXT] [--note TEXT] (EXPECTED FILE NAME)..."});
         return 2;
     }
     var status: u8 = 0;
     var row: usize = 0;
     while (row < s.rest.len) : (row += 3) {
         status = @max(status, try verify(io, s.rest[row], s.rest[row + 1], s.rest[row + 2]));
+    }
+    // The note, once, after the files that do not match; not after a command line that is wrong (2).
+    if (status == 1) {
+        if (s.note) |n| io.say("digest", &.{n});
     }
     if (status != 0) return status;
     const out = s.out orelse return 0;

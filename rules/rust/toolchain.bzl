@@ -364,7 +364,12 @@ def rust_toolchains(extra = {}):
         extra: version -> row, the user's own pins (the `EXTRA_RUST_VERSIONS` of the generated `rust_pins.bzl`): `date` and,
             per component `rustc`, `rust_std`, `cargo`, `clippy`, `{"sha256", "size"}`. A version already in `RUST_VERSIONS` is
             refused: the table's hashes are the reviewed ones.
+
+    The generated `rust_pins.bzl` of the package is also a target of that name, a file the workspace's `:sync_patch` stages at
+    `toolchains/rust_pins.bzl` (cargo.bzl): the sync rewrites that file, so its copy must be the repository's.
     """
+    if native.glob(["rust_pins.bzl"]):
+        native.export_file(name = "rust_pins.bzl", src = "rust_pins.bzl", visibility = ["PUBLIC"])
     for role in ["busybox", "zig"]:
         p = PINS[role]
         pinned_file(

@@ -6,6 +6,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 #   buck2 build //:ci                    lint and test the member; the build script runs as a cached remote action
 #   buck2 build //:sync_check            red unless the generated files are what `buildrules sync` writes now (on the farm, no network)
 #   buck2 build //:sync --out .         regenerate after a change to a Cargo.toml or Cargo.lock: writes the files the sync changed (on the farm)
+#   buck2 build //:sync_patch --out D   the same sync as a verdict and a patch (every cargo_workspace has it); here the verdict is `none`
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//rules/rust:sync.bzl", "cargo_sync")
 load("@buildrules//rules/zig:zig.bzl", "zig_test")

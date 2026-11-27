@@ -29,8 +29,8 @@ test "each command is its own: given nothing, each says what it needs (its own m
         .{ "run", "check run: no program: it follows `--`\n" },
         .{ "expect", "check expect: --want is required\n" },
         .{ "marker", "check marker: --out is required\n" },
-        .{ "digest", "check digest: usage: check digest [--out FILE] [--stamp TEXT] (EXPECTED FILE NAME)...\n" },
-        .{ "same", "check same: usage: check same --out FILE [--stamp TEXT] A B\n" },
+        .{ "digest", "check digest: usage: check digest [--out FILE] [--stamp TEXT] [--note TEXT] (EXPECTED FILE NAME)...\n" },
+        .{ "same", "check same: usage: check same --out FILE [--stamp TEXT] [--note TEXT] A B\n" },
         .{ "copy", "check copy: usage: check copy SOURCE DESTINATION\n" },
         .{ "isa", "check isa: usage: check isa --objdump PROGRAM --binary FILE --expect avx2|none --label TEXT --out REPORT\n" },
     };

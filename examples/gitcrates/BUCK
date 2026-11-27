@@ -7,6 +7,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 #   buck2 build //:ci                    lint and test the member; both git packages build from GitHub's archive of the commit
 #   buck2 build //:sync_check            red unless the generated files are what `buildrules sync` writes now (on the farm, no network)
 #   buck2 build //:sync --out .         regenerate after a change to a Cargo.toml or Cargo.lock: writes the files the sync changed (on the farm)
+#   buck2 build //:sync_patch --out D   the same sync as a verdict and a patch (every cargo_workspace has it); here the verdict is `none`
 #
 # The sync runs on the farm with no network (rules/rust/sync.bzl): the crates.io packages are downloaded by the sha256 Cargo.lock records, the
 # commit as GitHub's archive by the sha256 and size third_party/buildrules/git_archives.tsv records, and cargo reads them in place of crates.io
@@ -27,5 +28,24 @@ cargo_workspace(path = ".")
     )
     for name, check in [("sync", False), ("sync_check", True)]
 ]
+
+# The stale case of `:sync_patch`, for rules/rust/tests:sync_patch_roundtrip: this workspace as a pull request that adds a crates.io crate (fnv) to
+# gdemo's dependencies and to Cargo.lock leaves it, with the generated files as they are. stale/ holds the edited files, each put at its path
+# in the workspace (`named`); gdemo's other two files are there too, since a file cannot go inside a directory (gdemo's `:sources`) that is.
+cargo_sync(
+    name = "stale_patch",
+    patch = True,
+    rustc = "1.95.0",
+    deps = ["//third_party/buildrules:files"],
+    srcs = ["rust-toolchain.toml", "BUCK", "buildrules.bzl", "buildrules.lock.bzl"] + glob(["toolchains/**"]),
+    named = {
+        "Cargo.lock": "stale/Cargo.lock.in",
+        "Cargo.toml": "stale/Cargo.toml.in",
+        "crates/gdemo/BUCK": "stale/gdemo.BUCK.in",
+        "crates/gdemo/Cargo.toml": "stale/gdemo.Cargo.toml.in",
+        "crates/gdemo/src/lib.rs": "stale/gdemo.lib.rs.in",
+    },
+    visibility = ["PUBLIC"],
+)
 
 scrub_files()

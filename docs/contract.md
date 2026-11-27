@@ -226,6 +226,12 @@ without `--sources` removes the config. `sync --list-sources FILE` reads `Cargo.
 `--sources` needs as JSON (`{"sources": [{"file", "url", "sha256", "size"}]}`, `size` null for a crate), refusing by name a package
 that cannot be fetched by hash; it runs nothing. `cargo_sync` (`rules/rust/sync.bzl`) is the two as farm actions: the list, a
 download of each file by its hash, then the sync in a copy of the workspace, whose output is every file the sync wrote or changed.
+With `patch = True` (the `:sync_patch` every `cargo_workspace` declares) the output is instead `verdict.txt` (`none`, `tables`: only
+the generated files changed, or `lock`: Cargo.lock too; then `M`, `A` or `D` and the path of each file), and, unless the verdict is
+`none`, `offer/sync.patch` (every change as one patch `git apply` takes, paths relative to the workspace root) and `offer/files/` (the
+files the sync wrote or changed); the target is green whether the files are stale or not (`rules/rust/sync_patch.zig`). The table check
+(`:check`) names each file that changed and then says once that the table alone is stale (`STALE TABLE ONLY: ...`), so the compile errors
+of the same build in the crates those files touch read as what follows from it.
 
 A reader refuses a table whose `SCHEMA` is not the one it understands (`2`). `sync` first lets cargo resolve: `cargo fetch` creates
 `Cargo.lock` if there is none and changes it only as far as the manifests require (a new dependency adds its crates; nothing else is

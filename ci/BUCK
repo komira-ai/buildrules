@@ -32,6 +32,7 @@ _RUST = [
 group(name = "rust_default", deps = _RUST + [
     "//rules/rust:rustc_launch_unit",
     "//rules/rust:crt_static_test",
+    "//rules/rust/tests:sync_patch_roundtrip",
     "//examples/zig:hello_zig",
     "//examples/zig:hello_unit",
 ])
@@ -509,6 +510,7 @@ group(name = "crates", deps = [
     "crates//:ci",
     "crates//:sync_check",
     "crates//:sync",
+    "crates//:sync_patch",
     "crates//:debug",
     "crates//:release",
     "crates//:lint",
@@ -591,6 +593,8 @@ group(name = "gitcrates", deps = [
     "gitcrates//:ci",
     "gitcrates//:sync_check",
     "gitcrates//:sync",
+    "gitcrates//:sync_patch",
+    "gitcrates//:stale_patch",
     "gitcrates//:debug",
     "gitcrates//:release",
     "gitcrates//:lint",
@@ -1100,6 +1104,7 @@ group(name = "floors", deps = [
     "//rules/postgres:coverage_floor",
     "//rules/rust:coverage_floor",
     "//rules/rust:coverage_crate_patch_floor",
+    "//rules/rust:coverage_sync_patch_floor",
     "//rules/toolbox:coverage_floor",
     "//tools/bootstrap:coverage_floor",
     "//tools/channels:coverage_floor",
