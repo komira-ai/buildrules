@@ -479,6 +479,7 @@ FAULTY = [
     ("//ci/faulty:c_check_of_other_stdout", "//ci/faulty:c_check_of_its_stdout", "c_check: expected output equal to 'not what it prints' but"),
     ("//ci/faulty:mojo_same_of_other_bytes", "//ci/mojo_gate:consumer_of_green", "differ at byte 1"),
     ("//ci/faulty:table_of_other_bytes", "//ci/faulty:table_in_sync", "STALE ci/faulty/empty.txt"),
+    ("//ci/faulty:table_of_other_bytes_says_stale_only", "//ci/faulty:table_in_sync", "check digest: STALE TABLE ONLY: the files above changed since `buildrules sync` wrote the table"),
     ("//ci/faulty:rust_toolchain_of_other_version", "toolchains//:rust", "rust_toolchain: expected output starting with 'rustc 0.0.0 (' but"),
     ("//ci/faulty:fails", "//examples/hello:hello_lib_test", "this test fails by design"),
     ("//ci/faulty:binary_with_crt_static", "//examples/hello:hello", "rustc_launch: a static link (-static-pie, which rustc passes for -C target-feature=+crt-static) for the glibc target x86_64-linux-gnu.2.34 is refused"),

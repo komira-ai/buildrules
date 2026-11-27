@@ -102,7 +102,7 @@ test "same: the command line is --out, --stamp, then two files; anything else is
     var c = try kit.Case.init();
     defer c.deinit();
     try c.put("a", "1");
-    const usage = "check same: usage: check same --out FILE [--stamp TEXT] A B\n";
+    const usage = "check same: usage: check same --out FILE [--stamp TEXT] [--note TEXT] A B\n";
     try kit.expectResult(try c.run(&.{ "same", "a", "a" }), 2, "", usage);
     try kit.expectResult(try c.run(&.{ "same", "--out", "o", "a" }), 2, "", usage);
     try kit.expectResult(try c.run(&.{ "same", "--out", "o", "a", "a", "a" }), 2, "", usage);
@@ -288,11 +288,46 @@ test "digest: a wrong digest of the wrong algorithm length or form is status 2; 
     try t.expectEqual(@as(u8, 2), (try c.run(&.{ "digest", "md5:x", "abc", "b", "sha256:" ++ SHA256_ABC, "nope", "a" })).status);
 }
 
+test "digest: --note is said once, after every file that does not match, and never when all match or the command line is wrong" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    try c.put("abc", "abc");
+    try c.put("other", "abd");
+    const note = "the table alone is stale";
+    const r = try c.run(&.{ "digest", "--note", note, "--out", "o", "sha256:" ++ SHA256_ABC, "other", "first", "sha256:" ++ SHA256_ABC, "abc", "fine", "sha512:" ++ SHA512_ABC, "other", "second" });
+    try t.expectEqual(@as(u8, 1), r.status);
+    var lines = std.mem.splitScalar(u8, r.err, '\n');
+    try t.expect(std.mem.startsWith(u8, lines.next().?, "check digest: first: the sha256 of other is "));
+    try t.expect(std.mem.startsWith(u8, lines.next().?, "check digest: second: the sha512 of other is "));
+    try t.expectEqualStrings("check digest: the table alone is stale", lines.next().?);
+    try t.expectEqualStrings("", lines.next().?);
+    try t.expect(lines.next() == null);
+    try t.expect(!c.exists("o"));
+    // a file that cannot be read is a mismatch too
+    try kit.expectResult(try c.run(&.{ "digest", "--note", note, "sha256:" ++ SHA256_ABC, "nope", "n" }), 1, "", "check digest: n: cannot read nope: FileNotFound\ncheck digest: the table alone is stale\n");
+    // all match: the stamp, and no note
+    try kit.expectResult(try c.run(&.{ "digest", "--out", "o", "--note", note, "sha256:" ++ SHA256_ABC, "abc", "n" }), 0, "", "");
+    try t.expectEqualStrings("ok\n", try c.read("o"));
+    // an EXPECTED of no known form is the command line's fault: status 2, and no note
+    try kit.expectResult(try c.run(&.{ "digest", "--note", note, "md5:x", "abc", "n" }), 2, "", "check digest: n: 'md5:x' is not sha256:<hex>, sha512:<hex>, sha256-<base64> or sha512-<base64>\n");
+    try kit.expectResult(try c.run(&.{ "digest", "--note" }), 2, "", "check digest: --note needs a value\n");
+}
+
+test "same: --note is said after the difference, and not when the files are the same" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    try c.put("a", "1");
+    try c.put("b", "2");
+    try kit.expectResult(try c.run(&.{ "same", "--note", "regenerate it", "--out", "o", "a", "b" }), 1, "", "check same: a and b differ at byte 1\ncheck same: regenerate it\n");
+    try t.expect(!c.exists("o"));
+    try kit.expectResult(try c.run(&.{ "same", "--note", "regenerate it", "--out", "o", "a", "a" }), 0, "", "");
+}
+
 test "digest: the command line is options and then triples; anything else is status 2" {
     var c = try kit.Case.init();
     defer c.deinit();
     try c.put("abc", "abc");
-    const usage = "check digest: usage: check digest [--out FILE] [--stamp TEXT] (EXPECTED FILE NAME)...\n";
+    const usage = "check digest: usage: check digest [--out FILE] [--stamp TEXT] [--note TEXT] (EXPECTED FILE NAME)...\n";
     try kit.expectResult(try c.run(&.{"digest"}), 2, "", usage);
     try kit.expectResult(try c.run(&.{ "digest", "--out", "o" }), 2, "", usage);
     try kit.expectResult(try c.run(&.{ "digest", "sha256:" ++ SHA256_ABC, "abc" }), 2, "", usage);

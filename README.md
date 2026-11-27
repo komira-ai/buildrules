@@ -4,7 +4,7 @@ Hermetic Buck2 rules, Apache-2.0. v0: Rust, Node, Zig, C/C++ and Mojo on linux-x
 
     rules/core        pinned_file (sha256 + size download), run_check
     rules/rust        pins.bzl (the Rust version table: RUST_VERSIONS, RUST_DEFAULT, RUST_OLDEST), toolchain.bzl (one toolchain per version), rust.bzl, cargo.bzl
-                      (cargo_workspace, cargo_package), cargo_unit.bzl, test_run.bzl, isa_audit.bzl, rustc_launch.zig, bs_runner.zig, sync.bzl (`buildrules sync` on a farm),
+                      (cargo_workspace, cargo_package), cargo_unit.bzl, test_run.bzl, isa_audit.bzl, rustc_launch.zig, bs_runner.zig, sync.bzl (`buildrules sync` on a farm, and `:sync_patch`, its patch), sync_patch.zig,
                       rust_analyzer.bzl (`:rust_analyzer_inputs`, what `buildrules rust-project develop` downloads for rust-analyzer)
     rules/isa.bzl     ISA_LEVELS: one table of -march flags (rustc, zig cc, Mojo) and the selects that use it; rules/matrix.bzl: CI matrix transitions
     rules/zig, rules/gate, rules/kpin, rules/node, rules/pins

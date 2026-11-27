@@ -10,7 +10,7 @@ load("@buildrules//rules/cxx:native.bzl", "native_static")
 load("@buildrules//rules/native:defs.bzl", "native_library")
 load("@buildrules//rules/mojo:same.bzl", "mojo_same")
 load("@buildrules//rules/mojo:unit.bzl", "mojo_test_run_rule")
-load("@buildrules//rules/rust:cargo.bzl", "cargo_table_check")
+load("@buildrules//rules/rust:cargo.bzl", "cargo_table_check", "stale_note")
 load("@buildrules//rules/rust:cargo_unit.bzl", "cargo_unit")
 load("@buildrules//rules/rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("@buildrules//rules/rust:fmt.bzl", "rustfmt_check", "rustfmt_config")
@@ -75,6 +75,16 @@ cargo_table_check(
     files = [":empty.txt"],
     hashes = ["0000000000000000000000000000000000000000000000000000000000000000"],
     names = ["ci/faulty/empty.txt"],
+)
+
+# The same check with the note a workspace's `:check` carries (cargo.bzl, `stale_note`): said once, after the files that do not match.
+# (Control: `table_in_sync`.)
+cargo_table_check(
+    name = "table_of_other_bytes_says_stale_only",
+    files = [":empty.txt"],
+    hashes = ["0000000000000000000000000000000000000000000000000000000000000000"],
+    names = ["ci/faulty/empty.txt"],
+    note = stale_note("//ci/faulty:sync_patch"),
 )
 
 cargo_table_check(

@@ -505,6 +505,55 @@ dropping one) needs nothing else, while a crate or a git commit the lock does no
 on a machine with a network adds it once. A file the sync removed (the git record, after the last git dependency) is named in the
 build's output, to be deleted by hand: `--out` only adds and replaces.
 
+#### A stale table in a pull request
+
+Every workspace root also has `:sync_patch` (`cargo_workspace` declares it; nothing to add): the same sync on the farm, whose output says
+what the sync changed instead of being it.
+
+```sh
+buck2 build //:sync_patch --out DIR
+```
+
+`DIR/verdict.txt` is `none` (the generated files are what a sync writes now), `tables` (only the files `buildrules sync` generates are
+stale: Cargo.toml and Cargo.lock are as cargo resolves them, so the compile errors of a build that reads the table follow from it) or
+`lock` (cargo changed Cargo.lock as well), then one line per file. `DIR/offer/sync.patch` is the change as one patch `git apply` takes and
+`DIR/offer/files/` the files themselves; for `none`, `DIR/offer/` holds nothing. The table check of a build says the same in one line after the files it
+names: `STALE TABLE ONLY: ...`.
+
+A repository whose farm lane runs on GitHub Actions offers that patch when the farm build of a pull request fails, so a pull request that
+changed a Cargo.toml or Cargo.lock gets its regenerated tables without anyone running `buildrules sync`. Three steps after the build, in
+the same job (they use its connection to the farm), where `"$RUNNER_TEMP/bin/buck2"` is the job's buck2:
+
+```yaml
+      - name: Regenerate the generated files on the farm (when the build failed)
+        id: sync_patch
+        if: failure()
+        run: '"$RUNNER_TEMP/bin/buck2" build //:sync_patch --out "$RUNNER_TEMP/sync-patch"'
+      - name: Offer the patch (it is never pushed)
+        if: failure() && steps.sync_patch.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sync-patch
+          path: ${{ runner.temp }}/sync-patch/offer/
+          if-no-files-found: ignore
+      - name: Say what the patch is and how to apply it
+        if: failure() && steps.sync_patch.outcome != 'skipped'
+        run: '"$RUNNER_TEMP/bin/buck2" run buildrules//rules/rust:sync_patch -- summary --dir "$RUNNER_TEMP/sync-patch" --run "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY" --artifact sync-patch --to "$GITHUB_STEP_SUMMARY"'
+```
+
+The job stays red. Its summary gives the verdict and, for a stale table, the two commands that take the patch, run at the root of a
+checkout of the pull request's head; then commit the result and push:
+
+```sh
+gh run download <run> -R <owner>/<repo> -n sync-patch -D ../sync-patch-<run>
+git apply ../sync-patch-<run>/sync.patch
+```
+
+What the farm sync cannot do, it says in the log of the first step, and the summary says there is no patch: a crate or a git commit that
+Cargo.lock does not name yet (the pull request changed a Cargo.toml without the Cargo.lock cargo writes for it) needs `buildrules sync`
+where there is a network; a member the table does not list yet is not staged (its package cannot load until the table lists it), so cargo
+names it; and the sync runs the Rust of the table, so a change of `rust-toolchain.toml` is synced where `buildrules sync` runs.
+
 #### rust-analyzer
 
 ```sh

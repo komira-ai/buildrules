@@ -39,11 +39,14 @@ The Postgres fixture (resolved at sync, the package's over the workspace's): `po
 Doctests are out of v0: `:test` runs what `cargo test` runs minus them (a recorded gap).
 
 The workspace root package also has `:rust_analyzer_inputs` (rules/rust/rust_analyzer.bzl): what rust-analyzer needs that only a build
-makes, which `buildrules rust-project develop` downloads and writes rust-project.json from.
+makes, which `buildrules rust-project develop` downloads and writes rust-project.json from; and `:sync_patch` (rules/rust/sync.bzl):
+`buildrules sync` of the workspace on the farm, and the patch it makes when the generated files are stale (the verdict, the patch and the
+files; what CI offers when the farm build of a pull request fails, docs/how.md).
 
 A stale table is red: every `:test`, `:lint`, `:typecheck`, `:fmt`, `:coverage`, `:debug` and `:release` carries the workspace's `:check` as a validation, which compares
 the sha256 of Cargo.lock, rust-toolchain.toml and every Cargo.toml with what the table was made from. The compile actions
-never take a Cargo.toml as an input, so editing policy or metadata re-runs the check and nothing else.
+never take a Cargo.toml as an input, so editing policy or metadata re-runs the check and nothing else. The check names each file that
+changed and then says, once, that the table alone is stale: the compile errors of the same build in the crates those files touch follow from it.
 """
 
 load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage_floor_rule")
@@ -55,6 +58,7 @@ load(":pins.bzl", "RUST_VERSIONS")
 load(":refusal.bzl", "recording")
 load(":rust_analyzer.bzl", "rust_analyzer_inputs")
 load(":select.bzl", "has_llvm_tools", "llvm_tools_for", "rust_version_for", "toolchain_for")
+load(":sync.bzl", "cargo_sync")
 
 def _tname(uid):
     return uid.replace(":", "_")
@@ -568,7 +572,8 @@ def cargo_workspace(path = ".", table = None):
     files.append(":Cargo.lock")
     hashes.append(table["CARGO_LOCK_SHA256"])
     names.append(_join(ws, "Cargo.lock"))
-    _check(name = "check", files = files, hashes = hashes, names = names, visibility = ["PUBLIC"])
+    _check(name = "check", files = files, hashes = hashes, names = names, note = stale_note("//" + ws + ":sync_patch"), visibility = ["PUBLIC"])
+    _sync_patch(path, ws, table)
     here = native.package_name()
     third_party = "//" + _join(ws, "third_party/buildrules")
     rust_analyzer_inputs(
@@ -600,15 +605,56 @@ def cargo_workspace(path = ".", table = None):
     for a, deps in sorted(acts.items()):
         _step(name = a, deps = deps, visibility = ["PUBLIC"])
 
+# ---- :sync_patch -----------------------------------------------------------------
+
+def _sync_patch(path, ws, table):
+    """`:sync_patch`: `cargo_sync(patch = True)` (sync.bzl) of this workspace, its inputs found without the table's help where the table
+    may be the stale thing: the root's files by name (and the optional ones by glob), each member's `:sources` and the generated
+    third-party package's `:files`. A member the table does not list yet is not staged (its package cannot load until the table has it),
+    and cargo names it. `toolchains/rust_pins.bzl` is the root's own file when the root package holds it (a repository whose toolchains/
+    has no BUCK file, such as this repository's examples); otherwise the `toolchains` cell's export of it (rust_toolchains, toolchain.bzl)."""
+    def here(f):
+        return _join(path, f) if path not in ("", ".") else f
+
+    srcs = [here(f) for f in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "BUCK", "buildrules.bzl", "buildrules.lock.bzl"]]
+    srcs += native.glob([here(f) for f in ["clippy.toml", "buildrules-pins.toml", "toolchains/**"]])
+    named = {}
+    if not native.glob([here("toolchains/rust_pins.bzl")]):
+        named["toolchains/rust_pins.bzl"] = "toolchains//:rust_pins.bzl"
+    rows = table["PACKAGES"]
+    # A member at the workspace root is this package: its files are staged from here (a directory at the root would hold the root's own files).
+    members = [n for n in sorted(rows) if rows[n]["path"] not in ("", ".")]
+    if len(members) != len(rows):
+        srcs += native.glob([here("**")], exclude = [here("target/**"), here("buck-out/**")])
+    cargo_sync(
+        name = "sync_patch",
+        patch = True,
+        rustc = table["RUSTC"],
+        root = ws,
+        srcs = srcs,
+        named = named,
+        deps = ["//" + _join(ws, rows[n]["path"]) + ":sources" for n in members] + ["//" + _join(ws, "third_party/buildrules") + ":files"],
+        visibility = ["PUBLIC"],
+    )
+
 # ---- :check ----------------------------------------------------------------------
 
+def stale_note(sync_patch):
+    """What the table check says once after the files that changed: that the table alone is stale, so the compile errors of the same build
+    that come from it are not faults of their own, and how to regenerate it (`sync_patch`, the label of the workspace's `:sync_patch`)."""
+    return ("STALE TABLE ONLY: the files above changed since `buildrules sync` wrote the table, and nothing else is wrong that this check can see. " +
+            "The compile errors after this in the crates those files touch (an unresolved import, a crate that cannot be found) follow from the stale " +
+            "table: regenerate it with `buck2 build {} --out DIR` (the sync on the farm and its patch; docs/how.md), then build again.").format(sync_patch)
+
 # `check digest` (rules/check): the arguments come in triples, the expected sha256, the file and the name to report. Every file that is not what the
-# table was generated from is said by name with the digest it has (status 1, and no output); only when all match is the output written.
+# table was generated from is said by name with the digest it has (status 1, and no output), then the note once; only when all match is the output written.
 _SUCCESS = '{"version": 1, "data": {"status": "success"}}\n'
 
 def _check_impl(ctx):
     out = ctx.actions.declare_output("table_in_sync")
     args = cmd_args(ctx.attrs._check_exe[RunInfo], "digest", "--out", out.as_output(), "--stamp", _SUCCESS)
+    if ctx.attrs.note:
+        args.add("--note", ctx.attrs.note)
     for h, f, n in zip(ctx.attrs.hashes, ctx.attrs.files, ctx.attrs.names):
         args.add("sha256:" + h, f[DefaultInfo].default_outputs[0], "STALE " + n + " (run `buildrules sync` and commit the regenerated table)")
     ctx.actions.run(args, category = "cargo_table_check", identifier = ctx.label.name)
@@ -620,6 +666,8 @@ _check = rule(
         "files": attrs.list(attrs.dep()),
         "hashes": attrs.list(attrs.string()),
         "names": attrs.list(attrs.string()),
+        # Said once after the files that do not match (`stale_note`); nothing when empty.
+        "note": attrs.string(default = ""),
         "_check_exe": attrs.exec_dep(default = "buildrules//rules/check:check", providers = [RunInfo]),
     },
 )

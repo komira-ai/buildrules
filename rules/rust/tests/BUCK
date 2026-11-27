@@ -4,7 +4,9 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 # They are analysis tests; see rules/rust/refusal.bzl. The same refusal through the front door is
 # //examples/unpinned/crates/app:unpinned_rustc_is_refused.
 load("//rules/rust:pins.bzl", "RUST_DEFAULT", "RUST_OLDEST", "RUST_VERSIONS")
+load("//rules/core:platform.bzl", "LINUX_X86_64")
 load("//rules/rust:refusal.bzl", "refusal_test")
+load("//rules/zig:zig.bzl", "zig_test")
 load("//rules/rust:fmt.bzl", "workspace_config_candidates")
 load(":cases.bzl", "MID_EDITION", "NEW_EDITION", "OLD_EDITION", "coverage_refused", "edge_refusals", "edge_unit", "edges_mismatch", "fmt_plan_mismatch", "fmt_refusals", "globs_mismatch", "refused", "same", "table", "unit", "ws_config_of")
 
@@ -315,6 +317,31 @@ refusal_test(
         "rustfmt.toml",
     ]),
     none = True,
+    visibility = ["PUBLIC"],
+)
+
+# The sync of a stale workspace, end to end on the farm (sync_patch_roundtrip_test.zig): examples/gitcrates with a crates.io crate added to a
+# member's dependencies and to Cargo.lock, its generated files as they are (gitcrates//:stale_patch). The patch applies, the table check of
+# `buildrules check` passes on the result, and a second sync of the result offers nothing; the synced example itself offers nothing.
+zig_test(
+    name = "sync_patch_roundtrip",
+    exec_compatible_with = LINUX_X86_64,
+    src = "sync_patch_roundtrip_test.zig",
+    deps = ["//rules/rust:sync_patch_lib"],
+    data = {
+        "patch": "gitcrates//:stale_patch",
+        "sources": "gitcrates//:stale_patch[sources]",
+        "stale": "gitcrates//:stale_patch[workspace]",
+        "synced": "gitcrates//:sync_patch",
+    },
+    exec_tools = {
+        "BR_BUILDRULES": "buildrules//cli:buildrules",
+        "BR_CARGO": "toolchains//:cargo_1_95_0",
+        "BR_PINS": "//rules/rust:pins.bzl",
+        "BR_SYNC_PATCH": "//rules/rust:sync_patch",
+        "BR_SYSROOT": "toolchains//:sysroot_1_95_0",
+    },
+    zig = "buildrules//rules/pins:zig_next",
     visibility = ["PUBLIC"],
 )
 

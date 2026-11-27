@@ -25,7 +25,7 @@ zig_exe(
 # crate_patch (crate_patch.zig): the `patch` of a `crate_src`, run in a build action where cargo would have run the
 # crate's build script (a crate whose native code a buildrules target replaces). Built behind its unit tests.
 load("//rules/core:platform.bzl", "LINUX_X86_64")
-load("//rules/zig:zig.bzl", seed_zig_exe = "zig_exe", seed_zig_test = "zig_test")
+load("//rules/zig:zig.bzl", seed_zig_exe = "zig_exe", seed_zig_module = "zig_module", seed_zig_test = "zig_test")
 
 seed_zig_test(
     name = "crate_patch_unit",
@@ -150,6 +150,36 @@ seed_zig_exe(
     visibility = ["PUBLIC"],
 )
 
+# `:sync_patch` of every cargo_workspace (sync_patch.zig, rules/rust/sync.bzl): the staging and the sync of sync_stage, then the verdict, the
+# patch and the files of what the sync changed; and `summary`, what CI writes into a job summary from them (docs/how.md). The entry point,
+# sync_patch_main.zig, only forwards the process to the library's `run`; no test imports it, so it is not in `expect` below.
+seed_zig_test(
+    name = "sync_patch_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "sync_patch_test.zig",
+    imports = ["sync_patch.zig", "sync_stage.zig"],
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+seed_zig_exe(
+    name = "sync_patch",
+    exec_compatible_with = LINUX_X86_64,
+    src = "sync_patch_main.zig",
+    imports = ["sync_patch.zig", "sync_stage.zig"],
+    unit_tests = [":sync_patch_unit"],
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["PUBLIC"],
+)
+
+# The library as a module, for the end-to-end test in rules/rust/tests (which consumers never load, so it may name this repository's fixture
+# cells): zig refuses a relative import across directories.
+seed_zig_module(
+    name = "sync_patch_lib",
+    src = "sync_patch.zig",
+    imports = ["sync_stage.zig"],
+    visibility = ["//rules/rust/tests:"],
+)
+
 # Read by the buildrules.dev site tests (site/BUCK).
 export_file(
     name = "test_run.bzl",
@@ -174,6 +204,14 @@ export_file(
 zig_coverage(
     test_targets = [":rustc_launch_unit", ":sync_stage_unit", ":rustc_diag_unit", ":rust_cov_unit"],
     expect = ["rules/rust/rustc_launch.zig", "rules/rust/sync_stage.zig", "rules/rust/rustc_diag.zig", "rules/rust/rust_cov.zig"],
+)
+
+# sync_patch.zig, measured on its own: rules/rust's figure above is older and lower, and this one is held at the 99% of new code.
+zig_coverage(
+    name = "coverage_sync_patch",
+    floor = "coverage_sync_patch_floor.txt",
+    test_targets = [":sync_patch_unit"],
+    expect = ["rules/rust/sync_patch.zig"],
 )
 
 zig_coverage(

@@ -1,0 +1,25 @@
+# examples/gitcrates/Cargo.toml as a pull request that adds a crates.io crate (fnv) leaves it: the stale case of `:sync_patch`
+# (gitcrates//:stale_patch, rules/rust/tests:sync_patch_roundtrip). The generated files of the workspace are not changed with it.
+[workspace]
+resolver = "3"
+members = ["crates/gdemo"]
+
+# Every external dependency is declared once, here; members name it with `workspace = true`. thiserror comes from its git repository,
+# pinned by commit (a branch, a tag or a short rev is refused by `buildrules sync`).
+[workspace.dependencies]
+thiserror = { git = "https://github.com/dtolnay/thiserror", rev = "95a512669395f30cf9ae10343149726c0563ed76" }
+fnv = "1.0.7"
+
+[workspace.metadata.buildrules]
+# Policy only (profiles and lints stay in cargo's own tables). `ci` is what `buck2 build //:ci` builds.
+default-action = "ci"
+
+[workspace.metadata.buildrules.actions]
+ci = ["lint", "test"]
+
+[workspace.metadata.buildrules.lint]
+deny-warnings = true
+
+# A hermetic build cannot use incremental compilation: the generator refuses a profile that has it on.
+[profile.dev]
+incremental = false

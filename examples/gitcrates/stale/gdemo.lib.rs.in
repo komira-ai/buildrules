@@ -1,0 +1,1 @@
+//! gdemo as the stale workspace of gitcrates//:stale_patch has it: the sync reads that the library is there, not what it says.
