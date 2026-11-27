@@ -10,7 +10,8 @@
 //!                      a space and the path;
 //!   offer/sync.patch   every change as one patch `git apply` takes, its paths relative to the workspace root;
 //!   offer/files/       the files the sync wrote or changed, at their paths (what `buck2 build //:sync --out .` writes).
-//! There is no `offer/` when the verdict is `none`. The verdicts:
+//! When the verdict is `none`, `offer/` holds nothing (no patch, and `files/` empty), so an upload of it uploads nothing. `--out` is a new
+//! directory, as an action's output is. The verdicts:
 //!   none     the sync writes what the workspace holds: nothing to offer;
 //!   tables   the sync changed only the files it generates: Cargo.toml and Cargo.lock are as cargo resolves them, and the generated table
 //!            alone is stale (so the compile errors of a build that reads it follow from it);
@@ -72,14 +73,18 @@ pub fn verdictOf(changes: []const Change) Verdict {
 }
 
 // ---- lines and the edit script ----------------------------------------------------------------------------------------------
+//
+// Each list below is given all the room it needs once, before it is filled (`ensureTotalCapacityPrecise` of an empty list, which always
+// allocates), and filled without allocating: one allocation, so one failure path, per list.
 
 /// The lines of `text`, each with its newline; the last one has none when the text does not end in one.
 pub fn lines(a: Allocator, text: []const u8) ![]const []const u8 {
     var out = std.ArrayList([]const u8).empty;
+    try out.ensureTotalCapacityPrecise(a, std.mem.count(u8, text, "\n") + 1);
     var start: usize = 0;
     while (start < text.len) {
         const end = if (std.mem.indexOfScalarPos(u8, text, start, '\n')) |i| i + 1 else text.len;
-        try out.append(a, text[start..end]);
+        out.appendAssumeCapacity(text[start..end]);
         start = end;
     }
     return out.items;
@@ -97,10 +102,12 @@ pub fn editScript(a: Allocator, old: []const []const u8, new: []const []const u8
     while (head < old.len and head < new.len and std.mem.eql(u8, old[head], new[head])) head += 1;
     var tail: usize = 0;
     while (tail < old.len - head and tail < new.len - head and std.mem.eql(u8, old[old.len - 1 - tail], new[new.len - 1 - tail])) tail += 1;
+    // at most every old line and every new line, once each
     var out = std.ArrayList(Edit).empty;
-    for (old[0..head]) |l| try out.append(a, .{ .op = .same, .line = l });
+    try out.ensureTotalCapacityPrecise(a, old.len + new.len + 1);
+    for (old[0..head]) |l| out.appendAssumeCapacity(.{ .op = .same, .line = l });
     try middle(a, &out, old[head .. old.len - tail], new[head .. new.len - tail], max_d);
-    for (old[old.len - tail ..]) |l| try out.append(a, .{ .op = .same, .line = l });
+    for (old[old.len - tail ..]) |l| out.appendAssumeCapacity(.{ .op = .same, .line = l });
     return out.items;
 }
 
@@ -108,7 +115,7 @@ fn at(off: isize, k: isize) usize {
     return @intCast(off + k);
 }
 
-/// Myers' search over `o` -> `n`, whose first and last lines differ (the caller took the common ones off).
+/// Myers' search over `o` -> `n`, whose first and last lines differ (the caller took the common ones off); `out` has room for them all.
 fn middle(a: Allocator, out: *std.ArrayList(Edit), o: []const []const u8, n: []const []const u8, max_d: usize) !void {
     const len_o: isize = @intCast(o.len);
     const len_n: isize = @intCast(n.len);
@@ -118,16 +125,17 @@ fn middle(a: Allocator, out: *std.ArrayList(Edit), o: []const []const u8, n: []c
     const off = most + 1;
     const v = try a.alloc(isize, @intCast(2 * most + 3));
     @memset(v, 0);
+    // one snapshot per step: at most `most` steps, and the search stops after `max_d`
     var trace = std.ArrayList([]const isize).empty;
+    try trace.ensureTotalCapacityPrecise(a, @min(o.len + n.len, max_d) + 1);
     var d: isize = 0;
     while (true) : (d += 1) {
         if (d > @as(isize, @intCast(max_d))) {
-            for (o) |l| try out.append(a, .{ .op = .del, .line = l });
-            for (n) |l| try out.append(a, .{ .op = .ins, .line = l });
+            for (o) |l| out.appendAssumeCapacity(.{ .op = .del, .line = l });
+            for (n) |l| out.appendAssumeCapacity(.{ .op = .ins, .line = l });
             return;
         }
-        const snap = try a.dupe(isize, v[at(off, -d)..at(off, d + 1)]);
-        try trace.append(a, snap);
+        trace.appendAssumeCapacity(try a.dupe(isize, v[at(off, -d)..at(off, d + 1)]));
         var k: isize = -d;
         while (k <= d) : (k += 2) {
             var x = if (k == -d or (k != d and v[at(off, k - 1)] < v[at(off, k + 1)])) v[at(off, k + 1)] else v[at(off, k - 1)] + 1;
@@ -145,6 +153,7 @@ fn middle(a: Allocator, out: *std.ArrayList(Edit), o: []const []const u8, n: []c
 /// The edits of the path Myers' search found in `d` steps, from its trace, in order.
 fn backtrack(a: Allocator, out: *std.ArrayList(Edit), o: []const []const u8, n: []const []const u8, trace: []const []const isize, d: isize) !void {
     var rev = std.ArrayList(Edit).empty;
+    try rev.ensureTotalCapacityPrecise(a, o.len + n.len);
     var x: isize = @intCast(o.len);
     var y: isize = @intCast(n.len);
     var step = d;
@@ -158,12 +167,12 @@ fn backtrack(a: Allocator, out: *std.ArrayList(Edit), o: []const []const u8, n: 
         while (x > px and y > py) {
             x -= 1;
             y -= 1;
-            try rev.append(a, .{ .op = .same, .line = o[@intCast(x)] });
+            rev.appendAssumeCapacity(.{ .op = .same, .line = o[@intCast(x)] });
         }
         if (down) {
-            try rev.append(a, .{ .op = .ins, .line = n[@intCast(py)] });
+            rev.appendAssumeCapacity(.{ .op = .ins, .line = n[@intCast(py)] });
         } else {
-            try rev.append(a, .{ .op = .del, .line = o[@intCast(px)] });
+            rev.appendAssumeCapacity(.{ .op = .del, .line = o[@intCast(px)] });
         }
         x = px;
         y = py;
@@ -172,7 +181,7 @@ fn backtrack(a: Allocator, out: *std.ArrayList(Edit), o: []const []const u8, n: 
     var i = rev.items.len;
     while (i > 0) {
         i -= 1;
-        try out.append(a, rev.items[i]);
+        out.appendAssumeCapacity(rev.items[i]);
     }
 }
 
@@ -184,14 +193,26 @@ fn range(a: Allocator, before: usize, count: usize) ![]u8 {
     return std.fmt.allocPrint(a, "{d},{d}", .{ if (count == 0) before else before + 1, count });
 }
 
-fn line(a: Allocator, out: *std.ArrayList(u8), mark: u8, text: []const u8) !void {
-    try out.append(a, mark);
-    try out.appendSlice(a, text);
-    if (!std.mem.endsWith(u8, text, "\n")) try out.appendSlice(a, "\n\\ No newline at end of file\n");
+const no_newline_mark = "\n\\ No newline at end of file\n";
+
+/// The most bytes `hunks` writes for one edit: its mark, its line and the marker of a missing newline, and the header of a hunk that
+/// starts at it (two ranges of two numbers each).
+fn editBound(e: Edit) usize {
+    return 1 + e.line.len + no_newline_mark.len + "@@ -, +, @@\n".len + 4 * 20;
+}
+
+fn line(out: *std.ArrayList(u8), mark: u8, text: []const u8) void {
+    out.appendAssumeCapacity(mark);
+    out.appendSliceAssumeCapacity(text);
+    if (!std.mem.endsWith(u8, text, "\n")) out.appendSliceAssumeCapacity(no_newline_mark);
 }
 
 /// The hunks of `edits` with `ctx` lines of context: two changes are one hunk when at most `2 * ctx` unchanged lines are between them.
-pub fn hunks(a: Allocator, out: *std.ArrayList(u8), edits: []const Edit, ctx: usize) !void {
+pub fn hunks(a: Allocator, edits: []const Edit, ctx: usize) ![]u8 {
+    var bound: usize = 0;
+    for (edits) |e| bound += editBound(e);
+    var out = std.ArrayList(u8).empty;
+    try out.ensureTotalCapacityPrecise(a, bound);
     // old_at[i], new_at[i]: the old and the new lines before edits[i]
     const old_at = try a.alloc(usize, edits.len + 1);
     const new_at = try a.alloc(usize, edits.len + 1);
@@ -204,7 +225,7 @@ pub fn hunks(a: Allocator, out: *std.ArrayList(u8), edits: []const Edit, ctx: us
     var i: usize = 0;
     while (true) {
         while (i < edits.len and edits[i].op == .same) i += 1;
-        if (i == edits.len) return;
+        if (i == edits.len) return out.items;
         var last = i;
         var j = i + 1;
         while (j < edits.len and j - last <= 2 * ctx + 1) : (j += 1) {
@@ -215,8 +236,8 @@ pub fn hunks(a: Allocator, out: *std.ArrayList(u8), edits: []const Edit, ctx: us
         const old_n = old_at[end] - old_at[start];
         const new_n = new_at[end] - new_at[start];
         const head = try std.fmt.allocPrint(a, "@@ -{s} +{s} @@\n", .{ try range(a, old_at[start], old_n), try range(a, new_at[start], new_n) });
-        try out.appendSlice(a, head);
-        for (edits[start..end]) |e| try line(a, out, switch (e.op) {
+        out.appendSliceAssumeCapacity(head);
+        for (edits[start..end]) |e| line(&out, switch (e.op) {
             .same => ' ',
             .del => '-',
             .ins => '+',
@@ -248,15 +269,14 @@ pub fn filePatch(a: Allocator, out: *std.ArrayList(u8), c: Change, max_d: usize)
     const old = c.before orelse "";
     const new = c.after orelse "";
     if (std.mem.indexOfScalar(u8, old, 0) != null or std.mem.indexOfScalar(u8, new, 0) != null) return PatchError.BinaryFile;
-    try out.appendSlice(a, try std.fmt.allocPrint(a, "diff --git a/{s} b/{s}\n", .{ c.path, c.path }));
-    if (c.before == null) try out.appendSlice(a, "new file mode 100644\n");
-    if (c.after == null) try out.appendSlice(a, "deleted file mode 100644\n");
+    const mode = if (c.before == null) "new file mode 100644\n" else if (c.after == null) "deleted file mode 100644\n" else "";
+    const head = try std.fmt.allocPrint(a, "diff --git a/{s} b/{s}\n{s}", .{ c.path, c.path, mode });
     // An empty file made or removed: the header is all of it.
-    if (old.len == 0 and new.len == 0) return;
+    if (old.len == 0 and new.len == 0) return out.appendSlice(a, head);
     const from = if (c.before == null) "/dev/null" else try std.fmt.allocPrint(a, "a/{s}", .{c.path});
     const to = if (c.after == null) "/dev/null" else try std.fmt.allocPrint(a, "b/{s}", .{c.path});
-    try out.appendSlice(a, try std.fmt.allocPrint(a, "--- {s}\n+++ {s}\n", .{ from, to }));
-    try hunks(a, out, try editScript(a, try lines(a, old), try lines(a, new), max_d), context);
+    const body = try hunks(a, try editScript(a, try lines(a, old), try lines(a, new), max_d), context);
+    try out.appendSlice(a, try std.fmt.allocPrint(a, "{s}--- {s}\n+++ {s}\n{s}", .{ head, from, to, body }));
 }
 
 /// Every change, in the order given (`gather` sorts them by path), as one patch.
@@ -373,22 +393,28 @@ fn parse(a: Allocator, patch: []const u8) ![]const FilePatch {
 fn applyOne(a: Allocator, before: ?[]const u8, fp: FilePatch) ![]const u8 {
     if (fp.made != (before == null)) return ApplyError.PatchDoesNotApply;
     const old = try lines(a, before orelse "");
+    // at most the old bytes and every line the patch adds
+    var bound: usize = (before orelse "").len + 1;
+    for (fp.hunks) |h| {
+        for (h.body) |e| bound += e.line.len;
+    }
     var out = std.ArrayList(u8).empty;
+    try out.ensureTotalCapacityPrecise(a, bound);
     var cursor: usize = 0;
     for (fp.hunks) |h| {
         const at_line = if (h.old_count == 0) h.old_start else h.old_start -| 1;
         if (at_line < cursor or at_line > old.len) return ApplyError.PatchDoesNotApply;
-        for (old[cursor..at_line]) |l| try out.appendSlice(a, l);
+        for (old[cursor..at_line]) |l| out.appendSliceAssumeCapacity(l);
         cursor = at_line;
         for (h.body) |e| {
             if (e.op != .ins) {
                 if (cursor >= old.len or !std.mem.eql(u8, old[cursor], e.line)) return ApplyError.PatchDoesNotApply;
                 cursor += 1;
             }
-            if (e.op != .del) try out.appendSlice(a, e.line);
+            if (e.op != .del) out.appendSliceAssumeCapacity(e.line);
         }
     }
-    for (old[cursor..]) |l| try out.appendSlice(a, l);
+    for (old[cursor..]) |l| out.appendSliceAssumeCapacity(l);
     if (fp.removed and out.items.len != 0) return ApplyError.PatchDoesNotApply;
     return out.items;
 }
@@ -454,16 +480,24 @@ pub fn gather(a: Allocator, src: std.fs.Dir, files: std.fs.Dir, removed: []const
 
 /// verdict.txt: the verdict, then `<letter> <path>` per change.
 pub fn verdictText(a: Allocator, v: Verdict, changes: []const Change) ![]u8 {
+    var bound: usize = @tagName(v).len + 1;
+    for (changes) |c| bound += c.path.len + 3;
     var out = std.ArrayList(u8).empty;
-    try out.appendSlice(a, @tagName(v));
-    try out.append(a, '\n');
-    for (changes) |c| try out.appendSlice(a, try std.fmt.allocPrint(a, "{c} {s}\n", .{ c.letter(), c.path }));
+    try out.ensureTotalCapacityPrecise(a, bound);
+    out.appendSliceAssumeCapacity(@tagName(v));
+    out.appendAssumeCapacity('\n');
+    for (changes) |c| {
+        out.appendAssumeCapacity(c.letter());
+        out.appendAssumeCapacity(' ');
+        out.appendSliceAssumeCapacity(c.path);
+        out.appendAssumeCapacity('\n');
+    }
     return out.items;
 }
 
-/// `make` in `cwd`, with the work directory `work_path`: the sync's status when it failed (nothing is written then), else 0.
+/// `make` in `cwd`, with the work directory `work_path` (new, as an action's scratch directory is) and a new `--out` (as an action's output
+/// is): the sync's status when it failed (nothing is written then), else 0.
 pub fn make(a: Allocator, cwd: std.fs.Dir, args: stage.Args, work_path: []const u8, hooks: Hooks) !u8 {
-    try cwd.deleteTree(work_path);
     var work = try cwd.makeOpenPath(work_path, .{ .iterate = true });
     defer work.close();
     var src = try cwd.openDir(args.src, .{ .iterate = true });
@@ -473,17 +507,11 @@ pub fn make(a: Allocator, cwd: std.fs.Dir, args: stage.Args, work_path: []const 
     if (code != 0) return code;
     var out = try cwd.makeOpenPath(args.out, .{});
     defer out.close();
-    // `collect` writes into an empty directory: what is there is the sync's alone
-    try out.deleteTree(offer_dir);
     var files = try out.makeOpenPath(files_dir, .{ .iterate = true });
     defer files.close();
     const changes = try gather(a, src, files, try stage.collect(a, src, work, files, added));
     const v = verdictOf(changes);
-    if (v == .none) {
-        try out.deleteTree(offer_dir);
-    } else {
-        try out.writeFile(.{ .sub_path = patch_file, .data = try patchText(a, changes, max_edits) });
-    }
+    if (v != .none) try out.writeFile(.{ .sub_path = patch_file, .data = try patchText(a, changes, max_edits) });
     try out.writeFile(.{ .sub_path = verdict_file, .data = try verdictText(a, v, changes) });
     return 0;
 }
@@ -571,10 +599,8 @@ const lock_text =
 pub fn summary(a: Allocator, report: ?Report, w: Where) ![]u8 {
     const r = report orelse return a.dupe(u8, failed_text);
     if (r.verdict == .none) return a.dupe(u8, none_text);
-    var out = std.ArrayList(u8).empty;
-    try out.appendSlice(a, if (r.verdict == .tables) tables_text else lock_text);
     const dir = try std.fmt.allocPrint(a, "../{s}-{s}", .{ w.artifact, w.run });
-    try out.appendSlice(a, try std.fmt.allocPrint(a,
+    const head = try std.fmt.allocPrint(a, "{s}" ++
         \\
         \\CI ran `buildrules sync` on the farm at this commit and made the patch; it is offered, never pushed. At the root of a checkout
         \\of this commit, fetch it and apply it, then commit and push:
@@ -587,14 +613,23 @@ pub fn summary(a: Allocator, report: ?Report, w: Where) ![]u8 {
         \\The patch:
         \\
         \\
-    , .{ w.run, w.repository, w.artifact, dir, dir }));
+    , .{ if (r.verdict == .tables) tables_text else lock_text, w.run, w.repository, w.artifact, dir, dir });
+    var bound = head.len;
+    for (r.entries) |e| bound += e.path.len + "- `` (removed)\n".len;
+    var out = std.ArrayList(u8).empty;
+    try out.ensureTotalCapacityPrecise(a, bound);
+    out.appendSliceAssumeCapacity(head);
     for (r.entries) |e| {
         const what = switch (e.letter) {
             'A' => " (new)",
             'D' => " (removed)",
             else => "",
         };
-        try out.appendSlice(a, try std.fmt.allocPrint(a, "- `{s}`{s}\n", .{ e.path, what }));
+        out.appendSliceAssumeCapacity("- `");
+        out.appendSliceAssumeCapacity(e.path);
+        out.appendSliceAssumeCapacity("`");
+        out.appendSliceAssumeCapacity(what);
+        out.appendAssumeCapacity('\n');
     }
     return out.items;
 }
@@ -616,11 +651,13 @@ fn parseSummary(argv: []const []const u8) !SummaryArgs {
     return s;
 }
 
-fn appendTo(cwd: std.fs.Dir, path: []const u8, text: []const u8) !void {
-    var f = try cwd.createFile(path, .{ .truncate = false });
-    defer f.close();
-    try f.seekFromEnd(0);
-    try f.writeAll(text);
+/// `text` after what the file at `path` holds (nothing when there is no such file).
+fn appendTo(a: Allocator, cwd: std.fs.Dir, path: []const u8, text: []const u8) !void {
+    const before = cwd.readFileAlloc(a, path, 1 << 26) catch |e| switch (e) {
+        error.FileNotFound => "",
+        else => return e,
+    };
+    try cwd.writeFile(.{ .sub_path = path, .data = try std.mem.concat(a, u8, &.{ before, text }) });
 }
 
 fn summaryCmd(a: Allocator, cwd: std.fs.Dir, argv: []const []const u8, out: *std.ArrayList(u8), err: *std.ArrayList(u8)) !u8 {
@@ -643,7 +680,7 @@ fn summaryCmd(a: Allocator, cwd: std.fs.Dir, argv: []const []const u8, out: *std
     } else null;
     const md = try summary(a, report, s.where);
     try out.appendSlice(a, md);
-    if (s.to) |to| try appendTo(cwd, to, md);
+    if (s.to) |to| try appendTo(a, cwd, to, md);
     return if (report == null) 1 else 0;
 }
 

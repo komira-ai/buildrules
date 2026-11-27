@@ -123,9 +123,9 @@ test "a workspace whose Cargo.lock gained a crate: the stale table alone, a patc
     }, work_path);
     try expectRan(second, 0, "sync_patch make of the patched workspace");
     try t.expectEqual(P.Verdict.none, (try report(a, work, "second/verdict.txt")).verdict);
-    try t.expectError(error.FileNotFound, work.access("second/offer", .{}));
+    try t.expectError(error.FileNotFound, work.access("second/offer/sync.patch", .{}));
 
     // And so does the sync of the committed example.
     try t.expectEqual(P.Verdict.none, (try report(a, work, "synced/verdict.txt")).verdict);
-    try t.expectError(error.FileNotFound, work.access("synced/offer", .{}));
+    try t.expectError(error.FileNotFound, work.access("synced/offer/sync.patch", .{}));
 }

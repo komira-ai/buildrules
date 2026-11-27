@@ -516,8 +516,8 @@ buck2 build //:sync_patch --out DIR
 
 `DIR/verdict.txt` is `none` (the generated files are what a sync writes now), `tables` (only the files `buildrules sync` generates are
 stale: Cargo.toml and Cargo.lock are as cargo resolves them, so the compile errors of a build that reads the table follow from it) or
-`lock` (cargo changed Cargo.lock as well), then one line per file. Unless it is `none`, `DIR/offer/sync.patch` is the change as one patch
-`git apply` takes and `DIR/offer/files/` the files themselves. The table check of a build says the same in one line after the files it
+`lock` (cargo changed Cargo.lock as well), then one line per file. `DIR/offer/sync.patch` is the change as one patch `git apply` takes and
+`DIR/offer/files/` the files themselves; for `none`, `DIR/offer/` holds nothing. The table check of a build says the same in one line after the files it
 names: `STALE TABLE ONLY: ...`.
 
 A repository whose farm lane runs on GitHub Actions offers that patch when the farm build of a pull request fails, so a pull request that

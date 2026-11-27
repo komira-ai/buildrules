@@ -223,13 +223,10 @@ test "past the edit limit the changed middle is said as removed and added whole,
     const capped_ops = [_]P.Op{ .same, .del, .del, .del, .ins, .ins, .same };
     try t.expectEqual(capped_ops.len, capped.len);
     for (capped_ops, capped) |o, e| try t.expectEqual(o, e.op);
-    var out = std.ArrayList(u8).empty;
-    try P.hunks(a, &out, capped, P.context);
-    try t.expectEqualStrings("@@ -1,5 +1,4 @@\n h\n-a\n-b\n-c\n+b\n+x\n t\n", out.items);
+    try t.expectEqualStrings("@@ -1,5 +1,4 @@\n h\n-a\n-b\n-c\n+b\n+x\n t\n", try P.hunks(a, capped, P.context));
     // no change, no hunk
-    out.clearRetainingCapacity();
-    try P.hunks(a, &out, try P.editScript(a, old, old, P.max_edits), P.context);
-    try t.expectEqualStrings("", out.items);
+    try t.expectEqualStrings("", try P.hunks(a, try P.editScript(a, old, old, P.max_edits), P.context));
+    try t.expectEqualStrings("", try P.hunks(a, &.{}, P.context));
 }
 
 test "lines keep their newlines, and the last one has none when the text does not end in one" {
@@ -658,15 +655,23 @@ test "make: stale tables only, as a patch that applies to the workspace, the fil
     try t.expectEqualStrings("--dir", sync_argv[2]);
     try t.expect(std.mem.endsWith(u8, sync_argv[3], "/scratch/workspace"));
     try t.expectEqualStrings("--sources", sync_argv[sync_argv.len - 2]);
-    // a run on the synced workspace offers nothing: no offer/, and the verdict says so
+    // a run on the synced workspace (into a new --out, as an action's is) offers nothing: offer/ is empty, and the verdict says so
     sync_does = .nothing;
     try root.deleteTree("ws");
     try root.rename("scratch/workspace", "ws");
     try root.deleteFile("ws/.buckconfig");
-    const again = try runIn(a, &make_argv);
+    var second = std.ArrayList([]const u8).empty;
+    try second.appendSlice(a, &make_argv);
+    second.items[4] = "out2";
+    const again = try runIn(a, second.items);
     try t.expectEqual(@as(u8, 0), again.code);
-    try t.expectEqualStrings("none\n", try root.readFileAlloc(a, "out/verdict.txt", 1 << 10));
-    try t.expectError(error.FileNotFound, root.access("out/offer", .{}));
+    try t.expectEqualStrings("none\n", try root.readFileAlloc(a, "out2/verdict.txt", 1 << 10));
+    try t.expectError(error.FileNotFound, root.access("out2/offer/sync.patch", .{}));
+    var offered = try root.openDir("out2/offer/files", .{ .iterate = true });
+    defer offered.close();
+    var it = offered.iterate();
+    const first_entry = try it.next();
+    try t.expect(first_entry == null);
 }
 
 test "make: a Cargo.lock the sync changed is the verdict lock, and in the patch" {
@@ -782,6 +787,12 @@ test "gather: the sync's files with the workspace's bytes, a removed file with i
     try t.expectError(error.IsDir, P.gather(a, src, files, &.{}));
 }
 
+/// A new work directory and a new --out for the next run.
+fn fresh() !void {
+    try root.deleteTree("scratch");
+    try root.deleteTree("out");
+}
+
 test "make: every error of the file system, of the sync and of the patch is the caller's, and the command line says nothing of its own" {
     var ar = Arena.init(t.allocator);
     defer ar.deinit();
@@ -790,24 +801,43 @@ test "make: every error of the file system, of the sync and of the patch is the 
     defer tmp.cleanup();
     root = tmp.dir;
     try workspace();
-    sync_does = .nothing;
+    // each run with a new work directory and a new --out, as an action has them
     // the sync cannot start
     sync_does = .errs;
     try t.expectError(error.SyncDidNotStart, runIn(a, &make_argv));
+    try fresh();
     // a path of a pinned tool, or the work directory, that does not resolve
     sync_does = .nothing;
     unreal = "tools/pins.bzl";
     try t.expectError(error.Unreal, runIn(a, &make_argv));
+    try fresh();
     unreal = "scratch/workspace";
     try t.expectError(error.Unreal, runIn(a, &make_argv));
+    try fresh();
     unreal = "";
     // a file the sync wrote whose path a patch cannot carry
     sync_does = .quoted;
     try t.expectError(P.PatchError.PathNeedsQuoting, runIn(a, &make_argv));
+    try fresh();
     // a file of the sync's where the workspace has a directory
     sync_does = .clash;
     try t.expectError(error.IsDir, runIn(a, &make_argv));
+    try fresh();
+    // offer/ of --out is a file: offer/files cannot be made
     sync_does = .nothing;
+    try put(root, &.{.{ "out/offer", "" }});
+    if (runIn(a, &make_argv)) |_| return error.TestUnexpectedResult else |_| {}
+    try fresh();
+    // the patch cannot be written (a directory is where it goes)
+    sync_does = .tables;
+    try root.makePath("out/offer/sync.patch");
+    try t.expectError(error.IsDir, runIn(a, &make_argv));
+    try fresh();
+    // the verdict cannot be written (a directory is where it goes)
+    sync_does = .nothing;
+    try root.makePath("out/verdict.txt");
+    try t.expectError(error.IsDir, runIn(a, &make_argv));
+    try fresh();
     // --out is a file
     try root.writeFile(.{ .sub_path = "outfile", .data = "" });
     var to_file = std.ArrayList([]const u8).empty;
@@ -823,8 +853,8 @@ test "make: every error of the file system, of the sync and of the patch is the 
     try root.symLink("nowhere", "ws/dangling", .{});
     try t.expectError(error.FileNotFound, runIn(a, &make_argv));
     try root.deleteFile("ws/dangling");
+    try fresh();
     // the scratch path is a file: the work directory cannot be made
-    try root.deleteTree("scratch");
     try root.writeFile(.{ .sub_path = "scratch", .data = "" });
     if (runIn(a, &make_argv)) |_| return error.TestUnexpectedResult else |_| {}
 }
@@ -860,6 +890,9 @@ test "summary: a job summary that cannot be opened is the caller's error" {
     root = tmp.dir;
     try put(root, &.{.{ "p/verdict.txt", "none\n" }});
     try t.expectError(error.FileNotFound, runIn(a, &.{ "summary", "--dir", "p", "--run", "1", "--repository", "o/r", "--artifact", "x", "--to", "no/such/dir/summary.md" }));
+    // a job summary that is a directory cannot be read to append to
+    try root.makePath("adir");
+    try t.expectError(error.IsDir, runIn(a, &.{ "summary", "--dir", "p", "--run", "1", "--repository", "o/r", "--artifact", "x", "--to", "adir" }));
 }
 
 // ---- every allocation that fails is an error of the caller's ----------------------------------------------------------------
@@ -884,19 +917,20 @@ fn everyAllocationFails(f: *const fn (std.mem.Allocator) anyerror!void) !void {
 
 fn patchAndApply(a: std.mem.Allocator) anyerror!void {
     const changes = [_]P.Change{
+        .{ .path = "e", .before = null, .after = "" },
         .{ .path = "far", .before = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n", .after = "1\ntwo\n3\n4\n5\n6\n7\n8\n9\n10\n11\ntwelve" },
         .{ .path = "gone", .before = "a\n", .after = null },
         .{ .path = "made/f", .before = null, .after = "m\n" },
-        .{ .path = "e", .before = null, .after = "" },
     };
+    // the empty file first: each way of adding a file's part to the patch adds it to an empty patch once
     const patch = try P.patchText(a, &changes, P.max_edits);
-    const capped = try P.patchText(a, changes[0..1], 1);
+    const capped = try P.patchText(a, changes[1..2], 1);
     var tmp = std.testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
-    try put(tmp.dir, &.{ .{ "far", changes[0].before.? }, .{ "gone", "a\n" } });
+    try put(tmp.dir, &.{ .{ "far", changes[1].before.? }, .{ "gone", "a\n" } });
     var failed: []const u8 = "";
     try P.apply(a, tmp.dir, patch, &failed);
-    try put(tmp.dir, &.{.{ "far", changes[0].before.? }});
+    try put(tmp.dir, &.{.{ "far", changes[1].before.? }});
     try P.apply(a, tmp.dir, capped, &failed);
 }
 
@@ -926,6 +960,8 @@ fn commandLines(a: std.mem.Allocator) anyerror!void {
     try put(root, &.{.{ "bad/verdict.txt", "?\n" }});
     for ([_][]const []const u8{
         &.{ "summary", "--dir", "out", "--run", "1", "--repository", "o/r", "--artifact", "x", "--to", "s.md" },
+        // again: now appended to what the first wrote
+        &.{ "summary", "--dir", "out", "--run", "1", "--repository", "o/r", "--artifact", "x", "--to", "s.md" },
         &.{ "summary", "--dir", "absent", "--run", "1", "--repository", "o/r", "--artifact", "x" },
         &.{ "summary", "--dir", "bad", "--run", "1", "--repository", "o/r", "--artifact", "x" },
         &.{ "summary", "--dir", "out", "--run", "x", "--repository", "o/r", "--artifact", "x" },
@@ -942,6 +978,11 @@ fn gathering(a: std.mem.Allocator) anyerror!void {
     var files = try tmp.dir.openDir("files", .{ .iterate = true });
     defer files.close();
     _ = try P.gather(a, src, files, &.{"z"});
+    // removed files alone: the list of changes starts with them
+    try tmp.dir.makePath("none");
+    var nothing = try tmp.dir.openDir("none", .{ .iterate = true });
+    defer nothing.close();
+    _ = try P.gather(a, src, nothing, &.{"z"});
 }
 
 test "an allocation that fails anywhere is error.OutOfMemory: the patch, applying it, the verdict, the summaries, gather and both commands" {

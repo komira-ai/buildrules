@@ -158,7 +158,6 @@ seed_zig_test(
     exec_compatible_with = LINUX_X86_64,
     src = "sync_patch_test.zig",
     imports = ["sync_patch.zig", "sync_stage.zig"],
-    busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
 )
 
@@ -168,7 +167,6 @@ seed_zig_exe(
     src = "sync_patch_main.zig",
     imports = ["sync_patch.zig", "sync_stage.zig"],
     unit_tests = [":sync_patch_unit"],
-    busybox = "buildrules//rules/pins:busybox",
     zig = "buildrules//rules/pins:zig_next",
     visibility = ["PUBLIC"],
 )
