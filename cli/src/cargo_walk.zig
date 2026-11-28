@@ -31,9 +31,9 @@ pub const Pick = union(enum) { dir: []const u8, missing, unsure: []const []const
 /// The longest chain of symbolic links followed to a file (the kernel's own limit is 40).
 const max_hops = 40;
 
-/// The dependency tables of a manifest, in the order cargo follows their `path` entries (the underscore spellings are older names
-/// of the same tables).
-const dep_tables = [_][]const u8{ "dependencies", "build-dependencies", "build_dependencies", "dev-dependencies", "dev_dependencies" };
+/// The dependency tables of a manifest or of one of its targets, in the order cargo follows their `path` entries; cargo reads the
+/// older underscore spelling of a table only when the manifest has no table of the hyphen spelling.
+const dep_tables = [_][2][]const u8{ .{ "dependencies", "dependencies" }, .{ "build-dependencies", "build_dependencies" }, .{ "dev-dependencies", "dev_dependencies" } };
 
 pub const Checkout = struct {
     a: Allocator,
@@ -120,7 +120,7 @@ pub const Checkout = struct {
             if (std.mem.eql(u8, name, "target") and try c.resolve(try join(c.a, parentOf(dir), "Cargo.toml")) != null) return;
         }
         if (try c.resolve(try join(c.a, dir, "Cargo.toml")) != null) try c.nested(dir);
-        const names = if (c.subdirs.get(dir)) |l| l.items else &.{};
+        const names: []const []const u8 = if (c.subdirs.get(dir)) |l| l.items else &.{};
         for (names) |n| try c.walk(try join(c.a, dir, n));
     }
 
@@ -129,7 +129,7 @@ pub const Checkout = struct {
         if ((try c.visited.getOrPut(dir)).found_existing) return;
         const doc = (try c.manifest(dir)) orelse return;
         const pkg = val.get(doc, "package") orelse return; // a virtual manifest
-        if (pkg != .object) return; // cargo cannot read it
+        if (val.getStr(pkg, "name") == null) return; // cargo cannot read it (not a table, or no name)
         try c.order.append(c.a, dir);
         for (try c.pathDeps(dir, doc)) |p| try c.nested(p);
     }
@@ -137,12 +137,7 @@ pub const Checkout = struct {
     /// The directories of the manifest's `path` dependencies, in cargo's order (`nested_paths`), that lie in the archive.
     fn pathDeps(c: *Checkout, dir: []const u8, doc: Value) error{OutOfMemory}![]const []const u8 {
         var out = std.ArrayList([]const u8).empty;
-        var tables = std.ArrayList(Value).empty;
-        for (dep_tables) |t| if (val.get(doc, t)) |v| try tables.append(c.a, v);
-        if (val.get(doc, "target")) |targets| if (targets == .object) {
-            for (try sortedKeys(c.a, targets)) |k| for (dep_tables) |t| if (val.get(targets.object.get(k).?, t)) |v| try tables.append(c.a, v);
-        };
-        for (tables.items) |table| {
+        for (try depTables(c.a, doc)) |table| {
             if (table != .object) continue;
             for (try sortedKeys(c.a, table)) |name| {
                 const d = table.object.get(name).?;
@@ -159,24 +154,31 @@ pub const Checkout = struct {
         return out.items;
     }
 
-    /// The directory of the workspace the package at `dir` belongs to, as cargo finds it (`find_workspace_root`): its own manifest
-    /// when that has a [workspace], the directory `package.workspace` names, or the nearest directory above whose manifest has a
-    /// [workspace] that does not exclude the package. Null when there is none in the archive.
+    /// The directory of the workspace the package at `dir` belongs to, as cargo finds it (`find_workspace_root` and
+    /// `WorkspaceConfig::get_ws_root` in src/cargo/core/workspace.rs): its own manifest when that has a [workspace], the directory
+    /// its `package.workspace` names, or else the nearest directory above with a manifest that has a [workspace] that does not
+    /// exclude the package, or that names its workspace by `package.workspace`. Null when there is none in the archive.
     fn workspaceRoot(c: *Checkout, dir: []const u8, doc: Value) error{OutOfMemory}!?[]const u8 {
         if (val.get(doc, "workspace") != null) return dir;
-        if (val.asStr(toml.at(doc, &.{ "package", "workspace" }))) |rel| {
-            const ws = (try normalize(c.a, dir, rel)) orelse return null;
-            const m = (try c.manifest(ws)) orelse return null;
-            return if (val.get(m, "workspace") != null) ws else null;
-        }
+        if (val.asStr(toml.at(doc, &.{ "package", "workspace" }))) |rel| return c.pointer(dir, rel);
         var cur = dir;
         while (cur.len != 0) {
             cur = parentOf(cur);
             const m = (try c.manifest(cur)) orelse continue;
-            const w = val.get(m, "workspace") orelse continue;
-            if (!excludes(w, if (cur.len == 0) dir else dir[cur.len + 1 ..])) return cur;
+            if (val.get(m, "workspace")) |w| {
+                if (!excludes(w, if (cur.len == 0) dir else dir[cur.len + 1 ..])) return cur;
+                continue;
+            }
+            if (val.asStr(toml.at(m, &.{ "package", "workspace" }))) |rel| return c.pointer(cur, rel);
         }
         return null;
+    }
+
+    /// The workspace a `package.workspace = rel` of the manifest in `dir` names: null when it is not a workspace in the archive.
+    fn pointer(c: *Checkout, dir: []const u8, rel: []const u8) error{OutOfMemory}!?[]const u8 {
+        const ws = (try normalize(c.a, dir, rel)) orelse return null;
+        const m = (try c.manifest(ws)) orelse return null;
+        return if (val.get(m, "workspace") != null) ws else null;
     }
 
     /// The version of the package at `dir` (null when buildrules cannot tell it), and whether buildrules can show that cargo
@@ -198,12 +200,7 @@ pub const Checkout = struct {
             if (v == .string) version = v.string;
         } else version = "0.0.0"; // cargo's default for a manifest without a version
         if (version == null) sure = false;
-        var tables = std.ArrayList(Value).empty;
-        for (dep_tables) |t| if (val.get(doc, t)) |v| try tables.append(c.a, v);
-        if (val.get(doc, "target")) |targets| if (targets == .object) {
-            for (targets.object.values()) |tv| for (dep_tables) |t| if (val.get(tv, t)) |v| try tables.append(c.a, v);
-        };
-        for (tables.items) |table| {
+        for (try depTables(c.a, doc)) |table| {
             if (table != .object) continue;
             var it = table.object.iterator();
             while (it.next()) |kv| if (isInherited(kv.value_ptr.*)) {
@@ -247,6 +244,20 @@ pub const Checkout = struct {
     }
 };
 
+/// The dependency tables of a manifest in cargo's order (`nested_paths`): its own, then those of each `target`, by name.
+fn depTables(a: Allocator, doc: Value) error{OutOfMemory}![]const Value {
+    var out = std.ArrayList(Value).empty;
+    try appendDepTables(a, &out, doc);
+    if (val.get(doc, "target")) |targets| if (targets == .object) {
+        for (try sortedKeys(a, targets)) |k| try appendDepTables(a, &out, targets.object.get(k).?);
+    };
+    return out.items;
+}
+
+fn appendDepTables(a: Allocator, out: *std.ArrayList(Value), v: Value) error{OutOfMemory}!void {
+    for (dep_tables) |names| if (val.get(v, names[0]) orelse val.get(v, names[1])) |t| try out.append(a, t);
+}
+
 /// `{ workspace = true }`.
 fn isInherited(v: Value) bool {
     const w = val.get(v, "workspace") orelse return false;
@@ -268,7 +279,7 @@ fn excludes(ws: Value, rel: []const u8) bool {
 fn below(rel: []const u8, prefix: []const u8) bool {
     const p = std.mem.trimRight(u8, prefix, "/");
     if (p.len == 0 or std.mem.eql(u8, p, ".")) return true;
-    return std.mem.eql(u8, rel, p) or (std.mem.startsWith(u8, rel, p) and rel.len > p.len and rel[p.len] == '/');
+    return std.mem.startsWith(u8, rel, p) and (rel.len == p.len or rel[p.len] == '/');
 }
 
 fn lessName(_: void, x: []const u8, y: []const u8) bool {

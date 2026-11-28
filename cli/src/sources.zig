@@ -265,7 +265,7 @@ fn packageDir(a: std.mem.Allocator, d: *Diag, s: GitSrc, e: cargo_lock.Entry, co
         .unsure => |dirs| {
             const manifests = try a.alloc([]const u8, dirs.len);
             for (dirs, manifests) |dir, *m| m.* = if (dir.len == 0) "Cargo.toml" else try std.fmt.allocPrint(a, "{s}/Cargo.toml", .{dir});
-            return die(d, "{s} {s}: the archive of {s} at {s} has {d} Cargo.toml of the package ({s}). cargo takes the first one its walk of the checkout reads, {s}, but buildrules cannot show that cargo reads it: it inherits a key, the version or a dependency its workspace does not hold, or it has no src/lib.rs, src/main.rs, [lib] path or [[bin]] path in the archive. Give that manifest what it lacks, or remove the other copies from the repository", .{
+            return die(d, "{s} {s}: the archive of {s} at {s} has {d} Cargo.toml of the package ({s}). cargo takes the first one its walk of the checkout reads; the first it meets is {s}, and buildrules cannot show that cargo reads it: it inherits a key, the version or a dependency its workspace does not hold, or it has no src/lib.rs, src/main.rs, [lib] path or [[bin]] path in the archive (buildrules checks nothing else of a manifest). Give that manifest what it lacks, or remove the other copies from the repository", .{
                 e.name, e.version, s.git.repo, s.git.rev, dirs.len, try std.mem.join(a, ", ", manifests), manifests[0],
             });
         },

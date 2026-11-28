@@ -221,10 +221,11 @@ written are the ones a sync with the network writes. A git package is a director
 checkout (a directory source holds one package per directory) beside a link to the repository's root `Cargo.toml`, from which a
 member inherits workspace keys; the generator follows the links to the checkout. When the repository holds a package's manifest
 more than once (a test fixture that copies a crate), the package is the one cargo takes: the first manifest its walk of the
-checkout reads (cargo 0.96.0, `RecursivePathSource` in `src/cargo/sources/path.rs`: depth first, the names of a directory in byte
-order, a package's `path` dependencies as soon as it is met; `cli/src/cargo_walk.zig`). When `sync` cannot show that cargo reads
-that first manifest (its workspace lacks a key, the version or a dependency it inherits, or the archive holds none of its
-`src/lib.rs`, `src/main.rs`, `[lib]` path or `[[bin]]` path), the package is refused, naming every manifest of it. Only the packages `Cargo.lock` names can be
+checkout reads (cargo 0.96.0, `RecursivePathSource` in `src/cargo/sources/path.rs`: depth first, the names of a directory in
+byte order, a package's `path` dependencies as soon as it is met; `cli/src/cargo_walk.zig`). When `sync` cannot show that cargo
+reads the first one it meets (its workspace lacks a key, the version or a dependency it inherits, or the archive holds none of
+its `src/lib.rs`, `src/main.rs`, `[lib]` path or `[[bin]]` path; nothing else of a manifest is checked), the package is refused,
+naming every manifest of it. Only the packages `Cargo.lock` names can be
 resolved: a crate it does not name is refused by cargo, and a git commit without a line in the record by `sync`. A git package
 that only another platform uses has no line (no unit comes from it), so a workspace with one cannot be synced this way. A later `sync`
 without `--sources` removes the config. `sync --list-sources FILE` reads `Cargo.lock` and the record and writes the files

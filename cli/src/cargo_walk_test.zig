@@ -140,11 +140,17 @@ test "pick: cargo reads a package's path dependencies when it meets the package,
             \\gone = { workspace = true }
             \\plain = "1"
             \\off = { workspace = false }
+            \\odd = { workspace = "x" }
             \\
         ),
         file("c/Cargo.toml", "dependencies = 1\n" ++ pkg("c") ++ "\n[target.x]\ndependencies = 2\n"),
         file("c/n/Cargo.toml", pkg("c-n") ++ "\n[dependencies]\nv = { workspace = true }\n"),
     }, &copies), "p", "0.1.0"));
+    // a dependency inherited with no workspace in the archive leads nowhere
+    try expectDir("b/p", try pickIn(a, try with(a, &.{file("a/Cargo.toml", pkg("a") ++ "\n[dependencies]\np.workspace = true\n")}, &copies), "p", "0.1.0"));
+    // the older underscore spelling of a table is read when the hyphen one is absent, and passed over when it is there
+    try expectDir("n/p", try pickIn(a, try with(a, &.{file("a/Cargo.toml", pkg("a") ++ "\n[dev_dependencies]\nn = { path = \"../n/p\" }\n")}, &copies), "p", "0.1.0"));
+    try expectDir("b/p", try pickIn(a, try with(a, &.{file("a/Cargo.toml", pkg("a") ++ "\n[build-dependencies]\n\n[build_dependencies]\nn = { path = \"../n/p\" }\n")}, &copies), "p", "0.1.0"));
     // a directory reached twice is read once
     try expectDir("n/p", try pickIn(a, try with(a, &.{
         file("a/Cargo.toml", pkg("a") ++ "\n[dependencies]\nn = { path = \"../n/p\" }\nn2 = { path = \"../n/p/\" }\n"),
@@ -198,15 +204,39 @@ test "pick: Cargo.lock's version tells apart packages of one name: written, inhe
         file("fx/s/Cargo.toml", inherit),
         // its own workspace
         file("own/Cargo.toml", inherit ++ "\n[workspace]\n\n[workspace.package]\nversion = \"3.0.0\"\n"),
-        // the workspace package.workspace names, and one it names that is not a workspace
+        // the workspace package.workspace names
         file("named/w/Cargo.toml", "[workspace]\n\n[workspace.package]\nversion = \"4.0.0\"\n"),
         file("named/r/Cargo.toml", inherit ++ "workspace = \"../w\"\n"),
+        // a package above that names its workspace by package.workspace gives it to the packages below
+        file("pt/Cargo.toml", "[package]\nname = \"pt\"\nworkspace = \"../named/w\"\n"),
+        file("pt/s/Cargo.toml", "[package]\nname = \"r4\"\nversion.workspace = true\n"),
+        // an exclude of "." excludes everything below that workspace: the root's is taken
+        file("fy/Cargo.toml", "[workspace]\nexclude = [\".\"]\n\n[workspace.package]\nversion = \"6.0.0\"\n"),
+        file("fy/s/Cargo.toml", "[package]\nname = \"r3\"\nversion.workspace = true\n"),
     };
     try expectUnsure(&.{ "ex/keep", "fxx", "m" }, try pickIn(a, &ws, "r", "1.0.0"));
     try expectDir("fx/s", try pickIn(a, &ws, "r", "2.0.0"));
     try expectDir("own", try pickIn(a, &ws, "r", "3.0.0"));
     try expectDir("named/r", try pickIn(a, &ws, "r", "4.0.0"));
     try expectMissing(try pickIn(a, &ws, "r", "9.9.9"));
+    try expectDir("pt/s", try pickIn(a, &ws, "r4", "4.0.0"));
+    try expectMissing(try pickIn(a, &ws, "r4", "1.0.0"));
+    try expectDir("fy/s", try pickIn(a, &ws, "r3", "1.0.0"));
+    try expectMissing(try pickIn(a, &ws, "r3", "6.0.0"));
+
+    // no workspace cargo would take, so no version to tell packages apart by: the one manifest of the name is taken whatever
+    // Cargo.lock's version (a second one would make it unsure): a member the root excludes, and package.workspace that leaves the
+    // archive, names a directory with no manifest, or names a package that is not a workspace
+    const lone = [_]Entry{
+        file("Cargo.toml", "[workspace]\nexclude = [\"ex\"]\n\n[workspace.package]\nversion = \"1.0.0\"\n"),
+        file("ex/other/Cargo.toml", "[package]\nname = \"s0\"\nversion.workspace = true\n"),
+        file("x/Cargo.toml", "[package]\nname = \"s1\"\nversion.workspace = true\nworkspace = \"../../out\"\n"),
+        file("y/Cargo.toml", "[package]\nname = \"s2\"\nversion.workspace = true\nworkspace = \"../nothing\"\n"),
+        file("z/Cargo.toml", "[package]\nname = \"s3\"\nversion.workspace = true\nworkspace = \"../y\"\n"),
+    };
+    for ([_][]const u8{ "s0", "s1", "s2", "s3" }, [_][]const u8{ "ex/other", "x", "y", "z" }) |name, want| {
+        try expectDir(want, try pickIn(a, &lone, name, "7.7.7"));
+    }
 }
 
 test "pick: two manifests remain and buildrules cannot show that cargo reads the one it meets first: unsure, every manifest named in cargo's order" {
@@ -241,12 +271,12 @@ test "pick: a target is plain from src/main.rs, a [lib] path or a [[bin]] path i
     defer ar.deinit();
     const a = ar.allocator();
     const second = [_]Entry{ file("b/Cargo.toml", pkg("p")), file("b/src/lib.rs", lib) };
-    try expectDir("a", try pickIn(a, try with(a, &.{ file("a/Cargo.toml", pkg("p")), file("a/src/main.rs", lib) }, &second), "p", "0.1.0"));
+    try expectDir("a", try pickIn(a, try with(a, &.{ file("a/Cargo.toml", "target = 1\n" ++ pkg("p")), file("a/src/main.rs", lib) }, &second), "p", "0.1.0"));
     try expectDir("a", try pickIn(a, try with(a, &.{ file("a/Cargo.toml", pkg("p") ++ "\n[lib]\npath = \"l.rs\"\n"), file("a/l.rs", lib) }, &second), "p", "0.1.0"));
     try expectDir("a", try pickIn(a, try with(a, &.{ file("a/Cargo.toml", pkg("p") ++ "\n[[bin]]\nname = \"x\"\n\n[[bin]]\nname = \"y\"\npath = \"tools/y.rs\"\n"), file("a/tools/y.rs", lib) }, &second), "p", "0.1.0"));
 }
 
-test "pick: what cargo cannot read is passed over: a manifest that does not parse, a [package] that is not a table, a virtual manifest, and their path dependencies" {
+test "pick: what cargo cannot read is passed over: a manifest that does not parse, a [package] that is not a table or has no name, a virtual manifest, and their path dependencies" {
     var ar = std.heap.ArenaAllocator.init(t.allocator);
     defer ar.deinit();
     const a = ar.allocator();
@@ -257,6 +287,7 @@ test "pick: what cargo cannot read is passed over: a manifest that does not pars
     const dep = "\n[dependencies]\np = { path = \"../z/p\" }\n";
     try expectDir("b/p", try pickIn(a, try with(a, &.{file("a/Cargo.toml", pkg("p") ++ dep ++ "[broken\n")}, &copies), "p", "0.1.0"));
     try expectDir("b/p", try pickIn(a, try with(a, &.{file("a/Cargo.toml", "package = 1\n" ++ dep)}, &copies), "p", "0.1.0"));
+    try expectDir("b/p", try pickIn(a, try with(a, &.{file("a/Cargo.toml", "[package]\nversion = \"0.1.0\"\n" ++ dep)}, &copies), "p", "0.1.0"));
     try expectDir("b/p", try pickIn(a, try with(a, &.{file("a/Cargo.toml", "[workspace]\n" ++ dep)}, &copies), "p", "0.1.0"));
 }
 

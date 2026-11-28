@@ -386,8 +386,8 @@ test "vendor: an archive whose top directory is not the recorded one, a crate wh
     // cargo's walk meets the root's manifest first and copy/ second (old/ is another version, bad/ does not parse, virtual/ has no
     // package); neither has a library in the archive, so buildrules cannot show that cargo reads the root's
     try t.expectEqualStrings("r 0.1.0: the archive of github.com/o/r at " ++ rev ++ " has 2 Cargo.toml of the package (Cargo.toml, copy/Cargo.toml). " ++
-        "cargo takes the first one its walk of the checkout reads, Cargo.toml, but buildrules cannot show that cargo reads it: it inherits a key, the version or a dependency " ++
-        "its workspace does not hold, or it has no src/lib.rs, src/main.rs, [lib] path or [[bin]] path in the archive. Give that manifest what it lacks, or remove the other copies from the repository", try joinedMsgs(a, &d));
+        "cargo takes the first one its walk of the checkout reads; the first it meets is Cargo.toml, and buildrules cannot show that cargo reads it: it inherits a key, the version " ++
+        "or a dependency its workspace does not hold, or it has no src/lib.rs, src/main.rs, [lib] path or [[bin]] path in the archive (buildrules checks nothing else of a manifest). Give that manifest what it lacks, or remove the other copies from the repository", try joinedMsgs(a, &d));
 }
 
 /// GitHub's archive of github.com/o/r at `rev` shaped as a repository whose test fixture copies its crates: a virtual workspace root
@@ -395,7 +395,7 @@ test "vendor: an archive whose top directory is not the recorded one, a crate wh
 /// holds another manifest of each, with the same name and version written out and a library of its own.
 fn fixtureCopyArchive(a: std.mem.Allocator) ![]u8 {
     const top = "r-" ++ rev;
-    const fixture = top ++ "/crates/xtask/tests/layering/fixtures/clean";
+    const fixture = top ++ "/crates/xtask/tests/fixtures/clean";
     return kit.tarGz(a, &.{
         .{ .path = top ++ "/Cargo.toml", .data = "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n" },
         .{ .path = top ++ "/crates/r/Cargo.toml", .data = "[package]\nname = \"r\"\nversion.workspace = true\nedition.workspace = true\n\n[dependencies]\nr-impl = { path = \"../r-impl\" }\n" },
