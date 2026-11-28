@@ -251,6 +251,8 @@ test "pick: two manifests remain and buildrules cannot show that cargo reads the
     try expectUnsure(&.{ "a", "b" }, try pickIn(a, try with(a, &.{ root, file("a/Cargo.toml", pkg("p") ++ "edition.workspace = true\n"), file("a/src/lib.rs", lib) }, &second), "p", "0.1.0"));
     // a dependency inherited from a workspace that does not have it (in a target's table)
     try expectUnsure(&.{ "a", "b" }, try pickIn(a, try with(a, &.{ root, file("a/Cargo.toml", pkg("p") ++ "\n[target.x.dependencies]\nhere.workspace = true\nthere.workspace = true\n\n[target.y]\ndependencies = 1\n"), file("a/src/lib.rs", lib) }, &second), "p", "0.1.0"));
+    // a dependency inherited with no workspace above
+    try expectUnsure(&.{ "a", "b" }, try pickIn(a, try with(a, &.{ file("a/Cargo.toml", pkg("p") ++ "\n[dependencies]\nx.workspace = true\n"), file("a/src/lib.rs", lib) }, &second), "p", "0.1.0"));
     // a version inherited with no workspace above, or one cargo does not take
     try expectUnsure(&.{ "a", "b" }, try pickIn(a, try with(a, &.{ file("a/Cargo.toml", "[package]\nname = \"p\"\nversion.workspace = true\n"), file("a/src/lib.rs", lib) }, &second), "p", "0.1.0"));
     try expectUnsure(&.{ "a", "b" }, try pickIn(a, try with(a, &.{ file("a/Cargo.toml", "[package]\nname = \"p\"\nversion = 1\n"), file("a/src/lib.rs", lib) }, &second), "p", "0.1.0"));
@@ -323,9 +325,11 @@ const Sweep = struct {
         var c = cw.Checkout.init(alloc, &.{
             file("Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\nexclude = [\"fx\"]\n\n[workspace.package]\nversion = \"0.1.0\"\n\n[workspace.dependencies]\nq = { path = \"crates/q\" }\n"),
             dir("crates"),
-            file("crates/p/Cargo.toml", "[package]\nname = \"p\"\nversion.workspace = true\n\n[dependencies]\nq.workspace = true\nz = { path = \"../../z/p\" }\n\n[target.x.dev-dependencies]\nw = { path = \"../w\" }\n"),
+            link("crates/p/Cargo.toml", "../../manifests/p.toml"),
+            file("manifests/p.toml", "[package]\nname = \"p\"\nversion.workspace = true\n\n[dependencies]\nq.workspace = true\nz = { path = \"../../z/p\" }\n\n[target.x.dev-dependencies]\nw = { path = \"../w\" }\n"),
+            file("crates/p/target/Cargo.toml", pkg("tp")),
             link("crates/p/src/lib.rs", "../../../shared/lib.rs"),
-            file("crates/q/Cargo.toml", pkg("q") ++ "workspace = \"../..\"\n\n[lib]\npath = \"q.rs\"\n"),
+            file("crates/q/Cargo.toml", pkg("q") ++ "workspace = \"../..\"\n\n[lib]\npath = \"q.rs\"\n\n[[bin]]\nname = \"qb\"\npath = \"qb.rs\"\n"),
             file("crates/q/q.rs", lib),
             file("fx/Cargo.toml", "[workspace]\n"),
             file("fx/p/Cargo.toml", pkg("p")),

@@ -230,7 +230,8 @@ pub const Checkout = struct {
         var first_sure = false;
         for (c.order.items) |dir| {
             const doc = (try c.manifest(dir)).?;
-            if (!std.mem.eql(u8, val.asStr(toml.at(doc, &.{ "package", "name" })) orelse continue, name)) continue;
+            // `nested` keeps only a manifest whose [package] has a name.
+            if (!std.mem.eql(u8, val.asStr(toml.at(doc, &.{ "package", "name" })).?, name)) continue;
             const j = try c.judge(dir, doc);
             if (j.version) |v| if (!std.mem.eql(u8, v, version)) continue;
             if (dirs.items.len == 0) first_sure = j.sure;
