@@ -1,5 +1,5 @@
-# The farm measures one branch more than a GitHub-hosted runner can (the runner's figure was 400/405 against the farm's 401/405 for the same tree), so
-# the floor is the 99% minimum both hold, not either one's exact figure: a fall below it fails on either host. The unrun blocks on the farm are a failed
-# fork, a failed directory listing, and two positions the tests do run that read 0 there.
+# The 99% minimum, not either host's exact figure: a GitHub-hosted runner measured one branch fewer than the farm for the same tree (400/405 against
+# 401/405, and 435/440 against 436/440), so an exact floor fails on one of them. A fall below 99% fails on either host. The farm measures 429/431; its two
+# unrun blocks are the end of a protobuf walk after a fixed-width field and a directory listing that fails.
 lines 99.00
 branches 99.00

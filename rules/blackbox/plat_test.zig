@@ -35,7 +35,8 @@ test "a program that is not there, or not executable, is refused before anything
     if (plat.runInherit(plat.ctx, c.a, &.{c.path("data")}, e)) |_| return error.TestUnexpectedResult else |err| try t.expect(err == error.AccessDenied or err == error.PermissionDenied);
 }
 
-test "the shell's form of a status" {
-    try t.expectEqual(@as(u8, 3), plat_mod.shellStatus(3 << 8));
-    try t.expectEqual(@as(u8, 128 + 9), plat_mod.shellStatus(9));
+test "the shell's form of how a process ended" {
+    try t.expectEqual(@as(u8, 3), plat_mod.statusOf(.{ .Exited = 3 }));
+    try t.expectEqual(@as(u8, 128 + 9), plat_mod.statusOf(.{ .Signal = 9 }));
+    try t.expectEqual(@as(u8, 255), plat_mod.statusOf(.{ .Stopped = 19 }));
 }

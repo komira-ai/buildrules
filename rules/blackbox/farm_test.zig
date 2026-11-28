@@ -141,3 +141,17 @@ test "value: the exact spelling; matchesArgv: the program by its base name, then
     try t.expect(!farm.matchesArgv(job, &.{}));
     try t.expectEqualStrings("", try farm.render(a, &.{}));
 }
+
+test "a fixed-width field of either size, before another field and at the end of a message, is stepped over" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var prop = Pb{ .a = a };
+    _ = prop.fixed32(7).bytes(1, "OSFamily").fixed64(8).bytes(2, "Linux").fixed32(9);
+    var plat = Pb{ .a = a };
+    _ = plat.bytes(1, prop.done());
+    var act = Pb{ .a = a };
+    _ = act.bytes(1, "d").fixed32(3).bytes(10, plat.done()).fixed64(4);
+    const job = try farm.decode(a, act.done(), "");
+    try t.expectEqualStrings("OSFamily=Linux", try farm.render(a, job.properties));
+}
