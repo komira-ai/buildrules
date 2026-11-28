@@ -1296,22 +1296,20 @@ The tests: `rules/affected/tests` (the refusals, and the table cases that fail t
 
 ## 16. Black-box tests **[chosen]**
 
-`rules/blackbox` runs a service's released package inside a named image against fakes, as one `buck2 test` target. `rules/blackbox/README.md` is its full
-contract; this section is its summary.
+`rules/blackbox` puts packages onto a base image and runs a driver in it, as one `buck2 test` target that runs on the farm. `rules/blackbox/README.md` is
+its full contract; this section is its summary.
 
-Load path: `load("@buildrules//rules/blackbox:defs.bzl", "blackbox_test")`. `blackbox_test(name, image, package, service, driver, flags = [], fakes = {},
-fake_flags = {}, driver_flags = ["--service", "{addr:service}"], candidate = None, ready_timeout_s = 60, labels = [], visibility = None)`. Every argument
-after `driver` is optional, so one added later breaks no caller. `image` is by digest only; `package` is a pin `{"url", "sha256", "size"}` or a target
-label; `candidate` names the `-c blackbox.<candidate>_url/_sha256/_size` keys a release passes its package by (all three or none; an empty one is
-refused). The refusals are made when the BUCK file loads (the image, the names of the fakes, the service path, `ready_timeout_s`, the package and the
-candidate) or when the target is analysed (the placeholders of the flags, a `fake_flags` key that names no fake, and, in remote mode, an unset
-`[buildrules_re] linux_x86_64_properties`), each naming the target.
+Load path: `load("@buildrules//rules/blackbox:defs.bzl", "blackbox_test")`. `blackbox_test(name, image, packages, driver, visibility = None)`. `image` is
+by digest only. `packages` is a non-empty list, in the order the packages are put onto the image: each a pin `{"url", "sha256", "size"}` with an optional
+`"candidate"` naming the `-c blackbox.<candidate>_url/_sha256/_size` keys a release passes its package by (all three or none; an empty one is refused), or
+a target label. `driver` is a binary target. The refusals are made when the BUCK file loads (the image, an empty `packages`, a package that is neither a
+pin nor a label, a malformed pin or candidate) or when the target is analysed (in remote mode, an unset `[buildrules_re] linux_x86_64_properties`), each
+naming the target.
 
-The run is `blackbox_run run` (rules/blackbox): unpack the package without dpkg, give each fake and the service a loopback port, start the fakes and the
-service and wait for each to take a connection, run the driver, stop everything, print every log on a failure. Its status is the test's: the driver's
-when it failed, 1 for anything else that failed, 2 for a wrong command line, 0 for a pass.
+The run is `blackbox_run run` (rules/blackbox): it requires to be a farm job that received the test's image, checks every pinned package, unpacks each
+package's files over the job's root without dpkg, and runs the driver with that root as its one argument. Its status is the test's: the driver's when it
+failed, 1 for anything else that failed, 2 for a wrong command line, 0 for a pass. What the service is, how it is started and pointed at its fakes, is
+the driver's.
 
-Where it runs is the configuration's (section 14). Remote mode: the test's `ExternalRunnerTestInfo.default_executor` is the workers' property set
-(`[buildrules_re] linux_x86_64_properties`, every key, as Buck2 replaces the platform's executor with the test's) with `container-image` set to the image;
-the run checks it is a farm job that received that image. Local mode: the run starts itself in the image through docker
-(`-c blackbox.docker=<absolute path>`), and fails naming the key without it.
+The test's `ExternalRunnerTestInfo.default_executor` is the workers' property set (every key, as Buck2 replaces the platform's executor with the test's)
+with `container-image` set to the image. It runs on a farm and nowhere else; `buck2 build` of it runs nothing, so a check calls `buck2 test`.

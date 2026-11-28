@@ -24,8 +24,6 @@ pub fn main() u8 {
         .argv = argv,
         .environ = environ,
         .cwd = cwd,
-        .uid = std.os.linux.getuid(),
-        .gid = std.os.linux.getgid(),
         .plat = @import("plat.zig").real(),
     });
 }

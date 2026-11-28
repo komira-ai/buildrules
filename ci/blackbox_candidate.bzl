@@ -2,7 +2,7 @@
 configuration. A pure function of what the analysis gives, so the bxl only prints."""
 
 _TARGET = "//ci/blackbox_candidate:released_package"
-_DOWNLOAD = "//ci/blackbox_candidate:released_package.package"
+_DOWNLOAD = "//ci/blackbox_candidate:released_package.package0"
 
 _PINS = {
     # The pin of the BUCK file.

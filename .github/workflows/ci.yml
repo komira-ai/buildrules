@@ -118,8 +118,6 @@ jobs:
       - name: dpkg-deb reads the contents
         run: dpkg-deb --contents ci-debs/buildrules_0.0.0_amd64.deb
 
-      # The black-box test of the toy service (rules/blackbox/README.md), inside the image it names: in local mode the runner starts itself there through
-      # the runner's docker (the checkout read-only, no network but loopback). The same target runs on a farm in remote mode, with its own executor.
       # The package a black-box test runs, read from the real configuration: its pin with no `[blackbox] released_*` key, the candidate the keys name when a
       # release passes them (ci/blackbox_candidate.bxl). Analysis only: nothing is downloaded.
       - name: A black-box test runs its pinned package when no candidate is given
@@ -127,9 +125,6 @@ jobs:
 
       - name: A black-box test runs the candidate a release passes
         run: ./buck2 bxl -c buildrules_re.mode=local --config-file ci/blackbox_candidate.buckconfig //ci:blackbox_candidate.bxl:check -- --state given
-
-      - name: The black-box test of the toy, inside its image through docker
-        run: ./buck2 test --console simple -c buildrules_re.mode=local -c blackbox.docker=/usr/bin/docker //rules/blackbox/tests:toy
 
       - name: Stop buck2
         if: always()

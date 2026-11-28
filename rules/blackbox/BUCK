@@ -29,11 +29,11 @@ zig_module(
     visibility = ["//rules/blackbox/..."],
 )
 
-# The cases of each part. The cases of plat start programs for real: the toolbox (rules/toolbox) is the program that only has a status (`true`, `false`)
-# and the toy (toy/) the one that listens.
+# The cases of each part. The cases of plat start a program for real: the toolbox (rules/toolbox), which only has a status (`true`, `false`) or reads its
+# environment back (`printenv`).
 _SUPPORT = ["pbkit.zig", "testkit.zig"]
 _TESTS = ["cli", "deb", "farm", "plat", "probe", "run", "sweeps"]
-_TOOLS = {"TOOLBOX": "buildrules//rules/toolbox:toolbox", "TOY": "//rules/blackbox/toy:toy"}
+_TOOLS = {"TOOLBOX": "buildrules//rules/toolbox:toolbox"}
 
 [
     zig_test(
@@ -68,14 +68,19 @@ zig_exe(
     visibility = ["PUBLIC"],
 )
 
-# The executable as a process (blackbox_exe_test.zig): the toy's package run against the toy's fake and driver by the real platform, passing, and red
-# for each way a run fails (a driver that fails, a fake that exits before it is ready, a package that is not the pinned one). A validation of
-# `:blackbox_run`; it adds nothing to the coverage.
+# The executable as a process (blackbox_exe_test.zig): the toy's packages put onto a root and its driver run there by the real platform, passing, and
+# red for each way a run fails (a driver that fails, a package that is not the pinned one, a driver that is not there). A validation of `:blackbox_run`;
+# it adds nothing to the coverage.
 zig_test(
     name = "blackbox_exe_test",
     src = "blackbox_exe_test.zig",
     deps = [":debkit"],
-    env_tools = {"BLACKBOX_RUN": ":blackbox_run", "TOY": "//rules/blackbox/toy:toy", "TOOLBOX": "buildrules//rules/toolbox:toolbox"},
+    env_tools = {
+        "BLACKBOX_RUN": ":blackbox_run",
+        "TOY": "//rules/blackbox/toy:toy",
+        "TOY_DRIVER": "//rules/blackbox/toy:toy_driver",
+        "TOY_DRIVER_WRONG": "//rules/blackbox/toy:toy_driver_wrong",
+    },
     visibility = ["PUBLIC"],
     zig = _ZIG,
 )

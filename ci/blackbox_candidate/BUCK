@@ -4,20 +4,18 @@ load("@buildrules//ci:blackbox_candidate.bzl", "selection_problems")
 
 # Which package a `blackbox_test` runs, read from the real configuration (ci/blackbox_candidate.bxl): the pinned one with no `[blackbox] released_*`
 # keys, the candidate the keys name when they are given (ci/blackbox_candidate.buckconfig). The packages are two releases of this repository's own
-# command line, so both pins are real. The target is analysed, never run (the program is not a service, and building a test target builds nothing):
+# command line, so both pins are real. The target is analysed, never run (its driver is not this package's, and building a test target builds nothing):
 # no step gives it to `buck2 test`, and nothing here is downloaded.
 blackbox_test(
     name = "released_package",
     image = "docker://docker.io/library/ubuntu@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b",
-    package = {
+    packages = [{
         "url": "https://github.com/komira-ai/buildrules/releases/download/v0.0.85/buildrules_0.0.85_amd64.deb",
         "sha256": "ad6f920216588ed6f4cc58c9c684d77683a18c7f669ae2cf7d0dd79d6018f2f7",
         "size": 995196,
-    },
-    candidate = "released",
-    service = "usr/bin/buildrules",
-    flags = ["--version"],
-    driver = "//rules/blackbox/toy:toy",
+        "candidate": "released",
+    }],
+    driver = "//rules/blackbox/toy:toy_driver",
     visibility = ["PUBLIC"],
 )
 

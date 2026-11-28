@@ -2,20 +2,46 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("@buildrules//rules/zig:zig.bzl", "zig_exe")
 load(":defs.bzl", "toy_package")
 
-# The toy (toy.zig): a service with one outside call, its fake, its driver and the packer. A fixture of the blackbox tests, not measured.
+_ZIG = "buildrules//rules/pins:zig_next"
+
+# The toy (toy.zig): a service with one outside call, its fake and the packer. A fixture of the blackbox tests, not measured.
 zig_exe(
     name = "toy",
     src = "toy.zig",
     deps = ["//rules/blackbox:debkit"],
-    zig = "buildrules//rules/pins:zig_next",
+    zig = _ZIG,
     visibility = ["PUBLIC"],
 )
 
-# The toy service as a released service ships: a Debian package with the program at usr/bin/toy.
+# The toy service and its fake as packages, the way a test puts them onto its image: each is the toy at its own path.
 toy_package(
-    name = "toy_deb",
-    path = "usr/bin/toy",
+    name = "toy_service_deb",
+    path = "usr/bin/toy-service",
     program = ":toy",
+    visibility = ["PUBLIC"],
+)
+
+toy_package(
+    name = "toy_fake_deb",
+    path = "usr/bin/toy-fake",
+    program = ":toy",
+    visibility = ["PUBLIC"],
+)
+
+# The driver (driver.zig): starts the fake and the service from the root it is given, sends `hello`, and passes when the answer went through the fake.
+zig_exe(
+    name = "toy_driver",
+    src = "driver.zig",
+    zig = _ZIG,
+    visibility = ["PUBLIC"],
+)
+
+# The same driver expecting another answer: the red-by-design test (ci/faulty) and the process cases of rules/blackbox.
+zig_exe(
+    name = "toy_driver_wrong",
+    src = "driver_wrong.zig",
+    imports = ["driver.zig"],
+    zig = _ZIG,
     visibility = ["PUBLIC"],
 )
 

@@ -5,8 +5,8 @@
 //!  - an action referenced by a tag or branch (a moved tag changes what runs with the repository's token): every `uses:` is an
 //!    owner/repo@<40 hex>;
 //!  - a token with more than read access, or a trigger that runs fork code with secrets (`pull_request_target`);
-//!  - a CI that stops building the target it promises (//ci:all), stops running the completeness check or the black-box test of the toy through docker
-//!    (rules/blackbox), runs in remote mode (every
+//!  - a CI that stops building the target it promises (//ci:all), stops running the completeness check or the check of which package a black-box test
+//!    runs (ci/blackbox_candidate.bxl), runs in remote mode (every
 //!    `./buck2` command that loads the graph, which is every one but `kill` and `--version`, build and bxl and audit and query and test
 //!    alike, must pass `-c buildrules_re.mode=local`, because the execution platforms are analysed by all of them and fail without a mode;
 //!    any other value of that key anywhere is refused; and buck2 is run only as the literal `./buck2`: a bare `buck2`, `/path/buck2`,
@@ -27,10 +27,6 @@ pub const targets = [_][]const u8{
 
 /// The workflow runs the completeness check before it builds.
 const completeness = "./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check";
-
-/// The black-box test of the toy service, run inside its image through the runner's docker (rules/blackbox/README.md, "Where it runs"): the one place
-/// a pull request runs a test that names its own image, and the leg that proves the docker half of the rule.
-const blackbox_docker = "./buck2 test --console simple -c buildrules_re.mode=local -c blackbox.docker=/usr/bin/docker //rules/blackbox/tests:toy";
 
 /// The package a black-box test runs, through the real configuration, in both states (ci/blackbox_candidate.bxl).
 const blackbox_candidate = [_][]const u8{
@@ -641,17 +637,14 @@ pub fn check(a: std.mem.Allocator, workflow: []const u8, dotslash: []const u8, c
         if (!hasTargetLine(workflow, tg)) try add(a, &f, "target {s} is not built", .{tg});
     }
     var ran_completeness = false;
-    var ran_blackbox = false;
     var ran_candidate = [_]bool{false} ** blackbox_candidate.len;
     for (try commands(a, workflow)) |cmd| {
         for (blackbox_candidate, 0..) |want, k| {
             if (std.mem.endsWith(u8, cmd, want)) ran_candidate[k] = true;
         }
         if (std.mem.indexOf(u8, cmd, completeness) != null) ran_completeness = true;
-        if (std.mem.endsWith(u8, cmd, blackbox_docker)) ran_blackbox = true;
     }
     if (!ran_completeness) try add(a, &f, "the workflow does not run `{s}`", .{completeness});
-    if (!ran_blackbox) try add(a, &f, "the workflow does not run the black-box test through docker, `{s}`", .{blackbox_docker});
     for (blackbox_candidate, ran_candidate) |want, ran| {
         if (!ran) try add(a, &f, "the workflow does not check which package a black-box test runs, `{s}`", .{want});
     }
@@ -764,8 +757,6 @@ const fixture_wf =
     \\        run: ./buck2 bxl -c buildrules_re.mode=local //ci:blackbox_candidate.bxl:check -- --state absent
     \\      - name: The candidate
     \\        run: ./buck2 bxl -c buildrules_re.mode=local --config-file ci/blackbox_candidate.buckconfig //ci:blackbox_candidate.bxl:check -- --state given
-    \\      - name: The black-box test of the toy, inside its image through docker
-    \\        run: ./buck2 test --console simple -c buildrules_re.mode=local -c blackbox.docker=/usr/bin/docker //rules/blackbox/tests:toy
     \\      - name: Stop buck2
     \\        if: always()
     \\        run: ./buck2 kill
@@ -1070,18 +1061,6 @@ test "the completeness check must run" {
     const a = ar.allocator();
     const r = try fx(a);
     try expectFinding(a, r, try mutate(a, r.wf, "run: ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:check", "run: echo ./buck2 bxl -c buildrules_re.mode=local //ci:completeness.bxl:chec"), "completeness");
-}
-
-test "the black-box test through docker must run, exactly so" {
-    var ar = std.heap.ArenaAllocator.init(t.allocator);
-    defer ar.deinit();
-    const a = ar.allocator();
-    const r = try fx(a);
-    const cmd = "run: ./buck2 test --console simple -c buildrules_re.mode=local -c blackbox.docker=/usr/bin/docker //rules/blackbox/tests:toy";
-    // Gone, run without docker (it would refuse to run), and run on another target.
-    try expectFinding(a, r, try mutate(a, r.wf, cmd, "run: ./buck2 kill"), "the black-box test through docker");
-    try expectFinding(a, r, try mutate(a, r.wf, cmd, "run: ./buck2 test --console simple -c buildrules_re.mode=local //rules/blackbox/tests:toy"), "the black-box test through docker");
-    try expectFinding(a, r, try mutate(a, r.wf, cmd, "run: ./buck2 test --console simple -c buildrules_re.mode=local -c blackbox.docker=/usr/bin/docker //rules/blackbox/tests:farm_probe"), "the black-box test through docker");
 }
 
 test "the check of which package a black-box test runs must run, in both states" {

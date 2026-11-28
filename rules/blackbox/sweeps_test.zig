@@ -120,35 +120,39 @@ test "an allocation that fails ends the probe with the error, at every allocatio
     }
 }
 
-
-test "an allocation that fails is the error, at every allocation, in a run that passes and in each way one fails" {
-    const scenarios = [_]struct { name: []const u8, b: kit.Behave, status: u8 }{
-        .{ .name = "drv", .b = .{ .says = "x" }, .status = 0 },
-        .{ .name = "drv", .b = .{ .status = 3, .says = "x" }, .status = 3 },
-        .{ .name = "drv", .b = .{ .refuse = error.AccessDenied }, .status = 1 },
-        .{ .name = "upfake", .b = .{ .ready_at = null, .exits_early = 7 }, .status = 1 },
-        .{ .name = "svc", .b = .{ .dies = 9 }, .status = 1 },
-    };
-    for (scenarios) |sc| {
+test "run: an allocation that fails is the error, at every allocation, in a run that passes and in each way one fails" {
+    const answers = [_]anyerror!u8{ 0, 3, error.FileNotFound };
+    for (answers) |answer| {
         var c = try kit.Case.init();
         defer c.deinit();
         _ = c.toyPackage();
         var i: usize = 0;
         while (true) : (i += 1) {
-            c.plat.* = .{ .a = c.a };
-            c.plat.behave(sc.name, sc.b);
+            c.plat.* = .{ .a = c.a, .answer = answer };
             var failing = std.testing.FailingAllocator.init(c.a, .{ .fail_index = i });
-            if (run.run(failing.allocator(), c.io(), args(&c, &.{}))) |status| {
-                try t.expectEqual(sc.status, status);
-                break;
-            } else |e| try t.expectEqual(error.OutOfMemory, e);
+            if (run.run(failing.allocator(), c.io(), args(&c, &.{}))) |_| break else |e| try t.expectEqual(error.OutOfMemory, e);
+        }
+    }
+    // A pinned package, and a package that cannot be unpacked.
+    var p = try kit.Case.init();
+    defer p.deinit();
+    const bytes = p.toyPackage();
+    const pin = [_][]const u8{ "--sha256", p.sha256(bytes), "--size", try std.fmt.allocPrint(p.a, "{d}", .{bytes.len}) };
+    var b = try kit.Case.init();
+    defer b.deinit();
+    b.put("pkg.deb", "not a package");
+    for ([_]struct { c: *kit.Case, extra: []const []const u8 }{ .{ .c = &p, .extra = &pin }, .{ .c = &b, .extra = &.{} } }) |case| {
+        var i: usize = 0;
+        while (true) : (i += 1) {
+            var failing = std.testing.FailingAllocator.init(case.c.a, .{ .fail_index = i });
+            if (run.run(failing.allocator(), case.c.io(), args(case.c, case.extra))) |_| break else |e| try t.expectEqual(error.OutOfMemory, e);
         }
     }
     var f = try kit.Case.init();
     defer f.deinit();
     _ = f.toyPackage();
-    f.put(".job/action", pb.action(f.a, &.{}));
-    f.put(".job/command", pb.command(f.a, &.{"x"}, &.{.{ "container-image", image }}));
+    f.put(".job/action", action(f.a, &.{}));
+    f.put(".job/command", command(f.a, &.{"x"}, &.{.{ "container-image", image }}));
     var k: usize = 0;
     while (true) : (k += 1) {
         f.plat.* = .{ .a = f.a };
@@ -158,17 +162,9 @@ test "an allocation that fails is the error, at every allocation, in a run that 
             break;
         } else |e| try t.expectEqual(error.OutOfMemory, e);
     }
-    var d = try kit.Case.init();
-    defer d.deinit();
-    var j: usize = 0;
-    while (true) : (j += 1) {
-        var failing = std.testing.FailingAllocator.init(d.a, .{ .fail_index = j });
-        if (run.run(failing.allocator(), d.io(), args(&d, &.{ "--docker", "/usr/bin/docker" }))) |_| break else |e| try t.expectEqual(error.OutOfMemory, e);
-    }
 }
 
-
-test "spawn: an allocation that fails is the error, at every allocation, and nothing is started" {
+test "runInherit: an allocation that fails is the error, at every allocation, and nothing is run" {
     var c = try kit.Case.init();
     defer c.deinit();
     const toolbox = try kit.tool(c.a, "TOOLBOX");
@@ -176,8 +172,8 @@ test "spawn: an allocation that fails is the error, at every allocation, and not
     var i: usize = 0;
     while (true) : (i += 1) {
         var failing = std.testing.FailingAllocator.init(c.a, .{ .fail_index = i });
-        if (plat.spawn(plat.ctx, failing.allocator(), &.{ toolbox, "true" }, e, c.path("t.log"))) |pid| {
-            try t.expectEqual(@as(u8, 0), plat.wait(plat.ctx, pid));
+        if (plat.runInherit(plat.ctx, failing.allocator(), &.{ toolbox, "true" }, e)) |status| {
+            try t.expectEqual(@as(u8, 0), status);
             break;
         } else |err| try t.expectEqual(error.OutOfMemory, err);
     }

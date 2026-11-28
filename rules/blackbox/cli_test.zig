@@ -32,7 +32,7 @@ test "an allocation that fails ends the command: `out of memory`, exit 1" {
     var c = try kit.Case.init();
     defer c.deinit();
     var none = std.testing.FailingAllocator.init(c.a, .{ .fail_index = 0 });
-    c.argv = &.{ "blackbox_run", "run", "--flag", "x" };
+    c.argv = &.{ "blackbox_run", "run", "--package", "x" };
     try t.expectEqual(@as(u8, 1), cli.entry(none.allocator(), c.io()));
     try t.expectEqualStrings("blackbox_run: out of memory\n", c.stderr());
 }

@@ -1,5 +1,5 @@
-//! Test support: a scripted platform (no process is started, the clock is a number the runner's own sleeps move, so no case waits or measures time), a
-//! case with a temporary directory and buffers for the streams, and the paths of the programs the process cases start for real.
+//! Test support: a scripted platform (no process is started), a case with a temporary directory and buffers for the streams, and the paths of the
+//! programs the process cases start for real.
 
 const std = @import("std");
 const io_mod = @import("io.zig");
@@ -7,183 +7,30 @@ const debkit = @import("debkit");
 
 pub const t = std.testing;
 pub const Alloc = std.mem.Allocator;
-pub const Pid = io_mod.Pid;
 
-/// What a scripted process does, chosen by the base name of its program.
-pub const Behave = struct {
-    /// It takes a connection at the n-th look (1 = the first); null: never.
-    ready_at: ?u32 = 1,
-    /// It exits with this status at the first look before it is ready.
-    exits_early: ?u8 = null,
-    /// It is gone, with this status, at the first look after the driver ended.
-    dies: ?u8 = null,
-    /// It stays after SIGTERM (only SIGKILL ends it).
-    stays: bool = false,
-    /// The status `wait` gives (the driver's).
-    status: u8 = 0,
-    /// It cannot be started: this error.
-    refuse: ?anyerror = null,
-    /// What it writes to its log when it starts.
-    says: []const u8 = "",
-    /// It leaves a directory in the run's directory that this user cannot empty (`locked`, mode 0500), so the run's directory cannot be removed.
-    locks: bool = false,
-};
-
-const Proc = struct { pid: Pid, name: []const u8, b: Behave, looks: u32 = 0, ready: bool = false, alive: bool = true, termed: bool = false };
-
+/// The scripted platform: `runInherit` records the driver's command line and the environment it was given, notes whether the root (its one argument)
+/// held `usr/bin/svc` then, and answers `answer`.
 pub const Plat = struct {
     a: Alloc,
-    now: u64 = 0,
-    next_pid: Pid = 100,
-    next_port: u16 = 40000,
-    behaviours: std.StringHashMapUnmanaged(Behave) = .empty,
-    procs: std.ArrayList(Proc) = .empty,
-    /// Every command line started, its words joined by one space, and every signal sent, as `<name> <signal>`.
-    started: std.ArrayList([]const u8) = .empty,
-    signals: std.ArrayList([]const u8) = .empty,
-    /// TMPDIR in the environment the last process was given.
-    last_tmpdir: ?[]const u8 = null,
-    /// The command line `runInherit` was given, and what it answers.
-    inherited: ?[]const u8 = null,
-    inherit_answer: anyerror!u8 = 0,
-    reserve_fails: bool = false,
-    /// The ports `reservePort` gives, in order, before it counts up from 40001.
-    port_script: []const u16 = &.{},
-    driver_done: bool = false,
-
-    pub fn behave(p: *Plat, name: []const u8, b: Behave) void {
-        p.behaviours.put(p.a, name, b) catch @panic("oom");
-    }
+    /// The command line the driver was run with, its words joined by one space; null when it was not run.
+    ran: ?[]const u8 = null,
+    /// HOME in the environment the driver was given.
+    home: ?[]const u8 = null,
+    /// Whether `<root>/usr/bin/svc` was there, and what it held, when the driver ran.
+    service: ?[]const u8 = null,
+    answer: anyerror!u8 = 0,
 
     pub fn real(p: *Plat) io_mod.Plat {
-        return .{
-            .ctx = p,
-            .spawn = spawn,
-            .runInherit = runInherit,
-            .poll = poll,
-            .wait = wait,
-            .kill = kill,
-            .sleepMs = sleepMs,
-            .nowMs = nowMs,
-            .randomHex = randomHex,
-            .reservePort = reservePort,
-            .accepts = accepts,
-        };
+        return .{ .ctx = p, .runInherit = runInherit };
     }
 
-    fn of(ctx: *anyopaque) *Plat {
-        return @ptrCast(@alignCast(ctx));
-    }
-
-    fn find(p: *Plat, pid: Pid) *Proc {
-        for (p.procs.items) |*q| {
-            if (q.pid == pid) return q;
-        }
-        @panic("no such pid");
-    }
-
-    fn joined(a: Alloc, argv: []const []const u8) []const u8 {
-        return std.mem.join(a, " ", argv) catch @panic("oom");
-    }
-
-    fn spawn(ctx: *anyopaque, a: Alloc, argv: []const []const u8, env: *const std.process.EnvMap, log: []const u8) anyerror!Pid {
-        const p = of(ctx);
-        const name = std.fs.path.basename(argv[0]);
-        const b = p.behaviours.get(name) orelse Behave{};
-        if (b.refuse) |e| return e;
-        p.started.append(p.a, joined(p.a, argv)) catch @panic("oom");
-        p.last_tmpdir = if (env.get("TMPDIR")) |v| (p.a.dupe(u8, v) catch @panic("oom")) else null;
-        std.fs.cwd().writeFile(.{ .sub_path = log, .data = b.says }) catch @panic("cannot write the log");
-        if (b.locks) {
-            const locked = std.fs.path.join(p.a, &.{ std.fs.path.dirname(std.fs.path.dirname(log).?).?, "locked" }) catch @panic("oom");
-            var d = std.fs.cwd().makeOpenPath(locked, .{}) catch @panic("mkdir");
-            d.writeFile(.{ .sub_path = "f", .data = "" }) catch @panic("write");
-            d.close();
-            std.posix.fchmodat(std.fs.cwd().fd, locked, 0o500, 0) catch @panic("chmod");
-        }
-        _ = a;
-        p.next_pid += 1;
-        p.procs.append(p.a, .{ .pid = p.next_pid, .name = name, .b = b }) catch @panic("oom");
-        return p.next_pid;
-    }
-
-    fn runInherit(ctx: *anyopaque, _: Alloc, argv: []const []const u8, _: *const std.process.EnvMap) anyerror!u8 {
-        const p = of(ctx);
-        p.inherited = joined(p.a, argv);
-        return p.inherit_answer;
-    }
-
-    fn poll(ctx: *anyopaque, pid: Pid) ?u8 {
-        const p = of(ctx);
-        const q = p.find(pid);
-        if (!q.alive) @panic("a look at a process that was reaped");
-        if (!q.ready) {
-            if (q.b.exits_early) |s| {
-                q.alive = false;
-                return s;
-            }
-        }
-        if (p.driver_done and !q.termed) {
-            if (q.b.dies) |s| {
-                q.alive = false;
-                return s;
-            }
-        }
-        if (q.termed and !q.b.stays) {
-            q.alive = false;
-            return 143;
-        }
-        return null;
-    }
-
-    fn wait(ctx: *anyopaque, pid: Pid) u8 {
-        const p = of(ctx);
-        const q = p.find(pid);
-        q.alive = false;
-        p.driver_done = true;
-        return if (q.termed) 137 else q.b.status;
-    }
-
-    fn kill(ctx: *anyopaque, pid: Pid, sig: u8) void {
-        const p = of(ctx);
-        const q = p.find(pid);
-        p.signals.append(p.a, std.fmt.allocPrint(p.a, "{s} {d}", .{ q.name, sig }) catch @panic("oom")) catch @panic("oom");
-        if (sig == io_mod.sigterm) q.termed = true;
-        if (sig == io_mod.sigkill) q.b.stays = false;
-    }
-
-    fn sleepMs(ctx: *anyopaque, ms: u64) void {
-        of(ctx).now += ms;
-    }
-
-    fn nowMs(ctx: *anyopaque) u64 {
-        return of(ctx).now;
-    }
-
-    fn randomHex(_: *anyopaque, out: *[8]u8) void {
-        out.* = "0badc0de".*;
-    }
-
-    fn reservePort(ctx: *anyopaque) u16 {
-        const p = of(ctx);
-        if (p.reserve_fails) return 0;
-        if (p.port_script.len > 0) {
-            const port = p.port_script[0];
-            p.port_script = p.port_script[1..];
-            return port;
-        }
-        p.next_port += 1;
-        return p.next_port;
-    }
-
-    /// The last process started is the one the runner waits for.
-    fn accepts(ctx: *anyopaque, _: u16) bool {
-        const p = of(ctx);
-        const q = &p.procs.items[p.procs.items.len - 1];
-        q.looks += 1;
-        const at = q.b.ready_at orelse return false;
-        if (q.looks >= at) q.ready = true;
-        return q.ready;
+    fn runInherit(ctx: *anyopaque, _: Alloc, argv: []const []const u8, env: *const std.process.EnvMap) anyerror!u8 {
+        const p: *Plat = @ptrCast(@alignCast(ctx));
+        p.ran = std.mem.join(p.a, " ", argv) catch @panic("oom");
+        p.home = if (env.get("HOME")) |v| (p.a.dupe(u8, v) catch @panic("oom")) else null;
+        const svc = std.fs.path.join(p.a, &.{ argv[1], "usr/bin/svc" }) catch @panic("oom");
+        p.service = std.fs.cwd().readFileAlloc(p.a, svc, 1 << 20) catch null;
+        return p.answer;
     }
 };
 
@@ -205,7 +52,8 @@ pub const Case = struct {
         const a = arena.allocator();
         var tmp = std.testing.tmpDir(.{ .iterate = true });
         const dir = try tmp.dir.realpathAlloc(a, ".");
-        try tmp.dir.makePath("tmp");
+        // The root the packages are put onto (a farm job's is `/`).
+        try tmp.dir.makePath("root");
         const out = try a.create(std.Io.Writer.Allocating);
         out.* = std.Io.Writer.Allocating.init(a);
         const err = try a.create(std.Io.Writer.Allocating);
@@ -213,7 +61,7 @@ pub const Case = struct {
         const plat = try a.create(Plat);
         plat.* = .{ .a = a };
         // The environment the processes are given; an entry with no `=` is not one (it is left out).
-        const environ = try a.dupe([]const u8, &.{ "A=1", "HOME=/nonexistent", "PREFIX=/p", "NOT_AN_ASSIGNMENT", try std.fmt.allocPrint(a, "TMPDIR={s}/tmp", .{dir}) });
+        const environ = try a.dupe([]const u8, &.{ "A=1", "HOME=/nonexistent", "PREFIX=/p", "NOT_AN_ASSIGNMENT" });
         return .{ .arena = arena, .a = a, .tmp = tmp, .dir = dir, .out = out, .err = err, .plat = plat, .environ = environ };
     }
 
@@ -231,8 +79,6 @@ pub const Case = struct {
             .argv = c.argv,
             .environ = c.environ,
             .cwd = c.dir,
-            .uid = 1000,
-            .gid = 1000,
             .plat = c.plat.real(),
         };
     }
@@ -303,22 +149,7 @@ pub const image = "docker://repo@sha256:" ++ "1" ** 64;
 /// The command line of a run of the toy package with one fake, `up`, and the driver, followed by `extra`.
 pub fn runArgs(c: *Case, extra: []const []const u8) []const []const u8 {
     var out: std.ArrayList([]const u8) = .empty;
-    out.appendSlice(c.a, &.{
-        "--image",       image,
-        "--package",     c.path("pkg.deb"),
-        "--work-dir",    c.path("tmp"),
-        "--service",     "usr/bin/svc",
-        "--flag",        "--listen",
-        "--flag",        "{addr:service}",
-        "--flag",        "--up=http://{addr:up}/",
-        "--fake",        "up=/fakes/upfake",
-        "--fake-flag",   "up=--listen",
-        "--fake-flag",   "up={addr:up}",
-        "--driver",      "/d/drv",
-        "--driver-flag", "{addr:service}",
-        "--driver-flag", "{root}/etc {work} {port:up} {{literal}",
-        "--ready-s",     "2",
-    }) catch @panic("oom");
+    out.appendSlice(c.a, &.{ "--image", image, "--root", c.path("root"), "--package", c.path("pkg.deb"), "--driver", "/d/drv" }) catch @panic("oom");
     out.appendSlice(c.a, extra) catch @panic("oom");
     return out.items;
 }
