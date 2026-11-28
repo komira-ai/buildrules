@@ -2,6 +2,7 @@ load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
 load("@buildrules//ci/faulty:applets.bzl", "archive_files_over_applets")
 load("@buildrules//ci/mojo_gate:fixture.bzl", "gate_fixture_lib")
 load("@buildrules//rules:isa.bzl", "test_exec_compatible_with")
+load("@buildrules//rules/blackbox:defs.bzl", "blackbox_test")
 load("@buildrules//rules/core:run_check.bzl", "run_check")
 load("@buildrules//rules/cxx:archive.bzl", "archive_files")
 load("@buildrules//rules/cxx:defs.bzl", "c_check")
@@ -800,5 +801,16 @@ zig_test(
         "host_run_of_a_passing_test": "//tools/bootstrap:paths_unit",
     }.items()
 ]
+
+# The black-box test of the toy (rules/blackbox/tests:toy) with a driver that expects another answer: red by design when `buck2 test` runs it on a farm,
+# with what the service, the fake and the driver said. No build action of it fails (a test target has no output), so it is not a FAULTY row; the same
+# failure is held in //ci:all by //rules/blackbox:blackbox_exe_test ("a driver that fails turns the run red"), which runs the runner on the same packages
+# and the same driver.
+blackbox_test(
+    name = "blackbox_test_whose_driver_fails",
+    image = "docker://docker.io/library/ubuntu@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b",
+    packages = ["//rules/blackbox/toy:toy_service_deb", "//rules/blackbox/toy:toy_fake_deb"],
+    driver = "//rules/blackbox/toy:toy_driver_wrong",
+)
 
 scrub_files()

@@ -1,0 +1,5 @@
+# The 99% minimum, not either host's exact figure: a GitHub-hosted runner measured one branch fewer than the farm for the same tree (400/405 against
+# 401/405, and 435/440 against 436/440), so an exact floor fails on one of them. A fall below 99% fails on either host. The farm measures 429/431; its two
+# unrun blocks are the end of a protobuf walk after a fixed-width field and a directory listing that fails.
+lines 99.00
+branches 99.00

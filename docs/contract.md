@@ -41,6 +41,7 @@ files is red (section 8), never silently used.
 | `@buildrules//rules/rust:cargo_unit.bzl` **[p7]** | `cargo_unit`, `crate_src`: one compile / build-script / test / lint action each | the generated `third_party/buildrules/BUCK` |
 | `@buildrules//rules/rust:toolchain.bzl` | `rust_toolchains()` | the `toolchains` cell, one call |
 | `@buildrules//rules/rust:rust_analyzer.bzl` | `rust_analyzer_inputs` (the target of that name, below) | `cargo.bzl` (`cargo_workspace`) |
+| `@buildrules//rules/blackbox:defs.bzl` **[chosen]** | `blackbox_test`, `farm_probe_test`, `blackbox_package`, `test_executor` (section 16) | a service repository's BUCK files, by hand |
 
 `defs.bzl` re-exporting the two macros is the one change this contract makes to p7's tree; `cargo.bzl`
 keeps p7's names and signatures.
@@ -1298,3 +1299,23 @@ Failures, in either format, as the message's prefix: `EMPTY: ` (no changed path)
 Platforms. The selector reads the unconfigured graph and the checkout only, so its answer does not depend on the host, the execution platform or `--target-platforms`: run it once and build its list on each platform. The list is a superset across platforms (incompatible targets and every `select()` branch are in the unconfigured graph): `buck2 build` fails on a named label that is incompatible with the target platform, and `--skip-incompatible-targets` skips it and names it in the log. A `-c` that changes which targets exist must reach the selector too. The aggregate's package is subtracted from the reverse-dependency universe, but Buck2 answers `rdeps` over the universe's dependency closure, so a target of `universe` that depends on the aggregate brings it back: keep such targets out of `universe`.
 
 The tests: `rules/affected/tests` (the refusals, and the table cases that fail the package's load while one answers otherwise; built by `//ci:refusals`) and `ci/affected.bzl` (the real graph of `ci/affected_fixture`, run by `ci/completeness.bxl`).
+
+## 16. Black-box tests **[chosen]**
+
+`rules/blackbox` puts packages onto a base image and runs a driver in it, as one `buck2 test` target that runs on the farm. `rules/blackbox/README.md` is
+its full contract; this section is its summary.
+
+Load path: `load("@buildrules//rules/blackbox:defs.bzl", "blackbox_test")`. `blackbox_test(name, image, packages, driver, visibility = None)`. `image` is
+by digest only. `packages` is a non-empty list, in the order the packages are put onto the image: each a pin `{"url", "sha256", "size"}` with an optional
+`"candidate"` naming the `-c blackbox.<candidate>_url/_sha256/_size` keys a release passes its package by (all three or none; an empty one is refused), or
+a target label. `driver` is a binary target. The refusals are made when the BUCK file loads (the image, an empty `packages`, a package that is neither a
+pin nor a label, a malformed pin or candidate) or when the target is analysed (in remote mode, an unset `[buildrules_re] linux_x86_64_properties`), each
+naming the target.
+
+The run is `blackbox_run run` (rules/blackbox): it requires to be a farm job that received the test's image, checks every pinned package, unpacks each
+package's files over the job's root without dpkg, and runs the driver with that root as its one argument. Its status is the test's: the driver's when it
+failed, 1 for anything else that failed, 2 for a wrong command line, 0 for a pass. What the service is, how it is started and pointed at its fakes, is
+the driver's.
+
+The test's `ExternalRunnerTestInfo.default_executor` is the workers' property set (every key, as Buck2 replaces the platform's executor with the test's)
+with `container-image` set to the image. It runs on a farm and nowhere else; `buck2 build` of it runs nothing, so a check calls `buck2 test`.

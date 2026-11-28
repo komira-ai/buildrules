@@ -1,9 +1,12 @@
 //! The formats `unpack` reads, how one is told from the bytes, and the path from the file's bytes to the extractor.
 const std = @import("std");
-const extract = @import("extract.zig");
-const inflate = @import("inflate.zig");
+/// The extractor the formats are read through (a module that imports this one reaches it here).
+pub const extract = @import("extract.zig");
+/// The decoders and the sink they write to (a module that imports this one reaches them here, to read an archive's members without extracting them).
+pub const inflate = @import("inflate.zig");
+pub const stream = @import("stream.zig");
 const tar = @import("tar.zig");
-const xz = @import("xz.zig");
+pub const xz = @import("xz.zig");
 const zip = @import("zip.zig");
 
 pub const Format = enum { tar, tar_gz, tar_xz, zip };

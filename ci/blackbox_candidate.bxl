@@ -1,0 +1,22 @@
+# Which package a `blackbox_test` runs, through the real configuration (rules/blackbox/README.md, `candidate`): the public CI runs both states.
+#
+#   buck2 bxl -c buildrules_re.mode=local //ci:blackbox_candidate.bxl:check -- --state absent
+#   buck2 bxl -c buildrules_re.mode=local --config-file ci/blackbox_candidate.buckconfig //ci:blackbox_candidate.bxl:check -- --state given
+#
+# absent: no `[blackbox] released_*` key, and the test runs its pinned package. given: the three keys, and it runs the candidate they name. Analysis only: the
+# packages are not downloaded.
+
+load("@buildrules//ci:blackbox_candidate.bzl", "candidate_problems")
+
+def _impl(ctx):
+    problems = candidate_problems(ctx, ctx.cli_args.state)
+    if problems:
+        fail("ci/blackbox_candidate ({}): {} problem(s):\n  ".format(ctx.cli_args.state, len(problems)) + "\n  ".join(problems))
+    ctx.output.print("ok ({}): //ci/blackbox_candidate:released_package runs the package that state names".format(ctx.cli_args.state))
+
+check = bxl_main(
+    impl = _impl,
+    cli_args = {
+        "state": cli_args.enum(["absent", "given"]),
+    },
+)

@@ -118,6 +118,14 @@ jobs:
       - name: dpkg-deb reads the contents
         run: dpkg-deb --contents ci-debs/buildrules_0.0.0_amd64.deb
 
+      # The package a black-box test runs, read from the real configuration: its pin with no `[blackbox] released_*` key, the candidate the keys name when a
+      # release passes them (ci/blackbox_candidate.bxl). Analysis only: nothing is downloaded.
+      - name: A black-box test runs its pinned package when no candidate is given
+        run: ./buck2 bxl -c buildrules_re.mode=local //ci:blackbox_candidate.bxl:check -- --state absent
+
+      - name: A black-box test runs the candidate a release passes
+        run: ./buck2 bxl -c buildrules_re.mode=local --config-file ci/blackbox_candidate.buckconfig //ci:blackbox_candidate.bxl:check -- --state given
+
       - name: Stop buck2
         if: always()
         run: ./buck2 kill
