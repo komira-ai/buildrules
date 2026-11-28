@@ -62,6 +62,7 @@ const Case = struct {
             "--package",     c.package,
             "--sha256",      c.sha256,
             "--size",        c.size,
+            "--work-dir",    try std.fs.path.join(a, &.{ c.dir, "tmp" }),
             "--service",     "usr/bin/toy",
             "--flag",        "service",
             "--flag",        "--listen",

@@ -1,12 +1,13 @@
 //! `blackbox_run run`: one black-box test of a released package (README.md, defs.bzl).
 //!
-//!   blackbox_run run --image REF --package FILE [--sha256 HEX --size N] --service PATH [--flag ARG]...
+//!   blackbox_run run --image REF --package FILE [--sha256 HEX --size N] --work-dir DIR --service PATH [--flag ARG]...
 //!                    [--fake NAME=PROGRAM [--fake-flag NAME=ARG]...]... --driver PROGRAM [--driver-flag ARG]... [--ready-s N]
 //!                    [--farm | --docker DOCKER]
 //!
 //! In order: with `--docker`, it starts itself inside REF through DOCKER with the same arguments and exits with that run's status (nothing else happens
 //! outside the image). With `--farm`, it requires to be a farm job whose frontend received REF as `container-image`, and prints the job's action digest
-//! (farm.zig). It checks the package's size and sha256 when they are given, unpacks it (deb.zig) into a directory of its own (in TMPDIR, else /tmp),
+//! (farm.zig). It checks the package's size and sha256 when they are given, unpacks it (deb.zig) into a directory of its own in DIR (relative: to the working
+//! directory; given more than once, the last),
 //! gives each fake and the service a loopback port nothing listens on, puts the addresses into the flags (`{addr:NAME}` is `127.0.0.1:PORT`,
 //! `{port:NAME}` the port, `{root}` the unpacked package, `{work}` the run's directory, `{{` a `{`), starts each fake and waits until its port takes a
 //! connection, starts the service's program (PATH inside the package) the same way, runs the driver, and stops everything (SIGTERM to each process
@@ -31,6 +32,9 @@ const Pid = io_mod.Pid;
 pub const stop_ms: u64 = 30_000;
 pub const poll_ms: u64 = 20;
 
+/// The run's directory inside docker: a tmpfs of the container (programs run from it, so it is not `noexec`).
+pub const docker_work = "/blackbox-work";
+
 /// The longest `--ready-s` (a day), and how many times a port is asked for before the run gives up finding one no other process of it has.
 pub const max_ready_s: u64 = 86_400;
 pub const max_port_tries: usize = 16;
@@ -46,6 +50,8 @@ pub const Options = struct {
     sha256: ?[]const u8 = null,
     size: ?u64 = null,
     service: []const u8 = "",
+    /// Where the run makes its own directory (the rule gives it; inside docker it is a private tmpfs, `docker_work`).
+    work_dir: []const u8 = "",
     flags: std.ArrayList([]const u8) = .empty,
     fakes: std.ArrayList(Fake) = .empty,
     driver: []const u8 = "",
@@ -83,6 +89,8 @@ pub fn parse(a: Alloc, io: Io, args: []const []const u8) Oom!?Options {
             o.sha256 = v;
         } else if (std.mem.eql(u8, opt, "--size")) {
             o.size = std.fmt.parseInt(u64, v, 10) catch return usage(io, "`--size {s}` is not a number of bytes", .{v});
+        } else if (std.mem.eql(u8, opt, "--work-dir")) {
+            o.work_dir = v;
         } else if (std.mem.eql(u8, opt, "--service")) {
             o.service = v;
         } else if (std.mem.eql(u8, opt, "--flag")) {
@@ -110,7 +118,7 @@ pub fn parse(a: Alloc, io: Io, args: []const []const u8) Oom!?Options {
             return usage(io, "`{s}` is not an option", .{opt});
         }
     }
-    for ([_]struct { []const u8, []const u8 }{ .{ "--image", o.image }, .{ "--package", o.package }, .{ "--service", o.service }, .{ "--driver", o.driver } }) |req| {
+    for ([_]struct { []const u8, []const u8 }{ .{ "--image", o.image }, .{ "--package", o.package }, .{ "--work-dir", o.work_dir }, .{ "--service", o.service }, .{ "--driver", o.driver } }) |req| {
         if (req[1].len == 0) return usage(io, "`{s}` is required", .{req[0]});
     }
     if ((o.sha256 == null) != (o.size == null)) return usage(io, "`--sha256` and `--size` go together: the package is pinned by both or by neither", .{});
@@ -139,7 +147,7 @@ pub fn run(a: Alloc, io: Io, args: []const []const u8) Oom!u8 {
     }
     var hex: [8]u8 = undefined;
     io.plat.randomHex(io.plat.ctx, &hex);
-    const work = try std.fs.path.join(a, &.{ io.env("TMPDIR") orelse "/tmp", try std.fmt.allocPrint(a, "blackbox.{s}", .{hex}) });
+    const work = try std.fs.path.resolve(a, &.{ io.cwd, o.work_dir, try std.fmt.allocPrint(a, "blackbox.{s}", .{hex}) });
     // The package is read and checked before anything is written: a package that is not the pinned one leaves nothing behind.
     const bytes = std.fs.cwd().readFileAlloc(a, o.package, max_package) catch |e| switch (e) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -181,11 +189,12 @@ fn inDocker(a: Alloc, io: Io, args: []const []const u8, docker_at: usize, docker
         return 2;
     }
     const self = try std.fs.path.resolve(a, &.{ io.cwd, io.argv[0] });
-    var argv = try std.ArrayList([]const u8).initCapacity(a, 15 + args.len);
+    var argv = try std.ArrayList([]const u8).initCapacity(a, 19 + args.len);
     argv.appendSliceAssumeCapacity(&.{
         docker,                                            "run",         "--rm",  "--network", "none",
         "--user",                                          try std.fmt.allocPrint(a, "{d}:{d}", .{ io.uid, io.gid }),
         "--volume",                                        try std.fmt.allocPrint(a, "{s}:{s}:ro", .{ io.cwd, io.cwd }),
+        "--tmpfs",                                         docker_work ++ ":rw,exec,nosuid",
         "--workdir",                                       io.cwd,
         "--entrypoint",                                    self,
         dockerRef(image),                                  "run",
@@ -193,6 +202,8 @@ fn inDocker(a: Alloc, io: Io, args: []const []const u8, docker_at: usize, docker
     // Every argument but the option `--docker` and its value, where the command line had them (a flag whose value is `--docker` is kept).
     argv.appendSliceAssumeCapacity(args[0..docker_at]);
     argv.appendSliceAssumeCapacity(args[docker_at + 2 ..]);
+    // The checkout is read-only in there: the run's directory is the container's own tmpfs (the last `--work-dir` is the one a run takes).
+    argv.appendSliceAssumeCapacity(&.{ "--work-dir", docker_work });
     var env = std.process.EnvMap.init(a);
     for (io.environ) |entry| {
         const eq = std.mem.indexOfScalar(u8, entry, '=') orelse continue;

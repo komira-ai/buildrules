@@ -81,12 +81,4 @@ pub const Io = struct {
     pub fn put(io: Io, bytes: []const u8) void {
         emit(io.out, @ptrCast(&bytes), writeBytes);
     }
-
-    /// The value of the environment variable `name`, or null.
-    pub fn env(io: Io, name: []const u8) ?[]const u8 {
-        for (io.environ) |entry| {
-            if (entry.len > name.len and entry[name.len] == '=' and std.mem.eql(u8, entry[0..name.len], name)) return entry[name.len + 1 ..];
-        }
-        return null;
-    }
 };

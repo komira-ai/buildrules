@@ -80,14 +80,15 @@ message (`the action's container-image ... is not the base environment this exec
 ```
 
 `blackbox.docker` is the absolute path of the docker program. The run is `docker run --rm --network none --user <this user> --volume <checkout>:<checkout>:ro
---workdir <checkout> --entrypoint <the runner> <image> run ...`: the checkout read-only at its own path (so every path of the command line means what it
-meant outside), no network but loopback, this machine's user, and the runner, a static program, as the entry point. Without `blackbox.docker` the run fails
+--tmpfs /blackbox-work:rw,exec,nosuid --workdir <checkout> --entrypoint <the runner> <image> run ... --work-dir /blackbox-work`: the checkout read-only at
+its own path (so every path of the command line means what it meant outside), the run's directory a tmpfs of the container, no network but loopback, this
+machine's user, and the runner, a static program, as the entry point. Without `blackbox.docker` the run fails
 and names the key: a test that names an image never runs outside it. A pull request runs the toy this way on a hosted runner (`.github/workflows/ci.yml`).
 
 ## The runner, `blackbox_run run`
 
 ```
-blackbox_run run --image REF --package FILE [--sha256 HEX --size N] --service PATH [--flag ARG]...
+blackbox_run run --image REF --package FILE [--sha256 HEX --size N] --work-dir DIR --service PATH [--flag ARG]...
                  [--fake NAME=PROGRAM [--fake-flag NAME=ARG]...]... --driver PROGRAM [--driver-flag ARG]... [--ready-s N]
                  [--farm | --docker DOCKER]
 ```
@@ -97,7 +98,7 @@ The rule builds this argument list; nothing else needs to. In order:
 1. `--docker`: start itself inside the image as above, and exit with that run's status. `--farm`: require the job's directory (a top-level `.<name>/` holding
    `action` and `command`, farm.zig), print the action digest and the property set, and require `container-image` to be the test's image.
 2. Read the package; with `--sha256` and `--size`, refuse one that is not those bytes. Nothing is written before this.
-3. Unpack it (deb.zig) into `<TMPDIR or /tmp>/blackbox.<random>/root`, without dpkg: the image need not have it, and the run is not root. The `ar`
+3. Unpack it (deb.zig) into `<--work-dir>/blackbox.<random>/root`, without dpkg: the image need not have it, and the run is not root. The `ar`
    archive's `data.tar`, `data.tar.gz` or `data.tar.xz` is read by the extractor of `unpack` (tools/bootstrap): an absolute name, a `..`, a link that
    climbs out and an entry written through a link are refused, set-uid, set-gid and sticky bits are dropped. `data.tar.zst` is refused by name. The control
    member (the maintainer scripts) is not read: the program is started by hand.

@@ -1,0 +1,5 @@
+# The candidate a release passes a black-box test (rules/blackbox/README.md): read by ci/blackbox_candidate.bxl, `--state given`.
+[blackbox]
+  released_url = https://github.com/komira-ai/buildrules/releases/download/v0.0.86/buildrules_0.0.86_amd64.deb
+  released_sha256 = fa0da6e10aa6ffc0a9424942c909d8eb0d3d28aa60d5971e29710a5aa7f7a7d1
+  released_size = 995192

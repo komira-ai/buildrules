@@ -1,0 +1,35 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/blackbox:defs.bzl", "blackbox_test")
+load("@buildrules//ci:blackbox_candidate.bzl", "selection_problems")
+
+# Which package a `blackbox_test` runs, read from the real configuration (ci/blackbox_candidate.bxl): the pinned one with no `[blackbox] released_*`
+# keys, the candidate the keys name when they are given (ci/blackbox_candidate.buckconfig). The packages are two releases of this repository's own
+# command line, so both pins are real. The target is analysed, never run (the program is not a service, and building a test target builds nothing):
+# no step gives it to `buck2 test`, and nothing here is downloaded.
+blackbox_test(
+    name = "released_package",
+    image = "docker://docker.io/library/ubuntu@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b",
+    package = {
+        "url": "https://github.com/komira-ai/buildrules/releases/download/v0.0.85/buildrules_0.0.85_amd64.deb",
+        "sha256": "ad6f920216588ed6f4cc58c9c684d77683a18c7f669ae2cf7d0dd79d6018f2f7",
+        "size": 995196,
+    },
+    candidate = "released",
+    service = "usr/bin/buildrules",
+    flags = ["--version"],
+    driver = "//rules/blackbox/toy:toy",
+    visibility = ["PUBLIC"],
+)
+
+# The check itself, on commands it must refuse: another package's pin, none, and a download from elsewhere (each red for its own reason), beside one it accepts.
+_GIVEN = '"--sha256", "fa0da6e10aa6ffc0a9424942c909d8eb0d3d28aa60d5971e29710a5aa7f7a7d1", "--size", "995192"'
+_GIVEN_URL = "https://github.com/komira-ai/buildrules/releases/download/v0.0.86/buildrules_0.0.86_amd64.deb"
+
+[fail("selection_problems, {}: got {} problem(s), want {}: {}".format(what, len(got), want, got)) for what, got, want in [
+    ("the candidate, from its url", selection_problems("given", _GIVEN, _GIVEN_URL), 0),
+    ("the pin where the candidate is wanted", selection_problems("absent", _GIVEN, _GIVEN_URL), 3),
+    ("no package checked", selection_problems("given", "run --package x", _GIVEN_URL), 1),
+    ("the candidate from another url", selection_problems("given", _GIVEN, "https://example.invalid/x.deb"), 1),
+] if len(got) != want]
+
+scrub_files()

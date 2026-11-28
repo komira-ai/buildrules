@@ -94,6 +94,9 @@ def _impl(ctx):
     args = [ctx.attrs._runner[RunInfo], "run", "--image", ctx.attrs.image, "--package", ctx.attrs.package[DefaultInfo].default_outputs[0]]
     if ctx.attrs.package_sha256:
         args += ["--sha256", ctx.attrs.package_sha256, "--size", str(ctx.attrs.package_size)]
+    # The run makes its own directory in the working directory of the test (on a farm, the job's input root, which the job may write; inside docker the
+    # runner gives it a tmpfs of the container instead).
+    args += ["--work-dir", "blackbox-work"]
     args += ["--service", ctx.attrs.service] + _flag_args("--flag", ctx.attrs.flags)
     for fake, dep in sorted(ctx.attrs.fakes.items()):
         flags = ctx.attrs.fake_flags.get(fake, ["--listen", "{addr:" + fake + "}"])

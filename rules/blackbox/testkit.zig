@@ -212,8 +212,7 @@ pub const Case = struct {
         err.* = std.Io.Writer.Allocating.init(a);
         const plat = try a.create(Plat);
         plat.* = .{ .a = a };
-        // Before TMPDIR: an entry shorter than its name, one as long with another character after it, one with `=` there and another name, and one
-        // with no `=` at all.
+        // The environment the processes are given; an entry with no `=` is not one (it is left out).
         const environ = try a.dupe([]const u8, &.{ "A=1", "HOME=/nonexistent", "PREFIX=/p", "NOT_AN_ASSIGNMENT", try std.fmt.allocPrint(a, "TMPDIR={s}/tmp", .{dir}) });
         return .{ .arena = arena, .a = a, .tmp = tmp, .dir = dir, .out = out, .err = err, .plat = plat, .environ = environ };
     }
@@ -307,6 +306,7 @@ pub fn runArgs(c: *Case, extra: []const []const u8) []const []const u8 {
     out.appendSlice(c.a, &.{
         "--image",       image,
         "--package",     c.path("pkg.deb"),
+        "--work-dir",    c.path("tmp"),
         "--service",     "usr/bin/svc",
         "--flag",        "--listen",
         "--flag",        "{addr:service}",

@@ -1,5 +1,5 @@
 //! run.zig on the scripted platform (testkit.zig): which processes start, with which command lines, in which order; what is waited for; what is
-//! stopped and how; the status and every message, exactly. The package is a real one (debkit.zig), unpacked into the case's TMPDIR.
+//! stopped and how; the status and every message, exactly. The package is a real one (debkit.zig), unpacked into the case's directory (`--work-dir`).
 
 const std = @import("std");
 const run = @import("run.zig");
@@ -209,12 +209,19 @@ test "the package: pinned and right, not there, not of the pinned size or sha256
     e.put("pkg.deb", "not a package");
     try t.expectEqual(@as(u8, 1), try run.run(e.a, e.io(), args(&e, &.{})));
     try t.expectEqualStrings(try std.fmt.allocPrint(e.a, "blackbox_run: run: the package {s} cannot be unpacked: it is not an ar archive (a .deb starts with `!<arch>`)\n", .{e.path("pkg.deb")}), e.stderr());
-    // With no TMPDIR the run's directory would be under /tmp: a package that is not there fails first, so nothing is made there.
+    // A package that is not there fails before anything is made; and the run's directory is relative to the working directory when it is given so.
     var f = try kit.Case.init();
     defer f.deinit();
     f.environ = &.{"NOT_AN_ASSIGNMENT"};
     try t.expectEqual(@as(u8, 1), try run.run(f.a, f.io(), args(&f, &.{})));
     try t.expectEqualStrings(try std.fmt.allocPrint(f.a, "blackbox_run: run: cannot read the package {s}: FileNotFound\n", .{f.path("pkg.deb")}), f.stderr());
+    var g = try kit.Case.init();
+    defer g.deinit();
+    _ = g.toyPackage();
+    const relative = try g.a.dupe([]const u8, args(&g, &.{}));
+    relative[5] = "tmp";
+    try t.expectEqual(@as(u8, 0), try run.run(g.a, g.io(), relative));
+    try kit.expectHas(g.plat.started.items[1], try std.fmt.allocPrint(g.a, "{s}/tmp/blackbox.0badc0de/root/usr/bin/svc", .{g.dir}));
 }
 
 test "the run's directories cannot be made: each is said and the run fails" {
@@ -222,7 +229,7 @@ test "the run's directories cannot be made: each is said and the run fails" {
     defer c.deinit();
     _ = c.toyPackage();
     try c.tmp.dir.deleteTree("tmp");
-    c.put("tmp", "a file where TMPDIR is");
+    c.put("tmp", "a file where the run's directory goes");
     try t.expectEqual(@as(u8, 1), try run.run(c.a, c.io(), args(&c, &.{})));
     try t.expectEqualStrings(try std.fmt.allocPrint(c.a, "blackbox_run: run: cannot make the run's directory {s}: NotDir\n", .{work(&c)}), c.stderr());
     for ([_][]const u8{ "root", "logs" }) |sub| {
@@ -254,15 +261,16 @@ test "--docker: the same run started inside the image, the checkout mounted read
     const mount = try std.fmt.allocPrint(c.a, "{s}:{s}:ro", .{ c.dir, c.dir });
     const self = c.path("buck-out/blackbox_run");
     var want: std.ArrayList([]const u8) = .empty;
-    try want.appendSlice(c.a, &.{ "/usr/bin/docker", "run", "--rm", "--network", "none", "--user", "1000:1000", "--volume", mount, "--workdir", c.dir, "--entrypoint", self, "repo@sha256:" ++ "1" ** 64, "run" });
+    try want.appendSlice(c.a, &.{ "/usr/bin/docker", "run", "--rm", "--network", "none", "--user", "1000:1000", "--volume", mount, "--tmpfs", "/blackbox-work:rw,exec,nosuid", "--workdir", c.dir, "--entrypoint", self, "repo@sha256:" ++ "1" ** 64, "run" });
     try want.appendSlice(c.a, args(&c, &.{}));
+    try want.appendSlice(c.a, &.{ "--work-dir", "/blackbox-work" });
     try t.expectEqualStrings(try std.mem.join(c.a, " ", want.items), c.plat.inherited.?);
     try t.expectEqualStrings("blackbox_run: run: running inside repo@sha256:" ++ "1" ** 64 ++ " through /usr/bin/docker\n", c.stderr());
     // A flag whose value is `--docker` is the driver's, and stays.
     var e = try kit.Case.init();
     defer e.deinit();
     try t.expectEqual(@as(u8, 0), try run.run(e.a, e.io(), args(&e, &.{ "--driver-flag", "--docker", "--docker", "/usr/bin/docker" })));
-    try t.expect(std.mem.endsWith(u8, e.plat.inherited.?, "--ready-s 2 --driver-flag --docker"));
+    try t.expect(std.mem.endsWith(u8, e.plat.inherited.?, "--ready-s 2 --driver-flag --docker --work-dir /blackbox-work"));
     var d = try kit.Case.init();
     defer d.deinit();
     d.plat.inherit_answer = error.FileNotFound;
@@ -333,9 +341,10 @@ test "a wrong command line is exit 2, each way, with its message" {
         .{ .args = &.{ "--fake-flag", "noequals" }, .says = P ++ "`--fake-flag noequals` is not NAME=ARG\n" },
         .{ .args = &.{ "--fake-flag", "down=x" }, .says = P ++ "`--fake-flag down=x` names no fake given before it\n" },
         .{ .args = &.{}, .says = P ++ "`--image` is required\n" },
-        .{ .args = &.{ "--image", "i", "--package", "p", "--service", "s" }, .says = P ++ "`--driver` is required\n" },
-        .{ .args = &.{ "--image", "i", "--package", "p", "--service", "s", "--driver", "d", "--sha256", "x" }, .says = P ++ "`--sha256` and `--size` go together: the package is pinned by both or by neither\n" },
-        .{ .args = &.{ "--image", "i", "--package", "p", "--service", "s", "--driver", "d", "--farm", "--docker", "/d" }, .says = P ++ "`--farm` and `--docker` are two places to run; a run has one\n" },
+        .{ .args = &.{ "--image", "i", "--package", "p", "--service", "s" }, .says = P ++ "`--work-dir` is required\n" },
+        .{ .args = &.{ "--image", "i", "--package", "p", "--work-dir", "w", "--service", "s" }, .says = P ++ "`--driver` is required\n" },
+        .{ .args = &.{ "--image", "i", "--package", "p", "--work-dir", "w", "--service", "s", "--driver", "d", "--sha256", "x" }, .says = P ++ "`--sha256` and `--size` go together: the package is pinned by both or by neither\n" },
+        .{ .args = &.{ "--image", "i", "--package", "p", "--work-dir", "w", "--service", "s", "--driver", "d", "--farm", "--docker", "/d" }, .says = P ++ "`--farm` and `--docker` are two places to run; a run has one\n" },
     };
     for (cases) |case| {
         var c = try kit.Case.init();

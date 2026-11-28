@@ -10,7 +10,7 @@ load(":config.bzl", "config_of")
 # ---- the toy and the toy service -----------------------------------------------------------------------------------------------------------------
 
 # Passes only as a farm job whose frontend received exactly the workers' property set (`buck2 test` on a farm; README.md, "The toy").
-farm_probe_test(name = "farm_probe")
+farm_probe_test(name = "farm_probe", visibility = ["PUBLIC"])
 
 # Ubuntu 24.04 (`noble-20260917`), the linux-amd64 manifest: the base the farm's Linux actions run in, so the one image a farm runs today.
 UBUNTU = "docker://docker.io/library/ubuntu@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b"
@@ -28,6 +28,7 @@ blackbox_test(
     driver = "//rules/blackbox/toy:toy",
     driver_flags = ["driver", "--service", "{addr:service}", "--expect", "service saw: from the fake"],
     ready_timeout_s = 30,
+    visibility = ["PUBLIC"],
 )
 
 # ---- the refusals of the checks -----------------------------------------------------------------------------------------------------------------

@@ -152,6 +152,7 @@ scrub_test(
     "//rules/blackbox:scrub_files",
     "//rules/blackbox/tests:scrub_files",
     "//rules/blackbox/toy:scrub_files",
+    "//ci/blackbox_candidate:scrub_files",
     "//rules/minicfg:scrub_files",
     "//rules/mojo/tests:scrub_files",
     "//rules/mojo:scrub_files",
