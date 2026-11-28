@@ -1,0 +1,22 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe")
+load(":defs.bzl", "toy_package")
+
+# The toy (toy.zig): a service with one outside call, its fake, its driver and the packer. A fixture of the blackbox tests, not measured.
+zig_exe(
+    name = "toy",
+    src = "toy.zig",
+    deps = ["//rules/blackbox:debkit"],
+    zig = "buildrules//rules/pins:zig_next",
+    visibility = ["PUBLIC"],
+)
+
+# The toy service as a released service ships: a Debian package with the program at usr/bin/toy.
+toy_package(
+    name = "toy_deb",
+    path = "usr/bin/toy",
+    program = ":toy",
+    visibility = ["PUBLIC"],
+)
+
+scrub_files()

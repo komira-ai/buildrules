@@ -1,6 +1,7 @@
 //! The formats `unpack` reads, how one is told from the bytes, and the path from the file's bytes to the extractor.
 const std = @import("std");
-const extract = @import("extract.zig");
+/// The extractor the formats are read through (a module that imports this one reaches it here).
+pub const extract = @import("extract.zig");
 const inflate = @import("inflate.zig");
 const tar = @import("tar.zig");
 const xz = @import("xz.zig");

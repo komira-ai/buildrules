@@ -149,6 +149,22 @@ def _properties(key):
         props[k.strip()] = v.strip()
     return props
 
+def linux_x86_64_worker_properties():
+    """The property set of the linux x86_64 workers, parsed (`[buildrules_re] linux_x86_64_properties`, the root cell's): None in local mode, where no
+    property set is configured, and `{}` in remote mode when the key is unset (a caller refuses that when its target is analysed, with
+    `worker_properties_missing()`, so a package that names such a target still loads). A test that names its own executor (rules/blackbox) starts from
+    it: an executor's properties replace the platform's, they are not added to them."""
+    if _mode() == "local":
+        return None
+    if not read_root_config("buildrules_re", "linux_x86_64_properties", "").strip():
+        return {}
+    return _properties("linux_x86_64_properties")
+
+def worker_properties_missing(who):
+    """Why `who`, a target that carries its own executor, cannot be analysed in remote mode with `[buildrules_re] linux_x86_64_properties` unset."""
+    return ("{}: `[buildrules_re] linux_x86_64_properties` is not set, and this test's executor is the workers' property set with its image. Set it in " +
+            ".buckconfig.local, or run in local mode (`-c buildrules_re.mode=local`, docs/contract.md section 14).").format(who)
+
 def _executor(props):
     if props == None:
         return CommandExecutorConfig(

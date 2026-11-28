@@ -240,6 +240,7 @@ group(name = "refusals", deps = [
     "//rules/node/tests:all",
     "//rules/coverage/tests:all",
     "//rules/affected/tests:all",
+    "//rules/blackbox/tests:all",
 ])
 
 group(name = "matrix", deps = [
@@ -980,6 +981,9 @@ _PACKAGES = [
     "//rules/rust:scrub_files",
     "//rules/zig/tests:scrub_files",
     "//rules/toolbox:scrub_files",
+    "//rules/blackbox:scrub_files",
+    "//rules/blackbox/tests:scrub_files",
+    "//rules/blackbox/toy:scrub_files",
     "//rules/zig:scrub_files",
     "//third_party/aws-lc:scrub_files",
     "//rules:scrub_files",
@@ -1106,6 +1110,7 @@ group(name = "floors", deps = [
     "//rules/rust:coverage_crate_patch_floor",
     "//rules/rust:coverage_sync_patch_floor",
     "//rules/toolbox:coverage_floor",
+    "//rules/blackbox:coverage_floor",
     "//tools/bootstrap:coverage_floor",
     "//tools/channels:coverage_floor",
     "//tools/deploy:coverage_floor",
@@ -1267,6 +1272,10 @@ group(name = "all", deps = [
     "//rules/postgres:pg_exe_test",
     "//rules/toolbox:toolbox",
     "//rules/toolbox:toolbox_exe_test",
+    "//rules/blackbox:blackbox_run",
+    "//rules/blackbox:blackbox_exe_test",
+    "//rules/blackbox/tests:farm_probe",
+    "//rules/blackbox/tests:toy",
     "//rules/toolbox:linux_aarch64_is_aarch64_linux_musl",
     "//rules/toolbox:macos_arm64_is_aarch64_macos",
     "//rules/pins:macos_applets",

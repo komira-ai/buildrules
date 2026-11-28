@@ -46,6 +46,15 @@ zig_coverage(
     expect = ["tools/bootstrap/" + f for f in glob(["src/*.zig"], exclude = ["src/*_test.zig", "src/testkit.zig", "src/unpack.zig", "src/real.zig"])],
 )
 
+# The formats and the extractor as a module, for a tool of another package that unpacks the same way (rules/blackbox reads the data member of a .deb with it).
+zig_module(
+    name = "bootstrap_archive",
+    src = "src/archive.zig",
+    imports = glob(["src/*.zig"], exclude = ["src/*_test.zig", "src/testkit.zig"]),
+    unit_tests = [":" + name + "_unit" for name in _TESTS],
+    visibility = ["PUBLIC"],
+)
+
 zig_exe(
     name = "unpack",
     src = "src/unpack.zig",

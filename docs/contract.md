@@ -41,6 +41,7 @@ files is red (section 8), never silently used.
 | `@buildrules//rules/rust:cargo_unit.bzl` **[p7]** | `cargo_unit`, `crate_src`: one compile / build-script / test / lint action each | the generated `third_party/buildrules/BUCK` |
 | `@buildrules//rules/rust:toolchain.bzl` | `rust_toolchains()` | the `toolchains` cell, one call |
 | `@buildrules//rules/rust:rust_analyzer.bzl` | `rust_analyzer_inputs` (the target of that name, below) | `cargo.bzl` (`cargo_workspace`) |
+| `@buildrules//rules/blackbox:defs.bzl` **[chosen]** | `blackbox_test`, `farm_probe_test`, `blackbox_package`, `test_executor` (section 16) | a service repository's BUCK files, by hand |
 
 `defs.bzl` re-exporting the two macros is the one change this contract makes to p7's tree; `cargo.bzl`
 keeps p7's names and signatures.
@@ -1292,3 +1293,25 @@ Failures, in either format, as the message's prefix: `EMPTY: ` (no changed path)
 Platforms. The selector reads the unconfigured graph and the checkout only, so its answer does not depend on the host, the execution platform or `--target-platforms`: run it once and build its list on each platform. The list is a superset across platforms (incompatible targets and every `select()` branch are in the unconfigured graph): `buck2 build` fails on a named label that is incompatible with the target platform, and `--skip-incompatible-targets` skips it and names it in the log. A `-c` that changes which targets exist must reach the selector too. The aggregate's package is subtracted from the reverse-dependency universe, but Buck2 answers `rdeps` over the universe's dependency closure, so a target of `universe` that depends on the aggregate brings it back: keep such targets out of `universe`.
 
 The tests: `rules/affected/tests` (the refusals, and the table cases that fail the package's load while one answers otherwise; built by `//ci:refusals`) and `ci/affected.bzl` (the real graph of `ci/affected_fixture`, run by `ci/completeness.bxl`).
+
+## 16. Black-box tests **[chosen]**
+
+`rules/blackbox` runs a service's released package inside a named image against fakes, as one `buck2 test` target. `rules/blackbox/README.md` is its full
+contract; this section is its summary.
+
+Load path: `load("@buildrules//rules/blackbox:defs.bzl", "blackbox_test")`. `blackbox_test(name, image, package, service, driver, flags = [], fakes = {},
+fake_flags = {}, driver_flags = ["--service", "{addr:service}"], candidate = None, ready_timeout_s = 60, labels = [], visibility = None)`. Every argument
+after `driver` is optional, so one added later breaks no caller. `image` is by digest only; `package` is a pin `{"url", "sha256", "size"}` or a target
+label; `candidate` names the `-c blackbox.<candidate>_url/_sha256/_size` keys a release passes its package by (all three or none; an empty one is
+refused). The refusals are made when the BUCK file loads (the image, the names of the fakes, the service path, `ready_timeout_s`, the package and the
+candidate) or when the target is analysed (the placeholders of the flags, a `fake_flags` key that names no fake, and, in remote mode, an unset
+`[buildrules_re] linux_x86_64_properties`), each naming the target.
+
+The run is `blackbox_run run` (rules/blackbox): unpack the package without dpkg, give each fake and the service a loopback port, start the fakes and the
+service and wait for each to take a connection, run the driver, stop everything, print every log on a failure. Its status is the test's: the driver's
+when it failed, 1 for anything else that failed, 2 for a wrong command line, 0 for a pass.
+
+Where it runs is the configuration's (section 14). Remote mode: the test's `ExternalRunnerTestInfo.default_executor` is the workers' property set
+(`[buildrules_re] linux_x86_64_properties`, every key, as Buck2 replaces the platform's executor with the test's) with `container-image` set to the image;
+the run checks it is a farm job that received that image. Local mode: the run starts itself in the image through docker
+(`-c blackbox.docker=<absolute path>`), and fails naming the key without it.

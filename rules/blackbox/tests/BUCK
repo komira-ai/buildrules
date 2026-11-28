@@ -1,0 +1,106 @@
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+# The blackbox rule (rules/blackbox/README.md): the toy that proved a test can carry its own executor, the toy service run as a black-box test, and every
+# refusal of the rule's checks as analysis tests (rules/rust/refusal.bzl), each beside the accepted form so a check that refuses everything is red too.
+load("//rules/blackbox:checks.bzl", "check_candidate", "check_flags", "check_image", "check_names", "check_pin", "check_service", "executor_properties", "placeholders")
+load("//rules/blackbox:defs.bzl", "blackbox_package", "blackbox_test", "farm_probe_test")
+load("//rules/rust:refusal.bzl", "accepts", "refuses")
+load("//rules:matrix.bzl", "group")
+load(":config.bzl", "config_of")
+
+# ---- the toy and the toy service -----------------------------------------------------------------------------------------------------------------
+
+# Passes only as a farm job whose frontend received exactly the workers' property set (`buck2 test` on a farm; README.md, "The toy").
+farm_probe_test(name = "farm_probe")
+
+# Ubuntu 24.04 (`noble-20260917`), the linux-amd64 manifest: the base the farm's Linux actions run in, so the one image a farm runs today.
+UBUNTU = "docker://docker.io/library/ubuntu@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b"
+
+# The toy service (../toy) as a released service: its package, its one outside call pointed at a fake, and a driver that checks the answer went through
+# the fake. `buck2 test` runs it on the farm, or through docker with `-c buildrules_re.mode=local -c blackbox.docker=/usr/bin/docker` (README.md).
+blackbox_test(
+    name = "toy",
+    image = UBUNTU,
+    package = "//rules/blackbox/toy:toy_deb",
+    service = "usr/bin/toy",
+    flags = ["service", "--listen", "{addr:service}", "--upstream", "{addr:upstream}"],
+    fakes = {"upstream": "//rules/blackbox/toy:toy"},
+    fake_flags = {"upstream": ["fake", "--listen", "{addr:upstream}", "--answer", "from the fake"]},
+    driver = "//rules/blackbox/toy:toy",
+    driver_flags = ["driver", "--service", "{addr:service}", "--expect", "service saw: from the fake"],
+    ready_timeout_s = 30,
+)
+
+# ---- the refusals of the checks -----------------------------------------------------------------------------------------------------------------
+
+_ALL = []
+_WHO = "//pkg:svc_blackbox"
+_SHA = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+_DIGEST = "sha256:" + _SHA
+_URL = "https://releases.example/svc_1.2.3_amd64.deb"
+
+# The image: by digest, never by tag.
+_ALL.append(accepts("image_by_digest_is_accepted", check_image, [_WHO, "docker://registry.example/team/svc@" + _DIGEST]))
+_ALL.append(accepts("image_by_digest_without_the_scheme_is_accepted", check_image, [_WHO, "registry.example:5000/svc@" + _DIGEST]))
+_ALL.append(refuses("image_by_tag_is_refused", check_image, [_WHO, "docker://ubuntu:24.04"], ["//pkg:svc_blackbox", "has no digest", "a tag is not accepted"]))
+_ALL.append(refuses("image_by_tag_and_digest_is_refused", check_image, [_WHO, "docker://ubuntu:24.04@" + _DIGEST], ["has a tag (`24.04`)"]))
+_ALL.append(refuses("image_with_a_missing_digest_is_refused", check_image, [_WHO, "docker://ubuntu@"], ["the digest must be `sha256:` and 64 lower-case hex digits"]))
+_ALL.append(refuses("image_with_a_short_digest_is_refused", check_image, [_WHO, "ubuntu@sha256:" + _SHA[:40]], ["the digest must be `sha256:` and 64 lower-case hex digits"]))
+_ALL.append(refuses("image_with_an_upper_case_digest_is_refused", check_image, [_WHO, "ubuntu@sha256:" + _SHA.upper()], ["the digest must be `sha256:` and 64 lower-case hex digits"]))
+_ALL.append(refuses("image_with_another_digest_kind_is_refused", check_image, [_WHO, "ubuntu@sha512:" + _SHA], ["the digest must be `sha256:`"]))
+_ALL.append(refuses("image_with_no_repository_is_refused", check_image, [_WHO, "docker://@" + _DIGEST], ["names no repository before its digest"]))
+
+# The package's pin: an https url, a sha256 and a positive size.
+_ALL.append(accepts("package_pin_is_accepted", check_pin, [_WHO, "`package`", _URL, _SHA, 1024]))
+_ALL.append(refuses("package_without_a_sha256_is_refused", check_pin, [_WHO, "`package`", _URL, "", 1024], ["the sha256 must be 64 lower-case hex digits"]))
+_ALL.append(refuses("package_without_a_size_is_refused", check_pin, [_WHO, "`package`", _URL, _SHA, 0], ["the size must be the package's positive length in bytes"]))
+_ALL.append(refuses("package_without_a_url_is_refused", check_pin, [_WHO, "`package`", " ", _SHA, 1], ["the url is empty"]))
+_ALL.append(refuses("package_over_http_is_refused", check_pin, [_WHO, "`package`", "http://releases.example/svc.deb", _SHA, 1], ["is not https"]))
+_ALL.append(accepts("package_as_a_pin_is_accepted", blackbox_package, [_WHO, {"sha256": _SHA, "size": 1024, "url": _URL}]))
+_ALL.append(accepts("package_as_a_target_is_accepted", blackbox_package, [_WHO, "//rules/blackbox/toy:toy_deb"]))
+_ALL.append(refuses("package_pin_missing_its_size_is_refused", blackbox_package, [_WHO, {"sha256": _SHA, "url": _URL}], ["exactly the keys url, sha256 and size"]))
+_ALL.append(refuses("package_that_is_neither_is_refused", blackbox_package, [_WHO, "svc.deb"], ["is neither a pin"]))
+_ALL.append(refuses("package_pin_with_a_short_sha256_is_refused", blackbox_package, [_WHO, {"sha256": _SHA[:10], "size": 1, "url": _URL}], ["the sha256 must be 64 lower-case hex digits"]))
+
+# The candidate a release passes with -c: none given is the pin; all three given replace it; some, or an empty one, is refused.
+_CANDIDATE = {"svc_url": _URL, "svc_sha256": _SHA, "svc_size": "2048"}
+
+_ALL.append(accepts("candidate_not_passed_is_the_pin", blackbox_package, [_WHO, "//rules/blackbox/toy:toy_deb", "svc"], kwargs = dict(config = config_of({}))))
+_ALL.append(accepts("candidate_passed_is_accepted", blackbox_package, [_WHO, "//rules/blackbox/toy:toy_deb", "svc"], kwargs = dict(config = config_of(_CANDIDATE))))
+_ALL.append(refuses("candidate_without_its_sha256_is_refused", blackbox_package, [_WHO, "//x:y", "svc"], ["svc_sha256 is not"], kwargs = dict(config = config_of({"svc_url": _URL, "svc_size": "1"}))))
+_ALL.append(refuses("candidate_with_an_empty_value_is_refused", blackbox_package, [_WHO, "//x:y", "svc"], ["svc_url is not"], kwargs = dict(config = config_of(dict(_CANDIDATE, svc_url = "")))))
+_ALL.append(refuses("candidate_with_two_missing_is_refused", blackbox_package, [_WHO, "//x:y", "svc"], ["svc_url, svc_size are not"], kwargs = dict(config = config_of({"svc_sha256": _SHA}))))
+_ALL.append(refuses("candidate_with_an_unpinned_sha256_is_refused", blackbox_package, [_WHO, "//x:y", "svc"], ["the candidate package (`-c blackbox.svc_*`)", "the sha256 must be 64 lower-case hex digits"], kwargs = dict(config = config_of(dict(_CANDIDATE, svc_sha256 = "latest")))))
+_ALL.append(refuses("candidate_with_a_size_that_is_no_number_is_refused", blackbox_package, [_WHO, "//x:y", "svc"], ["the size must be the package's positive length"], kwargs = dict(config = config_of(dict(_CANDIDATE, svc_size = "big")))))
+_ALL.append(refuses("candidate_with_a_bad_name_is_refused", check_candidate, [_WHO, "Svc-1", [None, None, None]], ["is not a name of lower-case letters"]))
+
+# The flags: every placeholder names a process the run has.
+_NAMES = ["upstream", "service"]
+
+_ALL.append(accepts("flags_with_every_placeholder_are_accepted", check_flags, [_WHO, "the service", ["--up={addr:upstream}", "{port:service}", "{root}/etc", "{work}", "{{literal}}"], _NAMES]))
+_ALL.append(refuses("flag_naming_an_unknown_process_is_refused", check_flags, [_WHO, "the driver", ["{addr:db}"], _NAMES], ["names `db`, which is not one of service, upstream"]))
+_ALL.append(refuses("flag_with_an_unknown_placeholder_is_refused", check_flags, [_WHO, "the service", ["{home}"], _NAMES], ["says `{home}`"]))
+_ALL.append(refuses("flag_with_a_placeholder_of_no_name_is_refused", check_flags, [_WHO, "the service", ["{addr:}"], _NAMES], ["says `{addr:}`"]))
+_ALL.append(refuses("flag_with_an_unclosed_brace_is_refused", check_flags, [_WHO, "the service", ["{addr:upstream"], _NAMES], ["opens a `{` it does not close"]))
+
+# The names of the fakes, and the path of the service in the package.
+_ALL.append(accepts("fake_names_are_accepted", check_names, [_WHO, ["object-store", "db_2"]]))
+_ALL.append(refuses("fake_named_service_is_refused", check_names, [_WHO, ["service"]], ["a fake is named `service`"]))
+_ALL.append(refuses("fake_with_a_bad_name_is_refused", check_names, [_WHO, ["Object Store"]], ["is not named by lower-case letters"]))
+_ALL.append(accepts("service_path_is_accepted", check_service, [_WHO, "usr/bin/svc"]))
+_ALL.append(refuses("service_path_that_is_absolute_is_refused", check_service, [_WHO, "/usr/bin/svc"], ["must be the program's path inside the package"]))
+_ALL.append(refuses("service_path_that_climbs_is_refused", check_service, [_WHO, "usr/../../etc/passwd"], ["must be the program's path inside the package"]))
+_ALL.append(refuses("service_path_that_is_empty_is_refused", check_service, [_WHO, ""], ["must be the program's path inside the package"]))
+
+# What is not a refusal: the values themselves.
+[fail("{}: got {}, want {}".format(what, got, want)) for what, got, want in [
+    ("placeholders of a flag", placeholders("a{addr:x}b{{c{root}"), ["addr:x", "root"]),
+    ("placeholders of an unclosed flag", placeholders("{addr:x"), None),
+    ("placeholders of a plain flag", placeholders("--verbose"), []),
+    # The test's executor repeats every key of the workers' set (an executor's properties replace the platform's) and sets the image.
+    ("executor properties", executor_properties({"OSFamily": "Linux", "ISA": "x86-64", "container-image": "docker://base@" + _DIGEST}, "svc@" + _DIGEST), {"OSFamily": "Linux", "ISA": "x86-64", "container-image": "docker://svc@" + _DIGEST}),
+    ("executor properties of an image with its scheme", executor_properties({}, "docker://svc@" + _DIGEST), {"container-image": "docker://svc@" + _DIGEST}),
+] if got != want]
+
+group(name = "all", deps = _ALL, visibility = ["PUBLIC"])
+
+scrub_files()
