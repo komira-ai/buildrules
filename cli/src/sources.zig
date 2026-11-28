@@ -16,16 +16,17 @@
 //!   - an archive is unpacked to cargo-home/git/checkouts/<owner>_<repository>/<commit>/, the form of cargo's own checkout,
 //!     which the generator and git_archive.zig read. Each package of it gets a directory of symbolic links to its files in
 //!     buck-out/buildrules/vendor/git/<owner>_<repository>_<commit>/, since a directory source holds one package per
-//!     directory, and beside them a link to the repository's root manifest, from which a member inherits workspace keys.
+//!     directory, and beside them a link to the repository's root manifest, from which a member inherits workspace keys. A
+//!     package's files are those of the manifest cargo takes for it, also when the repository holds the package's manifest more
+//!     than once (a test fixture that copies a crate): cargo_walk.zig.
 //! A package Cargo.lock does not name cannot be resolved this way: cargo names it, and a sync with the network adds it.
 
 const std = @import("std");
 const cargo_lock = @import("cargo_lock.zig");
+const cargo_walk = @import("cargo_walk.zig");
 const contract = @import("contract.zig");
 const git_archive = @import("git_archive.zig");
 const git_source = @import("git_source.zig");
-const toml = @import("toml.zig");
-const val = @import("val.zig");
 const Diag = @import("diag.zig").Diag;
 
 pub const Error = anyerror;
@@ -254,21 +255,21 @@ pub fn quoted(a: std.mem.Allocator, s: []const u8) error{OutOfMemory}![]const u8
     return std.fmt.allocPrint(a, "\"{s}\"", .{try std.mem.replaceOwned(u8, a, slashes, "\"", "\\\"")});
 }
 
-/// The directory of the package `e` in the archive ("" for its root): the one Cargo.toml whose [package] has `e`'s name (and its
-/// version, unless the version is inherited from the workspace).
-fn packageDir(a: std.mem.Allocator, d: *Diag, s: GitSrc, e: cargo_lock.Entry, ar: Archive) Error![]const u8 {
-    var found: ?[]const u8 = null;
-    for (ar.entries) |f| {
-        if (f.kind != .file or !std.mem.eql(u8, std.fs.path.basename(f.rel), "Cargo.toml")) continue;
-        const doc = toml.parse(a, f.data);
-        const n = val.asStr(toml.at(doc.value, &.{ "package", "name" })) orelse continue;
-        if (!std.mem.eql(u8, n, e.name)) continue;
-        if (val.asStr(toml.at(doc.value, &.{ "package", "version" }))) |v| if (!std.mem.eql(u8, v, e.version)) continue;
-        if (found) |other| return die(d, "{s} {s}: the archive of {s} at {s} has two Cargo.toml of the package ({s}, {s})", .{ e.name, e.version, s.git.repo, s.git.rev, other, f.rel });
-        found = f.rel;
-    }
-    const manifest = found orelse return die(d, "{s} {s}: no Cargo.toml in the archive of {s} at {s} is that package", .{ e.name, e.version, s.git.repo, s.git.rev });
-    return std.fs.path.dirname(manifest) orelse "";
+/// The directory of the package `e` in the archive ("" for its root): the manifest cargo takes for it (cargo_walk.zig). Refused
+/// by name when no manifest of the archive is the package, or when several are and buildrules cannot show that cargo reads the
+/// one its walk meets first.
+fn packageDir(a: std.mem.Allocator, d: *Diag, s: GitSrc, e: cargo_lock.Entry, co: *cargo_walk.Checkout) Error![]const u8 {
+    return switch (try co.pick(e.name, e.version)) {
+        .dir => |dir| dir,
+        .missing => die(d, "{s} {s}: no Cargo.toml in the archive of {s} at {s} is that package", .{ e.name, e.version, s.git.repo, s.git.rev }),
+        .unsure => |dirs| {
+            const manifests = try a.alloc([]const u8, dirs.len);
+            for (dirs, manifests) |dir, *m| m.* = if (dir.len == 0) "Cargo.toml" else try std.fmt.allocPrint(a, "{s}/Cargo.toml", .{dir});
+            return die(d, "{s} {s}: the archive of {s} at {s} has {d} Cargo.toml of the package ({s}). cargo takes the first one its walk of the checkout reads, {s}, but buildrules cannot show that cargo reads it: it inherits a key, the version or a dependency its workspace does not hold, or it has no src/lib.rs, src/main.rs, [lib] path or [[bin]] path in the archive. Give that manifest what it lacks, or remove the other copies from the repository", .{
+                e.name, e.version, s.git.repo, s.git.rev, dirs.len, try std.mem.join(a, ", ", manifests), manifests[0],
+            });
+        },
+    };
 }
 
 /// The names directly in the directory `sub` of the archive ("" for its root), directories implied by deeper entries included.
@@ -329,8 +330,9 @@ pub fn vendor(a: std.mem.Allocator, d: *Diag, sources_path: []const u8, root_pat
         try place(a, &ops, &.{.{ .kind = .clear, .path = co_rel }}, co_rel, ar, &.{.{ .kind = .dir, .path = v_rel }});
         // per package: its directory, a link per entry of its directory, its checksum file, and maybe the root manifest's link
         try ops.ensureUnusedCapacity(a, s.packages.items.len * (3 + ar.entries.len));
+        var co = try cargo_walk.Checkout.init(a, ar.entries);
         for (s.packages.items) |e| {
-            const sub = try packageDir(a, d, s, e, ar);
+            const sub = try packageDir(a, d, s, e, &co);
             const pkg = try std.fmt.allocPrint(a, "{s}/{s}-{s}", .{ v_rel, e.name, e.version });
             ops.appendAssumeCapacity(.{ .kind = .dir, .path = pkg });
             for (try children(a, ar, sub)) |c| {

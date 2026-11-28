@@ -19,6 +19,7 @@ test {
     _ = @import("autopin_zip_test.zig");
     _ = @import("buckgen_test.zig");
     _ = @import("cargo_cmd_test.zig");
+    _ = @import("cargo_walk_test.zig");
     _ = @import("contract_test.zig");
     _ = @import("ctx_test.zig");
     _ = @import("failclosed_test.zig");
