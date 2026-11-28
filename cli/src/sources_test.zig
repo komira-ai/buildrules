@@ -383,10 +383,59 @@ test "vendor: an archive whose top directory is not the recorded one, a crate wh
     d = Diag.init(a);
     try t.expectError(error.Refused, l.vendor(&d, only_r, try recordOf(a, twice)));
     try l.sweep(only_r, try recordOf(a, twice));
-    const msg = try joinedMsgs(a, &d);
-    try t.expect(kit.contains(msg, "r 0.1.0: the archive of github.com/o/r at " ++ rev ++ " has two Cargo.toml of the package ("));
-    try t.expect(kit.contains(msg, "copy/Cargo.toml"));
-    try t.expect(!kit.contains(msg, "old/"));
+    // cargo's walk meets the root's manifest first and copy/ second (old/ is another version, bad/ does not parse, virtual/ has no
+    // package); neither has a library in the archive, so buildrules cannot show that cargo reads the root's
+    try t.expectEqualStrings("r 0.1.0: the archive of github.com/o/r at " ++ rev ++ " has 2 Cargo.toml of the package (Cargo.toml, copy/Cargo.toml). " ++
+        "cargo takes the first one its walk of the checkout reads; the first it meets is Cargo.toml, and buildrules cannot show that cargo reads it: it inherits a key, the version " ++
+        "or a dependency its workspace does not hold, or it has no src/lib.rs, src/main.rs, [lib] path or [[bin]] path in the archive (buildrules checks nothing else of a manifest). Give that manifest what it lacks, or remove the other copies from the repository", try joinedMsgs(a, &d));
+}
+
+/// GitHub's archive of github.com/o/r at `rev` shaped as a repository whose test fixture copies its crates: a virtual workspace root
+/// whose members inherit its version, the crates `r` and `r-impl` in crates/, and below crates/xtask/tests a fixture workspace that
+/// holds another manifest of each, with the same name and version written out and a library of its own.
+fn fixtureCopyArchive(a: std.mem.Allocator) ![]u8 {
+    const top = "r-" ++ rev;
+    const fixture = top ++ "/crates/xtask/tests/fixtures/clean";
+    return kit.tarGz(a, &.{
+        .{ .path = top ++ "/Cargo.toml", .data = "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n" },
+        .{ .path = top ++ "/crates/r/Cargo.toml", .data = "[package]\nname = \"r\"\nversion.workspace = true\nedition.workspace = true\n\n[dependencies]\nr-impl = { path = \"../r-impl\" }\n" },
+        .{ .path = top ++ "/crates/r/src/lib.rs", .data = "pub fn r() {}\n" },
+        .{ .path = top ++ "/crates/r-impl/Cargo.toml", .data = "[package]\nname = \"r-impl\"\nversion.workspace = true\nedition.workspace = true\n" },
+        .{ .path = top ++ "/crates/r-impl/src/lib.rs", .data = "pub fn i() {}\n" },
+        .{ .path = top ++ "/crates/xtask/Cargo.toml", .data = "[package]\nname = \"xtask\"\nversion.workspace = true\n" },
+        .{ .path = top ++ "/crates/xtask/src/main.rs", .data = "fn main() {}\n" },
+        .{ .path = fixture ++ "/Cargo.toml", .data = "[workspace]\nmembers = [\"crates/*\"]\n" },
+        .{ .path = fixture ++ "/crates/r/Cargo.toml", .data = "[package]\nname = \"r\"\nversion = \"0.1.0\"\nedition = \"2024\"\n" },
+        .{ .path = fixture ++ "/crates/r/src/lib.rs", .data = "// the fixture's copy\n" },
+        .{ .path = fixture ++ "/crates/r-impl/Cargo.toml", .data = "[package]\nname = \"r-impl\"\nversion = \"0.1.0\"\nedition = \"2024\"\n" },
+        .{ .path = fixture ++ "/crates/r-impl/src/lib.rs", .data = "// the fixture's copy\n" },
+    }, 0);
+}
+
+test "vendor: a git package that a test fixture under another crate copies is laid out from the manifest cargo takes, the crate's own" {
+    var ar = std.heap.ArenaAllocator.init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    var l = try Layout.init(a);
+    defer l.tmp.cleanup();
+    const archive = try fixtureCopyArchive(a);
+    try l.tmp.dir.writeFile(.{ .sub_path = "fetched/o_r_" ++ rev ++ ".tar.gz", .data = archive });
+    const lock = try lockOf(a, try ctxm.sha256Hex(a, l.crate), true);
+    var d = Diag.init(a);
+    l.vendor(&d, lock, try recordOf(a, archive)) catch |e| {
+        std.debug.print("{s}\n", .{try joinedMsgs(a, &d)});
+        return e;
+    };
+    try t.expectEqual(@as(usize, 0), d.count());
+    const co = try std.fmt.allocPrint(a, "{s}/git/checkouts/o_r/" ++ rev, .{l.home});
+    const v_rel = sources.git_vendor_dir ++ "/o_r_" ++ rev;
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    // each package is the crate in crates/, not the fixture's copy cargo skips ("skipping duplicate package")
+    try t.expectEqualStrings(try std.fmt.allocPrint(a, "{s}/crates/r/src", .{co}), try l.tmp.dir.readLink("repo/" ++ v_rel ++ "/r-0.1.0/src", &buf));
+    try t.expectEqualStrings(try std.fmt.allocPrint(a, "{s}/crates/r-impl/Cargo.toml", .{co}), try l.tmp.dir.readLink("repo/" ++ v_rel ++ "/r-impl-0.1.0/Cargo.toml", &buf));
+    try t.expectEqualStrings("pub fn r() {}\n", try l.read("repo/" ++ v_rel ++ "/r-0.1.0/src/lib.rs"));
+    try t.expectEqualStrings("pub fn i() {}\n", try l.read("repo/" ++ v_rel ++ "/r-impl-0.1.0/src/lib.rs"));
+    try l.sweep(lock, try recordOf(a, archive));
 }
 
 test "a path in cargo's config is a TOML basic string: a backslash and a quote are escaped" {

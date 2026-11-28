@@ -72,6 +72,7 @@ _TESTS = [
     "autopin_table",
     "autopin_zip",
     "cargo_cmd",
+    "cargo_walk",
     "buckgen",
     "contract",
     "ctx",
