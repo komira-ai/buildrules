@@ -5,8 +5,8 @@
 //!
 //! In order: with `--farm`, it requires to be a farm job whose frontend received REF as `container-image`, and prints the job's action digest
 //! (farm.zig). It reads every package and refuses one whose size and sha256 are given and are not its own (nothing is written before every package is
-//! checked). It unpacks each package's files (deb.zig: the data member, not the maintainer scripts) over DIR, in the order given, so a later package's
-//! file replaces an earlier one's. It runs PROGRAM with DIR, made absolute, as its one argument, with this process's environment and streams, and waits
+//! checked), and refuses two packages that ship the same file, naming the path and both. It unpacks each package's files (deb.zig: the data member, not
+//! the maintainer scripts) over DIR, so each file is at the path its package ships it, replacing the image's own file there. It runs PROGRAM with DIR, made absolute, as its one argument, with this process's environment and streams, and waits
 //! for it: what the test does (start the service and the fakes the packages hold, drive them, stop them, print what they said) is the driver's.
 //!
 //! The status is the driver's when it failed, 1 when anything else failed (a package that is not the pinned one or cannot be unpacked, a driver that
@@ -117,6 +117,24 @@ pub fn run(a: Alloc, io: Io, args: []const []const u8) Oom!u8 {
         }
     }
     const root = try std.fs.path.resolve(a, &.{ io.cwd, o.root });
+    // Two packages that ship the same file is a test that could not say which one the driver ran: refused, naming the path and both, before anything
+    // is written.
+    var owner = std.StringHashMap(usize).init(a);
+    for (o.packages.items, bytes, 0..) |p, b, k| {
+        const listing = try deb.files(a, b);
+        if (listing.why) |why| {
+            io.say("run: the package {s} cannot be put onto {s}: {s}", .{ p.path, root, why });
+            return 1;
+        }
+        for (listing.paths) |path| {
+            const got = try owner.getOrPut(path);
+            if (got.found_existing) {
+                io.say("run: the packages {s} and {s} both ship /{s}: a test puts each file onto the image from one package", .{ o.packages.items[got.value_ptr.*].path, p.path, path });
+                return 1;
+            }
+            got.value_ptr.* = k;
+        }
+    }
     var dir = std.fs.cwd().openDir(root, .{}) catch |e| {
         io.say("run: cannot open the root {s}: {s}", .{ root, @errorName(e) });
         return 1;

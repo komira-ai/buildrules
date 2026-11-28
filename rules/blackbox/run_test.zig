@@ -23,21 +23,33 @@ test "a run that passes: the package's files are on the root when the driver run
     try t.expectEqualStrings("", c.stdout());
 }
 
-test "packages are put onto the root in the order given: a later package's file replaces an earlier one's, and both packages' files are there" {
+test "two packages are both put onto the root, each file at the path its package ships it, replacing the image's own file there" {
     var c = try kit.Case.init();
     defer c.deinit();
-    c.put("svc.deb", try debkit.packageOf(c.a, &.{ .{ .name = "usr/bin/svc", .mode = 0o755, .data = "first" }, .{ .name = "etc/svc.toml", .data = "x" } }));
-    c.put("fake.deb", try debkit.packageOf(c.a, &.{ .{ .name = "usr/bin/svc", .mode = 0o755, .data = "second" }, .{ .name = "usr/bin/fake", .mode = 0o755, .data = "f" } }));
-    // A file of the image that no package holds stays.
+    c.put("svc.deb", try debkit.packageOf(c.a, &.{ .{ .name = "usr/bin/svc", .mode = 0o755, .data = "service" }, .{ .name = "etc/svc.toml", .data = "x" } }));
+    c.put("fake.deb", try debkit.packageOf(c.a, &.{.{ .name = "usr/bin/fake", .mode = 0o755, .data = "f" }}));
+    // The image's own files: one a package replaces, one no package holds.
+    c.put("root/usr/bin/svc", "image");
     c.put("root/etc/hostname", "image");
     const argv = [_][]const u8{ "--image", image, "--root", c.path("root"), "--package", c.path("svc.deb"), "--package", c.path("fake.deb"), "--driver", "/d/drv" };
     try t.expectEqual(@as(u8, 0), try run.run(c.a, c.io(), &argv));
-    try t.expectEqualStrings("second", c.plat.service.?);
+    try t.expectEqualStrings("service", c.plat.service.?);
     try t.expectEqualStrings("x", try c.tmp.dir.readFileAlloc(c.a, "root/etc/svc.toml", 10));
     try t.expectEqualStrings("f", try c.tmp.dir.readFileAlloc(c.a, "root/usr/bin/fake", 10));
     try t.expectEqualStrings("image", try c.tmp.dir.readFileAlloc(c.a, "root/etc/hostname", 10));
 }
 
+test "two packages that ship the same path fail the test before anything is written, naming the path and both packages" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    c.put("svc.deb", try debkit.packageOf(c.a, &.{ .{ .name = "usr/bin/svc", .mode = 0o755, .data = "service" }, .{ .name = "usr/share/doc/x", .data = "d" } }));
+    c.put("fake.deb", try debkit.packageOf(c.a, &.{ .{ .name = "usr/bin/fake", .mode = 0o755, .data = "f" }, .{ .name = "usr/share/doc/x", .data = "other" } }));
+    const argv = [_][]const u8{ "--image", image, "--root", c.path("root"), "--package", c.path("svc.deb"), "--package", c.path("fake.deb"), "--driver", "/d/drv" };
+    try t.expectEqual(@as(u8, 1), try run.run(c.a, c.io(), &argv));
+    try t.expectEqualStrings(try std.fmt.allocPrint(c.a, "blackbox_run: run: the packages {s} and {s} both ship /usr/share/doc/x: a test puts each file onto the image from one package\n", .{ c.path("svc.deb"), c.path("fake.deb") }), c.stderr());
+    try t.expectEqual(@as(?[]const u8, null), c.plat.ran);
+    try t.expectError(error.FileNotFound, c.tmp.dir.access("root/usr/bin/svc", .{}));
+}
 test "a driver that fails is the run's status; one that cannot be started fails the run, naming it" {
     var c = try kit.Case.init();
     defer c.deinit();
@@ -165,4 +177,13 @@ test "a wrong command line is exit 2, each way, with its message" {
         try t.expectEqual(@as(u8, 2), try run.run(c.a, c.io(), case.args));
         try t.expectEqualStrings(case.says, c.stderr());
     }
+}
+
+test "a package whose files are listed but whose unpacking is refused (an entry outside the root) fails the run, naming it" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    c.put("pkg.deb", try debkit.package(c.a, "data.tar.gz", try debkit.gzip(c.a, try debkit.tar(c.a, &.{.{ .name = "/etc/passwd", .data = "x" }}))));
+    try t.expectEqual(@as(u8, 1), try run.run(c.a, c.io(), args(&c, &.{})));
+    try t.expectEqualStrings(try std.fmt.allocPrint(c.a, "blackbox_run: run: the package {s} cannot be put onto {s}: its `data.tar.gz` cannot be unpacked: AbsolutePath (at the entry `/etc/passwd`)\n", .{ c.path("pkg.deb"), c.path("root") }), c.stderr());
+    try t.expectEqual(@as(?[]const u8, null), c.plat.ran);
 }

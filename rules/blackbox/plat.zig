@@ -14,19 +14,12 @@ pub fn shellStatus(raw: u32) u8 {
     return @intCast((128 + sig) & 0xff);
 }
 
-/// The refusals std's exec reports to nobody (a forked child that cannot exec just exits), found before the fork.
-fn checkRunnable(path: []const u8) !void {
-    posix.access(path, posix.X_OK) catch |e| return switch (e) {
-        error.PermissionDenied => error.AccessDenied,
-        else => e,
-    };
-}
-
 /// Runs `argv` with exactly `env` and the streams inherited, and waits for it. The child side is system calls whose results are not looked at: it has
 /// nowhere to report a failure but its status (127: the program could not be run), and it runs in a process the tests' coverage does not follow, so
 /// it has no branch.
 fn runInherit(_: *anyopaque, a: std.mem.Allocator, argv: []const []const u8, env: *const std.process.EnvMap) anyerror!u8 {
-    try checkRunnable(argv[0]);
+    // The refusals exec reports to nobody (a forked child that cannot exec just exits) are found here, before the fork: not there, not executable.
+    try posix.access(argv[0], posix.X_OK);
     const argv_z = try a.allocSentinel(?[*:0]const u8, argv.len, null);
     for (argv, 0..) |arg, k| argv_z[k] = (try a.dupeZ(u8, arg)).ptr;
     const envp = try std.process.createNullDelimitedEnvMap(a, env);

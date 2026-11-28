@@ -46,6 +46,21 @@ test "an allocation that fails is the error, at every allocation of an unpack an
         try debkit.package(c.a, "data.tar.zst", ""),
         try debkit.package(c.a, "data.tar", "not a tar"),
     };
+    for (cases) |bytes| {
+        var i: usize = 0;
+        while (true) : (i += 1) {
+            var failing = std.testing.FailingAllocator.init(c.a, .{ .fail_index = i });
+            if (deb.files(failing.allocator(), bytes)) |_| break else |e| try t.expectEqual(error.OutOfMemory, e);
+        }
+    }
+    const gz = try debkit.packageOf(c.a, &.{.{ .name = "usr/bin/svc", .data = "x" }});
+    for ([_][]const u8{ gz, try debkit.package(c.a, "data.tar.gz", "\x1f\x8b not gzip") }) |bytes| {
+        var i: usize = 0;
+        while (true) : (i += 1) {
+            var failing = std.testing.FailingAllocator.init(c.a, .{ .fail_index = i });
+            if (deb.files(failing.allocator(), bytes)) |_| break else |e| try t.expectEqual(error.OutOfMemory, e);
+        }
+    }
     for (cases, 0..) |bytes, n| {
         const dir_name = try std.fmt.allocPrint(c.a, "oom{d}", .{n});
         var i: usize = 0;
@@ -146,6 +161,19 @@ test "run: an allocation that fails is the error, at every allocation, in a run 
         while (true) : (i += 1) {
             var failing = std.testing.FailingAllocator.init(case.c.a, .{ .fail_index = i });
             if (run.run(failing.allocator(), case.c.io(), args(case.c, case.extra))) |_| break else |e| try t.expectEqual(error.OutOfMemory, e);
+        }
+    }
+    // Two packages, and two that ship the same path.
+    for ([_][]const u8{ "usr/bin/fake", "usr/bin/svc" }) |second| {
+        var two = try kit.Case.init();
+        defer two.deinit();
+        _ = two.toyPackage();
+        two.put("fake.deb", try debkit.packageOf(two.a, &.{.{ .name = second, .mode = 0o755, .data = "f" }}));
+        const two_args = [_][]const u8{ "--image", image, "--root", two.path("root"), "--package", two.path("pkg.deb"), "--package", two.path("fake.deb"), "--driver", "/d/drv" };
+        var i: usize = 0;
+        while (true) : (i += 1) {
+            var failing = std.testing.FailingAllocator.init(two.a, .{ .fail_index = i });
+            if (run.run(failing.allocator(), two.io(), &two_args)) |_| break else |e| try t.expectEqual(error.OutOfMemory, e);
         }
     }
     var f = try kit.Case.init();

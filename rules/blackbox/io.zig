@@ -10,7 +10,7 @@ pub const Oom = error{OutOfMemory};
 pub const Plat = struct {
     ctx: *anyopaque,
     /// Runs `argv` (`argv[0]` a path, never looked for in PATH) with exactly `env`, the streams inherited, and gives its exit status (shell form: 128+N
-    /// for signal N); an error when it cannot be started (`FileNotFound`: it is not there; `AccessDenied`: it is not executable).
+    /// for signal N); an error when it cannot be started (`FileNotFound`: it is not there; `AccessDenied` or `PermissionDenied`: it is not executable).
     runInherit: *const fn (ctx: *anyopaque, a: Alloc, argv: []const []const u8, env: *const std.process.EnvMap) anyerror!u8,
 };
 

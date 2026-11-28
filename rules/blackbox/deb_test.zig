@@ -83,3 +83,28 @@ test "a file that is not a Debian package, each way, with its reason" {
     try expectRefused(&c, try debkit.ar(c.a, &.{ .{ .name = "debian-binary", .data = "2.0\n" }, .{ .name = "control.tar.gz", .data = "" } }), "it has no data member (data.tar, data.tar.gz or data.tar.xz)");
 }
 
+test "files: every entry that is not a directory, as it lands below the root, read without writing anything" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    const bytes = try debkit.packageOf(c.a, &.{
+        .{ .name = "usr/bin/svc", .mode = 0o755, .data = "program" },
+        .{ .name = "etc/svc/config.toml", .data = "x = 1\n" },
+        .{ .name = "usr/bin/svc-alias", .typeflag = '2', .link = "svc" },
+    });
+    const listing = try deb.files(c.a, bytes);
+    try t.expectEqual(@as(?[]const u8, null), listing.why);
+    try t.expectEqualStrings("usr/bin/svc etc/svc/config.toml usr/bin/svc-alias", try std.mem.join(c.a, " ", listing.paths));
+    // A plain data.tar, with names that do not start with `./`.
+    const plain = try debkit.package(c.a, "data.tar", try debkit.tar(c.a, &.{ .{ .name = "opt/", .typeflag = '5' }, .{ .name = "opt/a", .data = "a" } }));
+    try t.expectEqualStrings("opt/a", try std.mem.join(c.a, " ", (try deb.files(c.a, plain)).paths));
+}
+
+test "files: a package whose data member cannot be read is said, each way" {
+    var c = try kit.Case.init();
+    defer c.deinit();
+    try t.expectEqualStrings("it is not an ar archive (a .deb starts with `!<arch>`)", (try deb.files(c.a, "not a package")).why.?);
+    try t.expectEqualStrings("its `data.tar.gz` cannot be read: Corrupt", (try deb.files(c.a, try debkit.package(c.a, "data.tar.gz", "\x1f\x8b not gzip"))).why.?);
+    try t.expectEqualStrings("its `data.tar.xz` cannot be read: Corrupt", (try deb.files(c.a, try debkit.package(c.a, "data.tar.xz", "not xz"))).why.?);
+    const garbage = [_]u8{'x'} ** 512;
+    try kit.expectHas((try deb.files(c.a, try debkit.package(c.a, "data.tar", &garbage))).why.?, "its `data.tar` cannot be read: ");
+}

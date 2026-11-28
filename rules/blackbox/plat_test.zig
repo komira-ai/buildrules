@@ -31,7 +31,8 @@ test "a program that is not there, or not executable, is refused before anything
     const e = try env(c.a, &.{});
     try t.expectError(error.FileNotFound, plat.runInherit(plat.ctx, c.a, &.{c.path("absent")}, e));
     c.put("data", "not a program");
-    try t.expectError(error.AccessDenied, plat.runInherit(plat.ctx, c.a, &.{c.path("data")}, e));
+    // EACCES or EPERM, as the kernel and the file system answer `access(X_OK)` for a file with no execute bit.
+    if (plat.runInherit(plat.ctx, c.a, &.{c.path("data")}, e)) |_| return error.TestUnexpectedResult else |err| try t.expect(err == error.AccessDenied or err == error.PermissionDenied);
 }
 
 test "the shell's form of a status" {

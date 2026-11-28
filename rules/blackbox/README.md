@@ -36,7 +36,7 @@ blackbox_test(
 | argument | what it is |
 |---|---|
 | `image` | `[docker://]<repository>@sha256:<64 lower-case hex>`. A tag, alone or beside the digest, a missing or malformed digest, and a missing repository are refused when the BUCK file loads. |
-| `packages` | a non-empty list. Each is a pin `{"url", "sha256", "size"}` (an https url, 64 lower-case hex digits, a positive length) with an optional `"candidate"`, or the label of a target whose output is a `.deb` built in the same build. The runner checks the size and sha256 of a pinned package again before it puts anything onto the image. |
+| `packages` | a non-empty list; no two may ship the same path. Each is a pin `{"url", "sha256", "size"}` (an https url, 64 lower-case hex digits, a positive length) with an optional `"candidate"`, or the label of a target whose output is a `.deb` built in the same build. The runner checks the size and sha256 of a pinned package again before it puts anything onto the image. |
 | `driver` | a binary target. It is run with one argument, the root the packages were put onto (`/` on a farm), and the test passes when it exits 0. |
 
 What a service is, its flags, which address each fake listens on, and starting and stopping them, are the driver's: the packages put the programs at
@@ -88,7 +88,8 @@ The rule builds this argument list (`--root /`, `--farm`); nothing else needs to
    property set, and require `container-image` to be the test's image.
 2. Read every package; refuse one whose `--sha256` and `--size` (the pin of the `--package` before them) are not its own. Nothing is written before
    every package is checked.
-3. Unpack each package (deb.zig) over DIR, in the order given, so a later package's file replaces an earlier one's; without dpkg, which the image need
+3. Refuse two packages that ship the same path (a file or a link; directories are shared), naming the path and both packages. Unpack each package
+   (deb.zig) over DIR, each file at the path its package ships it, replacing the image's own file there; without dpkg, which the image need
    not have and the job could not run. The `ar` archive's `data.tar`, `data.tar.gz` or `data.tar.xz` is read by the extractor of `unpack`
    (tools/bootstrap): an absolute name, a `..`, a link that climbs out and an entry written through a link are refused, set-uid, set-gid and sticky bits
    are dropped. `data.tar.zst` is refused by name. The control member (the maintainer scripts) is not read.
