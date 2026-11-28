@@ -67,6 +67,13 @@ export_file(
     visibility = ["//ci:"],
 )
 
+# The action that joins a job to the farm (.github/actions/farm-connect), read by the tests of the tool it runs (tools/farm/BUCK).
+export_file(
+    name = "farm-connect-action.yml",
+    src = ".github/actions/farm-connect/action.yml",
+    visibility = ["//tools/farm:"],
+)
+
 # Read by the publish-unpack workflow check (ci/BUCK).
 export_file(
     name = "publish-unpack.yml",
@@ -113,4 +120,4 @@ export_file(
     visibility = ["//ci:"],
 )
 
-scrub_files(extra = [".buckconfig", ".buckconfig.local.example", ".gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/beta.yml", ".github/workflows/farm-macos.yml", ".github/workflows/site.yml", ".github/workflows/site-publish.yml", ".github/workflows/advisories.yml", ".github/workflows/lintian.yml", ".github/workflows/publish-unpack.yml", ".github/workflows/mopm-pin.yml"])
+scrub_files(extra = [".buckconfig", ".buckconfig.local.example", ".gitignore", ".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/beta.yml", ".github/workflows/farm-macos.yml", ".github/workflows/site.yml", ".github/workflows/site-publish.yml", ".github/workflows/advisories.yml", ".github/workflows/lintian.yml", ".github/workflows/publish-unpack.yml", ".github/workflows/mopm-pin.yml", ".github/actions/farm-connect/action.yml"])

@@ -1,0 +1,53 @@
+# The `farm` tool: the two steps a GitHub Actions job takes to build on the farm, shared by every repository that builds with buildrules
+# (tools/farm/README.md). `farm connect` waits, for a bounded time, until the farm answers and writes its buckconfig; `farm run` runs one
+# buck2 command there and runs it once more, after the farm answers again, when every failure in its output is a cut connection. The
+# farm-connect action (.github/actions/farm-connect) builds it on the runner. Zig, tested as a build action.
+load("@buildrules//rules/coverage:zig_cover.bzl", "zig_coverage")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load("@buildrules//tools/scrub:defs.bzl", "scrub_files")
+
+_SRCS = [
+    "args.zig",
+    "classify.zig",
+    "connect.zig",
+    "remote.zig",
+    "run.zig",
+    "wait.zig",
+]
+
+# Recorded buck2 output (fixtures/README.md says where each comes from): the cases of the classification, the local-0 check and the
+# runs, played by a stand-in runner.
+_FIXTURES = glob(["fixtures/*.log"])
+
+# Every file of the tool: the classification of a failed run over the recorded logs, the local-0 check, the bounded wait on a clock the
+# tests move, `farm connect` and `farm run` with a stand-in runner and wait, the real runner over busybox applets, and the real probe
+# against a listener on 127.0.0.1; and the farm-connect action held to the tool's command line.
+zig_test(
+    name = "farm_unit",
+    exec_compatible_with = LINUX_X86_64,
+    src = "farm_test.zig",
+    imports = _SRCS + ["farm.zig", "classify_test.zig", "action_test.zig"] + _FIXTURES,
+    data = {
+        ".github/actions/farm-connect/action.yml": "//:farm-connect-action.yml",
+    },
+    zig = "buildrules//rules/pins:zig_next",
+)
+
+zig_exe(
+    name = "farm",
+    exec_compatible_with = LINUX_X86_64,
+    src = "farm.zig",
+    imports = _SRCS,
+    zig = "buildrules//rules/pins:zig_next",
+    unit_tests = [":farm_unit", "buildrules//rules/pins:zig_next_version"],
+    visibility = ["PUBLIC"],
+)
+
+# The coverage of the sources the tests compile (rules/coverage/README.md, "Zig coverage"), and the floor it is held to.
+zig_coverage(
+    test_targets = [":farm_unit"],
+    expect = ["tools/farm/" + f for f in _SRCS + ["farm.zig"]],
+)
+
+scrub_files()

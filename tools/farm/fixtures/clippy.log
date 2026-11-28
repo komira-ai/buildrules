@@ -1,0 +1,311 @@
+[2026-11-26T16:36:43.718+00:00] Build ID: 00000000-0000-0000-0000-000000000000
+[2026-11-26T16:36:45.423+00:00] RE Session: GRPC-SESSION-ID
+[2026-11-26T16:36:52.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_2b96942cb0 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 2 other actions
+[2026-11-26T16:36:59.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_2b96942cb0 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 2 other actions
+[2026-11-26T16:37:06.618+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:37:13.718+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:37:20.718+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:37:27.818+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:37:34.818+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:37:41.818+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:37:48.918+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:37:55.918+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:38:03.018+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:38:10.118+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:38:17.118+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:38:24.218+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:38:31.318+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:38:38.418+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:38:45.518+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:38:52.618+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:38:59.618+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:39:06.718+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:39:13.818+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:39:20.918+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:39:27.918+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:39:34.918+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:39:42.018+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:39:49.118+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:39:56.118+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:40:03.218+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:40:10.318+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:40:17.418+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:40:24.418+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:40:31.418+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:40:38.518+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:40:45.518+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_queued], and 2 other actions
+[2026-11-26T16:40:52.618+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_execute], and 2 other actions
+[2026-11-26T16:40:59.718+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_execute], and 2 other actions
+[2026-11-26T16:41:06.718+00:00] Waiting on tierstore//crates/tierstore:fmt_rustfmt (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustfmt edition_2024 [re_execute], and 2 other actions
+[2026-11-26T16:41:13.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_2b96942cb0 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 1 other actions
+[2026-11-26T16:41:20.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_2b96942cb0 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 1 other actions
+[2026-11-26T16:41:28.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_b69fc576ae (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 1 other actions
+[2026-11-26T16:41:35.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_b69fc576ae (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 1 other actions
+[2026-11-26T16:41:42.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_2b96942cb0 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 1 other actions
+[2026-11-26T16:41:49.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:41:56.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:42:03.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:42:10.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:42:17.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:42:24.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:42:31.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:42:38.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:42:45.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:42:52.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:42:59.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:43:07.017+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:43:14.017+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:43:21.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:43:28.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:43:35.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:43:42.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:43:49.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:43:56.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:44:03.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:44:10.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:44:17.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:44:24.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:44:31.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:44:38.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:44:45.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:44:52.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:44:59.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:45:07.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:45:14.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:45:21.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:45:28.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:45:35.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:45:42.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:45:49.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:45:56.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_38a757b967 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- build_script [re_queued], and 1 other actions
+[2026-11-26T16:46:03.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:46:10.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:46:17.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:46:24.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:46:31.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:46:38.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:46:45.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:46:52.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:46:59.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:47:07.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:47:14.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:47:21.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:47:28.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:47:35.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:47:42.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:47:49.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:47:56.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:48:03.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:48:10.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:48:17.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:48:24.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:48:31.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:48:38.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:48:45.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:48:53.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:49:00.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:49:07.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:49:14.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:49:21.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:49:28.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:49:35.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:49:42.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:49:49.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:49:56.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:50:03.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:50:10.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:50:17.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:50:25.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:50:32.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:50:39.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:50:46.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:50:53.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:51:00.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:51:07.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:51:14.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:51:21.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:51:28.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:51:35.817+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:51:42.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:51:49.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:51:56.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:52:04.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:52:11.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:52:18.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:52:25.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:52:32.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:52:39.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:52:46.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:52:53.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:53:00.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:53:07.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:53:14.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:53:21.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:53:28.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:53:35.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:53:42.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:53:49.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:53:57.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:54:04.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:54:11.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:54:18.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:54:25.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:54:32.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:54:39.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:54:46.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:54:53.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:55:00.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:55:07.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:55:14.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:55:21.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:55:28.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:55:35.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:55:42.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:55:50.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:55:57.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:56:04.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:56:11.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:56:18.317+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:56:25.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:56:32.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:56:39.417+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:56:46.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:56:53.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_c1980509a2 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 6 other actions
+[2026-11-26T16:57:00.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 6 other actions
+[2026-11-26T16:57:07.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 6 other actions
+[2026-11-26T16:57:14.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 4 other actions
+[2026-11-26T16:57:21.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 4 other actions
+[2026-11-26T16:57:28.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 2 other actions
+[2026-11-26T16:57:35.917+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 2 other actions
+[2026-11-26T16:57:42.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 2 other actions
+[2026-11-26T16:57:50.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 2 other actions
+[2026-11-26T16:57:57.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 2 other actions
+[2026-11-26T16:58:04.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 2 other actions
+[2026-11-26T16:58:11.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 2 other actions
+[2026-11-26T16:58:18.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 1 other actions
+[2026-11-26T16:58:25.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 1 other actions
+[2026-11-26T16:58:32.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_7a90e48b13 (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 1 other actions
+[2026-11-26T16:58:39.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_11102dd7cf (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_action_cache], and 20 other actions
+[2026-11-26T16:58:46.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_11102dd7cf (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_action_cache], and 20 other actions
+[2026-11-26T16:58:53.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_11102dd7cf (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_upload], and 20 other actions
+[2026-11-26T16:59:00.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_11102dd7cf (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc, and 20 other actions
+[2026-11-26T16:59:07.718+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T16:59:14.818+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T16:59:21.818+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T16:59:28.918+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T16:59:36.018+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T16:59:43.118+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T16:59:50.218+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T16:59:57.218+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:00:04.318+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:00:11.418+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:00:18.518+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:00:25.618+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:00:32.618+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:00:39.718+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:00:46.818+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:00:53.818+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:01:00.918+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:01:07.918+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:01:15.017+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:01:22.018+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:01:29.018+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:01:36.118+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 20 other actions
+[2026-11-26T17:01:43.218+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_d29a196971_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 20 other actions
+[2026-11-26T17:01:50.218+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_d29a196971_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 20 other actions
+[2026-11-26T17:01:57.218+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_d29a196971_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 20 other actions
+[2026-11-26T17:02:04.318+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_d29a196971_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 18 other actions
+[2026-11-26T17:02:11.418+00:00] Waiting on tierstore//crates/compat:tierstore-compat-0.1.0_a0fca31740_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 9 other actions
+[2026-11-26T17:02:18.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_11102dd7cf (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 5 other actions
+[2026-11-26T17:02:25.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_11102dd7cf (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 5 other actions
+[2026-11-26T17:02:32.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_11102dd7cf (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 5 other actions
+[2026-11-26T17:02:39.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_11102dd7cf (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 5 other actions
+[2026-11-26T17:02:46.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_11102dd7cf (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 5 other actions
+[2026-11-26T17:02:53.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:03:00.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:03:08.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:03:15.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:03:22.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:03:29.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:03:36.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:03:43.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:03:50.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:03:57.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:04:04.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:04:11.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:04:18.718+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:04:25.818+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:04:32.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:04:39.918+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:04:47.018+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:04:54.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:05:01.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 16 other actions
+[2026-11-26T17:05:08.074+00:00] Action failed: tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-0.3.0_fb2de23c28_lint)
+[2026-11-26T17:05:08.074+00:00] Remote command returned non-zero exit code 1
+[2026-11-26T17:05:08.074+00:00] Remote action digest: '6e570c684e78b500e4c40c4c0ab9ede0052c9370c7bf44c8a5bf86f073f1c3bd:143'
+[2026-11-26T17:05:08.074+00:00] Stdout: <empty>
+[2026-11-26T17:05:08.074+00:00] Stderr:
+error: this call to `clone` can be replaced with `std::slice::from_ref`
+   --> crates/tierstore/src/server/cold_cli_front_tests.rs:216:5
+    |
+216 |     assert_eq!(open_uploads(store, "cas/").await, [id.clone()]);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cloned_ref_to_slice_refs
+    = note: `-D clippy::cloned-ref-to-slice-refs` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::cloned_ref_to_slice_refs)]`
+
+error: this call to `clone` can be replaced with `std::slice::from_ref`
+   --> crates/tierstore/src/server/cold_cli_front_tests.rs:304:9
+    |
+304 |         assert_eq!(open_uploads(&store, "cas/").await, [id.clone()]);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cloned_ref_to_slice_refs
+
+error: aborting due to 2 previous errors
+
+
+[2026-11-26T17:05:15.118+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_f4ea8f1916_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 15 other actions
+[2026-11-26T17:05:22.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_f4ea8f1916_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 15 other actions
+[2026-11-26T17:05:29.218+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_f4ea8f1916_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 15 other actions
+[2026-11-26T17:05:36.318+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_f4ea8f1916_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_queued], and 15 other actions
+[2026-11-26T17:05:43.418+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_f4ea8f1916_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 15 other actions
+[2026-11-26T17:05:50.518+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_f0acdd2460_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 9 other actions
+[2026-11-26T17:05:57.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_f0acdd2460_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 9 other actions
+[2026-11-26T17:06:04.618+00:00] Waiting on tierstore//crates/tierstore:tierstore-0.3.0_0d01b81e4e_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) -- rustc [re_execute], and 1 other actions
+[2026-11-26T17:06:10.736+00:00] Cache hits: 98%
+[2026-11-26T17:06:10.736+00:00] Commands: 2166 (cached: 2117, remote: 49, local: 0)
+[2026-11-26T17:06:10.736+00:00] Network: up 4.7MiB  down 73MiB  session GRPC-SESSION-ID
+[2026-11-26T17:06:10.737+00:00]
+[2026-11-26T17:06:10.737+00:00] BUILD ERRORS (1)
+[2026-11-26T17:06:10.737+00:00] The following actions failed during the execution of this command:
+[2026-11-26T17:06:10.737+00:00] Action failed: tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7) (rustc tierstore-0.3.0_fb2de23c28_lint)
+[2026-11-26T17:06:10.737+00:00] Remote command returned non-zero exit code 1
+[2026-11-26T17:06:10.737+00:00] Remote action digest: '6e570c684e78b500e4c40c4c0ab9ede0052c9370c7bf44c8a5bf86f073f1c3bd:143'
+[2026-11-26T17:06:10.737+00:00] Stdout: <empty>
+[2026-11-26T17:06:10.737+00:00] Stderr:
+error: this call to `clone` can be replaced with `std::slice::from_ref`
+   --> crates/tierstore/src/server/cold_cli_front_tests.rs:216:5
+    |
+216 |     assert_eq!(open_uploads(store, "cas/").await, [id.clone()]);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cloned_ref_to_slice_refs
+    = note: `-D clippy::cloned-ref-to-slice-refs` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::cloned_ref_to_slice_refs)]`
+
+error: this call to `clone` can be replaced with `std::slice::from_ref`
+   --> crates/tierstore/src/server/cold_cli_front_tests.rs:304:9
+    |
+304 |         assert_eq!(open_uploads(&store, "cas/").await, [id.clone()]);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cloned_ref_to_slice_refs
+
+error: aborting due to 2 previous errors
+
+
+[2026-11-26T17:06:10.737+00:00]
+BUILD FAILED
+Failed to build 'tierstore//crates/tierstore:tierstore-0.3.0_fb2de23c28_lint (buildrules//platforms:linux_x86_64#27db57317ae2fec7)'
